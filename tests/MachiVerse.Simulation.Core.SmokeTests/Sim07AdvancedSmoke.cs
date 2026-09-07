@@ -154,9 +154,21 @@ internal static class Sim07AdvancedSmoke
             .Select(entry => entry.DomainToken.Value switch
             {
                 "spatial" => (IDomainRuntimeV1)new SpatialDomainRuntimeV1(
-                    static (_, _) => ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>([])),
+                    static (_, _) => ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>([]),
+                    (context, _) => ValueTask.FromResult<IReadOnlyList<PartitionCandidateV1>>([
+                        DomainOwnedPartitionCandidateFactoryV1.CreateSpatial(
+                            context.State,
+                            "spatial.terrain_geometry",
+                            SHA256.HashData("spatial-change"u8))
+                    ])),
                 "environment" => new EnvironmentDomainRuntimeV1(
-                    (_, _) => ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>([environmentIntent])),
+                    (_, _) => ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>([environmentIntent]),
+                    (context, _) => ValueTask.FromResult<IReadOnlyList<PartitionCandidateV1>>([
+                        DomainOwnedPartitionCandidateFactoryV1.CreateEnvironment(
+                            context.State,
+                            "environment.atmosphere",
+                            SHA256.HashData("environment-change"u8))
+                    ])),
                 _ => new NoOpRuntime(entry.DomainToken),
             })
             .ToArray();
@@ -169,7 +181,11 @@ internal static class Sim07AdvancedSmoke
         foreach (var workers in new[] { 1, 4, 8, 16 })
         {
             var outputs = await DomainRuntimeExecutorV1.ExecuteAsync(plan, state, frozen, runtimes, workers);
-            var snapshot = outputs.Select(output => output.DomainToken.Value + ":" + string.Join(',', output.Intents.Select(static intent => intent.IntentId.ToString()))).ToArray();
+            var snapshot = outputs.Select(output =>
+                output.DomainToken.Value + ":" +
+                string.Join(',', output.Intents.Select(static intent => intent.IntentId.ToString())) + ":" +
+                string.Join(',', output.LocalPartitionCandidates.Select(static candidate => candidate.PartitionId.Value + "=" + Convert.ToHexString(candidate.CandidateDigest))))
+                .ToArray();
             baseline ??= snapshot;
             Require(baseline.SequenceEqual(snapshot),
                 "SIM-07 component gate: worker count changed Spatial/Environment domain output order/content.");
@@ -177,15 +193,23 @@ internal static class Sim07AdvancedSmoke
         }
 
         Require(finalOutputs is not null, "SIM-07 runtime output missing.");
+        var spatialOutput = finalOutputs.Single(output => output.DomainToken == spatialToken);
         var environmentOutput = finalOutputs.Single(output => output.DomainToken == environmentToken);
         Require(environmentOutput.Intents.Single().TargetDomain == spatialToken &&
                 environmentOutput.Intents.Single().MutationKind.Value == "spatial.intent.geometry-deform",
             "SIM-07 component gate: Environment geometry effect must cross owner boundary as canonical Spatial intent.");
+        Require(spatialOutput.LocalPartitionCandidates.Single().OwnerDomain == spatialToken &&
+                environmentOutput.LocalPartitionCandidates.Single().OwnerDomain == environmentToken,
+            "SIM-07 component gate: owner partition candidates must be emitted by their owning DomainRuntime.");
 
-        var spatialCandidate = DomainOwnedPartitionCandidateFactoryV1.CreateSpatial(
-            state, "spatial.terrain_geometry", SHA256.HashData("spatial-change"u8));
-        var environmentCandidate = DomainOwnedPartitionCandidateFactoryV1.CreateEnvironment(
-            state, "environment.atmosphere", SHA256.HashData("environment-change"u8));
+        var foreignSpatialCandidate = DomainOwnedPartitionCandidateFactoryV1.CreateSpatial(
+            state, "spatial.terrain_geometry", SHA256.HashData("foreign-output"u8));
+        RequireReject(
+            () => new DomainCandidateOutputV1(
+                environmentToken,
+                state.Header.Step,
+                localPartitionCandidates: [foreignSpatialCandidate]),
+            "domain-output.foreign-partition-candidate");
         RequireReject(
             () => DomainOwnedPartitionCandidateFactoryV1.CreateEnvironment(
                 state, "spatial.terrain_geometry", SHA256.HashData("foreign"u8)),
@@ -204,10 +228,12 @@ internal static class Sim07AdvancedSmoke
             state,
             frozen,
             finalOutputs,
-            resolutions,
-            [spatialCandidate, environmentCandidate]);
+            resolutions);
         Require(candidate.PartitionCandidates.Count == 2 && candidate.CommitDecision.CanCommit && !candidate.IsPublishable,
-            "SIM-07 component gate: owner partition candidates did not enter non-authoritative StepCandidate correctly.");
+            "SIM-07 component gate: DomainRuntime owner candidates did not enter non-authoritative StepCandidate correctly.");
+        Require(candidate.PartitionCandidates.Select(static item => item.OwnerDomain.Value)
+                .SequenceEqual(["environment", "spatial"]),
+            "SIM-07 component gate: StepCandidate partition candidates must be canonical by PartitionId.");
     }
 
     private static WorldStateV1 CreateWorldState()
