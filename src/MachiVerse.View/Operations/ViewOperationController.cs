@@ -25,15 +25,18 @@ public sealed class ViewOperationController
     private readonly ConfirmedWorldStore _confirmed;
     private readonly PredictionStore _predictions;
     private readonly ReconciliationCoordinator _reconciliation;
+    private readonly ViewOperationCatalog _catalog;
 
     public ViewOperationController(
         ConfirmedWorldStore confirmed,
         PredictionStore predictions,
-        ReconciliationCoordinator reconciliation)
+        ReconciliationCoordinator reconciliation,
+        ViewOperationCatalog catalog)
     {
         _confirmed = confirmed ?? throw new ArgumentNullException(nameof(confirmed));
         _predictions = predictions ?? throw new ArgumentNullException(nameof(predictions));
         _reconciliation = reconciliation ?? throw new ArgumentNullException(nameof(reconciliation));
+        _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
     }
 
     public ViewMutationAccessState AccessState { get; private set; } = ViewMutationAccessState.Blocked;
@@ -59,6 +62,7 @@ public sealed class ViewOperationController
         ValidateId128(operationId, nameof(operationId));
         ValidateHash256(immutablePayloadDigest, nameof(immutablePayloadDigest));
         ValidateDraft(draft);
+        _catalog.Validate(draft);
 
         var request = BuildRequest(draft, operationId, immutablePayloadDigest);
         var key = Hex(operationId);
