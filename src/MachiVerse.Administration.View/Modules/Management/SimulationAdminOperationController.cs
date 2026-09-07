@@ -201,9 +201,10 @@ public sealed class SimulationAdminOperationController
     public void MarkDeliveryUnknown(ByteString operationId)
     {
         var operation = RequireTracked(operationId);
-        if (operation.State is AdminOperationLifecycleState.Terminal or AdminOperationLifecycleState.Rejected or AdminOperationLifecycleState.Failed)
+        if (operation.State != AdminOperationLifecycleState.Submitted)
         {
-            throw new InvalidOperationException("Terminal Admin Operation cannot become delivery-unknown.");
+            throw new InvalidOperationException(
+                "Only a submitted Admin Operation can enter delivery-unknown state.");
         }
         _operations[operation.OperationId] = operation with
         {
@@ -228,9 +229,35 @@ public sealed class SimulationAdminOperationController
 
         var wire = OperationStatusResultV1.Parser.ParseFrom(envelope.Payload);
         var operationId = AdminSessionProjectionStore.ValidateId128(wire.OperationId, nameof(wire.OperationId));
+        var operationContext = envelope.OperationContext
+            ?? throw new InvalidDataException("operation.result requires OperationContext.");
+        if (!operationContext.HasOperationId)
+        {
+            throw new InvalidDataException("operation.result OperationContext requires operation_id.");
+        }
+        var contextOperationId = AdminSessionProjectionStore.ValidateId128(
+            operationContext.OperationId,
+            "operation_context.operation_id");
+        if (!string.Equals(contextOperationId, operationId, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("operation.result payload and OperationContext OperationId differ.");
+        }
+
         if (!_operations.TryGetValue(operationId, out var current))
         {
             return false;
+        }
+
+        if (operationContext.HasOperationPayloadDigest)
+        {
+            var contextDigest = AdminSessionProjectionStore.ValidateHash256(
+                operationContext.OperationPayloadDigest,
+                "operation_context.operation_payload_digest");
+            if (!string.Equals(contextDigest, current.ImmutablePayloadDigest, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "operation.result OperationContext immutable payload digest differs from the tracked request.");
+            }
         }
 
         if (wire.HasOperationPayloadDigest)
