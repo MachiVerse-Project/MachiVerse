@@ -110,10 +110,7 @@ public sealed class PublicationBufferV1
     public PublicationRouteResultV1 EnqueueConfirmed(ConfirmedStateSnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        if (snapshot.ContinuityToken.Length != 32)
-            throw new InvalidDataException("protocol.invalid-continuity-token-length");
-        if (snapshot.ProjectionSchemaDigest.Length != 32)
-            throw new InvalidDataException("protocol.invalid-projection-schema-digest");
+        ValidateSnapshot(snapshot);
 
         var enqueued = 0;
         var resyncRequired = 0;
@@ -173,12 +170,15 @@ public sealed class PublicationBufferV1
         ConfirmedStateSnapshot latestConfirmed)
     {
         ArgumentNullException.ThrowIfNull(latestConfirmed);
+        ValidateSnapshot(latestConfirmed);
         var id = RequireId128(subscriptionId, nameof(subscriptionId));
         var key = Convert.ToHexStringLower(id);
         if (!_subscribers.TryGetValue(key, out var state))
             throw new InvalidDataException("publication.subscription-unknown");
         if (state.State != PublicationSubscriberStateV1.ResyncRequired)
             throw new InvalidDataException("publication.resync-not-required");
+        if (state.LatestConfirmedBasisStep is not { } latest || latestConfirmed.BasisStep != latest)
+            throw new InvalidDataException("publication.resync-basis-stale");
 
         return new PublicationDeliveryV1(
             state.SubscriptionId.ToArray(),
@@ -199,10 +199,9 @@ public sealed class PublicationBufferV1
             throw new InvalidDataException("publication.subscription-unknown");
         if (state.State != PublicationSubscriberStateV1.ResyncRequired)
             throw new InvalidDataException("publication.resync-not-required");
-        if (state.LatestConfirmedBasisStep is { } latest && deliveredBasisStep < latest)
+        if (state.LatestConfirmedBasisStep is not { } latest || deliveredBasisStep != latest)
             throw new InvalidDataException("publication.resync-basis-stale");
         state.State = PublicationSubscriberStateV1.Ready;
-        state.LatestConfirmedBasisStep = deliveredBasisStep;
     }
 
     public PublicationSubscriberSnapshotV1 ReadSubscriber(ReadOnlySpan<byte> subscriptionId)
@@ -223,6 +222,14 @@ public sealed class PublicationBufferV1
             state.Pending.Count,
             state.CoalescedPublicationCount,
             state.LatestConfirmedBasisStep);
+
+    private static void ValidateSnapshot(ConfirmedStateSnapshot snapshot)
+    {
+        if (snapshot.ContinuityToken.Length != 32)
+            throw new InvalidDataException("protocol.invalid-continuity-token-length");
+        if (snapshot.ProjectionSchemaDigest.Length != 32)
+            throw new InvalidDataException("protocol.invalid-projection-schema-digest");
+    }
 
     private static byte[] RequireId128(ReadOnlySpan<byte> value, string field)
     {
