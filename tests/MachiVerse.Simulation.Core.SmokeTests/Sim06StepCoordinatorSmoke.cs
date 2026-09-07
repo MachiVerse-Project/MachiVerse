@@ -139,9 +139,15 @@ internal static class Sim06StepCoordinatorSmoke
             .Concat(reduce)
             .Concat(custom)
             .ToArray();
+        var partition = new PartitionCandidateV1(
+            new StableToken("resident.identity_lifecycle"),
+            new StableToken("resident"),
+            basisRevision: 1,
+            basisStep,
+            SHA256.HashData("sim06-change-set"u8));
         var domainOutputs = plan.Entries.Select(entry =>
             entry.DomainToken.Value == "resident"
-                ? new DomainCandidateOutputV1(entry.DomainToken, basisStep, allIntents)
+                ? new DomainCandidateOutputV1(entry.DomainToken, basisStep, allIntents, [partition])
                 : new DomainCandidateOutputV1(entry.DomainToken, basisStep)).ToArray();
         var allResolutions = new[]
         {
@@ -151,12 +157,6 @@ internal static class Sim06StepCoordinatorSmoke
             reduceA,
             customA,
         };
-        var partition = new PartitionCandidateV1(
-            new StableToken("resident.identity_lifecycle"),
-            new StableToken("resident"),
-            basisRevision: 1,
-            basisStep,
-            SHA256.HashData("sim06-change-set"u8));
 
         var diagnosticOnly = new InvariantResultV1(
             new StableToken("sim06.diagnostic"),
@@ -173,11 +173,12 @@ internal static class Sim06StepCoordinatorSmoke
             frozen,
             domainOutputs,
             allResolutions,
-            [partition],
-            [diagnosticOnly, blocking]);
+            invariantResults: [diagnosticOnly, blocking]);
         Require(candidateA.TargetStep == basisStep + 1 && !candidateA.CommitDecision.CanCommit &&
                 !candidateA.CommitDecision.FatalAuthorityFailure && !candidateA.IsPublishable,
             "Commit-blocking invariant failure must abort the non-authoritative candidate.");
+        Require(candidateA.PartitionCandidates.Single() == partition,
+            "StepCandidate must aggregate owner-local partition candidates from DomainCandidateOutput.");
 
         var candidateB = StepCandidateV1.Build(
             OpaqueId128.Parse("00000000000000000000000000000691"),
@@ -185,10 +186,27 @@ internal static class Sim06StepCoordinatorSmoke
             frozen,
             domainOutputs.Reverse(),
             allResolutions.Reverse(),
-            [partition],
-            [blocking, diagnosticOnly]);
+            invariantResults: [blocking, diagnosticOnly]);
         Require(candidateA.DiagnosticDigest.SequenceEqual(candidateB.DiagnosticDigest),
             "Candidate diagnostic must ignore candidate identity and input collection order.");
+
+        var externalRejected = false;
+        try
+        {
+            _ = StepCandidateV1.Build(
+                OpaqueId128.Parse("00000000000000000000000000000692"),
+                state,
+                frozen,
+                domainOutputs,
+                allResolutions,
+                [partition]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "step-candidate.external-partition-candidates-not-allowed")
+        {
+            externalRejected = true;
+        }
+        Require(externalRejected,
+            "Partition candidates must not bypass DomainCandidateOutput ownership by external injection.");
 
         var fatal = InvariantBarrierV1.Evaluate([
             new InvariantResultV1(

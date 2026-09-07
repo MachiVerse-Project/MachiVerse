@@ -149,13 +149,28 @@ public sealed class StepCandidateV1
             .ToArray();
         ValidateResolutionCoverage(intents, resolutions);
 
-        var partitions = (partitionCandidates ?? Array.Empty<PartitionCandidateV1>())
+        var externalPartitions = (partitionCandidates ?? Array.Empty<PartitionCandidateV1>()).ToArray();
+        if (externalPartitions.Length != 0)
+            throw new InvalidDataException("step-candidate.external-partition-candidates-not-allowed");
+
+        var partitions = outputs
+            .SelectMany(static output => output.LocalPartitionCandidates)
             .OrderBy(static candidate => candidate.PartitionId.Value, StringComparer.Ordinal)
             .ToArray();
         if (partitions.Select(static candidate => candidate.PartitionId).Distinct().Count() != partitions.Length)
             throw new InvalidDataException("step-candidate.duplicate-partition-candidate");
         if (partitions.Any(candidate => candidate.BasisStep != state.Header.Step || candidate.TargetStep != state.Header.Step + 1))
             throw new InvalidDataException("step-candidate.partition-basis-mismatch");
+        foreach (var candidate in partitions)
+        {
+            var basis = state.Partitions.Get(candidate.PartitionId.Value).Header;
+            if (basis.OwnerDomain != candidate.OwnerDomain)
+                throw new InvalidDataException("step-candidate.partition-owner-mismatch");
+            if (basis.Revision != candidate.BasisRevision)
+                throw new InvalidDataException("step-candidate.partition-basis-revision-mismatch");
+            if (basis.BasisStep > state.Header.Step)
+                throw new InvalidDataException("step-candidate.partition-basis-ahead");
+        }
 
         var invariants = (invariantResults ?? Array.Empty<InvariantResultV1>())
             .OrderBy(static result => result.InvariantId.Value, StringComparer.Ordinal)
