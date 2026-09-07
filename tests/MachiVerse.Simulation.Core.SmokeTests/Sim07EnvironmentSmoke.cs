@@ -65,6 +65,7 @@ internal static class Sim07EnvironmentSmoke
 
         Sim07EnvironmentProcessesSmoke.RunAsync().GetAwaiter().GetResult();
         Sim07AdvancedSmoke.RunAsync().GetAwaiter().GetResult();
+        Sim07StateModelSmoke.Run();
     }
 
     private static void RequireReject(Func<IReadOnlyDictionary<SpatialCellKeyV1, long>> action, string expectedMessage)
