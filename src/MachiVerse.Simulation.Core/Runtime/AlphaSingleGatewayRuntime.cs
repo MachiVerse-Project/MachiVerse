@@ -38,7 +38,8 @@ public sealed record AlphaSingleGatewayOptions(
                 "INT-01 local runtime is opt-in. Set MACHIVERSE_ALPHA_LOCAL=1; release transport authentication is not configured by this bootstrap.");
 
         return new AlphaSingleGatewayOptions(
-            Environment.GetEnvironmentVariable("MACHIVERSE_CORE_CONFIG") ?? "config/simulation-core.toml",
+            Environment.GetEnvironmentVariable("MACHIVERSE_CORE_CONFIG")
+                ?? Path.Combine(AppContext.BaseDirectory, "config", "simulation-core.toml"),
             Environment.GetEnvironmentVariable("MACHIVERSE_WORLD_ROOT") ?? ".machiverse/alpha",
             ParseId("MACHIVERSE_WORLD_ID", DefaultWorldId),
             ParseSeed(Environment.GetEnvironmentVariable("MACHIVERSE_WORLD_SEED_HEX") ?? DefaultWorldSeedHex),
