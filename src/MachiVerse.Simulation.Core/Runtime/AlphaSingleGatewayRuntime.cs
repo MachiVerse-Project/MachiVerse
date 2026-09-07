@@ -391,10 +391,12 @@ internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperat
         if (existing?.Lifecycle == OperationLifecycleStateV1.TerminalDurable) return existing;
 
         var head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
-        if (operation.Admission.AdmissionBasisStep > head.FinalizedStep)
-            throw new InvalidDataException("request.invalid");
+        if (operation.Admission.AdmissionBasisStep != head.FinalizedStep)
+            throw new InvalidDataException("world.basis-stale");
         if (operation.Admission.SchedulingPolicyGeneration != _config.Generation)
             throw new InvalidDataException("operation.scheduling-policy-generation-mismatch");
+        if ((int)_worldAuthority.GetBinding().Status == AlphaParticipationBindingStateV1.ActiveStatus)
+            throw new InvalidDataException("participation.binding-already-active");
 
         if (existing is null)
         {
