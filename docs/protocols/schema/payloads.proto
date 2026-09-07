@@ -318,6 +318,87 @@ message ConfigValueWireV1 {
     sint64 int_value = 2;
     uint64 uint_value = 3;
     double double_value = 4;
-    bool bool_value = 4;
+    string string_value = 5;
+    bytes bytes_value = 6;
   }
+}
+
+message ConfigReadRequestV1 {
+  ComponentTargetV1 target = 1;
+  repeated string keys = 2;
+}
+
+message ConfigEntryWireV1 {
+  string key = 1;
+  ConfigValueWireV1 effective_value = 2;
+  string impact = 3;
+  string mutability = 4;
+  bool sensitive = 5;
+}
+
+message ConfigReadResultV1 {
+  ResultV1 result = 1;
+  ComponentTargetV1 target = 2;
+  uint64 config_generation = 3;
+  bytes config_digest = 4;
+  repeated ConfigEntryWireV1 entries = 5;
+}
+
+message ConfigChangeEntryV1 {
+  string key = 1;
+  ConfigValueWireV1 value = 2;
+}
+
+message ConfigChangeRequestV1 {
+  ComponentTargetV1 target = 1;
+  bytes operation_id = 2;
+  bytes immutable_payload_digest = 3;
+  uint64 expected_base_generation = 4;
+  repeated ConfigChangeEntryV1 changes = 5;
+  optional uint64 requested_effective_step = 6;
+}
+
+message ConfigChangeResultV1 {
+  ResultV1 result = 1;
+  uint64 resulting_generation = 2;
+  bytes resulting_config_digest = 3;
+  optional uint64 effective_step = 4;
+}
+
+message OperationalCommandV1 {
+  ComponentTargetV1 target = 1;
+  string command_kind = 2;
+  optional bytes operation_id = 3;
+  optional bytes immutable_payload_digest = 4;
+  string payload_schema_id = 5;
+  SchemaVersionWireV1 payload_schema_version = 6;
+  bytes payload = 7;
+}
+
+message AuditQueryV1 {
+  optional uint64 from_unix_millis = 1;
+  optional uint64 to_unix_millis = 2;
+  repeated string audit_event_kinds = 3;
+  optional bytes operation_id = 4;
+  optional uint64 simulation_step = 5;
+  uint32 page_size = 6;
+  optional bytes cursor = 7;
+}
+
+message AuditRecordWireV1 {
+  bytes audit_record_id = 1;
+  uint64 timestamp_unix_millis = 2;
+  string audit_event_kind = 3;
+  bytes actor_account_ref = 4;
+  optional bytes operation_id = 5;
+  optional bytes immutable_payload_digest = 6;
+  optional uint64 simulation_step = 7;
+  string target_kind = 8;
+  string result_code = 9;
+  repeated KeyValueV1 attributes = 10;
+}
+
+message AuditPageV1 {
+  repeated AuditRecordWireV1 records = 1;
+  optional bytes next_cursor = 2;
 }
