@@ -92,11 +92,15 @@ internal static class Sim13StepCandidateTransactionSmoke
         var rootId = OpaqueId128.Parse((0x13400 + subjectSuffix).ToString("x32"));
         var root = new CausalityRefV1(CausalityRefKindV1.Operation, rootId.ToBytes(), basisStep);
         var subject = OpaqueId128.Parse((0x13500 + subjectSuffix).ToString("x32"));
+        var intentId = OpaqueId128.Parse((0x13600 + subjectSuffix).ToString("x32"));
         var participants = valid
             ? new[]
             {
                 new TransactionParticipantCandidateV1(
                     new StableToken("resident"),
+                    new StableToken("resident.identity_lifecycle"),
+                    [intentId],
+                    required: true,
                     TransactionParticipantOutcomeV1.Ready,
                     SHA256.HashData(subject.ToBytes()))
             }
