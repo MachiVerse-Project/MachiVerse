@@ -11,6 +11,7 @@ internal static class Sim11GovernanceLawSmoke
         VerifyConflict();
         VerifyEnforcementPhysicalSeparation();
         VerifyBorderPermissionCrossingSeparation();
+        Sim11RuntimeGateSmoke.RunAsync().GetAwaiter().GetResult();
     }
 
     private static void VerifyAstDecodeAndArbitraryCodeReject()
