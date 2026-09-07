@@ -32,6 +32,29 @@ jobs:
       - name: Verify contract fixtures
         run: dotnet run --project tools/MachiVerse.ContractFixtures -- verify
 
+  qa-adversarial-harness:
+    name: QA-03 adversarial harness
+    if: github.base_ref == 'develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Verify adversarial corpus
+        run: dotnet run --project tools/MachiVerse.AdversarialHarness -- verify
+      - name: Materialize adversarial corpus
+        run: |
+          output="$RUNNER_TEMP/qa03-corpus"
+          dotnet run --project tools/MachiVerse.AdversarialHarness -- materialize "$output"
+          test -s "$output/crash-matrix.json"
+          test -s "$output/mutation-cases.json"
+          test -s "$output/security-negative-corpus.json"
+          test -s "$output/target-adapter-contract.json"
+          test -s "$output/corpus-summary.json"
+
   simulation-core:
     name: Simulation Core build and smoke
     if: github.base_ref == 'simulation'
