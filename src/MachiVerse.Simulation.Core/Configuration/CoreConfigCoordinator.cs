@@ -20,7 +20,11 @@ public sealed record EffectiveCoreConfig(
 
 public sealed record ConfigChange(string Path, object Value);
 public sealed record ConfigChangeSet(ulong ExpectedBaseGeneration, IReadOnlyList<ConfigChange> Changes, ulong? EffectiveStep);
-public sealed record ValidatedConfigChange(EffectiveCoreConfig Candidate, bool IsNoChange, bool ContainsSimulationImpact);
+public sealed record ValidatedConfigChange(
+    EffectiveCoreConfig Candidate,
+    bool IsNoChange,
+    bool ContainsSimulationImpact,
+    ulong? EffectiveStep);
 
 public sealed class CoreConfigCoordinator
 {
@@ -50,7 +54,7 @@ public sealed class CoreConfigCoordinator
         if (changeSet.ExpectedBaseGeneration != current.Generation)
             throw new InvalidDataException("config.stale-generation");
         if (changeSet.Changes.Count == 0)
-            return new ValidatedConfigChange(current, true, false);
+            return new ValidatedConfigChange(current, true, false, changeSet.EffectiveStep);
         if (changeSet.Changes.Select(static x => x.Path).Distinct(StringComparer.Ordinal).Count() != changeSet.Changes.Count)
             throw new InvalidDataException("config.duplicate-change-path");
 
@@ -76,18 +80,44 @@ public sealed class CoreConfigCoordinator
 
         var digest = ComputeDigest(candidate);
         var noChange = CryptographicOperations.FixedTimeEquals(digest, current.Digest);
-        if (noChange) return new ValidatedConfigChange(current, true, containsSimulation);
+        if (noChange)
+            return new ValidatedConfigChange(current, true, containsSimulation, changeSet.EffectiveStep);
         if (current.Generation == ulong.MaxValue) throw new OverflowException("ConfigGeneration cannot wrap.");
 
         return new ValidatedConfigChange(
             new EffectiveCoreConfig(current.Generation + 1, candidate, digest, Normalize(candidate)),
             false,
-            containsSimulation);
+            containsSimulation,
+            changeSet.EffectiveStep);
     }
 
     public EffectiveCoreConfig ApplyAtBoundary(ValidatedConfigChange validated)
     {
-        if (validated.IsNoChange) return Current;
+        ArgumentNullException.ThrowIfNull(validated);
+        if (validated.ContainsSimulationImpact)
+            throw new InvalidDataException("config.simulation-boundary-step-required");
+        return ApplyValidated(validated);
+    }
+
+    public EffectiveCoreConfig ApplyAtBoundary(ValidatedConfigChange validated, ulong basisStep)
+    {
+        ArgumentNullException.ThrowIfNull(validated);
+        if (validated.ContainsSimulationImpact)
+        {
+            if (validated.EffectiveStep is null)
+                throw new InvalidDataException("config.effective-step-required");
+            if (validated.EffectiveStep.Value != basisStep)
+                throw new InvalidDataException("config.effective-step-boundary-mismatch");
+        }
+        return ApplyValidated(validated);
+    }
+
+    private EffectiveCoreConfig ApplyValidated(ValidatedConfigChange validated)
+    {
+        var current = Current;
+        if (validated.IsNoChange) return current;
+        if (current.Generation == ulong.MaxValue || validated.Candidate.Generation != current.Generation + 1)
+            throw new InvalidDataException("config.stale-generation");
         _current = validated.Candidate;
         return _current;
     }
