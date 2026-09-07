@@ -113,8 +113,6 @@ public static class DeterministicSequentialImpulseV1
             }
         }
 
-        // A fixed hard cap is authoritative. Failure to settle by the cap is explicit and never
-        // replaced by a timing-sensitive fallback.
         if (!converged)
         {
             converged = ordered.All(contact =>
@@ -139,7 +137,7 @@ public static class DeterministicSequentialImpulseV1
     private static bool ResolveContact(
         SequentialImpulseContactV1 contact,
         long restitutionTarget,
-        IDictionary<OpaqueId128, MutableBodyState> states)
+        IReadOnlyDictionary<OpaqueId128, MutableBodyState> states)
     {
         var a = states[contact.BodyA];
         var b = states[contact.BodyB];
