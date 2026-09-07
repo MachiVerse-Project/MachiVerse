@@ -74,7 +74,7 @@
     private void OnSessionChanged()
         => _ = InvokeAsync(StateHasChanged);
 
-    private void OnGatewayStateChanged(AdminViewLifecycleState _)
+    private void OnGatewayStateChanged(AdminViewLifecycleState state)
         => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
