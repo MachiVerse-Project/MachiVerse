@@ -3,14 +3,15 @@ using Google.Protobuf;
 using MachiVerse.Administration.View.Configuration;
 using MachiVerse.Administration.View.Modules.Management;
 using MachiVerse.Administration.View.Modules.Monitoring;
+using MachiVerse.Protocol.Canonical;
 using MachiVerse.Protocol.V1;
 
 namespace MachiVerse.Administration.View.Protocol;
 
 /// <summary>
-/// Owns the initial read-only Administration View session for INT-01.
-/// It proves auth separation plus health/config read projection without enabling
-/// state-changing Admin commands through the local Alpha bridge.
+/// Owns the Administration View protocol session for INT-01.
+/// Browser code never talks to Gateway protocol DTOs directly; this session owns negotiation,
+/// ADMIN_VIEW auth, Config request identity, and correlated response application.
 /// </summary>
 public sealed class AdminGatewaySession(
     AdminViewConfig config,
@@ -20,6 +21,7 @@ public sealed class AdminGatewaySession(
     ManagementProjectionStore management)
 {
     private readonly SemaphoreSlim _startGate = new(1, 1);
+    private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly ByteString _senderInstanceId = RandomId128();
     private bool _started;
     private uint _negotiationGeneration;
@@ -99,6 +101,7 @@ public sealed class AdminGatewaySession(
             healthQuery.MetricNames.Add("gateway.confirmed.basis-step");
             healthQuery.MetricNames.Add("gateway.core.local-master");
             healthQuery.MetricNames.Add("gateway.core.negotiated");
+            healthQuery.MetricNames.Add("gateway.config.generation");
             await gateway.SendAsync(NormalEnvelope(
                 "component.health.query",
                 "protocol.health-query.v1",
@@ -109,32 +112,7 @@ public sealed class AdminGatewaySession(
             HealthLoaded = true;
             Changed?.Invoke();
 
-            var configRead = management.BuildConfigRead(target, [
-                "audit.query-max-page-size",
-                "audit.retention-days",
-                "network.connect-timeout-ms",
-                "network.reconnect-initial-ms",
-                "network.reconnect-max-ms",
-                "peer.heartbeat-interval-ms",
-                "peer.heartbeat-timeout-ms",
-                "publication.buffer-ms",
-                "publication.max-client-backlog",
-                "queue.publication-capacity",
-                "queue.result-capacity",
-            ]);
-            await gateway.SendAsync(NormalEnvelope(
-                "config.read",
-                "protocol.config-read-request.v1",
-                configRead), cancellationToken);
-            var configEnvelope = await RequireNormalAsync("config.read.result", cancellationToken);
-            if (!management.TryApply(configEnvelope))
-                throw new InvalidDataException("config.read.result-not-applied");
-            var configTarget = management.Snapshot.ConfigTargets.SingleOrDefault();
-            if (configTarget is null || configTarget.ConfigGeneration == 0)
-                throw new InvalidDataException("config.read.local-alpha-empty");
-            ConfigGeneration = configTarget.ConfigGeneration;
-            ConfigLoaded = true;
-
+            await RefreshConfigAsync(target, cancellationToken);
             gateway.MarkReady();
             _started = true;
             Changed?.Invoke();
@@ -150,6 +128,95 @@ public sealed class AdminGatewaySession(
         {
             _startGate.Release();
         }
+    }
+
+    public async Task<ConfigChangeResultV1> SubmitConfigChangeAsync(
+        ConfigChangeDraft draft,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        if (!_started) throw new InvalidOperationException("Administration View session is not ready.");
+
+        await _mutationGate.WaitAsync(cancellationToken);
+        try
+        {
+            var operationId = RandomId128();
+            var provisional = new ConfigChangeRequestV1
+            {
+                Target = draft.Target.Clone(),
+                ExpectedBaseGeneration = draft.BaseConfigGeneration,
+            };
+            provisional.Changes.Add(draft.Edits
+                .OrderBy(static edit => edit.Key, StringComparer.Ordinal)
+                .Select(static edit => new ConfigChangeEntryV1
+                {
+                    Key = edit.Key,
+                    Value = edit.Value.Clone(),
+                }));
+            var digest = ByteString.CopyFrom(ConfigChangeIdentityV1.ComputeImmutablePayloadDigest(provisional));
+            var request = management.PrepareConfigChange(draft, operationId, digest);
+            management.MarkSubmitted(operationId);
+
+            var operationContext = new OperationContextWireV1
+            {
+                OperationId = operationId,
+                OperationPayloadDigest = digest,
+            };
+            await gateway.SendAsync(NormalEnvelope(
+                "config.change",
+                "protocol.config-change-request.v1",
+                request,
+                operationContext), cancellationToken);
+
+            var resultEnvelope = await RequireNormalAsync("config.change.result", cancellationToken);
+            ValidateOperationContext(resultEnvelope, operationId, digest);
+            if (!management.TryApply(resultEnvelope))
+                throw new InvalidDataException("config.change.result-not-applied");
+            var result = ConfigChangeResultV1.Parser.ParseFrom(resultEnvelope.Payload);
+
+            await RefreshConfigAsync(draft.Target, cancellationToken);
+            Changed?.Invoke();
+            return result;
+        }
+        catch (Exception ex)
+        {
+            LastError = BoundedError(ex);
+            Changed?.Invoke();
+            throw;
+        }
+        finally
+        {
+            _mutationGate.Release();
+        }
+    }
+
+    private async Task RefreshConfigAsync(ComponentTargetV1 target, CancellationToken cancellationToken)
+    {
+        var configRead = management.BuildConfigRead(target, [
+            "audit.query-max-page-size",
+            "audit.retention-days",
+            "network.connect-timeout-ms",
+            "network.reconnect-initial-ms",
+            "network.reconnect-max-ms",
+            "peer.heartbeat-interval-ms",
+            "peer.heartbeat-timeout-ms",
+            "publication.buffer-ms",
+            "publication.max-client-backlog",
+            "queue.publication-capacity",
+            "queue.result-capacity",
+        ]);
+        await gateway.SendAsync(NormalEnvelope(
+            "config.read",
+            "protocol.config-read-request.v1",
+            configRead), cancellationToken);
+        var configEnvelope = await RequireNormalAsync("config.read.result", cancellationToken);
+        if (!management.TryApply(configEnvelope))
+            throw new InvalidDataException("config.read.result-not-applied");
+        var configTarget = management.Snapshot.ConfigTargets.SingleOrDefault();
+        if (configTarget is null || configTarget.ConfigGeneration == 0)
+            throw new InvalidDataException("config.read.local-alpha-empty");
+        ConfigGeneration = configTarget.ConfigGeneration;
+        ConfigLoaded = true;
     }
 
     private async Task<WireEnvelopeV1> RequireNormalAsync(string type, CancellationToken cancellationToken)
@@ -179,10 +246,14 @@ public sealed class AdminGatewaySession(
             Payload = payload.ToByteString(),
         };
 
-    private WireEnvelopeV1 NormalEnvelope(string type, string schema, IMessage payload)
+    private WireEnvelopeV1 NormalEnvelope(
+        string type,
+        string schema,
+        IMessage payload,
+        OperationContextWireV1? operationContext = null)
     {
         if (_negotiationGeneration == 0) throw new InvalidOperationException("Admin Gateway protocol is not negotiated.");
-        return new WireEnvelopeV1
+        var envelope = new WireEnvelopeV1
         {
             EnvelopeVersion = 1,
             ProtocolId = AdminGatewayEnvelopeCodec.ProtocolId,
@@ -197,12 +268,23 @@ public sealed class AdminGatewaySession(
             PayloadCompression = (CompressionKindV1)1,
             Payload = payload.ToByteString(),
         };
+        if (operationContext is not null) envelope.OperationContext = operationContext;
+        return envelope;
+    }
+
+    private static void ValidateOperationContext(WireEnvelopeV1 envelope, ByteString operationId, ByteString digest)
+    {
+        if (envelope.OperationContext is null || !envelope.OperationContext.HasOperationId ||
+            !envelope.OperationContext.OperationId.Equals(operationId) ||
+            !envelope.OperationContext.HasOperationPayloadDigest ||
+            !envelope.OperationContext.OperationPayloadDigest.Equals(digest))
+            throw new InvalidDataException("operation.context-mismatch");
     }
 
     private static ByteString RandomId128()
     {
-        var bytes = new byte[16];
-        do RandomNumberGenerator.Fill(bytes); while (bytes.AsSpan().IndexOfAnyExcept((byte)0) < 0);
+        Span<byte> bytes = stackalloc byte[16];
+        do RandomNumberGenerator.Fill(bytes); while (bytes.IndexOfAnyExcept((byte)0) < 0);
         return ByteString.CopyFrom(bytes);
     }
 

@@ -1,29 +1,30 @@
 using System.Net;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
-using System.Text;
 using Google.Protobuf;
+using MachiVerse.Gateway.Audit;
 using MachiVerse.Gateway.Configuration;
 using MachiVerse.Protocol.V1;
 
 namespace MachiVerse.Gateway.Protocol;
 
 /// <summary>
-/// INT-01 local-only Gateway -> Administration View bridge.
-/// This path is deliberately read-only and loopback-only. It proves the canonical
-/// mv.gateway-admin-view browser boundary without bypassing the production Admin auth
-/// or config-mutation design.
+/// INT-01 loopback-only Gateway -> Administration View bridge.
+/// It exercises the canonical Admin protocol while keeping the local Alpha auth profile isolated
+/// from the production OIDC/BFF and TLS profile.
 /// </summary>
 public sealed class AlphaAdminBridge(
     AlphaCoreLinkOptions coreOptions,
     AlphaCoreLinkState coreLinkState,
-    GatewayConfig gatewayConfig,
+    AlphaGatewayConfigCoordinator configCoordinator,
+    ProtectedAdminAuditGateV1 auditGate,
     ILogger<AlphaAdminBridge> logger)
 {
     private const string ProtocolId = "mv.gateway-admin-view";
     private readonly AlphaCoreLinkOptions _coreOptions = coreOptions ?? throw new ArgumentNullException(nameof(coreOptions));
     private readonly AlphaCoreLinkState _coreLinkState = coreLinkState ?? throw new ArgumentNullException(nameof(coreLinkState));
-    private readonly GatewayConfig _gatewayConfig = gatewayConfig ?? throw new ArgumentNullException(nameof(gatewayConfig));
+    private readonly AlphaGatewayConfigCoordinator _configCoordinator = configCoordinator ?? throw new ArgumentNullException(nameof(configCoordinator));
+    private readonly ProtectedAdminAuditGateV1 _auditGate = auditGate ?? throw new ArgumentNullException(nameof(auditGate));
     private readonly ILogger<AlphaAdminBridge> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
     public async Task HandleAsync(HttpContext context)
@@ -34,7 +35,6 @@ public sealed class AlphaAdminBridge(
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
-
         if (!IsLoopback(context.Connection.RemoteIpAddress))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -53,8 +53,7 @@ public sealed class AlphaAdminBridge(
         {
             var helloEnvelope = await ReceiveEnvelopeAsync(socket, context.RequestAborted);
             ValidateBootstrapHello(helloEnvelope);
-            var hello = ProtocolHelloV1.Parser.ParseFrom(helloEnvelope.Payload);
-            ValidateHello(hello);
+            ValidateHello(ProtocolHelloV1.Parser.ParseFrom(helloEnvelope.Payload));
 
             var accept = new ProtocolAcceptV1
             {
@@ -67,7 +66,6 @@ public sealed class AlphaAdminBridge(
                 "protocol.accept",
                 "protocol.accept.v1",
                 accept), context.RequestAborted);
-            _logger.LogInformation("Alpha Admin bridge negotiated protocol 1.0.");
 
             var loginEnvelope = await ReceiveNormalAsync(socket, context.RequestAborted, "auth.login");
             var login = AuthLoginBeginV1.Parser.ParseFrom(loginEnvelope.Payload);
@@ -75,39 +73,38 @@ public sealed class AlphaAdminBridge(
                 throw new InvalidDataException("auth.unauthorized: Alpha Admin bridge accepts ADMIN_VIEW only.");
 
             var sessionId = RandomId128();
-            var loginResult = new AuthLoginResultV1
-            {
-                Result = Success("auth.login.local-alpha-admin"),
-                SessionId = sessionId,
-                SessionGeneration = 1,
-            };
             await SendAsync(socket, NormalResponse(
                 loginEnvelope,
                 "auth.login.result",
                 "protocol.auth-login-result",
-                loginResult), context.RequestAborted);
+                new AuthLoginResultV1
+                {
+                    Result = Success("auth.login.local-alpha-admin"),
+                    SessionId = sessionId,
+                    SessionGeneration = 1,
+                }), context.RequestAborted);
 
             var sessionState = new AuthSessionStateV1
             {
                 SessionId = sessionId,
                 AuthDomain = (AuthDomainWireV1)2,
-                EffectiveRoleSet = "admin-view.alpha-readonly",
+                EffectiveRoleSet = "admin-view.alpha-config",
                 SessionGeneration = 1,
                 Status = (SessionWireStatusV1)1,
             };
             sessionState.EffectivePermissions.Add("admin.audit.read");
+            sessionState.EffectivePermissions.Add("admin.config.change");
             sessionState.EffectivePermissions.Add("admin.config.read");
             sessionState.EffectivePermissions.Add("admin.health.read");
             await SendAsync(socket, Notification(
                 "auth.session.changed",
                 "protocol.auth-session-state.v1",
                 sessionState), context.RequestAborted);
-            _logger.LogInformation("Alpha Admin bridge activated read-only ADMIN_VIEW session.");
 
+            _logger.LogInformation("Alpha Admin bridge activated ADMIN_VIEW Config session.");
             while (socket.State == WebSocketState.Open && !context.RequestAborted.IsCancellationRequested)
             {
                 var request = await ReceiveNormalAsync(socket, context.RequestAborted);
-                _logger.LogInformation("Alpha Admin bridge received {MessageType}.", request.MessageType);
                 switch (request.MessageType)
                 {
                     case "component.health.query":
@@ -115,6 +112,9 @@ public sealed class AlphaAdminBridge(
                         break;
                     case "config.read":
                         await HandleConfigReadAsync(socket, request, context.RequestAborted);
+                        break;
+                    case "config.change":
+                        await HandleConfigChangeAsync(socket, request, sessionId, context.RequestAborted);
                         break;
                     default:
                         throw new InvalidDataException($"protocol.unexpected-admin-message:{request.MessageType}");
@@ -139,10 +139,7 @@ public sealed class AlphaAdminBridge(
         }
     }
 
-    private async Task HandleHealthAsync(
-        WebSocket socket,
-        WireEnvelopeV1 request,
-        CancellationToken cancellationToken)
+    private async Task HandleHealthAsync(WebSocket socket, WireEnvelopeV1 request, CancellationToken cancellationToken)
     {
         var query = HealthQueryV1.Parser.ParseFrom(request.Payload);
         if (query.Targets.Count != 1 || !IsLocalGatewayTarget(query.Targets[0]))
@@ -167,6 +164,12 @@ public sealed class AlphaAdminBridge(
             Value = new MetricValueV1 { BoolValue = core.LocalMaster },
             ObservedAtUnixMillis = now,
         });
+        health.Metrics.Add(new MetricSampleV1
+        {
+            Name = "gateway.config.generation",
+            Value = new MetricValueV1 { UintValue = _configCoordinator.Current.Generation },
+            ObservedAtUnixMillis = now,
+        });
         if (core.BasisStep is { } basisStep)
         {
             health.Metrics.Add(new MetricSampleV1
@@ -188,33 +191,28 @@ public sealed class AlphaAdminBridge(
             "component.health.result",
             "protocol.component-health.v1",
             health), cancellationToken);
-        _logger.LogInformation("Alpha Admin bridge sent component.health.result with {MetricCount} metrics.", health.Metrics.Count);
     }
 
-    private async Task HandleConfigReadAsync(
-        WebSocket socket,
-        WireEnvelopeV1 request,
-        CancellationToken cancellationToken)
+    private async Task HandleConfigReadAsync(WebSocket socket, WireEnvelopeV1 request, CancellationToken cancellationToken)
     {
         var read = ConfigReadRequestV1.Parser.ParseFrom(request.Payload);
         if (read.Target is null || !IsLocalGatewayTarget(read.Target))
             throw new InvalidDataException("request.invalid: Alpha Admin config read requires the local Gateway target.");
 
-        var allEntries = BuildReadableConfigEntries();
+        var snapshot = _configCoordinator.Current;
         var requested = read.Keys.Count == 0
-            ? allEntries.Keys.OrderBy(static key => key, StringComparer.Ordinal).ToArray()
+            ? snapshot.Values.Keys.OrderBy(static key => key, StringComparer.Ordinal).ToArray()
             : read.Keys.Distinct(StringComparer.Ordinal).OrderBy(static key => key, StringComparer.Ordinal).ToArray();
-
         var result = new ConfigReadResultV1
         {
             Result = Success("config.read.local-alpha"),
             Target = LocalGatewayTarget(),
-            ConfigGeneration = 1,
-            ConfigDigest = ByteString.CopyFrom(BuildReadableConfigDigest(allEntries)),
+            ConfigGeneration = snapshot.Generation,
+            ConfigDigest = ByteString.CopyFrom(snapshot.Digest),
         };
         foreach (var key in requested)
         {
-            if (allEntries.TryGetValue(key, out var entry)) result.Entries.Add(entry.Clone());
+            if (snapshot.Values.TryGetValue(key, out var value)) result.Entries.Add(UIntEntry(key, value));
         }
 
         await SendAsync(socket, NormalResponse(
@@ -222,47 +220,128 @@ public sealed class AlphaAdminBridge(
             "config.read.result",
             "protocol.config-read-result.v1",
             result), cancellationToken);
-        _logger.LogInformation("Alpha Admin bridge sent config.read.result with {EntryCount} entries.", result.Entries.Count);
     }
 
-    private Dictionary<string, ConfigEntryWireV1> BuildReadableConfigEntries()
+    private async Task HandleConfigChangeAsync(
+        WebSocket socket,
+        WireEnvelopeV1 request,
+        ByteString sessionId,
+        CancellationToken cancellationToken)
     {
-        var entries = new Dictionary<string, ConfigEntryWireV1>(StringComparer.Ordinal)
+        var change = ConfigChangeRequestV1.Parser.ParseFrom(request.Payload);
+        if (change.Target is null || !IsLocalGatewayTarget(change.Target))
+            throw new InvalidDataException("request.invalid: Alpha Admin Config change requires the local Gateway target.");
+        RequireId128(change.OperationId, "operation_id");
+        if (change.ImmutablePayloadDigest.Length != 32)
+            throw new InvalidDataException("protocol.invalid-hash:immutable_payload_digest");
+
+        AlphaGatewayConfigApplyResult apply;
+        try
         {
-            ["network.connect-timeout-ms"] = UIntEntry("network.connect-timeout-ms", _gatewayConfig.ConnectTimeoutMs),
-            ["network.reconnect-initial-ms"] = UIntEntry("network.reconnect-initial-ms", _gatewayConfig.ReconnectInitialMs),
-            ["network.reconnect-max-ms"] = UIntEntry("network.reconnect-max-ms", _gatewayConfig.ReconnectMaxMs),
-            ["peer.heartbeat-interval-ms"] = UIntEntry("peer.heartbeat-interval-ms", _gatewayConfig.HeartbeatIntervalMs),
-            ["peer.heartbeat-timeout-ms"] = UIntEntry("peer.heartbeat-timeout-ms", _gatewayConfig.HeartbeatTimeoutMs),
-            ["auth.session-idle-lifetime-seconds"] = UIntEntry("auth.session-idle-lifetime-seconds", _gatewayConfig.SessionIdleLifetimeSeconds),
-            ["auth.session-absolute-lifetime-seconds"] = UIntEntry("auth.session-absolute-lifetime-seconds", _gatewayConfig.SessionAbsoluteLifetimeSeconds),
-            ["queue.publication-capacity"] = UIntEntry("queue.publication-capacity", _gatewayConfig.OutboundQueues.PublicationCapacity),
-            ["queue.result-capacity"] = UIntEntry("queue.result-capacity", _gatewayConfig.OutboundQueues.ResultCapacity),
-            ["publication.max-client-backlog"] = UIntEntry("publication.max-client-backlog", _gatewayConfig.OutboundQueues.MaxClientBacklog),
-            ["publication.buffer-ms"] = UIntEntry("publication.buffer-ms", _gatewayConfig.OutboundQueues.PublicationBufferMs),
-            ["audit.retention-days"] = UIntEntry("audit.retention-days", _gatewayConfig.Audit.RetentionDays),
-            ["audit.query-max-page-size"] = UIntEntry("audit.query-max-page-size", _gatewayConfig.Audit.QueryMaxPageSize),
+            var guarded = await _auditGate.ForwardAsync(
+                BuildConfigChangeRequestAudit(request, change, sessionId),
+                _ => ValueTask.FromResult(_configCoordinator.Apply(change)),
+                result => BuildConfigChangeResultAudit(request, change, sessionId, result),
+                cancellationToken);
+            apply = guarded.Result;
+            if (!guarded.ResultAuditCommitted)
+                _logger.LogError("Alpha Config change completed but result audit commit failed for correlation {CorrelationId}.",
+                    Convert.ToHexStringLower(request.CorrelationId.Span));
+        }
+        catch (ProtectedAdminAuditUnavailableException)
+        {
+            var current = _configCoordinator.Current;
+            apply = new AlphaGatewayConfigApplyResult(
+                Rejected("component.unavailable", retryAdvice: 3),
+                current.Generation,
+                current.Digest,
+                false);
+        }
+
+        var payload = new ConfigChangeResultV1
+        {
+            Result = apply.Result,
+            ResultingGeneration = apply.ResultingGeneration,
+            ResultingConfigDigest = ByteString.CopyFrom(apply.ResultingConfigDigest),
         };
-        return entries;
+        var operation = new OperationContextWireV1
+        {
+            OperationId = change.OperationId,
+            OperationPayloadDigest = change.ImmutablePayloadDigest,
+        };
+        await SendAsync(socket, NormalResponse(
+            request,
+            "config.change.result",
+            "protocol.config-change-result.v1",
+            payload,
+            operation), cancellationToken);
     }
 
-    private static ConfigEntryWireV1 UIntEntry(string key, int value)
+    private AuditRecordDraftV1 BuildConfigChangeRequestAudit(
+        WireEnvelopeV1 envelope,
+        ConfigChangeRequestV1 change,
+        ByteString sessionId)
+        => new(
+            "audit.admin.config-change-requested",
+            UnixTimeNs(),
+            "gateway",
+            _coreOptions.ComponentInstanceId.ToByteArray(),
+            "alpha-local-admin",
+            SHA256.HashData(sessionId.Span),
+            change.OperationId.ToByteArray(),
+            envelope.CorrelationId.ToByteArray(),
+            "gateway",
+            null,
+            null,
+            change.ExpectedBaseGeneration,
+            change.ImmutablePayloadDigest.ToByteArray(),
+            "requested",
+            "config.change.requested",
+            null,
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["changed-count"] = change.Changes.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            });
+
+    private AuditRecordDraftV1 BuildConfigChangeResultAudit(
+        WireEnvelopeV1 envelope,
+        ConfigChangeRequestV1 change,
+        ByteString sessionId,
+        AlphaGatewayConfigApplyResult apply)
+    {
+        var applied = (int)apply.Result.Status is 1 or 4;
+        return new AuditRecordDraftV1(
+            applied ? "audit.admin.config-change-applied" : "audit.admin.config-change-rejected",
+            UnixTimeNs(),
+            "gateway",
+            _coreOptions.ComponentInstanceId.ToByteArray(),
+            "alpha-local-admin",
+            SHA256.HashData(sessionId.Span),
+            change.OperationId.ToByteArray(),
+            envelope.CorrelationId.ToByteArray(),
+            "gateway",
+            null,
+            null,
+            apply.ResultingGeneration,
+            change.ImmutablePayloadDigest.ToByteArray(),
+            applied ? "success" : "rejected",
+            apply.Result.Code,
+            null,
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["replayed"] = apply.Replayed ? "true" : "false",
+            });
+    }
+
+    private static ConfigEntryWireV1 UIntEntry(string key, ulong value)
         => new()
         {
             Key = key,
-            EffectiveValue = new ConfigValueWireV1 { UintValue = checked((ulong)value) },
+            EffectiveValue = new ConfigValueWireV1 { UintValue = value },
             Impact = "operational",
-            Mutability = "read-only-alpha",
+            Mutability = AlphaGatewayConfigPolicy.IsRuntimeMutable(key) ? "runtime-safe-alpha" : "read-only-alpha",
             Sensitive = false,
         };
-
-    private static byte[] BuildReadableConfigDigest(IReadOnlyDictionary<string, ConfigEntryWireV1> entries)
-    {
-        var canonical = string.Join("\n", entries
-            .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
-            .Select(static pair => $"{pair.Key}={pair.Value.EffectiveValue.UintValue}"));
-        return SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
-    }
 
     private ComponentTargetV1 LocalGatewayTarget()
         => new()
@@ -276,10 +355,15 @@ public sealed class AlphaAdminBridge(
            (!target.HasLogicalInstanceId || target.LogicalInstanceId.Equals(_coreOptions.GatewayLogicalId));
 
     private WireEnvelopeV1 BootstrapResponse(WireEnvelopeV1 request, string messageType, string schema, IMessage payload)
-        => CreateEnvelope(request, messageType, schema, payload, bootstrap: true);
+        => CreateEnvelope(request, messageType, schema, payload, bootstrap: true, operation: null);
 
-    private WireEnvelopeV1 NormalResponse(WireEnvelopeV1 request, string messageType, string schema, IMessage payload)
-        => CreateEnvelope(request, messageType, schema, payload, bootstrap: false);
+    private WireEnvelopeV1 NormalResponse(
+        WireEnvelopeV1 request,
+        string messageType,
+        string schema,
+        IMessage payload,
+        OperationContextWireV1? operation = null)
+        => CreateEnvelope(request, messageType, schema, payload, bootstrap: false, operation);
 
     private WireEnvelopeV1 Notification(string messageType, string schema, IMessage payload)
         => new()
@@ -303,8 +387,10 @@ public sealed class AlphaAdminBridge(
         string messageType,
         string schema,
         IMessage payload,
-        bool bootstrap)
-        => new()
+        bool bootstrap,
+        OperationContextWireV1? operation)
+    {
+        var envelope = new WireEnvelopeV1
         {
             EnvelopeVersion = 1,
             ProtocolId = ProtocolId,
@@ -320,6 +406,9 @@ public sealed class AlphaAdminBridge(
             PayloadCompression = (CompressionKindV1)1,
             Payload = payload.ToByteString(),
         };
+        if (operation is not null) envelope.OperationContext = operation;
+        return envelope;
+    }
 
     private static ResultV1 Success(string code)
         => new()
@@ -327,6 +416,14 @@ public sealed class AlphaAdminBridge(
             Status = (ResultStatusV1)1,
             Code = code,
             RetryAdvice = (RetryAdviceV1)1,
+        };
+
+    private static ResultV1 Rejected(string code, int retryAdvice = 1)
+        => new()
+        {
+            Status = (ResultStatusV1)6,
+            Code = code,
+            RetryAdvice = (RetryAdviceV1)retryAdvice,
         };
 
     private static async Task SendAsync(WebSocket socket, WireEnvelopeV1 envelope, CancellationToken cancellationToken)
@@ -407,10 +504,13 @@ public sealed class AlphaAdminBridge(
 
     private static ByteString RandomId128()
     {
-        var bytes = new byte[16];
-        do RandomNumberGenerator.Fill(bytes); while (bytes.AsSpan().IndexOfAnyExcept((byte)0) < 0);
+        Span<byte> bytes = stackalloc byte[16];
+        do RandomNumberGenerator.Fill(bytes); while (bytes.IndexOfAnyExcept((byte)0) < 0);
         return ByteString.CopyFrom(bytes);
     }
+
+    private static long UnixTimeNs()
+        => checked(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000L);
 
     private static bool IsLoopback(IPAddress? address)
         => address is not null && IPAddress.IsLoopback(address);

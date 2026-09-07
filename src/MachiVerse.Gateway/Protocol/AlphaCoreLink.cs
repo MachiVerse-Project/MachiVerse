@@ -138,7 +138,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
     ];
 
     private readonly AlphaCoreLinkOptions _options;
-    private readonly GatewayConfig _config;
+    private readonly AlphaGatewayConfigCoordinator _config;
     private readonly ProtocolNegotiationState _negotiation;
     private readonly SchedulingPolicyProjection _scheduling;
     private readonly MasterAuthorityTracker _master;
@@ -149,7 +149,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
 
     public AlphaCoreConnectionWorker(
         AlphaCoreLinkOptions options,
-        GatewayConfig config,
+        AlphaGatewayConfigCoordinator config,
         ProtocolNegotiationState negotiation,
         SchedulingPolicyProjection scheduling,
         MasterAuthorityTracker master,
@@ -172,7 +172,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await using var client = new CoreProtocolClient(_options.CoreEndpoint);
-        var reconnectDelayMs = _config.ReconnectInitialMs;
+        var reconnectDelayMs = RuntimeMilliseconds("network.reconnect-initial-ms");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -180,7 +180,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
             {
                 _linkState.MarkConnecting();
                 await RunSessionAsync(client, stoppingToken);
-                reconnectDelayMs = _config.ReconnectInitialMs;
+                reconnectDelayMs = RuntimeMilliseconds("network.reconnect-initial-ms");
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -193,7 +193,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
                 _linkState.MarkDisconnected(BoundedError(ex), _resync);
                 await Task.Delay(reconnectDelayMs, stoppingToken);
                 reconnectDelayMs = Math.Min(
-                    _config.ReconnectMaxMs,
+                    RuntimeMilliseconds("network.reconnect-max-ms"),
                     checked(reconnectDelayMs <= int.MaxValue / 2 ? reconnectDelayMs * 2 : int.MaxValue));
             }
         }
@@ -362,7 +362,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            await Task.Delay(_config.HeartbeatIntervalMs, cancellationToken);
+            await Task.Delay(RuntimeMilliseconds("peer.heartbeat-interval-ms"), cancellationToken);
             var heartbeat = new GatewayHeartbeatV1
             {
                 GatewayLogicalId = _options.GatewayLogicalId,
@@ -383,6 +383,14 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
                 heartbeat,
                 new WorldContextWireV1 { WorldId = worldId }));
         }
+    }
+
+    private int RuntimeMilliseconds(string key)
+    {
+        var snapshot = _config.Current;
+        return snapshot.Values.TryGetValue(key, out var value) && value is > 0 and <= int.MaxValue
+            ? checked((int)value)
+            : throw new InvalidDataException($"config.runtime-value-invalid:{key}");
     }
 
     private ProtocolHelloV1 BuildHello()
