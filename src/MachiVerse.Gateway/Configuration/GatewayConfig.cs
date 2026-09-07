@@ -13,6 +13,12 @@ public sealed record GatewayOidcConfig(
     int SessionAbsoluteLifetimeSeconds,
     int MaxActiveSessionsPerAccount);
 
+public sealed record GatewayOutboundQueueConfig(
+    int PublicationCapacity,
+    int ResultCapacity,
+    int MaxClientBacklog,
+    int PublicationBufferMs);
+
 public sealed record GatewayConfig(
     int ConnectTimeoutMs,
     int ReconnectInitialMs,
@@ -22,4 +28,5 @@ public sealed record GatewayConfig(
     int SessionIdleLifetimeSeconds,
     int SessionAbsoluteLifetimeSeconds,
     GatewayOidcConfig Oidc,
+    GatewayOutboundQueueConfig OutboundQueues,
     TomlTable Raw);
