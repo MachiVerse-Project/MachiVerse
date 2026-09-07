@@ -8,14 +8,23 @@ public delegate ValueTask<IReadOnlyList<MutationIntentCandidateV1>> DomainIntent
     DomainRuntimeContextV1 context,
     CancellationToken cancellationToken);
 
+public delegate ValueTask<IReadOnlyList<PartitionCandidateV1>> DomainPartitionCandidateEvaluatorV1(
+    DomainRuntimeContextV1 context,
+    CancellationToken cancellationToken);
+
 public abstract class DeterministicDomainRuntimeV1 : IDomainRuntimeV1
 {
-    private readonly DomainIntentEvaluatorV1 _evaluator;
+    private readonly DomainIntentEvaluatorV1 _intentEvaluator;
+    private readonly DomainPartitionCandidateEvaluatorV1? _partitionCandidateEvaluator;
 
-    protected DeterministicDomainRuntimeV1(string domainToken, DomainIntentEvaluatorV1 evaluator)
+    protected DeterministicDomainRuntimeV1(
+        string domainToken,
+        DomainIntentEvaluatorV1 intentEvaluator,
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
     {
         DomainToken = new StableToken(domainToken);
-        _evaluator = evaluator ?? throw new ArgumentNullException(nameof(evaluator));
+        _intentEvaluator = intentEvaluator ?? throw new ArgumentNullException(nameof(intentEvaluator));
+        _partitionCandidateEvaluator = partitionCandidateEvaluator;
     }
 
     public StableToken DomainToken { get; }
@@ -30,19 +39,45 @@ public abstract class DeterministicDomainRuntimeV1 : IDomainRuntimeV1
         if (context.FrozenInput.BasisStep != context.State.Header.Step)
             throw new InvalidDataException("domain-runtime.basis-step-mismatch");
 
-        var intents = await _evaluator(context, cancellationToken).ConfigureAwait(false)
+        var intents = await _intentEvaluator(context, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("domain-runtime.intent-evaluator-null");
         if (intents.Any(intent => intent.SourceDomain != DomainToken || intent.BasisStep != context.FrozenInput.BasisStep))
             throw new InvalidDataException("domain-runtime.intent-source-mismatch");
-        return new DomainCandidateOutputV1(DomainToken, context.FrozenInput.BasisStep, intents);
+
+        IReadOnlyList<PartitionCandidateV1> localPartitionCandidates = Array.Empty<PartitionCandidateV1>();
+        if (_partitionCandidateEvaluator is not null)
+        {
+            localPartitionCandidates = await _partitionCandidateEvaluator(context, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidDataException("domain-runtime.partition-candidate-evaluator-null");
+        }
+
+        return new DomainCandidateOutputV1(
+            DomainToken,
+            context.FrozenInput.BasisStep,
+            intents,
+            localPartitionCandidates);
     }
 }
 
-public sealed class SpatialDomainRuntimeV1(DomainIntentEvaluatorV1 evaluator)
-    : DeterministicDomainRuntimeV1("spatial", evaluator);
+public sealed class SpatialDomainRuntimeV1 : DeterministicDomainRuntimeV1
+{
+    public SpatialDomainRuntimeV1(
+        DomainIntentEvaluatorV1 intentEvaluator,
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        : base("spatial", intentEvaluator, partitionCandidateEvaluator)
+    {
+    }
+}
 
-public sealed class EnvironmentDomainRuntimeV1(DomainIntentEvaluatorV1 evaluator)
-    : DeterministicDomainRuntimeV1("environment", evaluator);
+public sealed class EnvironmentDomainRuntimeV1 : DeterministicDomainRuntimeV1
+{
+    public EnvironmentDomainRuntimeV1(
+        DomainIntentEvaluatorV1 intentEvaluator,
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        : base("environment", intentEvaluator, partitionCandidateEvaluator)
+    {
+    }
+}
 
 public static class DomainOwnedPartitionCandidateFactoryV1
 {
