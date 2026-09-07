@@ -33,6 +33,7 @@ Gateway authenticated identity
   -> View immutable participation.binding.create payload
   -> Gateway session/diver_ref exact-match admission
   -> Core Participation validation
+  -> confirmed ParticipationBindingViewV1.diver_ref
 ```
 
 View may copy the Gateway-confirmed `diver_ref` into an immutable Operation payload. View must not choose or substitute another actor identity.
@@ -66,7 +67,7 @@ Semantic rules:
 
 ## 4. Confirmed binding projection
 
-Standard Protocol v1 adds field 6 to `ParticipationBindingViewV1`:
+Standard Protocol v1 adds fields 6 and 7 to `ParticipationBindingViewV1`:
 
 ```proto
 message ParticipationBindingViewV1 {
@@ -76,6 +77,7 @@ message ParticipationBindingViewV1 {
   optional uint64 effective_from_step = 4;
   optional string absence_policy_profile = 5;
   uint64 binding_generation = 6;
+  optional bytes diver_ref = 7;
 }
 ```
 
@@ -91,10 +93,13 @@ For `ACTIVE`:
 
 - `binding_id` required, non-zero `Id128`;
 - `resident_id` required, non-zero `Id128`;
+- `diver_ref` required, non-zero `Id128`;
 - `effective_from_step` required;
 - `binding_generation >= 1`.
 
-For `NONE`, `binding_id`, `resident_id`, and `effective_from_step` are absent and generation is zero.
+For `NONE`, `binding_id`, `resident_id`, `diver_ref`, and `effective_from_step` are absent and generation is zero.
+
+`diver_ref` is part of the confirmed world binding projection so the authoritative actor association survives publication, persistence-derived recovery, and reconnect. A View must not treat an ACTIVE binding whose `diver_ref` differs from its current Gateway-confirmed session `diver_ref` as current control authority.
 
 ## 5. Binding create request payload
 
