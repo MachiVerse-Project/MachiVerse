@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Runtime;
 
@@ -12,6 +13,9 @@ public sealed class TransactionParticipantCandidateV1
 {
     public TransactionParticipantCandidateV1(
         StableToken domainToken,
+        StableToken partitionId,
+        IEnumerable<OpaqueId128> intentIds,
+        bool required,
         TransactionParticipantOutcomeV1 outcome,
         ReadOnlySpan<byte> candidateEffectDigest,
         StableToken? diagnosticCode = null)
@@ -19,16 +23,34 @@ public sealed class TransactionParticipantCandidateV1
         if (!Enum.IsDefined(outcome)) throw new ArgumentOutOfRangeException(nameof(outcome));
         if (candidateEffectDigest.Length != 32)
             throw new ArgumentException("Candidate effect digest must be 32 bytes.", nameof(candidateEffectDigest));
-        if (!StandardDomainExecutionPlanV1.Create().Entries.Any(entry => entry.DomainToken == domainToken))
-            throw new InvalidDataException("transaction.participant-domain-unregistered");
+        ArgumentNullException.ThrowIfNull(intentIds);
+
+        var planEntry = StandardDomainExecutionPlanV1.Create().Entries
+            .SingleOrDefault(entry => entry.DomainToken == domainToken)
+            ?? throw new InvalidDataException("transaction.participant-domain-unregistered");
+        var partition = StandardDomainPartitionRegistry.Get(partitionId.Value);
+        if (partition.OwnerDomain != domainToken || !planEntry.OwnedPartitions.Contains(partitionId))
+            throw new InvalidDataException("transaction.participant-partition-owner-mismatch");
+
+        var orderedIntentIds = intentIds.Order().ToArray();
+        if (orderedIntentIds.Any(static intentId => intentId.IsZero))
+            throw new InvalidDataException("transaction.participant-intent-id-zero");
+        if (orderedIntentIds.Distinct().Count() != orderedIntentIds.Length)
+            throw new InvalidDataException("transaction.participant-intent-id-duplicate");
 
         DomainToken = domainToken;
+        PartitionId = partitionId;
+        IntentIds = Array.AsReadOnly(orderedIntentIds);
+        Required = required;
         Outcome = outcome;
         CandidateEffectDigest = candidateEffectDigest.ToArray();
         DiagnosticCode = diagnosticCode;
     }
 
     public StableToken DomainToken { get; }
+    public StableToken PartitionId { get; }
+    public IReadOnlyList<OpaqueId128> IntentIds { get; }
+    public bool Required { get; }
     public TransactionParticipantOutcomeV1 Outcome { get; }
     public byte[] CandidateEffectDigest { get; }
     public StableToken? DiagnosticCode { get; }
@@ -108,13 +130,23 @@ public static class CrossDomainTransactionAssemblerV1
             .Select(participant => participant ?? throw new ArgumentNullException(nameof(participants)))
             .OrderBy(participant => rankByDomain[participant.DomainToken])
             .ThenBy(static participant => participant.DomainToken.Value, StringComparer.Ordinal)
+            .ThenBy(static participant => participant.PartitionId.Value, StringComparer.Ordinal)
             .ToArray();
-        if (orderedParticipants.Select(static participant => participant.DomainToken).Distinct().Count() != orderedParticipants.Length)
+        if (orderedParticipants
+            .Select(static participant => (participant.DomainToken, participant.PartitionId))
+            .Distinct()
+            .Count() != orderedParticipants.Length)
             throw new InvalidDataException("transaction.participant-duplicate");
 
         var allowedDomains = registration.RequiredDomains.Concat(registration.OptionalDomains).ToHashSet();
         if (orderedParticipants.Any(participant => !allowedDomains.Contains(participant.DomainToken)))
             throw new InvalidDataException("transaction.participant-domain-not-allowed");
+        foreach (var participant in orderedParticipants)
+        {
+            var expectedRequired = registration.RequiredDomains.Contains(participant.DomainToken);
+            if (participant.Required != expectedRequired)
+                throw new InvalidDataException("transaction.participant-requiredness-mismatch");
+        }
 
         var transactionId = TransactionIdentityV1.Derive(
             worldId,
@@ -126,12 +158,10 @@ public static class CrossDomainTransactionAssemblerV1
 
         var participantDomains = orderedParticipants.Select(static participant => participant.DomainToken).ToHashSet();
         var missingRequired = registration.RequiredDomains.FirstOrDefault(domain => !participantDomains.Contains(domain));
-        var failedRequired = orderedParticipants.FirstOrDefault(participant =>
-            registration.RequiredDomains.Contains(participant.DomainToken) &&
-            participant.Outcome == TransactionParticipantOutcomeV1.Failed);
-        var failedOptional = orderedParticipants.FirstOrDefault(participant =>
-            registration.OptionalDomains.Contains(participant.DomainToken) &&
-            participant.Outcome == TransactionParticipantOutcomeV1.Failed);
+        var failedRequired = orderedParticipants.FirstOrDefault(static participant =>
+            participant.Required && participant.Outcome == TransactionParticipantOutcomeV1.Failed);
+        var failedOptional = orderedParticipants.FirstOrDefault(static participant =>
+            !participant.Required && participant.Outcome == TransactionParticipantOutcomeV1.Failed);
 
         TransactionCandidateStatusV1 status;
         StableToken? failureCode;
@@ -285,11 +315,17 @@ public static class CrossDomainTransactionAssemblerV1
             writer.WriteArrayStart((ulong)participants.Count);
             foreach (var participant in participants)
             {
-                writer.WriteMapStart(4);
+                writer.WriteMapStart(7);
                 writer.WriteUnsigned(0); writer.WriteAsciiText(participant.DomainToken.Value);
-                writer.WriteUnsigned(1); writer.WriteUnsigned((uint)participant.Outcome);
-                writer.WriteUnsigned(2); writer.WriteBytes(participant.CandidateEffectDigest);
-                writer.WriteUnsigned(3);
+                writer.WriteUnsigned(1); writer.WriteAsciiText(participant.PartitionId.Value);
+                writer.WriteUnsigned(2);
+                writer.WriteArrayStart((ulong)participant.IntentIds.Count);
+                foreach (var intentId in participant.IntentIds)
+                    writer.WriteBytes(intentId.ToBytes());
+                writer.WriteUnsigned(3); writer.WriteUnsigned(participant.Required ? 1u : 0u);
+                writer.WriteUnsigned(4); writer.WriteUnsigned((uint)participant.Outcome);
+                writer.WriteUnsigned(5); writer.WriteBytes(participant.CandidateEffectDigest);
+                writer.WriteUnsigned(6);
                 if (participant.DiagnosticCode is { } participantCode)
                 {
                     writer.WriteArrayStart(1);
