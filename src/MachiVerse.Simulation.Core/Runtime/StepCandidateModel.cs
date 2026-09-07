@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -60,6 +61,7 @@ public sealed class StepCandidateV1
         ulong basisStep,
         ulong targetStep,
         ulong configGeneration,
+        byte[] configDigest,
         FrozenStepInputV1 frozenInput,
         IReadOnlyList<DomainCandidateOutputV1> domainOutputs,
         IReadOnlyList<MutationIntentCandidateV1> orderedIntents,
@@ -74,6 +76,7 @@ public sealed class StepCandidateV1
         BasisStep = basisStep;
         TargetStep = targetStep;
         ConfigGeneration = configGeneration;
+        ConfigDigest = configDigest;
         FrozenInput = frozenInput;
         DomainOutputs = domainOutputs;
         OrderedIntents = orderedIntents;
@@ -89,6 +92,7 @@ public sealed class StepCandidateV1
     public ulong BasisStep { get; }
     public ulong TargetStep { get; }
     public ulong ConfigGeneration { get; }
+    public byte[] ConfigDigest { get; }
     public FrozenStepInputV1 FrozenInput { get; }
     public IReadOnlyList<DomainCandidateOutputV1> DomainOutputs { get; }
     public IReadOnlyList<MutationIntentCandidateV1> OrderedIntents { get; }
@@ -117,6 +121,11 @@ public sealed class StepCandidateV1
             throw new InvalidDataException("step-candidate.frozen-input-basis-mismatch");
         if (state.Header.Step == ulong.MaxValue)
             throw new InvalidDataException("step-candidate.step-overflow");
+        if (frozenInput.ConfigGeneration < state.Header.ConfigGeneration)
+            throw new InvalidDataException("step-candidate.config-generation-behind-state");
+        if (frozenInput.ConfigGeneration == state.Header.ConfigGeneration &&
+            !CryptographicOperations.FixedTimeEquals(frozenInput.ConfigDigest, state.Diagnostic.ConfigDigest))
+            throw new InvalidDataException("step-candidate.config-digest-mismatch-at-generation");
 
         var plan = StandardDomainExecutionPlanV1.Create();
         var rankByDomain = plan.Entries.ToDictionary(static entry => entry.DomainToken, static entry => entry.DomainRank);
@@ -168,7 +177,8 @@ public sealed class StepCandidateV1
             state.Header.WorldId,
             state.Header.Step,
             targetStep,
-            state.Header.ConfigGeneration,
+            frozenInput.ConfigGeneration,
+            frozenInput.ConfigDigest.ToArray(),
             frozenInput,
             Array.AsReadOnly(outputs),
             Array.AsReadOnly(intents),
@@ -204,12 +214,13 @@ public sealed class StepCandidateV1
         ulong targetStep)
         => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {
-            writer.WriteMapStart(9);
+            writer.WriteMapStart(10);
             writer.WriteUnsigned(0); writer.WriteBytes(state.Header.WorldId.ToBytes());
             writer.WriteUnsigned(1); writer.WriteUnsigned(state.Header.Step);
             writer.WriteUnsigned(2); writer.WriteUnsigned(targetStep);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(state.Header.ConfigGeneration);
-            writer.WriteUnsigned(4);
+            writer.WriteUnsigned(3); writer.WriteUnsigned(frozenInput.ConfigGeneration);
+            writer.WriteUnsigned(4); writer.WriteBytes(frozenInput.ConfigDigest);
+            writer.WriteUnsigned(5);
             writer.WriteArrayStart((ulong)frozenInput.ScheduledOperations.Count);
             foreach (var operation in frozenInput.ScheduledOperations)
             {
@@ -217,7 +228,7 @@ public sealed class StepCandidateV1
                 writer.WriteBytes(operation.OperationId.ToBytes());
                 writer.WriteBytes(operation.OrderKey.ToDatabaseBytes());
             }
-            writer.WriteUnsigned(5);
+            writer.WriteUnsigned(6);
             writer.WriteArrayStart((ulong)outputs.Count);
             foreach (var output in outputs)
             {
@@ -227,7 +238,7 @@ public sealed class StepCandidateV1
                 foreach (var intent in output.Intents)
                     writer.WriteBytes(intent.IntentId.ToBytes());
             }
-            writer.WriteUnsigned(6);
+            writer.WriteUnsigned(7);
             writer.WriteArrayStart((ulong)resolutions.Count);
             foreach (var resolution in resolutions)
             {
@@ -253,7 +264,7 @@ public sealed class StepCandidateV1
                     writer.WriteBytes(resolution.AggregateDigest);
                 }
             }
-            writer.WriteUnsigned(7);
+            writer.WriteUnsigned(8);
             writer.WriteArrayStart((ulong)partitions.Count);
             foreach (var partition in partitions)
             {
@@ -261,7 +272,7 @@ public sealed class StepCandidateV1
                 writer.WriteAsciiText(partition.PartitionId.Value);
                 writer.WriteBytes(partition.CandidateDigest);
             }
-            writer.WriteUnsigned(8);
+            writer.WriteUnsigned(9);
             writer.WriteArrayStart((ulong)invariants.Count);
             foreach (var invariant in invariants)
             {
