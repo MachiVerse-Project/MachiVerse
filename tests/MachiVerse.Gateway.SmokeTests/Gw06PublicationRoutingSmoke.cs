@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using MachiVerse.Gateway.Auth;
 using MachiVerse.Gateway.Authorization;
 using MachiVerse.Gateway.Configuration;
 using MachiVerse.Gateway.Publication;
@@ -16,30 +17,33 @@ internal static class Gw06PublicationRoutingSmoke
         Require(config.OutboundQueues.MaxClientBacklog == 8, "Gateway max client backlog must come from Config.");
         Require(config.OutboundQueues.PublicationBufferMs == 1000, "Gateway publication buffer window must come from Config.");
 
-        var sessionId = Id(1);
+        var auth = new GatewayAuthorizationService();
+        var session = SpectatorSession(1);
         var subscriptionId = Id(2);
-        var allow = new AuthorizationDecisionV1(
-            Id(3),
-            sessionId,
-            SessionGeneration: 1,
-            Permission: "view.world.read.public",
-            OperationId: null,
-            TargetKind: "world.subscribe/view.public.v1",
-            Outcome: AuthorizationOutcomeV1.Allow,
-            ReasonCode: "auth.allowed");
-
         var publication = new PublicationBufferV1(capacity: 2, maxClientBacklog: 1);
-        publication.RegisterViewSubscriber(subscriptionId, "view.public.v1", allow);
+        publication.RegisterViewSubscriber(
+            subscriptionId,
+            "view.public.v1",
+            auth,
+            session,
+            expectedSessionGeneration: 1);
 
-        var denied = allow with
-        {
-            DecisionId = Id(4),
-            Outcome = AuthorizationOutcomeV1.Deny,
-            ReasonCode = "auth.unauthorized"
-        };
         RequireReject(
-            () => publication.RegisterViewSubscriber(Id(5), "view.public.v1", denied),
+            () => publication.RegisterViewSubscriber(
+                Id(5),
+                "view.participant.v1",
+                auth,
+                session,
+                expectedSessionGeneration: 1),
             "auth.unauthorized");
+        RequireReject(
+            () => publication.RegisterViewSubscriber(
+                Id(6),
+                "view.public.v1",
+                auth,
+                session,
+                expectedSessionGeneration: 2),
+            "auth.session-stale");
 
         var basis100 = Snapshot(100, 10);
         var first = publication.EnqueueConfirmed(basis100);
@@ -67,11 +71,18 @@ internal static class Gw06PublicationRoutingSmoke
             "Normal publication must resume after explicit resync completion.");
 
         var capacityBuffer = new PublicationBufferV1(capacity: 1, maxClientBacklog: 8);
-        capacityBuffer.RegisterViewSubscriber(Id(20), "view.public.v1", allow with { DecisionId = Id(21) });
+        capacityBuffer.RegisterViewSubscriber(
+            Id(20),
+            "view.public.v1",
+            auth,
+            SpectatorSession(21),
+            expectedSessionGeneration: 1);
         capacityBuffer.RegisterViewSubscriber(
             Id(22),
             "view.public.v1",
-            allow with { DecisionId = Id(23), SessionId = Id(24) });
+            auth,
+            SpectatorSession(24),
+            expectedSessionGeneration: 1);
         var capacityResult = capacityBuffer.EnqueueConfirmed(Snapshot(200, 20));
         Require(capacityResult.EnqueuedCount == 1 && capacityResult.ResyncRequiredCount == 1,
             "Global publication capacity must degrade a subscriber to resync instead of blocking other queues.");
@@ -102,6 +113,24 @@ internal static class Gw06PublicationRoutingSmoke
         var retriedB = resultRouter.TryEnqueue(routeId, terminalB);
         Require(retriedB.Status == ResultRouteEnqueueStatusV1.Enqueued,
             "Custody-held terminal result must be routable after queue capacity becomes available.");
+    }
+
+    private static GatewaySessionSnapshot SpectatorSession(byte marker)
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        return new GatewaySessionSnapshot(
+            SessionId: Id(marker),
+            AccountId: Id((byte)(marker + 1)),
+            DiverRef: null,
+            AuthDomain: (AuthDomainWireV1)1,
+            EffectiveRoleSet: "view.spectator",
+            EffectivePermissions: ["view.world.read.public", "view.world.subscribe"],
+            IssuedMasterGeneration: 1,
+            SessionGeneration: 1,
+            CreatedAt: now,
+            LastSecurityEventAt: now,
+            LastSeenAt: now,
+            Status: GatewaySessionStatus.Active);
     }
 
     private static ConfirmedStateSnapshot Snapshot(ulong basisStep, byte marker)
