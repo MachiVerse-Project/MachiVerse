@@ -154,7 +154,7 @@
         StateHasChanged();
     }
 
-    private void SessionChanged(AdminSessionProjection _)
+    private void SessionChanged(AdminSessionProjection session)
         => _ = InvokeAsync(StateHasChanged);
 
     private void ProjectionChanged()
