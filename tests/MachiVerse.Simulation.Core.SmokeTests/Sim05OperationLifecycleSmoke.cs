@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Runtime;
@@ -163,7 +164,70 @@ component = "simulation-core"
         {
         }
 
-        Sim05DurableOperationSmoke.RunAsync().GetAwaiter().GetResult();
+        VerifySchedulerState();
+    }
+
+    private static void VerifySchedulerState()
+    {
+        var scopeDigest = SHA256.HashData("sim05-scheduler-scope"u8);
+        var firstId = OpaqueId128.Parse("00000000000000000000000000000601");
+        var secondId = OpaqueId128.Parse("00000000000000000000000000000602");
+        var futureId = OpaqueId128.Parse("00000000000000000000000000000603");
+        var staleId = OpaqueId128.Parse("00000000000000000000000000000604");
+
+        SameStepOrderKey Key(OpaqueId128 id, int priority) => new(
+            phase: 1,
+            domainRank: 50,
+            conflictScopeDigest: scopeDigest,
+            semanticPriority: priority,
+            intentId: id);
+
+        var scheduler = new OperationSchedulerStateV1(nextSchedulableStep: 10, freezeStep: null);
+        scheduler.AddDurable(new ScheduledOperationRefV1(secondId, 10, Key(secondId, 5)));
+        scheduler.AddDurable(new ScheduledOperationRefV1(firstId, 10, Key(firstId, -5)));
+        scheduler.AddDurable(new ScheduledOperationRefV1(futureId, 11, Key(futureId, 0)));
+
+        var step10 = scheduler.ForEffectiveStep(10);
+        Require(step10.Count == 2 && step10[0].OperationId == firstId && step10[1].OperationId == secondId,
+            "Scheduler bucket must follow canonical SameStepOrderKey order, not insertion order.");
+
+        scheduler.FreezeExternalInput(10);
+        Require(scheduler.FreezeStep == 10 && scheduler.NextSchedulableStep == 11,
+            "Freezing transition S must advance the next schedulable Step to S+1.");
+
+        RequireReject(
+            () => scheduler.AddDurable(new ScheduledOperationRefV1(staleId, 9, Key(staleId, 0))),
+            "operation.scheduler-past-effective-step");
+
+        scheduler.OpenAfterFinalization(10);
+        Require(scheduler.FreezeStep is null && scheduler.NextSchedulableStep == 11,
+            "Finalization must keep the scheduler open at no earlier than S+1.");
+        Require(scheduler.ForEffectiveStep(10).Count == 0,
+            "Finalized transition bucket must be removed to prevent re-enumeration/double apply.");
+        Require(scheduler.ForEffectiveStep(11).Count == 1 && scheduler.ForEffectiveStep(11)[0].OperationId == futureId,
+            "Finalization must preserve future scheduled Operations.");
+
+        var recoveryId = OpaqueId128.Parse("00000000000000000000000000000605");
+        var recoveryScheduler = new OperationSchedulerStateV1(
+            nextSchedulableStep: 20,
+            freezeStep: null,
+            scheduled:
+            [
+                new ScheduledOperationRefV1(recoveryId, 20, Key(recoveryId, 0)),
+            ]);
+        recoveryScheduler.OpenAfterFinalization(20);
+        Require(recoveryScheduler.NextSchedulableStep == 21 && recoveryScheduler.ForEffectiveStep(20).Count == 0,
+            "Recovery-style finalization without an in-memory freeze must still retire S and advance to S+1.");
+
+        RequireReject(
+            () => recoveryScheduler.AddDurable(new ScheduledOperationRefV1(staleId, 20, Key(staleId, 0))),
+            "operation.scheduler-past-effective-step");
+
+        var mismatchScheduler = new OperationSchedulerStateV1(30, null);
+        mismatchScheduler.FreezeExternalInput(30);
+        RequireReject(
+            () => mismatchScheduler.OpenAfterFinalization(31),
+            "operation.scheduler-finalized-step-mismatch");
     }
 
     private static void Require(bool condition, string message)

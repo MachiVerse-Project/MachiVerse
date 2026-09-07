@@ -2,64 +2,6 @@ using MachiVerse.Simulation.Core.Determinism;
 
 namespace MachiVerse.Simulation.Core.Runtime;
 
-public sealed record OperationSchedulingPolicyEpochV1(
-    ulong EffectiveFromStep,
-    ulong? EffectiveUntilStep,
-    OperationSchedulingPolicyV1 Policy)
-{
-    public void Validate()
-    {
-        ArgumentNullException.ThrowIfNull(Policy);
-        if (EffectiveUntilStep is { } until && until < EffectiveFromStep)
-            throw new InvalidDataException("operation.scheduling-policy-range-invalid");
-    }
-
-    public bool Contains(ulong step)
-        => step >= EffectiveFromStep && (EffectiveUntilStep is null || step <= EffectiveUntilStep.Value);
-}
-
-public sealed class OperationSchedulingPolicyCatalogV1
-{
-    private readonly IReadOnlyDictionary<ulong, OperationSchedulingPolicyEpochV1> _byGeneration;
-
-    public OperationSchedulingPolicyCatalogV1(IEnumerable<OperationSchedulingPolicyEpochV1> epochs)
-    {
-        ArgumentNullException.ThrowIfNull(epochs);
-        var ordered = epochs
-            .OrderBy(static epoch => epoch.EffectiveFromStep)
-            .ThenBy(static epoch => epoch.Policy.OwnerConfigGeneration)
-            .ToArray();
-        if (ordered.Length == 0)
-            throw new ArgumentException("At least one scheduling policy epoch is required.", nameof(epochs));
-
-        for (var index = 0; index < ordered.Length; index++)
-        {
-            ordered[index].Validate();
-            if (index > 0)
-            {
-                var previous = ordered[index - 1];
-                if (previous.EffectiveUntilStep is null || previous.EffectiveUntilStep.Value >= ordered[index].EffectiveFromStep)
-                    throw new InvalidDataException("operation.scheduling-policy-range-overlap");
-            }
-        }
-
-        if (ordered.Select(static epoch => epoch.Policy.OwnerConfigGeneration).Distinct().Count() != ordered.Length)
-            throw new InvalidDataException("operation.scheduling-policy-generation-duplicate");
-
-        _byGeneration = ordered.ToDictionary(static epoch => epoch.Policy.OwnerConfigGeneration);
-    }
-
-    public OperationSchedulingPolicyV1 Resolve(OperationSchedulingAdmissionV1 admission)
-    {
-        ArgumentNullException.ThrowIfNull(admission);
-        if (!_byGeneration.TryGetValue(admission.SchedulingPolicyGeneration, out var epoch))
-            throw new InvalidDataException("operation.scheduling-policy-generation-unknown");
-        if (!epoch.Contains(admission.AdmissionBasisStep))
-            throw new InvalidDataException("operation.scheduling-policy-not-effective-at-basis");
-        return epoch.Policy;
-    }
-}
-
 public sealed record ScheduledOperationRefV1(
     OpaqueId128 OperationId,
     ulong EffectiveStep,
@@ -123,6 +65,11 @@ public sealed class OperationSchedulerStateV1
     {
         ArgumentNullException.ThrowIfNull(scheduled);
         scheduled.Validate();
+
+        var minimumRetainedStep = FreezeStep ?? NextSchedulableStep;
+        if (scheduled.EffectiveStep < minimumRetainedStep)
+            throw new InvalidDataException("operation.scheduler-past-effective-step");
+
         if (!_operationIds.Add(scheduled.OperationId))
             throw new InvalidDataException("operation.scheduler-duplicate-operation");
 
@@ -150,12 +97,27 @@ public sealed class OperationSchedulerStateV1
         NextSchedulableStep = step + 1;
     }
 
+    /// <summary>
+    /// Advances the scheduler only after transition durability is established. Operations for the
+    /// finalized transition are removed from the in-memory scheduler at the same semantic boundary;
+    /// future-step operations remain queued in canonical order.
+    /// </summary>
     public void OpenAfterFinalization(ulong finalizedStep)
     {
         if (FreezeStep is { } frozen && finalizedStep != frozen)
             throw new InvalidDataException("operation.scheduler-finalized-step-mismatch");
+        if (finalizedStep == ulong.MaxValue)
+            throw new InvalidDataException("operation.scheduling-overflow");
+
+        if (_byEffectiveStep.Remove(finalizedStep, out var finalizedBucket))
+        {
+            foreach (var operation in finalizedBucket)
+                _operationIds.Remove(operation.OperationId);
+        }
+
         FreezeStep = null;
-        if (NextSchedulableStep < finalizedStep)
-            NextSchedulableStep = finalizedStep;
+        var minimumNextSchedulableStep = finalizedStep + 1;
+        if (NextSchedulableStep < minimumNextSchedulableStep)
+            NextSchedulableStep = minimumNextSchedulableStep;
     }
 }
