@@ -271,5 +271,11 @@ await Sim06DurableFinalizationSmoke.RunAsync();
 Sim07SpatialSmoke.Run();
 Sim07EnvironmentSmoke.Run();
 Sim08MotionPathSmoke.Run();
+Sim08CollisionSmoke.Run();
+Sim08CrossOwnerIntentSmoke.Run();
+Sim08HandoffSmoke.Run();
+Sim08PrimitiveCollisionSmoke.Run();
+Sim08SequentialImpulseSmoke.Run();
+await Sim08StateRuntimeSmoke.RunAsync();
 
-Console.WriteLine("SIM-01/SIM-02/SIM-03/SIM-04/SIM-05/SIM-06/SIM-07/SIM-08 motion/path foundation smoke tests passed.");
+Console.WriteLine("SIM-01..SIM-08 component smoke tests passed, including full SIM-08 Physical/Built acceptance.");
