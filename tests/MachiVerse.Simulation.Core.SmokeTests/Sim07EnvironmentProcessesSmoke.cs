@@ -4,41 +4,42 @@ using MachiVerse.Simulation.Core.Domains.Spatial;
 
 internal static class Sim07EnvironmentProcessesSmoke
 {
-    internal static async Task RunAsync()
+    internal static Task RunAsync()
     {
         var cellA = new SpatialCellKeyV1(0, -1, 0, 0);
         var cellB = new SpatialCellKeyV1(0, 0, 0, 0);
         var cellC = new SpatialCellKeyV1(0, 1, 0, 0);
 
-        await VerifyGroundwaterJacobiAsync(cellA, cellB);
+        VerifyGroundwaterJacobi(cellA, cellB);
         VerifySurfaceWaterAllocation(cellA, cellB, cellC);
         VerifyOceanConservation(cellA, cellB);
+        VerifyErosionMaterialBoundary(cellA, cellB);
         VerifyEcologyOrderIndependence();
         VerifyContaminantMass(cellA, cellB, cellC);
+        return Task.CompletedTask;
     }
 
-    private static async Task VerifyGroundwaterJacobiAsync(SpatialCellKeyV1 cellA, SpatialCellKeyV1 cellB)
+    private static void VerifyGroundwaterJacobi(SpatialCellKeyV1 cellA, SpatialCellKeyV1 cellB)
     {
         var initial = new Dictionary<SpatialCellKeyV1, long>
         {
             [cellB] = 200,
             [cellA] = 100,
         };
+        var edge = new GroundwaterConductanceEdgeV1(cellA, cellB, 250_000);
+        var result = GroundwaterJacobiV1.Solve(initial, [edge]);
+        var permuted = GroundwaterJacobiV1.Solve(
+            new Dictionary<SpatialCellKeyV1, long>
+            {
+                [cellA] = 100,
+                [cellB] = 200,
+            },
+            [new GroundwaterConductanceEdgeV1(cellB, cellA, 250_000)]);
 
-        string? baseline = null;
-        foreach (var workerCount in new[] { 1, 4, 8, 16 })
-        {
-            var result = await GroundwaterJacobiV1.RunAsync(
-                initial,
-                (cell, previous) => cell == cellA ? previous[cellB] : previous[cellA],
-                workerCount);
-            Require(result[cellA] == 100 && result[cellB] == 200,
-                "domain.environment.groundwater.jacobi: exactly 16 previous-buffer iterations must return the two-cell swap fixture to its basis state.");
-            var signature = string.Join('|', result.OrderBy(static pair => pair.Key).Select(static pair => $"{pair.Key}:{pair.Value}"));
-            baseline ??= signature;
-            Require(signature == baseline,
-                $"domain.environment.groundwater.jacobi: worker-count={workerCount} changed the fixed-iteration result.");
-        }
+        Require(GroundwaterJacobiV1.StandardIterations == 16 && result[cellA] == 149 && result[cellB] == 151,
+            "domain.environment.groundwater.jacobi: fixed 16-iteration golden fixture mismatch.");
+        Require(result.OrderBy(static pair => pair.Key).SequenceEqual(permuted.OrderBy(static pair => pair.Key)),
+            "domain.environment.groundwater.jacobi: cell/edge input permutation changed the result.");
     }
 
     private static void VerifySurfaceWaterAllocation(
@@ -63,55 +64,68 @@ internal static class Sim07EnvironmentProcessesSmoke
 
     private static void VerifyOceanConservation(SpatialCellKeyV1 cellA, SpatialCellKeyV1 cellB)
     {
-        var stocks = new Dictionary<SpatialCellKeyV1, OceanConservedStockV1>
+        var stocks = new Dictionary<SpatialCellKeyV1, OceanCellStockV1>
         {
-            [cellB] = new(50, -3, 2, 1, 500, 700),
-            [cellA] = new(100, 10, -5, 4, 1000, 2000),
+            [cellB] = new(50, -3, 500, 700),
+            [cellA] = new(100, 10, 1000, 2000),
         };
-        var transfer = new OceanConservedStockV1(20, 4, -2, 1, 100, 300);
-        var result = OceanConservativeFluxBatchV1.Apply(
-            stocks,
-            [new OceanFluxV1(cellA, cellB, transfer)]);
-        var reversedInput = OceanConservativeFluxBatchV1.Apply(
-            new Dictionary<SpatialCellKeyV1, OceanConservedStockV1>
+        var flux = new OceanFluxEdgeV1(cellA, cellB, 20, 4, 100, 300);
+        var result = OceanConservativeFluxV1.Apply(stocks, [flux]);
+        var permuted = OceanConservativeFluxV1.Apply(
+            new Dictionary<SpatialCellKeyV1, OceanCellStockV1>
             {
                 [cellA] = stocks[cellA],
                 [cellB] = stocks[cellB],
             },
-            [new OceanFluxV1(cellA, cellB, transfer)]);
+            [flux]);
 
-        Require(result[cellA] == new OceanConservedStockV1(80, 6, -3, 3, 900, 1700),
+        Require(result[cellA] == new OceanCellStockV1(80, 6, 900, 1700),
             "domain.environment.ocean.flux: source conserved stock mismatch.");
-        Require(result[cellB] == new OceanConservedStockV1(70, 1, 0, 2, 600, 1000),
+        Require(result[cellB] == new OceanCellStockV1(70, 1, 600, 1000),
             "domain.environment.ocean.flux: target conserved stock mismatch.");
-        Require(result.OrderBy(static pair => pair.Key).SequenceEqual(reversedInput.OrderBy(static pair => pair.Key)),
+        Require(result.OrderBy(static pair => pair.Key).SequenceEqual(permuted.OrderBy(static pair => pair.Key)),
             "domain.environment.ocean.flux: input map insertion order changed the result.");
+    }
+
+    private static void VerifyErosionMaterialBoundary(SpatialCellKeyV1 cellA, SpatialCellKeyV1 cellB)
+    {
+        var geometryIntentId = OpaqueId128.Parse("00000000000000000000000000000721");
+        var result = ErosionMaterialBoundaryV1.ApplyMaterialTransfer(
+            new Dictionary<SpatialCellKeyV1, long>
+            {
+                [cellA] = 100,
+                [cellB] = 0,
+            },
+            [new ErosionMaterialTransferV1(cellA, cellB, 25, geometryIntentId)]);
+        Require(result[cellA] == 75 && result[cellB] == 25 && result.Values.Sum() == 100,
+            "domain.environment.erosion.material: material transfer must conserve stock and require Spatial geometry causality.");
     }
 
     private static void VerifyEcologyOrderIndependence()
     {
         var seed = new WorldSeed256(new byte[32]);
         var worldId = OpaqueId128.Parse("00000000000000000000000000000701");
-        var cohortA = OpaqueId128.Parse("00000000000000000000000000000711");
-        var cohortB = OpaqueId128.Parse("00000000000000000000000000000712");
-        var cohorts = new[]
-        {
-            (Id: cohortA, Population: 101UL, BirthRate: 123_456U, DeathRate: 23_456U),
-            (Id: cohortB, Population: 203UL, BirthRate: 87_654U, DeathRate: 12_345U),
-        };
+        var cohortA = new EcologyCohortStateV1(
+            OpaqueId128.Parse("00000000000000000000000000000711"), 101, 1000);
+        var cohortB = new EcologyCohortStateV1(
+            OpaqueId128.Parse("00000000000000000000000000000712"), 203, 2000);
+        var cohorts = new[] { cohortA, cohortB };
 
         var forward = cohorts.ToDictionary(
-            static cohort => cohort.Id,
-            cohort => EcologyPopulationV1.Transition(
-                seed, worldId, 77, cohort.Id, cohort.Population, cohort.BirthRate, cohort.DeathRate));
+            static cohort => cohort.CohortId,
+            cohort => EcologyCohortTransitionV1.Advance(
+                cohort, 123_456, 23_456, 12_345, seed, worldId, 77));
         var reverse = cohorts.Reverse().ToDictionary(
-            static cohort => cohort.Id,
-            cohort => EcologyPopulationV1.Transition(
-                seed, worldId, 77, cohort.Id, cohort.Population, cohort.BirthRate, cohort.DeathRate));
+            static cohort => cohort.CohortId,
+            cohort => EcologyCohortTransitionV1.Advance(
+                cohort, 123_456, 23_456, 12_345, seed, worldId, 77));
 
         Require(forward.OrderBy(static pair => pair.Key).SequenceEqual(reverse.OrderBy(static pair => pair.Key)),
             "domain.environment.ecology.random: cohort iteration order changed addressable stochastic realization.");
-        Require(EcologyPopulationV1.Transition(seed, worldId, 77, cohortA, 10, 0, 1_000_000).CandidatePopulation == 0,
+        var extinct = EcologyCohortTransitionV1.Advance(
+            new EcologyCohortStateV1(cohortA.CohortId, 10, 0),
+            0, 1_000_000, 0, seed, worldId, 77);
+        Require(extinct.PopulationCount == 0,
             "domain.environment.ecology.random: 100% death rate fixture mismatch.");
     }
 
