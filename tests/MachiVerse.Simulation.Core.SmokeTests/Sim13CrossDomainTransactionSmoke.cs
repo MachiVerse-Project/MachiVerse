@@ -10,6 +10,7 @@ internal static class Sim13CrossDomainTransactionSmoke
         VerifyRegistry();
         VerifyTransactionIdentityPermutation();
         VerifyAllTransactionKinds();
+        VerifyWorkerCountDeterminismAsync().GetAwaiter().GetResult();
         Sim13StepCandidateTransactionSmoke.Run();
     }
 
@@ -53,9 +54,10 @@ internal static class Sim13CrossDomainTransactionSmoke
         var kind = CrossDomainTransactionKindRegistryV1.Get("transaction.market-sale-delivery");
         var forward = TransactionIdentityV1.Derive(worldId, kind, 42, root, [subjectHigh, subjectLow], 7);
         var reverse = TransactionIdentityV1.Derive(worldId, kind, 42, root, [subjectLow, subjectHigh], 7);
+        var expected = Id("784bffff95ab49f037ff0ee72cbf5129");
 
-        Require(forward == reverse && !forward.IsZero,
-            "determinism.transaction-id.vector: transaction identity must be stable across subject permutations.");
+        Require(forward == expected && reverse == expected,
+            "determinism.transaction-id.vector: mv.transaction.v1 golden TransactionId mismatch.");
     }
 
     private static void VerifyAllTransactionKinds()
@@ -153,6 +155,57 @@ internal static class Sim13CrossDomainTransactionSmoke
         }
     }
 
+    private static async Task VerifyWorkerCountDeterminismAsync()
+    {
+        var worldId = Id("00000000000000000000000000013201");
+        var rootId = Id("00000000000000000000000000013202");
+        var root = new CausalityRefV1(CausalityRefKindV1.Operation, rootId.ToBytes(), 200);
+        var subjects = new[]
+        {
+            Id("00000000000000000000000000013210"),
+            Id("00000000000000000000000000013211"),
+        };
+        var work = CrossDomainTransactionKindRegistryV1.Registrations
+            .Select((registration, index) => new WorkerTransactionCase(registration, (ulong)index))
+            .ToArray();
+
+        string[]? baseline = null;
+        foreach (var workerCount in new[] { 1, 4, 8, 16 })
+        {
+            foreach (var input in new[] { work, work.Reverse().ToArray() })
+            {
+                var assembled = await DeterministicBatchExecutor.RunAsync(
+                    input,
+                    workerCount,
+                    (item, _) =>
+                    {
+                        var participants = item.Registration.RequiredDomains
+                            .Select(domain => ReadyParticipant(item.Registration.TransactionKind, domain))
+                            .Reverse()
+                            .ToArray();
+                        var candidate = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+                            worldId,
+                            item.Registration.TransactionKind,
+                            200,
+                            root,
+                            subjects.Reverse(),
+                            item.Ordinal,
+                            participants,
+                            [Invariant(item.Registration.TransactionKind, InvariantOutcomeV1.Pass)]);
+                        return ValueTask.FromResult(candidate);
+                    });
+                var canonical = assembled
+                    .OrderBy(static candidate => candidate.TransactionKind.Value, StringComparer.Ordinal)
+                    .Select(static candidate => $"{candidate.TransactionKind.Value}:{candidate.TransactionId}:{Convert.ToHexString(candidate.DiagnosticDigest)}")
+                    .ToArray();
+
+                baseline ??= canonical;
+                Require(canonical.SequenceEqual(baseline),
+                    $"SIM-13 worker/input permutation changed transaction assembly at worker-count={workerCount}.");
+            }
+        }
+    }
+
     private static TransactionParticipantCandidateV1 ReadyParticipant(StableToken kind, StableToken domain)
         => new(
             domain,
@@ -178,4 +231,8 @@ internal static class Sim13CrossDomainTransactionSmoke
     {
         if (!condition) throw new InvalidOperationException(message);
     }
+
+    private sealed record WorkerTransactionCase(
+        CrossDomainTransactionKindRegistrationV1 Registration,
+        ulong Ordinal);
 }
