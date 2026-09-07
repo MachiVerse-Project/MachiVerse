@@ -1,13 +1,39 @@
 using MachiVerse.Gateway.Configuration;
+using MachiVerse.Gateway.Protocol;
+using MachiVerse.Gateway.State;
 
 var builder = WebApplication.CreateBuilder(args);
-var configPath = Environment.GetEnvironmentVariable("MACHIVERSE_GATEWAY_CONFIG") ?? "config/gateway.toml";
+var configPath = Environment.GetEnvironmentVariable("MACHIVERSE_GATEWAY_CONFIG")
+    ?? Path.Combine(AppContext.BaseDirectory, "config", "gateway.toml");
 var gatewayConfig = GatewayConfigLoader.LoadFile(configPath);
+var alphaCoreOptions = AlphaCoreLinkOptions.TryFromEnvironment();
+var alphaCoreState = new AlphaCoreLinkState();
 
 builder.Services.AddSingleton(gatewayConfig);
+builder.Services.AddSingleton(alphaCoreState);
 builder.Services.AddGrpc();
+
+if (alphaCoreOptions is not null)
+{
+    builder.Services.AddSingleton(alphaCoreOptions);
+    builder.Services.AddSingleton<ProtocolNegotiationState>();
+    builder.Services.AddSingleton<SchedulingPolicyProjection>();
+    builder.Services.AddSingleton<ConfirmedProjectionCache>();
+    builder.Services.AddSingleton<ResyncCoordinator>();
+    builder.Services.AddSingleton(new MasterAuthorityTracker(alphaCoreOptions.GatewayLogicalId));
+    builder.Services.AddHostedService<AlphaCoreConnectionWorker>();
+}
 
 var app = builder.Build();
 app.UseWebSockets();
-app.MapGet("/healthz", () => Results.Ok(new { component = "gateway", status = "starting-foundation" }));
-app.Run();
+app.MapGet("/healthz", () =>
+{
+    var core = alphaCoreState.Current;
+    return Results.Ok(new
+    {
+        component = "gateway",
+        status = core.Enabled ? core.Status : "standalone-foundation",
+        core,
+    });
+});
+await app.RunAsync();
