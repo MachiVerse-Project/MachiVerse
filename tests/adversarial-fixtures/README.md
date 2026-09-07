@@ -4,7 +4,7 @@ This directory is the version-controlled source for `QA-03` crash / malformed-in
 
 ## Authority boundary
 
-The harness does **not** define production protocol, Config, persistence, authentication, TLS, law-AST, snapshot, or audit semantics. Those remain owned by `docs/design/`, `docs/protocols/`, and the responsible component.
+The harness does **not** define production protocol, Config, persistence, authentication, TLS, law-AST, snapshot, history, or audit semantics. Those remain owned by `docs/design/`, `docs/protocols/`, and the responsible component.
 
 The corpus provides deterministic hostile inputs and expected *disposition classes* only. Component-local adapters decide the exact canonical reason code and must still enforce their own contract.
 
@@ -21,7 +21,15 @@ dotnet run --project tools/MachiVerse.AdversarialHarness -- materialize <output-
 
 - exact persistence crash matrix coverage: 6 write stages x 5 injection points = 30 cases;
 - canonical manifest ordering and duplicate rejection;
-- malformed-input coverage for protobuf, WebSocket, TOML, law AST, and snapshot metadata;
+- all P4-08 malformed-input target classes:
+  - protobuf envelope/payload;
+  - WebSocket frame/message assembly;
+  - StableToken parser;
+  - Config TOML/parser/schema;
+  - Rule/law AST;
+  - Snapshot manifest/chunk metadata;
+  - history payload decoder;
+  - log/audit query filter;
 - deterministic case identities and SHA-256 corpus digest;
 - auth/session/internal-mTLS/audit negative-case traceability;
 - synthetic-only security fixtures;
