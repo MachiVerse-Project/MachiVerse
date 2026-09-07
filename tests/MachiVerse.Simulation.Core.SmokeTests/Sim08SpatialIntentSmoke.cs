@@ -5,7 +5,6 @@ using MachiVerse.Simulation.Core.Runtime;
 
 internal static class Sim08SpatialIntentSmoke
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Run()
     {
         VerifyCanonicalTerrainIntent("spatial.intent.geometry-carve");
