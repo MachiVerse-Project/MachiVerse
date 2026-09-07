@@ -17,6 +17,7 @@ var viewConfig = GeneralViewConfigLoader.LoadText(configText);
 
 builder.Services.AddSingleton(viewConfig);
 builder.Services.AddSingleton(SceneProjectionAdapterRegistry.Empty);
+builder.Services.AddSingleton(ViewOperationCatalog.Empty);
 builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<GatewayProtocolClient>();
 builder.Services.AddScoped<ConfirmedWorldStore>();
