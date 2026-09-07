@@ -84,8 +84,8 @@ public sealed class SqliteStepTransitionDurabilityV1(SqlitePersistenceStore stor
 
 /// <summary>
 /// Establishes the only SIM-06 publishable boundary: a StepCandidate remains non-authoritative
-/// until the SIM-03 transition transaction has committed successfully. The in-memory scheduler
-/// is advanced only after durable commit succeeds.
+/// until the SIM-03 transition transaction has committed successfully. No scheduler retirement
+/// or publishable receipt exists before the durable COMMIT succeeds.
 /// </summary>
 public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 durability)
 {
@@ -107,26 +107,26 @@ public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 du
                 : "step-finalize.commit-blocked-by-invariant");
         if (candidate.IsPublishable)
             throw new InvalidDataException("step-finalize.candidate-must-be-non-authoritative");
-        if (scheduler.FreezeStep != candidate.BasisStep)
+        if (material.ActiveConfigGeneration != candidate.ConfigGeneration)
+            throw new InvalidDataException("step-finalize.config-generation-mismatch");
+        if (scheduler.FreezeStep != candidate.BasisStep || scheduler.NextSchedulableStep != candidate.TargetStep)
             throw new InvalidDataException("step-finalize.scheduler-freeze-mismatch");
-        if (scheduler.NextSchedulableStep < candidate.TargetStep)
-            throw new InvalidDataException("step-finalize.scheduler-barrier-mismatch");
         if (material.TransitionHistory.WorldId != candidate.WorldId)
             throw new InvalidDataException("step-finalize.history-world-mismatch");
+        if (!string.Equals(material.TransitionHistory.RecordType, "transition.committed.v1", StringComparison.Ordinal))
+            throw new InvalidDataException("step-finalize.history-record-type-mismatch");
 
+        RequireFrozenSchedulerMatch(candidate, scheduler);
         RequireTerminalCoverage(candidate, material.TerminalOperations);
 
-        // No authoritative in-memory state is advanced before this await. If the persistence
-        // implementation throws/crashes before COMMIT, the scheduler remains frozen at State(S)
-        // and no publishable receipt is created.
-        var durable = await _durability.CommitAsync(candidate, material, cancellationToken);
+        // This await is the authority boundary. Any exception before/inside COMMIT leaves the
+        // frozen scheduler and State(S) authority untouched and creates no publishable receipt.
+        var durable = await _durability.CommitAsync(candidate, material, cancellationToken).ConfigureAwait(false);
         if (durable.ResultingStep != candidate.TargetStep)
             throw new InvalidDataException("step-finalize.persistence-result-step-mismatch");
         if (durable.HistorySequence != material.TransitionHistory.Sequence)
             throw new InvalidDataException("step-finalize.persistence-history-sequence-mismatch");
 
-        // Pre-validation above makes this a non-throwing semantic transition for a valid
-        // scheduler. It intentionally happens after durable COMMIT.
         scheduler.OpenAfterFinalization(candidate.BasisStep);
 
         return new DurableStepReceiptV1(
@@ -137,6 +137,24 @@ public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 du
             candidate.DiagnosticDigest.ToArray());
     }
 
+    private static void RequireFrozenSchedulerMatch(
+        StepCandidateV1 candidate,
+        OperationSchedulerStateV1 scheduler)
+    {
+        var live = scheduler.ForEffectiveStep(candidate.BasisStep);
+        var frozen = candidate.FrozenInput.ScheduledOperations;
+        if (live.Count != frozen.Count)
+            throw new InvalidDataException("step-finalize.scheduler-frozen-set-mismatch");
+
+        for (var index = 0; index < live.Count; index++)
+        {
+            if (live[index].OperationId != frozen[index].OperationId ||
+                live[index].EffectiveStep != frozen[index].EffectiveStep ||
+                !live[index].OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(frozen[index].OrderKey.ToDatabaseBytes()))
+                throw new InvalidDataException("step-finalize.scheduler-frozen-set-mismatch");
+        }
+    }
+
     private static void RequireTerminalCoverage(
         StepCandidateV1 candidate,
         IReadOnlyCollection<TerminalOperationCommit> terminalOperations)
@@ -144,9 +162,13 @@ public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 du
         var expected = candidate.FrozenInput.ScheduledOperations
             .Select(static item => item.OperationId)
             .ToHashSet();
-        var actual = terminalOperations
-            .Select(static item => item.OperationId)
-            .ToHashSet();
+        var actual = new HashSet<OpaqueId128>();
+        foreach (var terminal in terminalOperations)
+        {
+            ArgumentNullException.ThrowIfNull(terminal);
+            if (!actual.Add(terminal.OperationId))
+                throw new InvalidDataException("step-finalize.duplicate-terminal-operation");
+        }
         if (!expected.SetEquals(actual))
             throw new InvalidDataException("step-finalize.terminal-operation-coverage-mismatch");
     }
