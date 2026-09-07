@@ -278,5 +278,6 @@ Sim08PrimitiveCollisionSmoke.Run();
 Sim08SequentialImpulseSmoke.Run();
 await Sim08StateRuntimeSmoke.RunAsync();
 Sim09ResidentCoreSmoke.Run();
+await Sim09RuntimeGateSmoke.RunAsync();
 
-Console.WriteLine("SIM-01..SIM-08 component smoke tests passed; SIM-09 Resident deterministic core foundation smoke passed.");
+Console.WriteLine("SIM-01..SIM-09 component smoke tests passed, including Resident/Participation deterministic runtime gate.");
