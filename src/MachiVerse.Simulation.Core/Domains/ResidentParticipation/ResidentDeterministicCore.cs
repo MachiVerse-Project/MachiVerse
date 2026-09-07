@@ -22,6 +22,24 @@ public readonly record struct ResidentPpmV1
     }
 }
 
+public sealed record ResidentHealthStateV1(
+    ResidentPpmV1 HealthCapacity,
+    ResidentPpmV1 Pain,
+    ResidentPpmV1 Stress,
+    ResidentPpmV1 Fatigue)
+{
+    public ResidentHealthStateV1 ApplyDelta(
+        long healthCapacityDelta,
+        long painDelta,
+        long stressDelta,
+        long fatigueDelta)
+        => new(
+            HealthCapacity.AddChecked(healthCapacityDelta),
+            Pain.AddChecked(painDelta),
+            Stress.AddChecked(stressDelta),
+            Fatigue.AddChecked(fatigueDelta));
+}
+
 public sealed record ResidentLifecycleStateV1(
     OpaqueId128 ResidentId,
     StableToken Lifecycle,
@@ -98,36 +116,6 @@ public static class ResidentDiseaseRandomV1
             OpaqueId128.Zero,
             0);
         return DeterministicRandom.BoundedUInt64(worldSeed, context, drawIndex: 0, ResidentPpmV1.Scale) < probabilityPpm;
-    }
-}
-
-public sealed record ResidentGoalCandidateV1(
-    OpaqueId128 GoalId,
-    long Utility,
-    int SemanticPriority)
-{
-    public void Validate()
-    {
-        if (GoalId.IsZero) throw new InvalidDataException("resident.goal-id-zero");
-    }
-}
-
-public static class ResidentGoalSelectorV1
-{
-    public static ResidentGoalCandidateV1 Select(IEnumerable<ResidentGoalCandidateV1> candidates)
-    {
-        ArgumentNullException.ThrowIfNull(candidates);
-        var materialized = candidates.ToArray();
-        if (materialized.Length == 0) throw new InvalidDataException("resident.goal-empty");
-        foreach (var candidate in materialized) candidate.Validate();
-        if (materialized.Select(static candidate => candidate.GoalId).Distinct().Count() != materialized.Length)
-            throw new InvalidDataException("resident.goal-id-duplicate");
-
-        return materialized
-            .OrderByDescending(static candidate => candidate.Utility)
-            .ThenBy(static candidate => candidate.SemanticPriority)
-            .ThenBy(static candidate => candidate.GoalId)
-            .First();
     }
 }
 
