@@ -264,7 +264,9 @@ Sim05OperationLifecycleSmoke.Run();
 await Sim05DurableOperationSmoke.RunAsync();
 await Sim05CoordinatorSmoke.RunAsync();
 await Sim06StepCoordinatorSmoke.RunAsync();
+await Sim06ConfigBoundarySmoke.RunAsync();
+await Sim06DependencyDagSmoke.RunAsync();
 await Sim06DurableFinalizeSmoke.RunAsync();
 await Sim06DurableFinalizationSmoke.RunAsync();
 
-Console.WriteLine("SIM-01/SIM-02/SIM-03/SIM-04/SIM-05/SIM-06 deterministic runtime/durable finalization smoke tests passed.");
+Console.WriteLine("SIM-01/SIM-02/SIM-03/SIM-04/SIM-05/SIM-06 deterministic runtime/config/DAG/durable finalization smoke tests passed.");
