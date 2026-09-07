@@ -19,6 +19,8 @@ public readonly record struct QuaternionQ30V1(int X, int Y, int Z, int W)
     public static QuaternionQ30V1 Identity => new(0, 0, 0, One);
 }
 
+public readonly record struct Velocity3UmPerSecondV1(long X, long Y, long Z);
+
 public sealed record SpatialFrameNodeV1(
     StableToken FrameId,
     StableToken? ParentFrameId,
@@ -104,7 +106,7 @@ public sealed record AtmosphereCellStateV1(
     int PressurePascal,
     int TemperatureMilliKelvin,
     uint HumidityPpm,
-    Vec3MmV1 WindMicrometrePerSecond,
+    Velocity3UmPerSecondV1 WindUmPerSecond,
     long WaterVaporMassGram,
     long LiquidWaterMassGram,
     IReadOnlyDictionary<StableToken, uint> GasCompositionPpb)
