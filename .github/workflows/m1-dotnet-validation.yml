@@ -79,7 +79,7 @@ jobs:
         run: dotnet build src/MachiVerse.View/MachiVerse.View.csproj --configuration Release
 
   administration-view:
-    name: ADMIN-01 Administration View build
+    name: Administration View build and smoke
     if: github.base_ref == 'administration-view'
     runs-on: ubuntu-latest
     steps:
@@ -91,3 +91,5 @@ jobs:
           dotnet-version: 10.0.400
       - name: Build Administration View
         run: dotnet build src/MachiVerse.Administration.View/MachiVerse.Administration.View.csproj --configuration Release
+      - name: Run Administration View smoke tests
+        run: dotnet run --project tests/MachiVerse.Administration.View.SmokeTests --configuration Release
