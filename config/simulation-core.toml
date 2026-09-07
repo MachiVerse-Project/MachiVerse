@@ -1,4 +1,5 @@
 # INT-01 local Alpha bootstrap. Omitted fields are completed from CoreConfigSchema defaults.
+# Runtime activation is explicitly gated by MACHIVERSE_ALPHA_LOCAL=1.
 [meta]
 format = "machiverse-config"
 schema_version = "1.0"
