@@ -88,18 +88,18 @@ internal static class Gw06PublicationRoutingSmoke
             "Global publication capacity must degrade a subscriber to resync instead of blocking other queues.");
 
         var resultRouter = new OperationResultRouterV1(capacity: 1);
-        var routeId = Id(30);
+        var viewRoute = new GatewayOutboundRouteV1(GatewayOutboundRouteKindV1.GeneralView, Id(30));
         var terminalA = TerminalCustody(31, "result-a");
         var terminalB = TerminalCustody(32, "result-b");
 
-        var enqueued = resultRouter.TryEnqueue(routeId, terminalA);
+        var enqueued = resultRouter.TryEnqueue(viewRoute, terminalA);
         Require(enqueued.Status == ResultRouteEnqueueStatusV1.Enqueued && resultRouter.PendingCount == 1,
             "Terminal result must enter its dedicated result queue.");
-        var duplicate = resultRouter.TryEnqueue(routeId, terminalA);
+        var duplicate = resultRouter.TryEnqueue(viewRoute, terminalA);
         Require(duplicate.Status == ResultRouteEnqueueStatusV1.Duplicate && resultRouter.PendingCount == 1,
             "Repeated terminal observation must not duplicate a queued result.");
 
-        var backpressured = resultRouter.TryEnqueue(routeId, terminalB);
+        var backpressured = resultRouter.TryEnqueue(viewRoute, terminalB);
         Require(backpressured.Status == ResultRouteEnqueueStatusV1.Backpressured &&
                 backpressured.ReasonCode == "gateway.result-backpressure" &&
                 resultRouter.PendingCount == 1,
@@ -109,10 +109,20 @@ internal static class Gw06PublicationRoutingSmoke
 
         var deliveredA = resultRouter.TryDequeue()
             ?? throw new InvalidOperationException("Queued terminal result disappeared.");
-        Require(deliveredA.Result.Code == "result-a", "Result router changed terminal result identity.");
-        var retriedB = resultRouter.TryEnqueue(routeId, terminalB);
+        Require(deliveredA.Result.Code == "result-a" && deliveredA.Route.Kind == GatewayOutboundRouteKindV1.GeneralView,
+            "Result router changed terminal result identity or route domain.");
+        var retriedB = resultRouter.TryEnqueue(viewRoute, terminalB);
         Require(retriedB.Status == ResultRouteEnqueueStatusV1.Enqueued,
             "Custody-held terminal result must be routable after queue capacity becomes available.");
+
+        var routeIsolation = new OperationResultRouterV1(capacity: 2);
+        var sharedRouteId = Id(40);
+        var generalRoute = new GatewayOutboundRouteV1(GatewayOutboundRouteKindV1.GeneralView, sharedRouteId);
+        var adminRoute = new GatewayOutboundRouteV1(GatewayOutboundRouteKindV1.AdministrationView, sharedRouteId);
+        Require(routeIsolation.TryEnqueue(generalRoute, terminalA).Status == ResultRouteEnqueueStatusV1.Enqueued,
+            "General View result route failed.");
+        Require(routeIsolation.TryEnqueue(adminRoute, terminalA).Status == ResultRouteEnqueueStatusV1.Enqueued,
+            "Administration View route must remain distinct even with the same opaque route id.");
     }
 
     private static GatewaySessionSnapshot SpectatorSession(byte marker)
