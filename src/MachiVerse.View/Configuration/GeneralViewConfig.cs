@@ -8,4 +8,7 @@ public sealed record GeneralViewConfig(
     int ReconcileSoftDurationMs,
     int ReconcileMaxSoftDurationMs,
     int ReconnectInitialMs,
-    int ReconnectMaxMs);
+    int ReconnectMaxMs,
+    Uri GatewayEndpoint,
+    string WorldIdHex,
+    bool AllowInsecureLoopbackAlpha);
