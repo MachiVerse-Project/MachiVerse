@@ -125,10 +125,11 @@ jobs:
           const sleep=ms=>new Promise(r=>setTimeout(r,ms));
           const waitText=async (needle, attempts=100)=>{let text='';for(let i=0;i<attempts;i++){text=await evalJs('document.body?.innerText ?? ""');if(text.includes(needle))return text;await sleep(300);}throw new Error('Missing text '+needle+'; last DOM:\n'+text);};
           const clickText=async text=>{const ok=await evalJs(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!b)return false;b.click();return true;})()`);if(!ok)throw new Error('Button not found: '+text);};
+          const clickLinkText=async text=>{const ok=await evalJs(`(()=>{const a=[...document.querySelectorAll('a')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!a)return false;a.click();return true;})()`);if(!ok)throw new Error('Link not found: '+text);};
 
           await send('Runtime.enable');
           await waitText('Lifecycle\nReady');
-          await evalJs("location.href='/management'");
+          await clickLinkText('Open Config / operational command management');
           await waitText('Config / Operational Command Management');
           await waitText('ConfigGeneration\n1');
           await clickText('Start local draft');
