@@ -59,10 +59,18 @@
     private bool _rendererInitialized;
     private bool _disposed;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         ConfirmedStore.Changed += OnConfirmedChanged;
         GatewaySession.Changed += OnGatewaySessionChanged;
+        try
+        {
+            await GatewaySession.StartAsync();
+        }
+        catch
+        {
+            // The session exposes its bounded diagnostic and fail-closed lifecycle state.
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -80,15 +88,6 @@
         catch (Exception ex)
         {
             _rendererError = ex.Message;
-        }
-
-        try
-        {
-            await GatewaySession.StartAsync();
-        }
-        catch
-        {
-            // The session exposes its bounded diagnostic and fail-closed lifecycle state.
         }
 
         StateHasChanged();
