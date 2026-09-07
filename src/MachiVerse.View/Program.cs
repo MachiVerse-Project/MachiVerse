@@ -26,6 +26,7 @@ builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.H
 builder.Services.AddScoped<GatewayProtocolClient>();
 builder.Services.AddScoped<ConfirmedWorldStore>();
 builder.Services.AddScoped<PublicationConsumer>();
+builder.Services.AddScoped<GeneralViewGatewaySession>();
 builder.Services.AddScoped<PredictionStore>();
 builder.Services.AddScoped<ReconciliationCoordinator>();
 builder.Services.AddScoped<ViewOperationController>();
