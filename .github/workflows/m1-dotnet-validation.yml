@@ -32,6 +32,29 @@ jobs:
       - name: Verify contract fixtures
         run: dotnet run --project tools/MachiVerse.ContractFixtures -- verify
 
+  qa-determinism-harness:
+    name: QA-02 determinism/replay harness
+    if: github.base_ref == 'develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Verify determinism matrix and comparator
+        run: dotnet run --project tools/MachiVerse.DeterminismHarness -- verify
+      - name: Materialize determinism matrix
+        run: |
+          output="$RUNNER_TEMP/qa02-matrix"
+          dotnet run --project tools/MachiVerse.DeterminismHarness -- materialize "$output"
+          test -s "$output/run-matrix.json"
+          test -s "$output/matrix-summary.json"
+          test -s "$output/target-adapter-contract.json"
+          test -s "$output/semantic-trace-contract.json"
+          test -s "$output/acceptance-test-case-coverage.json"
+
   qa-adversarial-harness:
     name: QA-03 adversarial harness
     if: github.base_ref == 'develop'
