@@ -283,5 +283,6 @@ Sim10MarketLedgerSmoke.Run();
 await Sim10RuntimeGateSmoke.RunAsync();
 Sim11GovernanceLawSmoke.Run();
 await Sim11RuntimeGateSmoke.RunAsync();
+Sim12InfrastructureInformationSmoke.Run();
 
-Console.WriteLine("SIM-01..SIM-11 component smoke tests passed, including Governance/Security deterministic runtime gate.");
+Console.WriteLine("SIM-01..SIM-12 component smoke tests passed through Infrastructure/Information deterministic primitives.");
