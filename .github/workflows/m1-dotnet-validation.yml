@@ -45,6 +45,15 @@ jobs:
           dotnet-version: 10.0.400
       - name: Verify adversarial corpus
         run: dotnet run --project tools/MachiVerse.AdversarialHarness -- verify
+      - name: Materialize adversarial corpus
+        run: |
+          output="$RUNNER_TEMP/qa03-corpus"
+          dotnet run --project tools/MachiVerse.AdversarialHarness -- materialize "$output"
+          test -s "$output/crash-matrix.json"
+          test -s "$output/mutation-cases.json"
+          test -s "$output/security-negative-corpus.json"
+          test -s "$output/target-adapter-contract.json"
+          test -s "$output/corpus-summary.json"
 
   simulation-core:
     name: Simulation Core build and smoke
