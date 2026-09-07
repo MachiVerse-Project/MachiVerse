@@ -7,9 +7,9 @@ public sealed record PortableWorldImportPlan(
     PersistenceMigrationPaths Migration);
 
 /// <summary>
-/// Format-neutral import staging boundary. The concrete export bundle schema and decoder are
-/// supplied by the schema-owned caller; this type guarantees that a verified import is loaded
-/// into a new persistence generation and CURRENT is switched only after target validation.
+/// Validated import staging boundary for the Phase 4 MachiVerseWorldExportV1 bundle.
+/// Physical bundle structure is checked before schema-owned semantic verification. Import writes
+/// only a new staging persistence generation and switches CURRENT after target validation.
 /// </summary>
 public static class PortableWorldImport
 {
@@ -21,8 +21,7 @@ public static class PortableWorldImport
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(exportDirectory);
         var export = Path.GetFullPath(exportDirectory);
-        if (!Directory.Exists(export))
-            throw new InvalidDataException("persistence.export-missing");
+        PortableWorldBundleV1.ValidateBundleStructure(export);
         var migration = PersistenceGenerationMigration.Prepare(persistenceRoot, worldId, activeGeneration);
         return new PortableWorldImportPlan(export, migration);
     }
@@ -41,14 +40,11 @@ public static class PortableWorldImport
         ArgumentNullException.ThrowIfNull(verifyImportedGeneration);
         if (expectedWorldId.IsZero)
             throw new ArgumentException("WorldId ZERO is invalid for import.", nameof(expectedWorldId));
-        if (!Directory.Exists(plan.ExportDirectory))
-            throw new InvalidDataException("persistence.export-missing");
 
+        PortableWorldBundleV1.ValidateBundleStructure(plan.ExportDirectory);
         await verifyExport(plan.ExportDirectory, expectedWorldId, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Only the new staging generation is exposed as a write target. The current source
-        // generation stays authoritative until the loaded generation passes full validation.
         await loadIntoStaging(plan.ExportDirectory, plan.Migration.Staging, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
