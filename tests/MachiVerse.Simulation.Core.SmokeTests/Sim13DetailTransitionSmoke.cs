@@ -27,9 +27,11 @@ component = "simulation-core"
         VerifyHysteresis(policy);
         VerifyBudgetAndPermutation(policy);
         VerifyBudgetWorkerCountDeterminismAsync(policy).GetAwaiter().GetResult();
+        VerifyOversizedTransitionRejected(policy);
         VerifyFloors(policy);
         VerifyTriggerSourceGate();
         VerifyConservationAuthorityGate(policy);
+        VerifyPlannerPlanBinding(policy);
         VerifyApplyAndCameraIndependence(policy);
         Sim13DetailConservationSmoke.Run();
     }
@@ -152,6 +154,34 @@ component = "simulation-core"
         }
     }
 
+    private static void VerifyOversizedTransitionRejected(DetailTransitionPolicyV1 policy)
+    {
+        var resident = new StableToken("resident");
+        var region = Region(25, resident, DetailLevelV1.D3BoundarySummary, lastTransitionStep: 0);
+        var directory = new DetailDirectoryV1([region]);
+        var oversized = Transition(
+            region.DetailRegionId,
+            resident,
+            DetailLevelV1.D3BoundarySummary,
+            DetailLevelV1.D0Entity,
+            requiredStep: 0,
+            triggerStep: 0,
+            trigger: 2501,
+            records: checked((uint)policy.PromotionMaxRecordsPerStep + 1));
+
+        var rejected = false;
+        try
+        {
+            _ = DetailTransitionPlannerV1.Plan(directory, [oversized], 30, policy);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "detail.transition-estimate-exceeds-step-budget")
+        {
+            rejected = true;
+        }
+        Require(rejected,
+            "detail.budget.progress: a transition that can never fit the configured per-Step budget must fail explicitly instead of deferring forever.");
+    }
+
     private static void VerifyFloors(DetailTransitionPolicyV1 policy)
     {
         var resident = new StableToken("resident");
@@ -181,10 +211,10 @@ component = "simulation-core"
 
     private static void VerifyTriggerSourceGate()
     {
-        var rejected = false;
+        var invalidEnumRejected = false;
         try
         {
-            _ = new DetailTransitionCandidateV1(
+            _ = new DetailTransitionRequestV1(
                 Id(39),
                 new StableToken("resident"),
                 DetailLevelV1.D2RegionalAggregate,
@@ -198,11 +228,35 @@ component = "simulation-core"
         }
         catch (ArgumentOutOfRangeException)
         {
-            rejected = true;
+            invalidEnumRejected = true;
         }
+        Require(invalidEnumRejected,
+            "detail.camera-independence: unregistered trigger source must be rejected.");
 
-        Require(rejected,
-            "detail.camera-independence: non-authoritative/unregistered trigger source must not enter the detail queue.");
+        var triggerId = Id(3902);
+        var authority = ScheduledOperationAuthority(triggerId, 0);
+        var forged = new DetailTransitionRequestV1(
+            Id(38),
+            new StableToken("resident"),
+            DetailLevelV1.D2RegionalAggregate,
+            DetailLevelV1.D0Entity,
+            requiredEffectiveStep: 0,
+            semanticPriority: 0,
+            DetailTransitionTriggerSourceV1.MutationIntent,
+            triggerId,
+            triggerObservedStep: 0,
+            estimatedRecordCount: 1);
+        var forgedRejected = false;
+        try
+        {
+            _ = DetailTransitionAdmissionV1.Admit(forged, authority);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "detail.transition-trigger-not-authoritative")
+        {
+            forgedRejected = true;
+        }
+        Require(forgedRejected,
+            "detail.camera-independence: a caller cannot relabel an arbitrary trigger ID as an authoritative source.");
     }
 
     private static void VerifyConservationAuthorityGate(DetailTransitionPolicyV1 policy)
@@ -232,11 +286,7 @@ component = "simulation-core"
         var blocked = false;
         try
         {
-            _ = directory.Apply(
-                plan.Selected,
-                plan.Deferred.Concat(plan.NotYetEligible),
-                transitionStep: 30,
-                failedValidation);
+            _ = directory.Apply(plan, failedValidation);
         }
         catch (InvalidDataException ex) when (ex.Message == "detail.conservation-blocked")
         {
@@ -245,18 +295,11 @@ component = "simulation-core"
         Require(blocked,
             "detail.stock-conservation: failed conservation proof must block authority-changing detail Apply.");
 
-        var mismatchedValidation = DetailConservationInvariantV1.ValidateForTransitions(
-            [],
-            before,
-            before);
+        var mismatchedValidation = DetailConservationInvariantV1.ValidateForTransitions([], before, before);
         var mismatchRejected = false;
         try
         {
-            _ = directory.Apply(
-                plan.Selected,
-                plan.Deferred.Concat(plan.NotYetEligible),
-                transitionStep: 30,
-                mismatchedValidation);
+            _ = directory.Apply(plan, mismatchedValidation);
         }
         catch (InvalidDataException ex) when (ex.Message == "detail.conservation-transition-mismatch")
         {
@@ -264,6 +307,46 @@ component = "simulation-core"
         }
         Require(mismatchRejected,
             "detail conservation proof must be bound to the exact canonical selected transition set.");
+    }
+
+    private static void VerifyPlannerPlanBinding(DetailTransitionPolicyV1 policy)
+    {
+        var resident = new StableToken("resident");
+        var region = Region(42, resident, DetailLevelV1.D2RegionalAggregate, lastTransitionStep: 0);
+        var sourceDirectory = new DetailDirectoryV1([region]);
+        var transition = Transition(
+            region.DetailRegionId,
+            resident,
+            DetailLevelV1.D2RegionalAggregate,
+            DetailLevelV1.D0Entity,
+            0,
+            0,
+            4201,
+            10);
+        var plan = DetailTransitionPlannerV1.Plan(sourceDirectory, [transition], 30, policy);
+        var validation = DetailConservationInvariantV1.ValidateForTransitions(
+            plan.Selected,
+            new DetailConservationSnapshotV1(),
+            new DetailConservationSnapshotV1());
+
+        var alteredRegion = Region(
+            42,
+            resident,
+            DetailLevelV1.D2RegionalAggregate,
+            lastTransitionStep: 0,
+            [DetailTransitionGuardV1.BoundResident]);
+        var alteredDirectory = new DetailDirectoryV1([alteredRegion]);
+        var rejected = false;
+        try
+        {
+            _ = alteredDirectory.Apply(plan, validation);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "detail.transition-plan-directory-mismatch")
+        {
+            rejected = true;
+        }
+        Require(rejected,
+            "detail planner-issued plan must be bound to the exact directory authority used for floor/hysteresis/budget validation.");
     }
 
     private static void VerifyApplyAndCameraIndependence(DetailTransitionPolicyV1 policy)
@@ -284,19 +367,13 @@ component = "simulation-core"
         var first = DetailTransitionPlannerV1.Plan(directory, [request], 30, policy);
         var second = DetailTransitionPlannerV1.Plan(directory, [request], 30, policy);
         Require(first.Selected.Select(Key).SequenceEqual(second.Selected.Select(Key)),
-            "detail.camera-independence: detail planner result must depend only on authoritative inputs.");
+            "detail.camera-independence: detail planner result must depend only on admitted authoritative inputs.");
 
-        var conservationBefore = new DetailConservationSnapshotV1();
-        var conservationAfter = new DetailConservationSnapshotV1();
         var validation = DetailConservationInvariantV1.ValidateForTransitions(
             first.Selected,
-            conservationBefore,
-            conservationAfter);
-        var applied = directory.Apply(
-            first.Selected,
-            first.Deferred.Concat(first.NotYetEligible),
-            transitionStep: 30,
-            validation);
+            new DetailConservationSnapshotV1(),
+            new DetailConservationSnapshotV1());
+        var applied = directory.Apply(first, validation);
         var next = applied.GetRegion(region.DetailRegionId);
         Require(next.GetLevel(resident) == DetailLevelV1.D0Entity &&
                 next.LineageGeneration == region.LineageGeneration + 1 &&
@@ -327,17 +404,39 @@ component = "simulation-core"
         ulong triggerStep,
         int trigger,
         uint records)
-        => new(
+    {
+        var triggerId = Id(trigger);
+        var request = new DetailTransitionRequestV1(
             regionId,
             domain,
             current,
             target,
             requiredStep,
             semanticPriority: 0,
-            DetailTransitionTriggerSourceV1.MutationIntent,
-            Id(trigger),
+            DetailTransitionTriggerSourceV1.ScheduledOperation,
+            triggerId,
             triggerStep,
             records);
+        return DetailTransitionAdmissionV1.Admit(request, ScheduledOperationAuthority(triggerId, triggerStep));
+    }
+
+    private static DetailTransitionTriggerAuthorityV1 ScheduledOperationAuthority(OpaqueId128 triggerId, ulong triggerStep)
+    {
+        var orderKey = new SameStepOrderKey(
+            phase: 0,
+            domainRank: 0,
+            conflictScopeDigest: new byte[32],
+            semanticPriority: 0,
+            intentId: triggerId);
+        var scheduled = new ScheduledOperationRefV1(triggerId, triggerStep, orderKey);
+        var frozen = new FrozenStepInputV1(
+            Id(900000),
+            triggerStep,
+            configGeneration: 1,
+            configDigest: new byte[32],
+            [scheduled]);
+        return DetailTransitionTriggerAuthorityV1.FromStep(frozen);
+    }
 
     private static string Key(DetailTransitionCandidateV1 candidate)
         => $"{candidate.RequiredEffectiveStep}:{candidate.SemanticPriority}:{candidate.DetailRegionId}:{candidate.DomainToken.Value}:{candidate.TriggerSource}:{candidate.TriggerId}";
