@@ -9,8 +9,9 @@ public interface IDomainRecordSchemaResolverV1 : IDomainRecordReferenceResolverV
 
 /// <summary>
 /// Canonical SIM-04 payload validation entry point. It composes the generic field validator with
-/// Phase 4 scalar-family ranges, nested canonical validation, and target record-schema checks.
-/// Domain-specific algorithms/cross-field invariants remain owned by SIM-07..SIM-12.
+/// Phase 4 scalar-family ranges and target record-schema checks. Canonical nested/list validation
+/// is owned by the generic field validator. Domain-specific algorithms/cross-field invariants
+/// remain owned by SIM-07..SIM-12.
 /// </summary>
 public sealed class StandardDomainPayloadCodecValidatorV1
 {
@@ -31,11 +32,6 @@ public sealed class StandardDomainPayloadCodecValidatorV1
 
             ValidateScalarFamily(partitionId, field, value);
             ValidateReferenceSchema(partitionId, field, value, references);
-
-            if (field.Kind is DomainPayloadFieldKindV1.OrderedNestedList or DomainPayloadFieldKindV1.RuleAst)
-            {
-                ((ICanonicalDomainNestedValueV1)value).ValidateCanonical();
-            }
         }
 
         ValidateSchemaSpecificRange(partitionId, payload);
