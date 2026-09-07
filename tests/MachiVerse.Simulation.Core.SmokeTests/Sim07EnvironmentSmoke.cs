@@ -62,6 +62,8 @@ internal static class Sim07EnvironmentSmoke
         ]);
         Require(reverseChoice == hydrologyChoice,
             "Hydrology minimum-head selection must be input-permutation independent.");
+
+        Sim07EnvironmentProcessesSmoke.RunAsync().GetAwaiter().GetResult();
     }
 
     private static void RequireReject(Func<IReadOnlyDictionary<SpatialCellKeyV1, long>> action, string expectedMessage)
