@@ -247,9 +247,10 @@ public sealed class DetailTransitionTriggerAuthorityV1
         return new DetailTransitionTriggerAuthorityV1(authority);
     }
 
-    public static OpaqueId128 ConfigPolicyTriggerId(ulong configGeneration, ReadOnlySpan<byte> configDigest)
+    public static OpaqueId128 ConfigPolicyTriggerId(ulong configGeneration, byte[] configDigest)
     {
         if (configGeneration == 0) throw new ArgumentOutOfRangeException(nameof(configGeneration));
+        ArgumentNullException.ThrowIfNull(configDigest);
         if (configDigest.Length != 32) throw new ArgumentException("Config digest must be 32 bytes.", nameof(configDigest));
         return HashSuite.Trunc128(HashSuite.DomainHash("mv.detail-config-trigger.v1", writer =>
         {
