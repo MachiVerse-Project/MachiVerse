@@ -22,7 +22,7 @@
       "category": "toml",
       "testCaseId": "config.type-range",
       "seedText": "[gateway]\\nqueue.publication-capacity = 128\\n",
-      "mutations": ["empty", "truncate-half", "flip-first-bit", "append-zero", "duplicate-prefix"],
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
       "expectedDisposition": "reject-or-explicit-failure"
     },
     {
@@ -30,7 +30,7 @@
       "category": "law-ast",
       "testCaseId": "domain.law.arbitrary-code-reject",
       "seedText": "{\"node\":\"registered.fixture\",\"args\":[]}",
-      "mutations": ["empty", "truncate-half", "flip-first-bit", "append-zero", "duplicate-prefix"],
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
       "expectedDisposition": "reject-or-explicit-failure"
     },
     {
@@ -38,7 +38,7 @@
       "category": "protobuf",
       "testCaseId": "protocol.envelope.valid",
       "seedText": "wire-envelope-fixture-v1",
-      "mutations": ["empty", "truncate-half", "flip-first-bit", "append-zero", "oversize-metadata"],
+      "mutations": ["append-zero", "empty", "flip-first-bit", "oversize-metadata", "truncate-half"],
       "expectedDisposition": "reject-or-explicit-failure"
     },
     {
@@ -46,7 +46,7 @@
       "category": "snapshot",
       "testCaseId": "persistence.snapshot.required-sections",
       "seedText": "{\"snapshot_generation\":1,\"sections\":103}",
-      "mutations": ["empty", "truncate-half", "flip-first-bit", "append-zero", "duplicate-prefix"],
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
       "expectedDisposition": "reject-or-explicit-failure"
     },
     {
@@ -54,7 +54,7 @@
       "category": "websocket",
       "testCaseId": "protocol.envelope.size-limit",
       "seedText": "binary-websocket-frame-v1",
-      "mutations": ["empty", "truncate-half", "flip-first-bit", "append-zero", "oversize-metadata"],
+      "mutations": ["append-zero", "empty", "flip-first-bit", "oversize-metadata", "truncate-half"],
       "expectedDisposition": "reject-or-explicit-failure"
     }
   ],
@@ -79,9 +79,9 @@
   ],
   "adapterContract": {
     "protocol": "jsonl",
-    "requestFields": ["caseId", "category", "payloadBase64", "declaredLength", "expectedDisposition"],
-    "resultFields": ["caseId", "outcome", "reasonCode", "diagnosticDigest"],
-    "allowedOutcomes": ["accepted", "rejected", "explicit-failure", "tamper-detected", "no-secret", "no-auto-release"],
+    "requestFields": ["caseId", "category", "declaredLength", "expectedDisposition", "payloadBase64"],
+    "resultFields": ["caseId", "diagnosticDigest", "outcome", "reasonCode"],
+    "allowedOutcomes": ["accepted", "explicit-failure", "no-auto-release", "no-secret", "rejected", "tamper-detected"],
     "rule": "Harness expectations never authorize acceptance; target-specific acceptance remains canonical component behavior."
   }
 }
