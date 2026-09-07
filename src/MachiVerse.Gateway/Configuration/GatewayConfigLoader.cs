@@ -19,6 +19,8 @@ public static class GatewayConfigLoader
 
         var network = Table(model, "network");
         var peer = Table(model, "peer");
+        var queue = Table(model, "queue");
+        var publication = Table(model, "publication");
         var auth = Table(model, "auth");
         var oidc = Table(auth, "oidc");
 
@@ -27,6 +29,10 @@ public static class GatewayConfigLoader
         var reconnectMax = PositiveInt(network, "reconnect-max-ms");
         var heartbeatInterval = PositiveInt(peer, "heartbeat-interval-ms");
         var heartbeatTimeout = PositiveInt(peer, "heartbeat-timeout-ms");
+        var publicationCapacity = PositiveInt(queue, "publication-capacity");
+        var resultCapacity = PositiveInt(queue, "result-capacity");
+        var maxClientBacklog = PositiveInt(publication, "max-client-backlog");
+        var publicationBufferMs = PositiveInt(publication, "buffer-ms");
         var idle = IntInRange(auth, "session-idle-lifetime-seconds", 300, 86400);
         var absolute = IntInRange(auth, "session-absolute-lifetime-seconds", 900, 604800);
         var loginLifetime = IntInRange(auth, "login-transaction-lifetime-seconds", 60, 1800);
@@ -57,6 +63,11 @@ public static class GatewayConfigLoader
             idle,
             absolute,
             maxSessions);
+        var outboundQueues = new GatewayOutboundQueueConfig(
+            publicationCapacity,
+            resultCapacity,
+            maxClientBacklog,
+            publicationBufferMs);
 
         return new GatewayConfig(
             connect,
@@ -67,6 +78,7 @@ public static class GatewayConfigLoader
             idle,
             absolute,
             authConfig,
+            outboundQueues,
             model);
     }
 
