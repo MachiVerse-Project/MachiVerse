@@ -36,6 +36,18 @@ internal static class Sim04PayloadValidationSmoke
         }
     }
 
+    private sealed class NestedProbe : ICanonicalDomainNestedValueV1
+    {
+        public bool WasValidated { get; private set; }
+
+        public void ValidateCanonical() => WasValidated = true;
+    }
+
+    private sealed class InvalidNestedProbe : ICanonicalDomainNestedValueV1
+    {
+        public void ValidateCanonical() => throw new InvalidOperationException("fixture nested value is not canonical");
+    }
+
     [ModuleInitializer]
     internal static void Initialize() => Run();
 
@@ -104,6 +116,36 @@ internal static class Sim04PayloadValidationSmoke
         RequireReject(
             () => validator.Validate("resident.family_lineage", lineage, resolver),
             "domain.payload.canonical-list-order:resident.family_lineage:parent_refs");
+
+        var goalPlan = new Dictionary<string, object?>
+        {
+            ["resident_ref"] = resident,
+            ["goal_token"] = "work",
+            ["utility"] = 100L,
+            ["status"] = "active",
+            ["plan_actions"] = new string[] { "work", "assess" },
+            ["current_action_index"] = (ushort)0,
+            ["planning_generation"] = 1u,
+            ["target_refs"] = Array.Empty<PartitionRecordRefV1>(),
+        };
+        validator.Validate("resident.goal_plan", goalPlan, resolver);
+
+        var nested = new NestedProbe();
+        var absencePolicy = new Dictionary<string, object?>
+        {
+            ["diver_ref"] = OpaqueId128.Parse("00000000000000000000000000000110"),
+            ["policy_generation"] = 1u,
+            ["priority_rules"] = new ICanonicalDomainNestedValueV1[] { nested },
+            ["effective_from"] = 10UL,
+        };
+        validator.Validate("participation.absence_policy", absencePolicy, resolver);
+        if (!nested.WasValidated)
+            throw new InvalidOperationException("Ordered nested payload values must run their canonical validator.");
+
+        absencePolicy["priority_rules"] = new ICanonicalDomainNestedValueV1[] { new InvalidNestedProbe() };
+        RequireReject(
+            () => validator.Validate("participation.absence_policy", absencePolicy, resolver),
+            "domain.payload.nested-invalid:participation.absence_policy:priority_rules");
 
         var unknownField = new Dictionary<string, object?>(physiology, StringComparer.Ordinal)
         {
