@@ -24,7 +24,7 @@ public static class GatewayAuthEndpoints
     {
         try
         {
-            var domain = ParseAuthDomain(context.Request.Query["auth_domain"]);
+            var domain = ParseAuthDomain(context.Request.Query["auth_domain"].ToString());
             var returnPath = OptionalQuery(context, "return_path");
             var now = DateTimeOffset.UtcNow;
             var redirect = await flow.BeginAsync(domain, returnPath, now, cancellationToken);
