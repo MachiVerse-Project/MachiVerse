@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Resident;
 using MachiVerse.Simulation.Core.Runtime;
 
 namespace MachiVerse.Simulation.Core.Domains.ResidentParticipation;
@@ -30,7 +31,7 @@ public sealed record ResidentPerceptionObservationV1(
     {
         if (ObservationId.IsZero || ResidentId.IsZero || SubjectRef.IsZero || SourceDeliveryId.IsZero)
             throw new InvalidDataException("resident.perception-id-zero");
-        if (ConfidencePpm > ResidentPpmV1.Scale)
+        if (ConfidencePpm > ResidentPpmV1.Max)
             throw new InvalidDataException("resident.perception-confidence-range");
     }
 }
@@ -52,6 +53,7 @@ public sealed class ResidentCognitionProjectionV1
 
     public void ReceiveDelivery(ResidentInformationDeliveryV1 delivery)
     {
+        ArgumentNullException.ThrowIfNull(delivery);
         delivery.Validate();
         if (!_deliveries.TryAdd(delivery.DeliveryId, delivery))
             throw new InvalidDataException("resident.delivery-duplicate");
@@ -81,6 +83,7 @@ public sealed class ResidentCognitionProjectionV1
 
     public void ApplyPerception(ResidentPerceptionObservationV1 observation)
     {
+        ArgumentNullException.ThrowIfNull(observation);
         observation.Validate();
         var key = observation.ResidentId + "/" + observation.SubjectRef + "/" + observation.Proposition.Value;
         _beliefs[key] = new ResidentBeliefEntryV1(
