@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Google.Protobuf;
 using Grpc.Core;
+using MachiVerse.Protocol.Canonical;
 using MachiVerse.Protocol.V1;
 using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
@@ -147,8 +148,6 @@ public sealed class AlphaSingleGatewayRuntime
         var master = new CoreMasterAuthorityCoordinatorV1(store, sessions);
         await master.RecoverAsync(cancellationToken);
 
-        // INT-01 has exactly one configured local Gateway. Re-selection is durable on each Core start,
-        // matching the SIM-14 rule that process recovery never restores a Gateway identity as authority.
         sessions.Register(
             options.GatewayLogicalId,
             new GatewayRegisterV1
@@ -164,13 +163,12 @@ public sealed class AlphaSingleGatewayRuntime
             cancellationToken);
 
         head = await store.ReadCoreProtocolHeadAsync(cancellationToken);
-        var state = BuildEmptyConfirmedState(options, head);
-        var worldAuthority = new AlphaWorldAuthorityV1(state, OperationSchedulingPolicyV1.FromConfig(config));
-        var operations = new CoreGatewayOperationProtocolV1(
-            store,
-            master,
-            new AlphaDurableOperationIngressV1(store, options.WorldId));
-        var publications = new CoreConfirmedPublicationCoordinatorV1(store, new AlphaEmptyProjectionSourceV1());
+        var binding = await RecoverBindingAsync(store, cancellationToken);
+        var state = BuildConfirmedState(options, head, binding);
+        var worldAuthority = new AlphaWorldAuthorityV1(state, binding, OperationSchedulingPolicyV1.FromConfig(config));
+        var ingress = new AlphaDurableOperationIngressV1(store, options, config, worldAuthority);
+        var operations = new CoreGatewayOperationProtocolV1(store, master, ingress);
+        var publications = new CoreConfirmedPublicationCoordinatorV1(store, new AlphaParticipationProjectionSourceV1(worldAuthority));
 
         return new AlphaSingleGatewayRuntime(
             store,
@@ -182,6 +180,19 @@ public sealed class AlphaSingleGatewayRuntime
             operations,
             publications,
             worldAuthority);
+    }
+
+    private static async Task<ParticipationBindingViewV1> RecoverBindingAsync(
+        SqlitePersistenceStore store,
+        CancellationToken cancellationToken)
+    {
+        var latest = await store.ReadLatestTerminalByResultCodeAsync("participation.binding.created", cancellationToken);
+        if (latest is null) return AlphaParticipationBindingStateV1.None();
+        if (latest.RichResultPayload is null)
+            throw new InvalidDataException("alpha.binding-terminal-missing-rich-result");
+        var binding = ParticipationBindingViewV1.Parser.ParseFrom(latest.RichResultPayload);
+        AlphaParticipationBindingStateV1.Validate(binding, requireActive: true);
+        return binding;
     }
 
     private static WorldPersistencePaths ResolvePersistencePaths(AlphaSingleGatewayOptions options)
@@ -222,19 +233,28 @@ public sealed class AlphaSingleGatewayRuntime
                 writer.WriteUnsigned(3); writer.WriteBytes(configDigest);
             });
 
-    private static WorldStateV1 BuildEmptyConfirmedState(
+    internal static WorldStateV1 BuildConfirmedState(
         AlphaSingleGatewayOptions options,
-        CoreProtocolPersistenceHeadV1 head)
+        CoreProtocolPersistenceHeadV1 head,
+        ParticipationBindingViewV1 binding)
     {
-        var partitions = StandardDomainPartitionRegistry.Entries.Select(entry => new PartitionStateRefV1(
-            new PartitionStateHeaderV1(
+        AlphaParticipationBindingStateV1.Validate(binding, requireActive: false);
+        var revision = head.FinalizedStep == ulong.MaxValue ? ulong.MaxValue : head.FinalizedStep + 1;
+        var partitions = StandardDomainPartitionRegistry.Entries.Select(entry =>
+        {
+            var isParticipation = string.Equals(entry.PartitionId.Value, "participation", StringComparison.Ordinal);
+            var itemCount = isParticipation && (int)binding.Status == AlphaParticipationBindingStateV1.ActiveStatus ? 1UL : 0UL;
+            var digest = isParticipation
+                ? AlphaParticipationBindingStateV1.ComputeStateDigest(binding, head.FinalizedStep)
+                : SHA256.HashData(Encoding.ASCII.GetBytes($"alpha-empty:{entry.PartitionId.Value}:{head.FinalizedStep}"));
+            return new PartitionStateRefV1(new PartitionStateHeaderV1(
                 entry,
-                revision: 1,
-                basisStep: head.FinalizedStep,
-                detailLevel: DetailLevelV1.D0Entity,
-                itemCount: 0,
-                canonicalDigest: SHA256.HashData(Encoding.ASCII.GetBytes(
-                    $"alpha-empty:{entry.PartitionId.Value}:{head.FinalizedStep}")))));
+                revision,
+                head.FinalizedStep,
+                DetailLevelV1.D0Entity,
+                itemCount,
+                digest));
+        });
         var header = new WorldStateHeaderV1(
             options.WorldId,
             head.FinalizedStep,
@@ -272,69 +292,397 @@ internal sealed class AlphaLoopbackGatewayIdentityResolverV1(OpaqueId128 gateway
     }
 }
 
-internal sealed class AlphaWorldAuthorityV1(
-    WorldStateV1 state,
-    OperationSchedulingPolicyV1 schedulingPolicy) : ICoreGatewayWorldAuthorityV1
+internal sealed class AlphaWorldAuthorityV1 : ICoreGatewayWorldAuthorityV1
 {
+    private readonly object _gate = new();
+    private WorldStateV1 _state;
+    private ParticipationBindingViewV1 _binding;
+    private readonly OperationSchedulingPolicyV1 _schedulingPolicy;
+
+    public AlphaWorldAuthorityV1(
+        WorldStateV1 state,
+        ParticipationBindingViewV1 binding,
+        OperationSchedulingPolicyV1 schedulingPolicy)
+    {
+        _state = state ?? throw new ArgumentNullException(nameof(state));
+        _binding = binding?.Clone() ?? throw new ArgumentNullException(nameof(binding));
+        _schedulingPolicy = schedulingPolicy ?? throw new ArgumentNullException(nameof(schedulingPolicy));
+    }
+
     public Task<WorldStateV1> GetCurrentFinalizedStateAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(state);
+        lock (_gate) return Task.FromResult(_state);
     }
 
-    public OperationSchedulingPolicyV1 GetCurrentSchedulingPolicy() => schedulingPolicy;
+    public ParticipationBindingViewV1 GetBinding()
+    {
+        lock (_gate) return _binding.Clone();
+    }
+
+    public void ApplyDurableState(WorldStateV1 state, ParticipationBindingViewV1 binding)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(binding);
+        AlphaParticipationBindingStateV1.Validate(binding, requireActive: false);
+        lock (_gate)
+        {
+            if (state.Header.Step < _state.Header.Step)
+                throw new InvalidDataException("alpha.world-state-regression");
+            _state = state;
+            _binding = binding.Clone();
+        }
+    }
+
+    public OperationSchedulingPolicyV1 GetCurrentSchedulingPolicy() => _schedulingPolicy;
 }
 
-internal sealed class AlphaDurableOperationIngressV1(
-    SqlitePersistenceStore store,
-    OpaqueId128 worldId) : ICoreGatewayDurableOperationIngressV1
+internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperationIngressV1
 {
+    private readonly SqlitePersistenceStore _store;
+    private readonly AlphaSingleGatewayOptions _options;
+    private readonly EffectiveCoreConfig _config;
+    private readonly AlphaWorldAuthorityV1 _worldAuthority;
+    private readonly DurableOperationCoordinatorV1 _coordinator;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public AlphaDurableOperationIngressV1(
+        SqlitePersistenceStore store,
+        AlphaSingleGatewayOptions options,
+        EffectiveCoreConfig config,
+        AlphaWorldAuthorityV1 worldAuthority)
+    {
+        _store = store ?? throw new ArgumentNullException(nameof(store));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+        _worldAuthority = worldAuthority ?? throw new ArgumentNullException(nameof(worldAuthority));
+        var policy = OperationSchedulingPolicyV1.FromConfig(config);
+        _coordinator = new DurableOperationCoordinatorV1(
+            store,
+            new OperationSchedulingPolicyHistoryV1([
+                new OperationSchedulingPolicyHistoryEntryV1(policy, 0, null)
+            ]));
+    }
+
     public async Task<OperationDurableObservationV1> SubmitDurablyAsync(
         StandardOperationV1 operation,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);
+        ParticipationBindingIdentityV1.ValidateStandardOperation(operation);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await SubmitBindingLockedAsync(operation, cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<OperationDurableObservationV1> SubmitBindingLockedAsync(
+        StandardOperationV1 operation,
+        CancellationToken cancellationToken)
+    {
         var operationId = OpaqueId128.FromBytes(operation.OperationId.Span);
         var digest = operation.ImmutablePayloadDigest.ToByteArray();
-        var anchor = await store.ReadHistoryAnchorAsync(cancellationToken);
-        if (anchor.Sequence == ulong.MaxValue) throw new OverflowException("HistorySequence cannot wrap.");
+        var existing = await _coordinator.ObserveAsync(operationId, digest, cancellationToken);
+        if (existing?.Lifecycle == OperationLifecycleStateV1.TerminalDurable) return existing;
 
-        var history = HistoryRecordMaterial.Create(
-            worldId,
-            anchor.Sequence + 1,
-            anchor.Digest,
-            "operation.accepted.v1",
-            "persistence.operation-accepted",
-            1,
-            0,
-            operation.ToByteArray(),
+        var head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
+        if (operation.Admission.AdmissionBasisStep > head.FinalizedStep)
+            throw new InvalidDataException("request.invalid");
+        if (operation.Admission.SchedulingPolicyGeneration != _config.Generation)
+            throw new InvalidDataException("operation.scheduling-policy-generation-mismatch");
+
+        if (existing is null)
+        {
+            var acceptedHistory = await NextHistoryAsync(
+                "operation.accepted.v1",
+                "persistence.operation-accepted",
+                operation.ToByteArray(),
+                writer =>
+                {
+                    writer.WriteMapStart(3);
+                    writer.WriteUnsigned(0); writer.WriteBytes(operationId.ToBytes());
+                    writer.WriteUnsigned(1); writer.WriteBytes(digest);
+                    writer.WriteUnsigned(2); writer.WriteAsciiText(operation.OperationKind);
+                },
+                cancellationToken);
+            existing = await _coordinator.AcceptOrConvergeAsync(operationId, digest, acceptedHistory, cancellationToken);
+        }
+
+        var admission = new OperationSchedulingAdmissionV1(
+            operation.Admission.AdmissionBasisStep,
+            operation.Admission.SchedulingPolicyGeneration,
+            operation.Admission.HasRequestedNotBeforeStep ? operation.Admission.RequestedNotBeforeStep : null,
+            operation.Admission.HasRequestedDeadlineStep ? operation.Admission.RequestedDeadlineStep : null);
+        head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
+        var decision = _coordinator.Plan(
+            admission,
+            new OperationSchedulingBarrierV1(head.FinalizedStep, PauseActive: false, PauseBasisStep: null),
+            operation.Candidate?.CandidateStep);
+
+        if (decision.Kind == OperationSchedulingDecisionKindV1.TerminalRejected)
+        {
+            if (existing.Lifecycle != OperationLifecycleStateV1.AcceptedDurable)
+                throw new InvalidDataException("persistence.operation-invalid-lifecycle-for-reject");
+            throw new InvalidDataException(decision.ResultCode);
+        }
+
+        if (existing.Lifecycle == OperationLifecycleStateV1.AcceptedDurable)
+        {
+            var effectiveStep = decision.EffectiveStep ?? throw new InvalidDataException("operation.effective-step-missing");
+            var orderKey = BuildOrderKey(operationId, effectiveStep);
+            var scheduledHistory = await NextHistoryAsync(
+                "operation.scheduled.v1",
+                "persistence.operation-scheduled",
+                operation.ToByteArray(),
+                writer =>
+                {
+                    writer.WriteMapStart(3);
+                    writer.WriteUnsigned(0); writer.WriteBytes(operationId.ToBytes());
+                    writer.WriteUnsigned(1); writer.WriteUnsigned(effectiveStep);
+                    writer.WriteUnsigned(2); writer.WriteBytes(orderKey.ToDatabaseBytes());
+                },
+                cancellationToken);
+            existing = await _coordinator.ScheduleOrConvergeAsync(
+                operationId,
+                digest,
+                decision,
+                orderKey,
+                scheduledHistory,
+                cancellationToken);
+        }
+
+        if (existing.Lifecycle != OperationLifecycleStateV1.ScheduledDurable || existing.EffectiveStep is null)
+            return existing;
+
+        var scheduledStep = existing.EffectiveStep.Value;
+        while (true)
+        {
+            head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
+            if (head.FinalizedStep >= scheduledStep) break;
+            await CommitTransitionAsync(
+                head,
+                terminalOperations: Array.Empty<TerminalOperationCommit>(),
+                binding: _worldAuthority.GetBinding(),
+                cancellationToken);
+        }
+
+        head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
+        if (head.FinalizedStep != scheduledStep)
+            throw new InvalidDataException("persistence.operation-effective-step-passed");
+
+        var binding = CreateActiveBinding(operationId, scheduledStep);
+        await CommitTransitionAsync(
+            head,
+            [new TerminalOperationCommit(
+                operationId,
+                (int)CoreOperationResultStatusV1.Success,
+                "participation.binding.created",
+                binding.ToByteArray())],
+            binding,
+            cancellationToken);
+
+        var terminal = await _coordinator.ObserveAsync(operationId, digest, cancellationToken)
+            ?? throw new InvalidDataException("persistence.operation-state-missing-after-commit");
+        if (terminal.Lifecycle != OperationLifecycleStateV1.TerminalDurable)
+            throw new InvalidDataException("persistence.operation-terminal-state-incomplete");
+        return terminal;
+    }
+
+    private async Task CommitTransitionAsync(
+        CoreProtocolPersistenceHeadV1 head,
+        IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        ParticipationBindingViewV1 binding,
+        CancellationToken cancellationToken)
+    {
+        var transitionHistory = await NextHistoryAsync(
+            "transition.committed.v1",
+            "persistence.transition-committed",
+            terminalOperations.Count == 0 ? Array.Empty<byte>() : terminalOperations.First().OperationId.ToBytes(),
             writer =>
             {
-                writer.WriteMapStart(3);
-                writer.WriteUnsigned(0); writer.WriteBytes(operationId.ToBytes());
-                writer.WriteUnsigned(1); writer.WriteBytes(digest);
-                writer.WriteUnsigned(2); writer.WriteAsciiText(operation.OperationKind);
-            });
-        var accepted = await store.PersistAcceptedOperationAsync(operationId, digest, history, cancellationToken);
-        return new OperationDurableObservationV1(
-            OperationLifecycleStateV1.AcceptedDurable,
-            Duplicate: accepted.Status == DurableAcceptanceStatus.Duplicate,
-            accepted.AcceptedSequence,
-            ScheduledSequence: null,
-            EffectiveStep: null,
-            TerminalSequence: null,
-            TerminalStatus: null,
-            ResultCode: null);
+                writer.WriteMapStart(2);
+                writer.WriteUnsigned(0); writer.WriteUnsigned(head.FinalizedStep);
+                writer.WriteUnsigned(1);
+                writer.WriteArrayStart((ulong)terminalOperations.Count);
+                foreach (var terminal in terminalOperations.OrderBy(static item => item.OperationId))
+                    writer.WriteBytes(terminal.OperationId.ToBytes());
+            },
+            cancellationToken);
+        var resultingStep = checked(head.FinalizedStep + 1);
+        var continuity = HistoryIntegrity.ComputeTransitionContinuityToken(
+            _options.WorldId,
+            resultingStep,
+            head.StateContinuityToken,
+            transitionHistory.RecordDigest);
+        await _store.PersistTransitionCommitAsync(
+            head.FinalizedStep,
+            resultingStep,
+            continuity,
+            head.ConfigGeneration,
+            head.ConfigDigest,
+            transitionHistory,
+            terminalOperations,
+            cancellationToken);
+        var nextHead = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
+        var state = AlphaSingleGatewayRuntime.BuildConfirmedState(_options, nextHead, binding);
+        _worldAuthority.ApplyDurableState(state, binding);
+    }
+
+    private async Task<HistoryRecordMaterial> NextHistoryAsync(
+        string recordType,
+        string schemaId,
+        byte[] payloadBytes,
+        Action<MvDcborWriter> normalized,
+        CancellationToken cancellationToken)
+    {
+        var anchor = await _store.ReadHistoryAnchorAsync(cancellationToken);
+        if (anchor.Sequence == ulong.MaxValue) throw new OverflowException("HistorySequence cannot wrap.");
+        return HistoryRecordMaterial.Create(
+            _options.WorldId,
+            anchor.Sequence + 1,
+            anchor.Digest,
+            recordType,
+            schemaId,
+            1,
+            0,
+            payloadBytes,
+            normalized);
+    }
+
+    private static SameStepOrderKey BuildOrderKey(OpaqueId128 operationId, ulong effectiveStep)
+        => new(
+            phase: 1,
+            domainRank: 50,
+            conflictScopeDigest: HashSuite.DomainHash("mv.alpha.participation-binding-scope.v1", writer =>
+            {
+                writer.WriteArrayStart(1);
+                writer.WriteUnsigned(effectiveStep);
+            }),
+            semanticPriority: 0,
+            intentId: operationId);
+
+    private ParticipationBindingViewV1 CreateActiveBinding(OpaqueId128 operationId, ulong effectiveStep)
+    {
+        var residentId = DerivedIdentity.DeriveEntityId(
+            _options.WorldId,
+            0,
+            new StableToken("resident"),
+            _options.WorldId,
+            new StableToken("alpha-resident"),
+            0);
+        var bindingId = DerivedIdentity.DeriveEntityId(
+            _options.WorldId,
+            effectiveStep,
+            new StableToken("participation"),
+            operationId,
+            new StableToken("diver-binding"),
+            0);
+        return new ParticipationBindingViewV1
+        {
+            Status = (ParticipationBindingStatusV1)AlphaParticipationBindingStateV1.ActiveStatus,
+            BindingId = ByteString.CopyFrom(bindingId.ToBytes()),
+            ResidentId = ByteString.CopyFrom(residentId.ToBytes()),
+            EffectiveFromStep = effectiveStep,
+            AbsencePolicyProfile = "alpha.default",
+        };
     }
 }
 
-internal sealed class AlphaEmptyProjectionSourceV1 : ICoreStateProjectionSourceV1
+internal static class AlphaParticipationBindingStateV1
 {
-    private static readonly byte[] ProjectionSchemaDigest = SHA256.HashData("machiverse.alpha.empty-projection.v1"u8);
+    internal const int NoneStatus = 1;
+    internal const int ActiveStatus = 2;
+
+    internal static ParticipationBindingViewV1 None()
+        => new() { Status = (ParticipationBindingStatusV1)NoneStatus };
+
+    internal static void Validate(ParticipationBindingViewV1 binding, bool requireActive)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        var status = (int)binding.Status;
+        if (status is not (NoneStatus or ActiveStatus))
+            throw new InvalidDataException("alpha.binding-status-invalid");
+        if (requireActive && status != ActiveStatus)
+            throw new InvalidDataException("alpha.binding-not-active");
+        if (status == ActiveStatus)
+        {
+            if (!binding.HasBindingId || binding.BindingId.Length != 16 || binding.BindingId.Span.IndexOfAnyExcept((byte)0) < 0)
+                throw new InvalidDataException("alpha.binding-id-invalid");
+            if (!binding.HasResidentId || binding.ResidentId.Length != 16 || binding.ResidentId.Span.IndexOfAnyExcept((byte)0) < 0)
+                throw new InvalidDataException("alpha.binding-resident-id-invalid");
+            if (!binding.HasEffectiveFromStep)
+                throw new InvalidDataException("alpha.binding-effective-step-missing");
+        }
+    }
+
+    internal static byte[] ComputeStateDigest(ParticipationBindingViewV1 binding, ulong basisStep)
+    {
+        Validate(binding, requireActive: false);
+        return HashSuite.DomainHash("mv.alpha.participation-state.v1", writer =>
+        {
+            writer.WriteMapStart(5);
+            writer.WriteUnsigned(0); writer.WriteUnsigned((ulong)(int)binding.Status);
+            writer.WriteUnsigned(1); WriteOptionalBytes(writer, binding.HasBindingId, binding.BindingId);
+            writer.WriteUnsigned(2); WriteOptionalBytes(writer, binding.HasResidentId, binding.ResidentId);
+            writer.WriteUnsigned(3);
+            writer.WriteArrayStart(binding.HasEffectiveFromStep ? 1UL : 0UL);
+            if (binding.HasEffectiveFromStep) writer.WriteUnsigned(binding.EffectiveFromStep);
+            writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
+        });
+    }
+
+    private static void WriteOptionalBytes(MvDcborWriter writer, bool present, ByteString value)
+    {
+        writer.WriteArrayStart(present ? 1UL : 0UL);
+        if (present) writer.WriteBytes(value.Span);
+    }
+}
+
+internal sealed class AlphaParticipationProjectionSourceV1(AlphaWorldAuthorityV1 authority)
+    : ICoreStateProjectionSourceV1
+{
+    internal const string BindingSchemaId = "protocol.participation-binding-view.v1";
+    private static readonly byte[] ProjectionSchemaDigest = SHA256.HashData("machiverse.alpha.participation-projection.v1"u8);
 
     public CoreProjectionFrameV1 BuildFull(WorldStateV1 state)
-        => new(Array.Empty<ProjectionRecordV1>(), ProjectionSchemaDigest);
+        => new([BuildBindingRecord(state, authority.GetBinding())], ProjectionSchemaDigest);
 
     public CoreProjectionFrameV1 BuildDelta(WorldStateV1 previousState, WorldStateV1 currentState)
-        => new(Array.Empty<ProjectionRecordV1>(), ProjectionSchemaDigest);
+    {
+        var previous = ParticipationDigest(previousState);
+        var current = ParticipationDigest(currentState);
+        return CryptographicOperations.FixedTimeEquals(previous, current)
+            ? new CoreProjectionFrameV1(Array.Empty<ProjectionRecordV1>(), ProjectionSchemaDigest)
+            : new CoreProjectionFrameV1([BuildBindingRecord(currentState, authority.GetBinding())], ProjectionSchemaDigest);
+    }
+
+    private static ProjectionRecordV1 BuildBindingRecord(WorldStateV1 state, ParticipationBindingViewV1 binding)
+    {
+        var recordId = DerivedIdentity.DeriveEntityId(
+            state.Header.WorldId,
+            0,
+            new StableToken("participation"),
+            state.Header.WorldId,
+            new StableToken("binding-projection"),
+            0);
+        return new ProjectionRecordV1
+        {
+            RecordSchemaId = BindingSchemaId,
+            RecordSchemaVersion = new SchemaVersionWireV1 { Major = 1, Minor = 0 },
+            RecordId = ByteString.CopyFrom(recordId.ToBytes()),
+            RecordRevision = state.Header.Step + 1,
+            MutationKind = (ProjectionMutationKindV1)1,
+            Payload = binding.ToByteString(),
+        };
+    }
+
+    private static byte[] ParticipationDigest(WorldStateV1 state)
+        => state.Partitions.Ordered
+            .Single(item => string.Equals(item.Header.Descriptor.PartitionId.Value, "participation", StringComparison.Ordinal))
+            .Header.CanonicalDigest.ToArray();
 }
