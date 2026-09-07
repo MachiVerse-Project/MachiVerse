@@ -584,7 +584,7 @@ internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperat
             0);
         return new ParticipationBindingViewV1
         {
-            Status = (ParticipationBindingStatusV1)AlphaParticipationBindingStateV1.ActiveStatus,
+            Status = (ParticipationBindingWireStatusV1)AlphaParticipationBindingStateV1.ActiveStatus,
             BindingId = ByteString.CopyFrom(bindingId.ToBytes()),
             ResidentId = ByteString.CopyFrom(residentId.ToBytes()),
             EffectiveFromStep = effectiveStep,
@@ -599,7 +599,7 @@ internal static class AlphaParticipationBindingStateV1
     internal const int ActiveStatus = 2;
 
     internal static ParticipationBindingViewV1 None()
-        => new() { Status = (ParticipationBindingStatusV1)NoneStatus };
+        => new() { Status = (ParticipationBindingWireStatusV1)NoneStatus };
 
     internal static void Validate(ParticipationBindingViewV1 binding, bool requireActive)
     {
@@ -682,7 +682,5 @@ internal sealed class AlphaParticipationProjectionSourceV1(AlphaWorldAuthorityV1
     }
 
     private static byte[] ParticipationDigest(WorldStateV1 state)
-        => state.Partitions.Ordered
-            .Single(item => string.Equals(item.Header.Descriptor.PartitionId.Value, "participation", StringComparison.Ordinal))
-            .Header.CanonicalDigest.ToArray();
+        => state.Partitions.Get("participation").Header.CanonicalDigest.ToArray();
 }
