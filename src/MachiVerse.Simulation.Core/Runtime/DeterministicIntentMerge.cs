@@ -88,7 +88,8 @@ public sealed class MutationIntentCandidateV1
         ConflictScopeV1 targetScope,
         int semanticPriority,
         ConflictResolutionModeV1 resolutionMode,
-        ReadOnlySpan<byte> semanticPayloadDigest)
+        ReadOnlySpan<byte> semanticPayloadDigest,
+        StableToken? requiredTransactionKind = null)
     {
         if (intentId.IsZero) throw new ArgumentException("IntentId ZERO is invalid.", nameof(intentId));
         if (phase > 5) throw new ArgumentOutOfRangeException(nameof(phase), "Standard OrderPhase is 0..5.");
@@ -96,6 +97,9 @@ public sealed class MutationIntentCandidateV1
         ArgumentNullException.ThrowIfNull(targetScope);
         if (semanticPayloadDigest.Length != 32)
             throw new ArgumentException("Intent semantic payload digest must be 32 bytes.", nameof(semanticPayloadDigest));
+        if (requiredTransactionKind is { } requiredKind &&
+            !CrossDomainTransactionKindRegistryV1.Contains(requiredKind))
+            throw new InvalidDataException("intent.required-transaction-kind-unregistered");
 
         var targetPartition = StandardDomainPartitionRegistry.Get(targetPartitionId.Value);
         if (targetPartition.OwnerDomain != targetDomain)
@@ -123,6 +127,7 @@ public sealed class MutationIntentCandidateV1
         SemanticPriority = semanticPriority;
         ResolutionMode = resolutionMode;
         SemanticPayloadDigest = semanticPayloadDigest.ToArray();
+        RequiredTransactionKind = requiredTransactionKind;
         OrderKey = new SameStepOrderKey(phase, domainRank, targetScope.Digest, semanticPriority, intentId);
     }
 
@@ -137,6 +142,7 @@ public sealed class MutationIntentCandidateV1
     public int SemanticPriority { get; }
     public ConflictResolutionModeV1 ResolutionMode { get; }
     public byte[] SemanticPayloadDigest { get; }
+    public StableToken? RequiredTransactionKind { get; }
     public SameStepOrderKey OrderKey { get; }
 }
 
