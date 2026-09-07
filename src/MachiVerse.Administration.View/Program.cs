@@ -33,5 +33,6 @@ builder.Services.AddSingleton<SimulationAdminOperationController>();
 
 builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<AdminGatewayProtocolClient>();
+builder.Services.AddScoped<AdminGatewaySession>();
 
 await builder.Build().RunAsync();
