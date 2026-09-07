@@ -92,7 +92,9 @@ internal static class Sim11GovernanceLawSmoke
                     lessSpecific.RuleId,
                     lowerPriority.RuleId
                 ]) &&
-                forward == reverse,
+                reverse.Status == forward.Status &&
+                reverse.Effect == forward.Effect &&
+                reverse.ConsideredRuleIds.SequenceEqual(forward.ConsideredRuleIds),
             "domain.law.resolution-order: priority/specificity/rule-id canonical resolution mismatch.");
     }
 
