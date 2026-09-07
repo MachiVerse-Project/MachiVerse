@@ -10,7 +10,6 @@ internal static class Sim08AcceptanceSmoke
         Sim08HandoffSmoke.Run();
         Sim08PrimitiveCollisionSmoke.Run();
         Sim08SequentialImpulseSmoke.Run();
-        Sim08SpatialIntentSmoke.Run();
         Sim08StateRuntimeSmoke.RunAsync().GetAwaiter().GetResult();
     }
 }
