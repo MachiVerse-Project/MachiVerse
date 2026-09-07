@@ -4,10 +4,36 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Sim04PayloadValidationSmoke
 {
-    private sealed class Resolver(IEnumerable<PartitionRecordRefV1> existing) : IDomainRecordReferenceResolverV1
+    private sealed class Resolver(IEnumerable<PartitionRecordRefV1> existing) : IDomainRecordSchemaResolverV1
     {
         private readonly HashSet<PartitionRecordRefV1> _existing = existing.ToHashSet();
+
         public bool Exists(PartitionRecordRefV1 reference) => _existing.Contains(reference);
+
+        public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
+        {
+            if (!_existing.Contains(reference))
+            {
+                schema = default;
+                return false;
+            }
+
+            schema = StandardDomainPartitionRegistry.Get(reference.PartitionId.Value).RecordSchema;
+            return true;
+        }
+    }
+
+    private sealed class WrongSchemaResolver(IEnumerable<PartitionRecordRefV1> existing) : IDomainRecordSchemaResolverV1
+    {
+        private readonly HashSet<PartitionRecordRefV1> _existing = existing.ToHashSet();
+
+        public bool Exists(PartitionRecordRefV1 reference) => _existing.Contains(reference);
+
+        public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
+        {
+            schema = new SchemaRefV1("domain.spatial.world_frame.record");
+            return _existing.Contains(reference);
+        }
     }
 
     [ModuleInitializer]
@@ -28,7 +54,7 @@ internal static class Sim04PayloadValidationSmoke
             "resident.identity_lifecycle",
             OpaqueId128.Parse("00000000000000000000000000000103"));
         var resolver = new Resolver([resident, parentA, parentB]);
-        var validator = new StandardDomainPayloadValidatorV1();
+        var validator = new StandardDomainPayloadCodecValidatorV1();
 
         var physiology = new Dictionary<string, object?>
         {
@@ -60,6 +86,10 @@ internal static class Sim04PayloadValidationSmoke
             () => validator.Validate("resident.physiology", physiology, new Resolver(Array.Empty<PartitionRecordRefV1>())),
             "domain.payload.reference-validation:resident.physiology:resident_ref");
 
+        RequireReject(
+            () => validator.Validate("resident.physiology", physiology, new WrongSchemaResolver([resident])),
+            "domain.payload.reference-schema:resident.physiology:resident_ref");
+
         var lineage = new Dictionary<string, object?>
         {
             ["resident_ref"] = resident,
@@ -82,6 +112,40 @@ internal static class Sim04PayloadValidationSmoke
         RequireReject(
             () => validator.Validate("resident.physiology", unknownField, resolver),
             "domain.payload.unknown-field:resident.physiology:presentation_only");
+
+        var detailRequirement = new Dictionary<string, object?>
+        {
+            ["resident_ref"] = resident,
+            ["minimum_detail"] = (byte)4,
+            ["scope_ref"] = parentA,
+            ["reason"] = "binding",
+            ["effective_from"] = 10UL,
+        };
+        RequireReject(
+            () => validator.Validate("participation.detail_requirement", detailRequirement, resolver),
+            "domain.payload.scalar-range:participation.detail_requirement:minimum_detail");
+
+        var contaminant = new Dictionary<string, object?>
+        {
+            ["spatial_scope"] = parentA,
+            ["contaminant_kind"] = "smoke",
+            ["stock_mass_g"] = 1L,
+            ["concentration_ppb"] = 1_000_000_001u,
+            ["source_refs"] = Array.Empty<PartitionRecordRefV1>(),
+            ["sink_refs"] = Array.Empty<PartitionRecordRefV1>(),
+        };
+        RequireReject(
+            () => validator.Validate("environment.contaminant", contaminant, resolver),
+            "domain.payload.scalar-range:environment.contaminant:concentration_ppb");
+
+        var negativeMass = new Dictionary<string, object?>(contaminant, StringComparer.Ordinal)
+        {
+            ["concentration_ppb"] = 1u,
+            ["stock_mass_g"] = -1L,
+        };
+        RequireReject(
+            () => validator.Validate("environment.contaminant", negativeMass, resolver),
+            "domain.payload.scalar-range:environment.contaminant:stock_mass_g");
     }
 
     private static void RequireReject(Action action, string expectedMessage)
