@@ -12,20 +12,25 @@ internal static class Sim10RuntimeGateSmoke
         var scheduler = new OperationSchedulerStateV1(state.Header.Step, null);
         var frozen = StepInputFreezerV1.Freeze(state, scheduler);
         var plan = StandardDomainExecutionPlanV1.Create();
+        var societyPartitionIds = StandardDomainPartitionRegistry.Entries
+            .Where(static entry => entry.OwnerDomain.Value == "society_economy")
+            .Select(static entry => entry.PartitionId.Value)
+            .OrderBy(static partitionId => partitionId, StringComparer.Ordinal)
+            .ToArray();
+        Require(societyPartitionIds.Length == 16,
+            "SIM-10 component gate: standard Society/Economy partition count must remain 16.");
+
         var runtimes = plan.Entries.Select(entry => entry.DomainToken.Value switch
         {
             "society_economy" => (IDomainRuntimeV1)new SocietyEconomyDomainRuntimeV1(
                 static (_, _) => ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>([]),
-                (context, _) => ValueTask.FromResult<IReadOnlyList<PartitionCandidateV1>>([
-                    SocietyEconomyPartitionCandidateFactoryV1.Create(
-                        context.State,
-                        "society.market_transaction",
-                        SHA256.HashData("sim10-market"u8)),
-                    SocietyEconomyPartitionCandidateFactoryV1.Create(
-                        context.State,
-                        "society.finance_account",
-                        SHA256.HashData("sim10-finance"u8))
-                ])),
+                (context, _) => ValueTask.FromResult<IReadOnlyList<PartitionCandidateV1>>(
+                    societyPartitionIds.Select(partitionId =>
+                        SocietyEconomyPartitionCandidateFactoryV1.Create(
+                            context.State,
+                            partitionId,
+                            SHA256.HashData(System.Text.Encoding.ASCII.GetBytes("sim10:" + partitionId))))
+                    .ToArray())),
             _ => new NoOpRuntime(entry.DomainToken),
         }).ToArray();
 
@@ -41,11 +46,12 @@ internal static class Sim10RuntimeGateSmoke
             var society = outputs.Single(static output => output.DomainToken.Value == "society_economy");
             Require(society.Intents.Count == 0,
                 "SIM-10 component gate: Society/Economy fixture must not mutate foreign owner state directly.");
-            Require(society.LocalPartitionCandidates.Count == 2 &&
+            Require(society.LocalPartitionCandidates.Count == societyPartitionIds.Length &&
                     society.LocalPartitionCandidates.All(static candidate => candidate.OwnerDomain.Value == "society_economy") &&
-                    society.LocalPartitionCandidates.Any(static candidate => candidate.PartitionId.Value == "society.market_transaction") &&
-                    society.LocalPartitionCandidates.Any(static candidate => candidate.PartitionId.Value == "society.finance_account"),
-                "SIM-10 component gate: Society/Economy owner-local partition candidate mismatch.");
+                    society.LocalPartitionCandidates.Select(static candidate => candidate.PartitionId.Value)
+                        .OrderBy(static partitionId => partitionId, StringComparer.Ordinal)
+                        .SequenceEqual(societyPartitionIds),
+                "SIM-10 component gate: all 16 Society/Economy partitions must use owner-local candidates.");
 
             var snapshot = outputs.Select(output =>
                 output.DomainToken.Value + ":" +
@@ -64,6 +70,12 @@ internal static class Sim10RuntimeGateSmoke
                 state,
                 "physical.presence",
                 SHA256.HashData("sim10-foreign"u8)),
+            "domain.partition-candidate-foreign-owner");
+        RequireReject(
+            () => SocietyEconomyPartitionCandidateFactoryV1.Create(
+                state,
+                "resident.knowledge_belief",
+                SHA256.HashData("sim10-resident-foreign"u8)),
             "domain.partition-candidate-foreign-owner");
     }
 
