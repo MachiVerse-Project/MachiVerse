@@ -6,6 +6,9 @@ namespace MachiVerse.Gateway.Configuration;
 
 public static class GatewayConfigLoader
 {
+    private const int DefaultAuditRetentionDays = 400;
+    private const int DefaultAuditQueryMaxPageSize = 1000;
+
     public static GatewayConfig LoadFile(string path) => LoadText(File.ReadAllText(path));
 
     public static GatewayConfig LoadText(string text)
@@ -23,6 +26,7 @@ public static class GatewayConfigLoader
         var publication = Table(model, "publication");
         var auth = Table(model, "auth");
         var oidc = Table(auth, "oidc");
+        var audit = OptionalTable(model, "audit");
 
         var connect = PositiveInt(network, "connect-timeout-ms");
         var reconnectInitial = PositiveInt(network, "reconnect-initial-ms");
@@ -37,6 +41,18 @@ public static class GatewayConfigLoader
         var absolute = IntInRange(auth, "session-absolute-lifetime-seconds", 900, 604800);
         var loginLifetime = IntInRange(auth, "login-transaction-lifetime-seconds", 60, 1800);
         var maxSessions = IntInRange(auth, "max-active-sessions-per-account", 1, 1024);
+        var auditRetentionDays = OptionalIntInRange(
+            audit,
+            "retention-days",
+            30,
+            3650,
+            DefaultAuditRetentionDays);
+        var auditQueryMaxPageSize = OptionalIntInRange(
+            audit,
+            "query-max-page-size",
+            100,
+            10000,
+            DefaultAuditQueryMaxPageSize);
 
         if (reconnectMax < reconnectInitial) throw new InvalidDataException("network.reconnect-max-ms must be >= reconnect-initial-ms.");
         if ((long)heartbeatTimeout < (long)heartbeatInterval * 3) throw new InvalidDataException("peer.heartbeat-timeout-ms must be >= 3 * heartbeat-interval-ms.");
@@ -68,6 +84,9 @@ public static class GatewayConfigLoader
             resultCapacity,
             maxClientBacklog,
             publicationBufferMs);
+        var auditConfig = new GatewayAuditConfig(
+            auditRetentionDays,
+            auditQueryMaxPageSize);
 
         return new GatewayConfig(
             connect,
@@ -79,6 +98,7 @@ public static class GatewayConfigLoader
             absolute,
             authConfig,
             outboundQueues,
+            auditConfig,
             model);
     }
 
@@ -86,6 +106,14 @@ public static class GatewayConfigLoader
         => parent.TryGetValue(key, out var value) && value is TomlTable table
             ? table
             : throw new InvalidDataException($"Missing TOML table [{key}].");
+
+    private static TomlTable? OptionalTable(TomlTable parent, string key)
+    {
+        if (!parent.TryGetValue(key, out var value)) return null;
+        return value is TomlTable table
+            ? table
+            : throw new InvalidDataException($"Config field {key} must be a TOML table.");
+    }
 
     private static void RequireString(TomlTable table, string key, string expected)
     {
@@ -104,6 +132,14 @@ public static class GatewayConfigLoader
     {
         if (!table.TryGetValue(key, out var value) || value is not long number || number < minimum || number > maximum)
             throw new InvalidDataException($"Config field {key} must be in range {minimum}..{maximum}.");
+        return checked((int)number);
+    }
+
+    private static int OptionalIntInRange(TomlTable? table, string key, int minimum, int maximum, int defaultValue)
+    {
+        if (table is null || !table.TryGetValue(key, out var value)) return defaultValue;
+        if (value is not long number || number < minimum || number > maximum)
+            throw new InvalidDataException($"Config field audit.{key} must be in range {minimum}..{maximum}.");
         return checked((int)number);
     }
 
