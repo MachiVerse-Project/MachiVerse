@@ -27,6 +27,19 @@ internal static class Sim13CrossDomainTransactionSmoke
             Require(!registration.RequiredDomains.Intersect(registration.OptionalDomains).Any(),
                 $"{registration.TransactionKind.Value}: required/optional participant sets must not overlap.");
         }
+
+        var demolition = CrossDomainTransactionKindRegistryV1.GetRegistration(
+            CrossDomainTransactionKindRegistryV1.Get("transaction.demolition"));
+        Require(
+            demolition.RequiredDomains.SequenceEqual([
+                new StableToken("physical_built"),
+                new StableToken("society_economy")
+            ]) &&
+            demolition.OptionalDomains.SequenceEqual([
+                new StableToken("spatial"),
+                new StableToken("governance_security")
+            ]),
+            "transaction.demolition participant matrix must match the Phase 4 catalog.");
     }
 
     private static void VerifyTransactionIdentityPermutation()
