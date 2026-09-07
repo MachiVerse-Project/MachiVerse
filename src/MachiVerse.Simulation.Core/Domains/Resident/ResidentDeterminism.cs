@@ -353,13 +353,7 @@ public static class ResidentGoapPlannerV1
             checked((uint)expansionBudget));
 
     private static bool IsBetter(BestEntryV1 candidate, BestEntryV1 existing)
-    {
-        var compare = candidate.GCost.CompareTo(existing.GCost);
-        if (compare != 0) return compare < 0;
-        compare = string.CompareOrdinal(candidate.ArrivalAction, existing.ArrivalAction);
-        if (compare != 0) return compare < 0;
-        return string.CompareOrdinal(candidate.ParentStateDigest, existing.ParentStateDigest) < 0;
-    }
+        => candidate.GCost < existing.GCost;
 
     private static ResidentGoapResultV1 BuildFound(
         string startDigest,
