@@ -76,6 +76,8 @@ internal static class Sim13StepCandidateTransactionSmoke
         }
         Require(basisMismatchRejected,
             "SIM-13 StepCandidate must reject transaction candidates from a different basis Step.");
+
+        Sim13DurableAtomicitySmoke.Run();
     }
 
     private static CrossDomainTransactionCandidateV1 BirthTransaction(
