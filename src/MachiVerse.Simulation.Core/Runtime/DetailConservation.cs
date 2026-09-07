@@ -110,6 +110,25 @@ public sealed class DetailConservationSnapshotV1
     }
 }
 
+public sealed class DetailConservationValidationV1
+{
+    internal DetailConservationValidationV1(
+        byte[] transitionSetDigest,
+        IReadOnlyList<InvariantResultV1> results,
+        InvariantBarrierDecisionV1 decision)
+    {
+        if (transitionSetDigest.Length != 32)
+            throw new ArgumentException("Transition set digest must be 32 bytes.", nameof(transitionSetDigest));
+        TransitionSetDigest = transitionSetDigest.ToArray();
+        Results = results;
+        Decision = decision;
+    }
+
+    internal byte[] TransitionSetDigest { get; }
+    public IReadOnlyList<InvariantResultV1> Results { get; }
+    public InvariantBarrierDecisionV1 Decision { get; }
+}
+
 public static class DetailConservationInvariantV1
 {
     public static readonly StableToken IdentityInvariant = new("detail.identity-preservation");
@@ -162,6 +181,44 @@ public static class DetailConservationInvariantV1
         DetailConservationSnapshotV1 before,
         DetailConservationSnapshotV1 after)
         => InvariantBarrierV1.Evaluate(Validate(before, after));
+
+    public static DetailConservationValidationV1 ValidateForTransitions(
+        IEnumerable<DetailTransitionCandidateV1> selectedTransitions,
+        DetailConservationSnapshotV1 before,
+        DetailConservationSnapshotV1 after)
+    {
+        ArgumentNullException.ThrowIfNull(selectedTransitions);
+        var ordered = DetailTransitionCanonicalOrderV1.Order(selectedTransitions).ToArray();
+        var results = Validate(before, after);
+        return new DetailConservationValidationV1(
+            ComputeTransitionSetDigest(ordered),
+            results,
+            InvariantBarrierV1.Evaluate(results));
+    }
+
+    internal static byte[] ComputeTransitionSetDigest(IEnumerable<DetailTransitionCandidateV1> selectedTransitions)
+    {
+        ArgumentNullException.ThrowIfNull(selectedTransitions);
+        var ordered = DetailTransitionCanonicalOrderV1.Order(selectedTransitions).ToArray();
+        return HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
+        {
+            writer.WriteArrayStart((ulong)ordered.Length);
+            foreach (var candidate in ordered)
+            {
+                writer.WriteMapStart(10);
+                writer.WriteUnsigned(0); writer.WriteBytes(candidate.DetailRegionId.ToBytes());
+                writer.WriteUnsigned(1); writer.WriteAsciiText(candidate.DomainToken.Value);
+                writer.WriteUnsigned(2); writer.WriteUnsigned((uint)candidate.CurrentLevel);
+                writer.WriteUnsigned(3); writer.WriteUnsigned((uint)candidate.TargetLevel);
+                writer.WriteUnsigned(4); writer.WriteUnsigned(candidate.RequiredEffectiveStep);
+                writer.WriteUnsigned(5); writer.WriteInt64(candidate.SemanticPriority);
+                writer.WriteUnsigned(6); writer.WriteUnsigned((uint)candidate.TriggerSource);
+                writer.WriteUnsigned(7); writer.WriteBytes(candidate.TriggerId.ToBytes());
+                writer.WriteUnsigned(8); writer.WriteUnsigned(candidate.TriggerObservedStep);
+                writer.WriteUnsigned(9); writer.WriteUnsigned(candidate.EstimatedRecordCount);
+            }
+        });
+    }
 
     private static InvariantResultV1 Result(
         StableToken invariantId,
