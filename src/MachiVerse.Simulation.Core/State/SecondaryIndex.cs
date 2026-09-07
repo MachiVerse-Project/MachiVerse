@@ -55,15 +55,17 @@ public sealed class CanonicalIndexKeyV1 : IComparable<CanonicalIndexKeyV1>, IEqu
     }
 }
 
-public readonly record struct PartitionRecordRefV1(StableToken PartitionId, OpaqueId128 RecordId)
-    : IComparable<PartitionRecordRefV1>
+public readonly record struct PartitionRecordRefV1 : IComparable<PartitionRecordRefV1>
 {
-    public PartitionRecordRefV1(StableToken partitionId, OpaqueId128 recordId) : this()
+    public PartitionRecordRefV1(StableToken partitionId, OpaqueId128 recordId)
     {
         if (recordId.IsZero) throw new ArgumentException("PartitionRecordRef RecordId ZERO is invalid.", nameof(recordId));
         PartitionId = partitionId;
         RecordId = recordId;
     }
+
+    public StableToken PartitionId { get; }
+    public OpaqueId128 RecordId { get; }
 
     public int CompareTo(PartitionRecordRefV1 other)
     {
