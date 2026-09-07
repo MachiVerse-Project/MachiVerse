@@ -115,22 +115,38 @@ jobs:
             --dump-dom http://127.0.0.1:5560/ >"$RUNNER_TEMP/admin-view-dom.html" 2>"$RUNNER_TEMP/admin-view-browser.log" || {
               cat "$RUNNER_TEMP/admin-view-browser.log"
               cat "$admin_log"
+              cat "$gateway_log"
               exit 1
             }
 
           cat "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dd>Ready</dd>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Admin session</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dd>Active</dd>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Health projection</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dd>Loaded</dd>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Config projection</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Config generation</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dd>1</dd>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Health targets</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Config targets</dt>' "$RUNNER_TEMP/admin-view-dom.html"
+          verify() {
+            if ! grep -q "$1" "$RUNNER_TEMP/admin-view-dom.html"; then
+              echo "Missing expected Admin DOM marker: $1"
+              echo "--- Gateway log ---"
+              cat "$gateway_log"
+              echo "--- Administration View log ---"
+              cat "$admin_log"
+              echo "--- Browser log ---"
+              cat "$RUNNER_TEMP/admin-view-browser.log"
+              exit 1
+            fi
+          }
+
+          verify '<dd>Ready</dd>'
+          verify '<dt>Admin session</dt>'
+          verify '<dd>Active</dd>'
+          verify '<dt>Health projection</dt>'
+          verify '<dd>Loaded</dd>'
+          verify '<dt>Config projection</dt>'
+          verify '<dt>Config generation</dt>'
+          verify '<dd>1</dd>'
+          verify '<dt>Health targets</dt>'
+          verify '<dt>Config targets</dt>'
           if grep -q '<dt>Gateway error</dt>' "$RUNNER_TEMP/admin-view-dom.html"; then
             echo "Administration View surfaced a Gateway error."
             cat "$RUNNER_TEMP/admin-view-dom.html"
+            cat "$gateway_log"
+            cat "$admin_log"
             exit 1
           fi
