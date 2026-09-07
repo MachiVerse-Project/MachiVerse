@@ -27,11 +27,20 @@ public static class GeneralViewConfigLoader
         var maxSoftDuration = NonNegativeInt(reconcile, "max-soft-duration-ms");
         var reconnectInitial = PositiveInt(network, "reconnect-initial-ms");
         var reconnectMax = PositiveInt(network, "reconnect-max-ms");
+        var gatewayEndpoint = AbsoluteWebSocketUri(network, "gateway-endpoint");
+        var worldIdHex = CanonicalId128Hex(network, "world-id");
+        var allowInsecureLoopbackAlpha = Bool(network, "allow-insecure-loopback-alpha");
 
         if (softDuration > maxSoftDuration)
             throw new InvalidDataException("reconcile.soft-duration-ms must be <= max-soft-duration-ms.");
         if (reconnectMax < reconnectInitial)
             throw new InvalidDataException("network.reconnect-max-ms must be >= reconnect-initial-ms.");
+        if (string.Equals(gatewayEndpoint.Scheme, "ws", StringComparison.OrdinalIgnoreCase) &&
+            (!allowInsecureLoopbackAlpha || !gatewayEndpoint.IsLoopback))
+        {
+            throw new InvalidDataException(
+                "network.gateway-endpoint may use ws:// only for an explicitly enabled loopback Alpha endpoint.");
+        }
 
         return new GeneralViewConfig(
             targetFps,
@@ -41,7 +50,10 @@ public static class GeneralViewConfigLoader
             softDuration,
             maxSoftDuration,
             reconnectInitial,
-            reconnectMax);
+            reconnectMax,
+            gatewayEndpoint,
+            worldIdHex,
+            allowInsecureLoopbackAlpha);
     }
 
     private static TomlTable Table(TomlTable parent, string key)
@@ -53,6 +65,38 @@ public static class GeneralViewConfigLoader
     {
         if (!table.TryGetValue(key, out var value) || !string.Equals(value as string, expected, StringComparison.Ordinal))
             throw new InvalidDataException($"Invalid config meta field: {key}.");
+    }
+
+    private static string String(TomlTable table, string key)
+        => table.TryGetValue(key, out var value) && value is string text && !string.IsNullOrWhiteSpace(text)
+            ? text
+            : throw new InvalidDataException($"Config field {key} must be a non-empty string.");
+
+    private static Uri AbsoluteWebSocketUri(TomlTable table, string key)
+    {
+        var text = String(table, key);
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("ws" or "wss"))
+            throw new InvalidDataException($"Config field {key} must be an absolute ws:// or wss:// URI.");
+        return uri;
+    }
+
+    private static string CanonicalId128Hex(TomlTable table, string key)
+    {
+        var text = String(table, key);
+        if (text.Length != 32 || text.Any(static c => c is >= 'A' and <= 'F'))
+            throw new InvalidDataException($"Config field {key} must be 32 lowercase hexadecimal digits.");
+        try
+        {
+            var bytes = Convert.FromHexString(text);
+            if (bytes.AsSpan().IndexOfAnyExcept((byte)0) < 0)
+                throw new InvalidDataException($"Config field {key} cannot be ZERO.");
+            return text;
+        }
+        catch (FormatException ex)
+        {
+            throw new InvalidDataException($"Config field {key} is not canonical hexadecimal.", ex);
+        }
     }
 
     private static int PositiveInt(TomlTable table, string key)
