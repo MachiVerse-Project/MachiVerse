@@ -280,5 +280,6 @@ await Sim08StateRuntimeSmoke.RunAsync();
 Sim09ResidentCoreSmoke.Run();
 await Sim09RuntimeGateSmoke.RunAsync();
 Sim10MarketLedgerSmoke.Run();
+await Sim10RuntimeGateSmoke.RunAsync();
 
-Console.WriteLine("SIM-01..SIM-10 component smoke tests passed through Society/Economy deterministic primitives.");
+Console.WriteLine("SIM-01..SIM-10 component smoke tests passed, including Society/Economy deterministic runtime gate.");
