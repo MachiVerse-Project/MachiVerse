@@ -1,3 +1,5 @@
+using MachiVerse.Simulation.Core.Determinism;
+
 namespace MachiVerse.Simulation.Core.Runtime;
 
 public static class CrossDomainTransactionInvariantRegistryV1
