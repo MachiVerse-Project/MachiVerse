@@ -17,12 +17,14 @@ namespace MachiVerse.Gateway.Protocol;
 public sealed class AlphaAdminBridge(
     AlphaCoreLinkOptions coreOptions,
     AlphaCoreLinkState coreLinkState,
-    GatewayConfig gatewayConfig)
+    GatewayConfig gatewayConfig,
+    ILogger<AlphaAdminBridge> logger)
 {
     private const string ProtocolId = "mv.gateway-admin-view";
     private readonly AlphaCoreLinkOptions _coreOptions = coreOptions ?? throw new ArgumentNullException(nameof(coreOptions));
     private readonly AlphaCoreLinkState _coreLinkState = coreLinkState ?? throw new ArgumentNullException(nameof(coreLinkState));
     private readonly GatewayConfig _gatewayConfig = gatewayConfig ?? throw new ArgumentNullException(nameof(gatewayConfig));
+    private readonly ILogger<AlphaAdminBridge> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
     public async Task HandleAsync(HttpContext context)
     {
@@ -65,6 +67,7 @@ public sealed class AlphaAdminBridge(
                 "protocol.accept",
                 "protocol.accept.v1",
                 accept), context.RequestAborted);
+            _logger.LogInformation("Alpha Admin bridge negotiated protocol 1.0.");
 
             var loginEnvelope = await ReceiveNormalAsync(socket, context.RequestAborted, "auth.login");
             var login = AuthLoginBeginV1.Parser.ParseFrom(loginEnvelope.Payload);
@@ -99,10 +102,12 @@ public sealed class AlphaAdminBridge(
                 "auth.session.changed",
                 "protocol.auth-session-state.v1",
                 sessionState), context.RequestAborted);
+            _logger.LogInformation("Alpha Admin bridge activated read-only ADMIN_VIEW session.");
 
             while (socket.State == WebSocketState.Open && !context.RequestAborted.IsCancellationRequested)
             {
                 var request = await ReceiveNormalAsync(socket, context.RequestAborted);
+                _logger.LogInformation("Alpha Admin bridge received {MessageType}.", request.MessageType);
                 switch (request.MessageType)
                 {
                     case "component.health.query":
@@ -119,11 +124,13 @@ public sealed class AlphaAdminBridge(
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
         }
-        catch (WebSocketException)
+        catch (WebSocketException ex)
         {
+            _logger.LogInformation("Alpha Admin bridge WebSocket ended: {Message}", ex.Message);
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Alpha Admin bridge failed with {ErrorType}: {Message}", ex.GetType().Name, ex.Message);
             if (socket.State == WebSocketState.Open)
             {
                 var description = ex.Message.Length <= 120 ? ex.Message : ex.Message[..120];
@@ -181,6 +188,7 @@ public sealed class AlphaAdminBridge(
             "component.health.result",
             "protocol.component-health.v1",
             health), cancellationToken);
+        _logger.LogInformation("Alpha Admin bridge sent component.health.result with {MetricCount} metrics.", health.Metrics.Count);
     }
 
     private async Task HandleConfigReadAsync(
@@ -214,6 +222,7 @@ public sealed class AlphaAdminBridge(
             "config.read.result",
             "protocol.config-read-result.v1",
             result), cancellationToken);
+        _logger.LogInformation("Alpha Admin bridge sent config.read.result with {EntryCount} entries.", result.Entries.Count);
     }
 
     private Dictionary<string, ConfigEntryWireV1> BuildReadableConfigEntries()
