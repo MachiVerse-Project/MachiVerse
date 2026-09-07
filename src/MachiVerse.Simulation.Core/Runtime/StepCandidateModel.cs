@@ -185,10 +185,14 @@ public sealed class StepCandidateV1
             .ToArray();
         if (transactions.Select(static candidate => candidate.TransactionId).Distinct().Count() != transactions.Length)
             throw new InvalidDataException("step-candidate.duplicate-transaction-candidate");
+        if (transactions.Any(candidate => candidate.WorldId != state.Header.WorldId))
+            throw new InvalidDataException("step-candidate.transaction-world-mismatch");
         if (transactions.Any(candidate => candidate.BasisStep != state.Header.Step))
             throw new InvalidDataException("step-candidate.transaction-basis-mismatch");
         if (transactions.Any(static candidate => candidate.IsAuthoritative))
             throw new InvalidDataException("step-candidate.transaction-premature-authority");
+
+        CrossDomainTransactionStepBindingV1.Validate(transactions, intents, resolutions, partitions);
 
         var providedInvariants = (invariantResults ?? Array.Empty<InvariantResultV1>()).ToArray();
         var invariants = (transactions.Length == 0
@@ -236,6 +240,13 @@ public sealed class StepCandidateV1
             .Select(static candidate => candidate.FailureCode)
             .FirstOrDefault(static code => code is not null)
             ?? (allValid ? null : TransactionAtomicityFailure);
+        var strongestFailedSeverity = transactions
+            .SelectMany(static candidate => candidate.InvariantResults)
+            .Where(static result => result.Outcome == InvariantOutcomeV1.Fail &&
+                                    result.Severity is InvariantSeverityV1.CommitBlocking or InvariantSeverityV1.FatalAuthority)
+            .Select(static result => result.Severity)
+            .DefaultIfEmpty(InvariantSeverityV1.CommitBlocking)
+            .Max();
         var participantRefs = transactions.Select(candidate =>
             new CausalityRefV1(
                 CausalityRefKindV1.Transaction,
@@ -244,7 +255,7 @@ public sealed class StepCandidateV1
 
         return new InvariantResultV1(
             TransactionAtomicityInvariant,
-            InvariantSeverityV1.CommitBlocking,
+            strongestFailedSeverity,
             allValid ? InvariantOutcomeV1.Pass : InvariantOutcomeV1.Fail,
             participantRefs,
             failureCode);
