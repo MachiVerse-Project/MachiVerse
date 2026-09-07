@@ -70,11 +70,11 @@ internal static class Program
         if (!string.Equals(digest, reversedDigest, StringComparison.Ordinal))
             throw new InvalidDataException("QA-02 matrix digest depends on manifest enumeration order.");
 
-        SelfTestComparator(manifest.ProfileId);
+        SelfTestComparator(manifest);
 
         Console.WriteLine("QA-02 determinism/replay harness verification PASS");
         Console.WriteLine($"Run descriptors: {matrix.Count}");
-        Console.WriteLine($"Worker counts: {string.Join(',', manifest.WorkerCounts.Order())}");
+        Console.WriteLine($"Worker counts: {string.Join(",", manifest.WorkerCounts.Order())}");
         Console.WriteLine($"Matrix SHA-256: {digest}");
         Console.WriteLine("Semantic comparator self-test: PASS");
         return 0;
@@ -140,7 +140,8 @@ internal static class Program
         foreach (var loggingLevel in manifest.LoggingLevels.OrderBy(x => x, StringComparer.Ordinal))
         foreach (var telemetryMode in manifest.TelemetryModes.OrderBy(x => x, StringComparer.Ordinal))
         {
-            var semanticIdentity = string.Join('\0',
+            var semanticIdentity = string.Join("\0",
+            [
                 manifest.ProfileId,
                 workerCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 restartMode,
@@ -148,7 +149,8 @@ internal static class Program
                 route,
                 viewSubscribers.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 loggingLevel,
-                telemetryMode);
+                telemetryMode
+            ]);
             var runId = $"qa02.run.{Sha256Hex(Encoding.UTF8.GetBytes(semanticIdentity))[..24]}";
             runs.Add(new RunDescriptor(
                 runId,
@@ -317,25 +319,27 @@ internal static class Program
         return null;
     }
 
-    private static void SelfTestComparator(string profileId)
+    private static void SelfTestComparator(DeterminismManifest manifest)
     {
         var baseline = new SemanticTrace(
-            "1.0",
-            profileId,
+            manifest.SchemaVersion,
+            manifest.ProfileId,
             "qa02.selftest.baseline",
             [
                 TraceStep(10, "baseline-a", Operational("{\"elapsedMs\":10,\"traceId\":\"trace-a\"}")),
                 TraceStep(11, "baseline-b", Operational("{\"elapsedMs\":11,\"traceId\":\"trace-b\"}"))
             ]);
         var operationallyDifferent = new SemanticTrace(
-            "1.0",
-            profileId,
+            manifest.SchemaVersion,
+            manifest.ProfileId,
             "qa02.selftest.candidate",
             [
                 TraceStep(10, "baseline-a", Operational("{\"elapsedMs\":999,\"traceId\":\"other-a\"}")),
                 TraceStep(11, "baseline-b", Operational("{\"elapsedMs\":1,\"traceId\":\"other-b\"}"))
             ]);
 
+        ValidateTrace(manifest, baseline, "self-test baseline");
+        ValidateTrace(manifest, operationallyDifferent, "self-test candidate");
         if (CompareTraces(baseline, operationallyDifferent) is not null)
             throw new InvalidDataException("Comparator treated operational metadata as semantic authority.");
 
@@ -350,13 +354,18 @@ internal static class Program
         if (CompareTraces(baseline, missing) is null)
             throw new InvalidDataException("Comparator failed closed-check for a missing committed Step.");
 
-        ValidateTrace(new DeterminismManifest(
-            "1.0", profileId, [1, 4, 8, 16], ["none", "scenario-checkpoint"], [1, 2, 4],
-            ["route-0", "route-1", "route-2", "route-3"], [0, 100], ["debug", "warn"],
-            ["disabled", "enabled", "failing"],
-            ["stateDigest", "terminalOperationDigest", "transactionResultDigest", "configHistoryDigest"],
-            ["config.view-world-independence"],
-            new AdapterContract("jsonl", [], [], [], "self-test does not invent checkpoints")), baseline, "self-test");
+        var gapped = baseline with
+        {
+            Steps = [baseline.Steps[0], baseline.Steps[1] with { Step = 12 }]
+        };
+        try
+        {
+            ValidateTrace(manifest, gapped, "self-test gapped");
+            throw new InvalidDataException("Trace validator accepted a missing committed Step.");
+        }
+        catch (InvalidDataException ex) when (ex.Message.Contains("contiguous", StringComparison.Ordinal))
+        {
+        }
     }
 
     private static StepSemanticDigest TraceStep(ulong step, string semanticLabel, JsonElement operational)
@@ -416,7 +425,12 @@ internal static class Program
     private static void RequireCanonicalExact(IEnumerable<string> actual, IEnumerable<string> required, string field)
     {
         var actualArray = actual.ToArray();
-        RequireCanonicalTokens(actualArray, field);
+        var sorted = actualArray.OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        if (!actualArray.SequenceEqual(sorted, StringComparer.Ordinal))
+            throw new InvalidDataException($"{field} must be ASCII/ordinal ascending.");
+        if (actualArray.Distinct(StringComparer.Ordinal).Count() != actualArray.Length)
+            throw new InvalidDataException($"{field} contains duplicates.");
+
         var requiredArray = required.OrderBy(x => x, StringComparer.Ordinal).ToArray();
         if (!actualArray.SequenceEqual(requiredArray, StringComparer.Ordinal))
             throw new InvalidDataException($"{field} does not match the canonical required set.");
