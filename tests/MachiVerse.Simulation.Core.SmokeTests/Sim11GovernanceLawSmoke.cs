@@ -15,27 +15,28 @@ internal static class Sim11GovernanceLawSmoke
 
     private static void VerifyAstDecodeAndArbitraryCodeReject()
     {
+        Require(LawPredicateNodeKindRegistryV1.Decode("FACT_EQUALS") == LawPredicateNodeKindV1.FactEquals,
+            "domain.law.ast.decode: registered AST node decode mismatch.");
+        RequireReject(
+            () => _ = LawPredicateNodeKindRegistryV1.Decode("EXECUTE"),
+            "governance.law-ast-node-unregistered",
+            "domain.law.arbitrary-code-reject");
+
         var fact = new LawPredicateNodeV1(
             LawPredicateNodeKindV1.FactEquals,
             [],
-            new StableToken("fact.action-kind"),
-            new StableToken("action.trade"));
+            Key: new StableToken("fact.action-kind"),
+            TokenValue: new StableToken("action.trade"));
         var step = new LawPredicateNodeV1(
             LawPredicateNodeKindV1.TimeStepRange,
             [],
             FromStep: 10,
             UntilStep: 20);
-        var root = new LawPredicateNodeV1(LawPredicateNodeKindV1.And, [fact, step]);
-        root.Validate();
-
+        new LawPredicateNodeV1(LawPredicateNodeKindV1.And, [fact, step]).Validate();
         RequireReject(
             () => new LawPredicateNodeV1((LawPredicateNodeKindV1)255, []).Validate(),
             "governance.law-ast-node-unregistered",
             "domain.law.ast.decode");
-        RequireReject(
-            () => new LawPredicateNodeV1((LawPredicateNodeKindV1)254, []).Validate(),
-            "governance.law-ast-node-unregistered",
-            "domain.law.arbitrary-code-reject");
     }
 
     private static void VerifyApplicability()
@@ -46,54 +47,42 @@ internal static class Sim11GovernanceLawSmoke
             "00000000000000000000000000012010",
             jurisdiction,
             priority: 10,
+            specificity: 5,
             fromStep: 100,
             untilStep: 200,
             LawEffectKindV1.Permit,
-            "legal.permit");
+            "legal.permit",
+            PredicateFactEquals("fact.action-kind", "action.trade"));
 
-        Require(!rule.IsApplicableTo(otherJurisdiction, 150) &&
-                !rule.IsApplicableTo(jurisdiction, 99) &&
-                rule.IsApplicableTo(jurisdiction, 100) &&
-                rule.IsApplicableTo(jurisdiction, 200) &&
-                !rule.IsApplicableTo(jurisdiction, 201),
-            "domain.law.applicability: jurisdiction/effective Step boundaries mismatch.");
+        Require(!rule.IsApplicableTo(Context(otherJurisdiction, 150, "action.trade")) &&
+                !rule.IsApplicableTo(Context(jurisdiction, 99, "action.trade")) &&
+                rule.IsApplicableTo(Context(jurisdiction, 100, "action.trade")) &&
+                rule.IsApplicableTo(Context(jurisdiction, 200, "action.trade")) &&
+                !rule.IsApplicableTo(Context(jurisdiction, 201, "action.trade")) &&
+                !rule.IsApplicableTo(Context(jurisdiction, 150, "action.move")),
+            "domain.law.applicability: jurisdiction/effective Step/predicate boundaries mismatch.");
     }
 
     private static void VerifyResolutionOrder()
     {
         var jurisdiction = Id("00000000000000000000000000012101");
         var lowerRuleId = Rule(
-            "00000000000000000000000000012110", jurisdiction, 5, 0, null,
+            "00000000000000000000000000012110", jurisdiction, 5, 4, 0, null,
             LawEffectKindV1.Permit, "legal.permit");
         var higherRuleId = Rule(
-            "00000000000000000000000000012111", jurisdiction, 5, 0, null,
+            "00000000000000000000000000012111", jurisdiction, 5, 4, 0, null,
             LawEffectKindV1.Permit, "legal.permit");
         var lessSpecific = Rule(
-            "00000000000000000000000000012112", jurisdiction, 5, 0, null,
+            "00000000000000000000000000012112", jurisdiction, 5, 3, 0, null,
             LawEffectKindV1.Permit, "legal.permit");
         var lowerPriority = Rule(
-            "00000000000000000000000000012113", jurisdiction, 6, 0, null,
+            "00000000000000000000000000012113", jurisdiction, 6, 99, 0, null,
             LawEffectKindV1.Prohibit, "legal.prohibit");
+        var rules = new[] { lowerPriority, higherRuleId, lessSpecific, lowerRuleId };
+        var context = Context(jurisdiction, 10, "action.trade");
 
-        var forward = DeterministicLegalRuleResolverV1.Resolve(
-            jurisdiction,
-            10,
-            [
-                new ApplicableLegalRuleV1(lowerPriority, 99),
-                new ApplicableLegalRuleV1(higherRuleId, 4),
-                new ApplicableLegalRuleV1(lessSpecific, 3),
-                new ApplicableLegalRuleV1(lowerRuleId, 4),
-            ]);
-        var reverse = DeterministicLegalRuleResolverV1.Resolve(
-            jurisdiction,
-            10,
-            new[]
-            {
-                new ApplicableLegalRuleV1(lowerPriority, 99),
-                new ApplicableLegalRuleV1(higherRuleId, 4),
-                new ApplicableLegalRuleV1(lessSpecific, 3),
-                new ApplicableLegalRuleV1(lowerRuleId, 4),
-            }.Reverse());
+        var forward = DeterministicLegalRuleResolverV1.Resolve(context, rules);
+        var reverse = DeterministicLegalRuleResolverV1.Resolve(context, rules.Reverse());
 
         Require(forward.Status == LegalResolutionStatusV1.Resolved &&
                 forward.Effect == lowerRuleId.Effect &&
@@ -111,18 +100,19 @@ internal static class Sim11GovernanceLawSmoke
     {
         var jurisdiction = Id("00000000000000000000000000012201");
         var permit = Rule(
-            "00000000000000000000000000012210", jurisdiction, 1, 0, null,
+            "00000000000000000000000000012210", jurisdiction, 1, 8, 0, null,
             LawEffectKindV1.Permit, "legal.permit");
         var prohibit = Rule(
-            "00000000000000000000000000012211", jurisdiction, 1, 0, null,
+            "00000000000000000000000000012211", jurisdiction, 1, 8, 0, null,
             LawEffectKindV1.Prohibit, "legal.prohibit");
         var result = DeterministicLegalRuleResolverV1.Resolve(
-            jurisdiction,
-            1,
-            [new ApplicableLegalRuleV1(prohibit, 8), new ApplicableLegalRuleV1(permit, 8)]);
+            Context(jurisdiction, 1, "action.trade"),
+            [prohibit, permit]);
 
-        Require(result.Status == LegalResolutionStatusV1.Conflict && result.Effect is null,
-            "domain.law.conflict: conflicting leading terminal effects must produce explicit conflict.");
+        Require(result.Status == LegalResolutionStatusV1.Conflict &&
+                result.Effect is null &&
+                result.ConsideredRuleIds.SequenceEqual([permit.RuleId, prohibit.RuleId]),
+            "domain.law.conflict: conflicting equal-authority terminal effects must produce stable explicit conflict.");
     }
 
     private static void VerifyEnforcementPhysicalSeparation()
@@ -136,8 +126,8 @@ internal static class Sim11GovernanceLawSmoke
             20,
             30);
         order.Validate();
-        Require(order.TargetRef == target,
-            "domain.enforcement.physical-separation: institutional order must remain an order record and not replace physical target identity/state.");
+        Require(order.TargetRef == target && order.RequiresPhysicalExecution,
+            "domain.enforcement.physical-separation: institutional order must not itself move/damage/detain target.");
     }
 
     private static void VerifyBorderPermissionCrossingSeparation()
@@ -156,29 +146,55 @@ internal static class Sim11GovernanceLawSmoke
                 permission.IsLegallyPermittedAt(60) &&
                 !permission.IsLegallyPermittedAt(61) &&
                 permission.HolderRef == holder,
-            "domain.border.permission-crossing: legal permission must be Step-bounded institutional state, separate from actual physical crossing.");
+            "domain.border.permission-crossing: legal permission must remain separate from actual physical crossing.");
     }
+
+    private static LawPredicateNodeV1 PredicateFactEquals(string key, string value)
+        => new(
+            LawPredicateNodeKindV1.FactEquals,
+            [],
+            Key: new StableToken(key),
+            TokenValue: new StableToken(value));
 
     private static LegalRuleV1 Rule(
         string id,
         OpaqueId128 jurisdiction,
         int priority,
+        uint specificity,
         ulong fromStep,
         ulong? untilStep,
         LawEffectKindV1 effectKind,
-        string effectToken)
+        string effectToken,
+        LawPredicateNodeV1? predicate = null)
         => new(
             Id(id),
             jurisdiction,
             priority,
+            specificity,
             fromStep,
             untilStep,
-            new LawPredicateNodeV1(
+            predicate ?? new LawPredicateNodeV1(
                 LawPredicateNodeKindV1.TimeStepRange,
                 [],
                 FromStep: fromStep,
                 UntilStep: untilStep ?? ulong.MaxValue),
             new LawEffectV1(effectKind, new StableToken(effectToken)));
+
+    private static LawEvaluationContextV1 Context(
+        OpaqueId128 jurisdiction,
+        ulong step,
+        string actionKind)
+        => new(
+            jurisdiction,
+            step,
+            new Dictionary<StableToken, StableToken>
+            {
+                [new StableToken("fact.action-kind")] = new StableToken(actionKind),
+            },
+            new Dictionary<StableToken, long>(),
+            new HashSet<StableToken>(),
+            new HashSet<StableToken>(),
+            new HashSet<StableToken>());
 
     private static OpaqueId128 Id(string value) => OpaqueId128.Parse(value);
 
