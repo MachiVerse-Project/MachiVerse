@@ -207,7 +207,7 @@ public sealed class LoginTransactionStore(ILoginSecretStore secretStore)
     {
         if (returnPath is null) return;
         if (returnPath.Length == 0 ||
-            !returnPath.StartsWith('/', StringComparison.Ordinal) ||
+            !returnPath.StartsWith("/", StringComparison.Ordinal) ||
             returnPath.StartsWith("//", StringComparison.Ordinal) ||
             returnPath.Contains('\\') ||
             Uri.TryCreate(returnPath, UriKind.Absolute, out _))
