@@ -55,6 +55,9 @@ public sealed class PartitionCandidateV1
 
 public sealed class StepCandidateV1
 {
+    private static readonly StableToken TransactionAtomicityInvariant = new("transaction.atomicity");
+    private static readonly StableToken TransactionAtomicityFailure = new("transaction.invariant-failed");
+
     private StepCandidateV1(
         OpaqueId128 candidateId,
         OpaqueId128 worldId,
@@ -67,6 +70,7 @@ public sealed class StepCandidateV1
         IReadOnlyList<MutationIntentCandidateV1> orderedIntents,
         IReadOnlyList<ConflictGroupResolutionV1> conflictResolutions,
         IReadOnlyList<PartitionCandidateV1> partitionCandidates,
+        IReadOnlyList<CrossDomainTransactionCandidateV1> transactionCandidates,
         IReadOnlyList<InvariantResultV1> invariantResults,
         InvariantBarrierDecisionV1 commitDecision,
         byte[] diagnosticDigest)
@@ -82,6 +86,7 @@ public sealed class StepCandidateV1
         OrderedIntents = orderedIntents;
         ConflictResolutions = conflictResolutions;
         PartitionCandidates = partitionCandidates;
+        TransactionCandidates = transactionCandidates;
         InvariantResults = invariantResults;
         CommitDecision = commitDecision;
         DiagnosticDigest = diagnosticDigest;
@@ -98,6 +103,7 @@ public sealed class StepCandidateV1
     public IReadOnlyList<MutationIntentCandidateV1> OrderedIntents { get; }
     public IReadOnlyList<ConflictGroupResolutionV1> ConflictResolutions { get; }
     public IReadOnlyList<PartitionCandidateV1> PartitionCandidates { get; }
+    public IReadOnlyList<CrossDomainTransactionCandidateV1> TransactionCandidates { get; }
     public IReadOnlyList<InvariantResultV1> InvariantResults { get; }
     public InvariantBarrierDecisionV1 CommitDecision { get; }
     public byte[] DiagnosticDigest { get; }
@@ -110,7 +116,8 @@ public sealed class StepCandidateV1
         IEnumerable<DomainCandidateOutputV1> domainOutputs,
         IEnumerable<ConflictGroupResolutionV1> conflictResolutions,
         IEnumerable<PartitionCandidateV1>? partitionCandidates = null,
-        IEnumerable<InvariantResultV1>? invariantResults = null)
+        IEnumerable<InvariantResultV1>? invariantResults = null,
+        IEnumerable<CrossDomainTransactionCandidateV1>? transactionCandidates = null)
     {
         if (candidateId.IsZero) throw new ArgumentException("CandidateId ZERO is invalid.", nameof(candidateId));
         ArgumentNullException.ThrowIfNull(state);
@@ -172,7 +179,25 @@ public sealed class StepCandidateV1
                 throw new InvalidDataException("step-candidate.partition-basis-ahead");
         }
 
-        var invariants = (invariantResults ?? Array.Empty<InvariantResultV1>())
+        var transactions = (transactionCandidates ?? Array.Empty<CrossDomainTransactionCandidateV1>())
+            .Select(candidate => candidate ?? throw new ArgumentNullException(nameof(transactionCandidates)))
+            .OrderBy(static candidate => candidate.TransactionId)
+            .ToArray();
+        if (transactions.Select(static candidate => candidate.TransactionId).Distinct().Count() != transactions.Length)
+            throw new InvalidDataException("step-candidate.duplicate-transaction-candidate");
+        if (transactions.Any(candidate => candidate.WorldId != state.Header.WorldId))
+            throw new InvalidDataException("step-candidate.transaction-world-mismatch");
+        if (transactions.Any(candidate => candidate.BasisStep != state.Header.Step))
+            throw new InvalidDataException("step-candidate.transaction-basis-mismatch");
+        if (transactions.Any(static candidate => candidate.IsAuthoritative))
+            throw new InvalidDataException("step-candidate.transaction-premature-authority");
+
+        CrossDomainTransactionStepBindingV1.Validate(transactions, intents, resolutions, partitions);
+
+        var providedInvariants = (invariantResults ?? Array.Empty<InvariantResultV1>()).ToArray();
+        var invariants = (transactions.Length == 0
+                ? providedInvariants
+                : providedInvariants.Append(BuildTransactionAtomicityInvariant(transactions)))
             .OrderBy(static result => result.InvariantId.Value, StringComparer.Ordinal)
             .ThenBy(static result => result.Severity)
             .ToArray();
@@ -184,6 +209,7 @@ public sealed class StepCandidateV1
             outputs,
             resolutions,
             partitions,
+            transactions,
             invariants,
             targetStep);
 
@@ -199,9 +225,40 @@ public sealed class StepCandidateV1
             Array.AsReadOnly(intents),
             Array.AsReadOnly(resolutions),
             Array.AsReadOnly(partitions),
+            Array.AsReadOnly(transactions),
             Array.AsReadOnly(invariants),
             decision,
             diagnostic);
+    }
+
+    private static InvariantResultV1 BuildTransactionAtomicityInvariant(
+        IReadOnlyList<CrossDomainTransactionCandidateV1> transactions)
+    {
+        var allValid = transactions.All(static candidate => candidate.CanFinalize);
+        var failureCode = transactions
+            .Where(static candidate => !candidate.CanFinalize)
+            .Select(static candidate => candidate.FailureCode)
+            .FirstOrDefault(static code => code is not null)
+            ?? (allValid ? null : TransactionAtomicityFailure);
+        var strongestFailedSeverity = transactions
+            .SelectMany(static candidate => candidate.InvariantResults)
+            .Where(static result => result.Outcome == InvariantOutcomeV1.Fail &&
+                                    result.Severity is InvariantSeverityV1.CommitBlocking or InvariantSeverityV1.FatalAuthority)
+            .Select(static result => result.Severity)
+            .DefaultIfEmpty(InvariantSeverityV1.CommitBlocking)
+            .Max();
+        var participantRefs = transactions.Select(candidate =>
+            new CausalityRefV1(
+                CausalityRefKindV1.Transaction,
+                candidate.TransactionId.ToBytes(),
+                candidate.BasisStep));
+
+        return new InvariantResultV1(
+            TransactionAtomicityInvariant,
+            strongestFailedSeverity,
+            allValid ? InvariantOutcomeV1.Pass : InvariantOutcomeV1.Fail,
+            participantRefs,
+            failureCode);
     }
 
     private static void ValidateResolutionCoverage(
@@ -225,11 +282,13 @@ public sealed class StepCandidateV1
         IReadOnlyList<DomainCandidateOutputV1> outputs,
         IReadOnlyList<ConflictGroupResolutionV1> resolutions,
         IReadOnlyList<PartitionCandidateV1> partitions,
+        IReadOnlyList<CrossDomainTransactionCandidateV1> transactions,
         IReadOnlyList<InvariantResultV1> invariants,
         ulong targetStep)
         => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {
-            writer.WriteMapStart(10);
+            var hasTransactions = transactions.Count != 0;
+            writer.WriteMapStart(hasTransactions ? 11UL : 10UL);
             writer.WriteUnsigned(0); writer.WriteBytes(state.Header.WorldId.ToBytes());
             writer.WriteUnsigned(1); writer.WriteUnsigned(state.Header.Step);
             writer.WriteUnsigned(2); writer.WriteUnsigned(targetStep);
@@ -287,7 +346,22 @@ public sealed class StepCandidateV1
                 writer.WriteAsciiText(partition.PartitionId.Value);
                 writer.WriteBytes(partition.CandidateDigest);
             }
-            writer.WriteUnsigned(9);
+
+            if (hasTransactions)
+            {
+                writer.WriteUnsigned(9);
+                writer.WriteArrayStart((ulong)transactions.Count);
+                foreach (var transaction in transactions)
+                {
+                    writer.WriteMapStart(4);
+                    writer.WriteUnsigned(0); writer.WriteBytes(transaction.TransactionId.ToBytes());
+                    writer.WriteUnsigned(1); writer.WriteAsciiText(transaction.TransactionKind.Value);
+                    writer.WriteUnsigned(2); writer.WriteUnsigned((uint)transaction.Status);
+                    writer.WriteUnsigned(3); writer.WriteBytes(transaction.DiagnosticDigest);
+                }
+            }
+
+            writer.WriteUnsigned(hasTransactions ? 10UL : 9UL);
             writer.WriteArrayStart((ulong)invariants.Count);
             foreach (var invariant in invariants)
             {

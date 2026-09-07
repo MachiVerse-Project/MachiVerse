@@ -284,5 +284,7 @@ await Sim10RuntimeGateSmoke.RunAsync();
 Sim11GovernanceLawSmoke.Run();
 await Sim11RuntimeGateSmoke.RunAsync();
 Sim12InfrastructureInformationSmoke.Run();
+Sim13CrossDomainTransactionSmoke.Run();
+Sim13DetailTransitionSmoke.Run();
 
-Console.WriteLine("SIM-01..SIM-12 component smoke tests passed through Infrastructure/Information deterministic primitives.");
+Console.WriteLine("SIM-01..SIM-13 component smoke tests passed through cross-domain transaction and deterministic detail transition foundations.");
