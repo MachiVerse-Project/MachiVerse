@@ -47,6 +47,19 @@ internal static class Sim04WorldStateSmoke
                 throw new InvalidOperationException($"Registry invariant mismatch for {entry.PartitionId.Value}.");
         }
 
+        var indexEntries = StandardSecondaryIndexRegistry.Entries;
+        if (indexEntries.Count < 97)
+            throw new InvalidOperationException("Every standard partition must register at least one required secondary index.");
+        if (indexEntries.Any(static entry => entry.Authority != IndexAuthorityV1.DerivedRebuildable))
+            throw new InvalidOperationException("All Phase 4 required secondary indexes must be DERIVED_REBUILDABLE.");
+        if (indexEntries.Select(static entry => entry.IndexId.Value).Distinct(StringComparer.Ordinal).Count() != indexEntries.Count)
+            throw new InvalidOperationException("Required secondary IndexId values must be globally unique.");
+        foreach (var partition in entries)
+        {
+            if (StandardSecondaryIndexRegistry.ForPartition(partition.PartitionId.Value).Count == 0)
+                throw new InvalidOperationException($"Required secondary index coverage missing: {partition.PartitionId.Value}.");
+        }
+
         var residentIdentity = StandardDomainPartitionRegistry.Get("resident.identity_lifecycle");
         if (residentIdentity.OwnerDomain.Value != "resident" || residentIdentity.OwnerDomainRank != 50)
             throw new InvalidOperationException("Resident partition owner/rank mismatch.");
@@ -59,7 +72,7 @@ internal static class Sim04WorldStateSmoke
             retiredStep: null,
             detailLevel: DetailLevelV1.D0Entity,
             lineageRef: null,
-            payload: "resident-b");
+            payload: "alive");
         var recordLow = new DomainRecordEnvelopeV1<string>(
             OpaqueId128.Parse("00000000000000000000000000000001"),
             residentIdentity.RecordSchema,
@@ -68,7 +81,7 @@ internal static class Sim04WorldStateSmoke
             retiredStep: null,
             detailLevel: DetailLevelV1.D0Entity,
             lineageRef: null,
-            payload: "resident-a");
+            payload: "alive");
 
         var state = new DomainPartitionStateV1<string>(residentIdentity, [recordHigh, recordLow]);
         var recordOrder = state.RecordsCanonical.Select(static record => record.RecordId.ToString()).ToArray();
@@ -79,8 +92,48 @@ internal static class Sim04WorldStateSmoke
             }))
             throw new InvalidOperationException("Partition records must iterate by canonical record-id byte order.");
 
-        var revised = recordLow.Revise("resident-a-v2");
-        if (revised.Revision != 2 || revised.RecordId != recordLow.RecordId || revised.Payload != "resident-a-v2")
+        var lifecycleIndex = DerivedRecordIndexV1<string>.Rebuild(
+            "resident.lifecycle-by-status",
+            state,
+            static record => [record.Payload],
+            StringComparer.Ordinal);
+        var aliveIds = lifecycleIndex.Lookup("alive").Select(static id => id.ToString()).ToArray();
+        if (!aliveIds.SequenceEqual(recordOrder))
+            throw new InvalidOperationException("Derived secondary index values must be canonical record-id order.");
+
+        var permutedState = new DomainPartitionStateV1<string>(residentIdentity, [recordLow, recordHigh]);
+        var rebuilt = DerivedRecordIndexV1<string>.Rebuild(
+            "resident.lifecycle-by-status",
+            permutedState,
+            static record => [record.Payload],
+            StringComparer.Ordinal);
+        var firstSnapshot = lifecycleIndex.CanonicalEntries
+            .Select(pair => pair.Key + ":" + string.Join(",", pair.Value.Select(static id => id.ToString())))
+            .ToArray();
+        var rebuiltSnapshot = rebuilt.CanonicalEntries
+            .Select(pair => pair.Key + ":" + string.Join(",", pair.Value.Select(static id => id.ToString())))
+            .ToArray();
+        if (!firstSnapshot.SequenceEqual(rebuiltSnapshot))
+            throw new InvalidOperationException("Secondary index rebuild must be independent of source collection arrival order.");
+
+        var wrongIndexRejected = false;
+        try
+        {
+            _ = DerivedRecordIndexV1<string>.Rebuild(
+                "resident.health-by-resident",
+                state,
+                static record => [record.Payload],
+                StringComparer.Ordinal);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "domain.index-partition-mismatch")
+        {
+            wrongIndexRejected = true;
+        }
+        if (!wrongIndexRejected)
+            throw new InvalidOperationException("A secondary index recipe must not attach to a foreign partition.");
+
+        var revised = recordLow.Revise("retired");
+        if (revised.Revision != 2 || revised.RecordId != recordLow.RecordId || revised.Payload != "retired")
             throw new InvalidOperationException("Record revision must preserve identity and increment exactly once.");
         var retired = revised.Retire(20);
         if (!retired.IsRetired || retired.RetiredStep != 20 || retired.Revision != 3)
