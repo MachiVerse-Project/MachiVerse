@@ -16,7 +16,8 @@ public sealed record AlphaGatewayConfigSnapshot(
 
 public sealed record AlphaGatewayConfigApplyResult(
     ResultV1 Result,
-    AlphaGatewayConfigSnapshot Snapshot,
+    ulong ResultingGeneration,
+    byte[] ResultingConfigDigest,
     bool Replayed);
 
 /// <summary>
@@ -84,21 +85,24 @@ public sealed class AlphaGatewayConfigCoordinator
             {
                 if (!string.Equals(prior.ImmutablePayloadDigest, digestHex, StringComparison.Ordinal))
                     throw new InvalidDataException("config.operation-id-reuse");
-                return new AlphaGatewayConfigApplyResult(ToWireResult(prior), SnapshotForOperationLocked(prior), true);
+                return Replay(prior);
             }
 
-            AlphaGatewayConfigApplyResult result;
             if (request.ExpectedBaseGeneration != _state.Generation)
             {
-                result = CompleteLocked(
+                return CompleteLocked(
                     operationKey,
                     digestHex,
-                    status: 5,
-                    code: "config.generation-stale",
-                    generation: _state.Generation,
-                    digest: ComputeConfigDigest(_state.Values),
-                    mutate: false);
-                return result;
+                    ResultStatusV1.Rejected,
+                    "config.generation-stale",
+                    RetryAdviceV1.ResyncThenRetry,
+                    _state.Generation,
+                    ComputeConfigDigest(_state.Values));
+            }
+
+            if (request.HasRequestedEffectiveStep)
+            {
+                return RejectLocked(operationKey, digestHex, "config.invalid");
             }
 
             var candidate = new Dictionary<string, ulong>(_state.Values, StringComparer.Ordinal);
@@ -116,7 +120,12 @@ public sealed class AlphaGatewayConfigCoordinator
                     invalidCode = "config.unknown-field";
                     break;
                 }
-                if (change.Value is null || (int)change.Value.ValueCase != 3 || change.Value.UintValue > int.MaxValue)
+                if (!AlphaGatewayConfigPolicy.IsRuntimeMutable(change.Key))
+                {
+                    invalidCode = "config.static-change-offline";
+                    break;
+                }
+                if (change.Value is null || change.Value.ValueCase != ConfigValueWireV1.ValueOneofCase.UintValue || change.Value.UintValue > int.MaxValue)
                 {
                     invalidCode = "config.invalid";
                     break;
@@ -125,7 +134,6 @@ public sealed class AlphaGatewayConfigCoordinator
             }
 
             if (request.Changes.Count == 0) invalidCode = "config.invalid";
-            if (request.HasRequestedEffectiveStep) invalidCode = "config.invalid";
             if (invalidCode is null)
             {
                 try { ValidateCandidate(candidate); }
@@ -133,66 +141,75 @@ public sealed class AlphaGatewayConfigCoordinator
             }
 
             if (invalidCode is not null)
-            {
-                result = CompleteLocked(
-                    operationKey,
-                    digestHex,
-                    status: 2,
-                    code: invalidCode,
-                    generation: _state.Generation,
-                    digest: ComputeConfigDigest(_state.Values),
-                    mutate: false);
-                return result;
-            }
+                return RejectLocked(operationKey, digestHex, invalidCode);
 
             if (DictionaryEqual(_state.Values, candidate))
             {
-                result = CompleteLocked(
+                return CompleteLocked(
                     operationKey,
                     digestHex,
-                    status: 1,
-                    code: "config.no-change",
-                    generation: _state.Generation,
-                    digest: ComputeConfigDigest(_state.Values),
-                    mutate: false);
-                return result;
+                    ResultStatusV1.NoChange,
+                    "config.no-change",
+                    RetryAdviceV1.DoNotRetry,
+                    _state.Generation,
+                    ComputeConfigDigest(_state.Values));
             }
 
             var nextGeneration = checked(_state.Generation + 1);
             var nextDigest = ComputeConfigDigest(candidate);
             _state = _state with { Generation = nextGeneration, Values = candidate };
-            result = CompleteLocked(
+            return CompleteLocked(
                 operationKey,
                 digestHex,
-                status: 1,
-                code: "config.change.applied",
-                generation: nextGeneration,
-                digest: nextDigest,
-                mutate: true);
-            return result;
+                ResultStatusV1.Success,
+                "config.change.applied",
+                RetryAdviceV1.DoNotRetry,
+                nextGeneration,
+                nextDigest);
         }
     }
+
+    private AlphaGatewayConfigApplyResult RejectLocked(string operationKey, string immutableDigest, string code)
+        => CompleteLocked(
+            operationKey,
+            immutableDigest,
+            ResultStatusV1.Rejected,
+            code,
+            RetryAdviceV1.DoNotRetry,
+            _state.Generation,
+            ComputeConfigDigest(_state.Values));
 
     private AlphaGatewayConfigApplyResult CompleteLocked(
         string operationKey,
         string immutableDigest,
-        int status,
+        ResultStatusV1 status,
         string code,
+        RetryAdviceV1 retryAdvice,
         ulong generation,
-        byte[] digest,
-        bool mutate)
+        byte[] digest)
     {
         var operation = new PersistentOperation(
             immutableDigest,
-            status,
+            (int)status,
             code,
-            1,
+            (int)retryAdvice,
             generation,
             Convert.ToHexStringLower(digest));
         _state.Operations[operationKey] = operation;
         PersistLocked();
-        return new AlphaGatewayConfigApplyResult(ToWireResult(operation), SnapshotForOperationLocked(operation), false);
+        return new AlphaGatewayConfigApplyResult(
+            ToWireResult(operation),
+            generation,
+            digest.ToArray(),
+            false);
     }
+
+    private static AlphaGatewayConfigApplyResult Replay(PersistentOperation operation)
+        => new(
+            ToWireResult(operation),
+            operation.ResultingGeneration,
+            Convert.FromHexString(operation.ResultingDigest),
+            true);
 
     private static ResultV1 ToWireResult(PersistentOperation operation)
         => new()
@@ -201,14 +218,6 @@ public sealed class AlphaGatewayConfigCoordinator
             Code = operation.Code,
             RetryAdvice = (RetryAdviceV1)operation.RetryAdvice,
         };
-
-    private AlphaGatewayConfigSnapshot SnapshotForOperationLocked(PersistentOperation operation)
-    {
-        var digest = Convert.FromHexString(operation.ResultingDigest);
-        if (operation.ResultingGeneration == _state.Generation && CryptographicOperations.FixedTimeEquals(digest, ComputeConfigDigest(_state.Values)))
-            return SnapshotLocked();
-        return new AlphaGatewayConfigSnapshot(operation.ResultingGeneration, new Dictionary<string, ulong>(_state.Values, StringComparer.Ordinal), digest);
-    }
 
     private AlphaGatewayConfigSnapshot SnapshotLocked()
         => new(
@@ -220,7 +229,13 @@ public sealed class AlphaGatewayConfigCoordinator
     {
         var json = JsonSerializer.Serialize(_state, new JsonSerializerOptions { WriteIndented = true });
         var tempPath = _statePath + ".tmp";
-        File.WriteAllText(tempPath, json, new UTF8Encoding(false));
+        using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true))
+        {
+            writer.Write(json);
+            writer.Flush();
+            stream.Flush(flushToDisk: true);
+        }
         File.Move(tempPath, _statePath, overwrite: true);
     }
 
@@ -250,6 +265,8 @@ public sealed class AlphaGatewayConfigCoordinator
         {
             if (operation.ImmutablePayloadDigest.Length != 64 || operation.ResultingDigest.Length != 64 || operation.ResultingGeneration == 0)
                 throw new InvalidDataException("config.persist-operation-invalid");
+            if (operation.Status is < 1 or > 7 || operation.RetryAdvice is < 1 or > 5)
+                throw new InvalidDataException("config.persist-operation-result-invalid");
         }
     }
 
