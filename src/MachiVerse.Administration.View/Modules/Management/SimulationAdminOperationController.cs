@@ -118,7 +118,31 @@ public sealed class SimulationAdminOperationController
         var operation = RequireTracked(operationId);
         EnsureHighImpact(operation);
         _session.EnsurePermission(AdminPermissionTokens.OperationSubmit);
-        _confirmation.Begin(Fingerprint(operation), _session.Snapshot.SessionGeneration);
+
+        if (operation.State is not (AdminOperationLifecycleState.AwaitingConfirmation or AdminOperationLifecycleState.ReadyForSubmit))
+        {
+            throw new InvalidOperationException(
+                $"High-impact confirmation cannot begin from operation state '{operation.State}'.");
+        }
+
+        var sessionGeneration = _session.Snapshot.SessionGeneration;
+        var fingerprint = Fingerprint(operation);
+        var snapshot = _confirmation.Snapshot;
+        if (snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid
+            || snapshot.Fingerprint is null
+            || !snapshot.Fingerprint.Equals(fingerprint)
+            || snapshot.SessionGeneration != sessionGeneration)
+        {
+            _confirmation.Require(fingerprint, sessionGeneration);
+        }
+
+        _confirmation.Begin(fingerprint, sessionGeneration);
+        _operations[operation.OperationId] = operation with
+        {
+            State = AdminOperationLifecycleState.AwaitingConfirmation,
+            SessionGenerationAtPrepare = sessionGeneration,
+            LastReasonCode = null,
+        };
         Changed?.Invoke();
     }
 
@@ -131,6 +155,7 @@ public sealed class SimulationAdminOperationController
         _operations[operation.OperationId] = operation with
         {
             State = AdminOperationLifecycleState.ReadyForSubmit,
+            SessionGenerationAtPrepare = _session.Snapshot.SessionGeneration,
             LastReasonCode = null,
         };
         Changed?.Invoke();
@@ -282,6 +307,20 @@ public sealed class SimulationAdminOperationController
         _confirmation.OnSessionChanged(session);
         if (session.State == AdminSessionAccessState.Active)
         {
+            foreach (var (key, operation) in _operations.ToArray())
+            {
+                if (operation.HighImpact
+                    && operation.SessionGenerationAtPrepare != session.SessionGeneration
+                    && operation.State is AdminOperationLifecycleState.AwaitingConfirmation or AdminOperationLifecycleState.ReadyForSubmit)
+                {
+                    _operations[key] = operation with
+                    {
+                        State = AdminOperationLifecycleState.AwaitingConfirmation,
+                        SessionGenerationAtPrepare = session.SessionGeneration,
+                        LastReasonCode = "confirmation.session-generation-changed",
+                    };
+                }
+            }
             Changed?.Invoke();
             return;
         }
