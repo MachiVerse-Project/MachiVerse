@@ -1,6 +1,7 @@
 using MachiVerse.View;
 using MachiVerse.View.Configuration;
 using MachiVerse.View.Operations;
+using MachiVerse.View.Participation;
 using MachiVerse.View.Protocol;
 using MachiVerse.View.Rendering;
 using MachiVerse.View.State;
@@ -18,6 +19,9 @@ var viewConfig = GeneralViewConfigLoader.LoadText(configText);
 builder.Services.AddSingleton(viewConfig);
 builder.Services.AddSingleton(SceneProjectionAdapterRegistry.Empty);
 builder.Services.AddSingleton(ViewOperationCatalog.Empty);
+builder.Services.AddSingleton(ParticipationPreferenceCatalog.Empty);
+builder.Services.AddSingleton(AbsencePolicyProfileCatalog.Empty);
+builder.Services.AddSingleton<IParticipationOperationPayloadAdapter, UnavailableParticipationOperationPayloadAdapter>();
 builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<GatewayProtocolClient>();
 builder.Services.AddScoped<ConfirmedWorldStore>();
@@ -25,6 +29,9 @@ builder.Services.AddScoped<PublicationConsumer>();
 builder.Services.AddScoped<PredictionStore>();
 builder.Services.AddScoped<ReconciliationCoordinator>();
 builder.Services.AddScoped<ViewOperationController>();
+builder.Services.AddScoped<ViewSessionProjectionStore>();
+builder.Services.AddScoped<ParticipationBindingProjectionStore>();
+builder.Services.AddScoped<DiverParticipationController>();
 builder.Services.AddScoped<ThreeRendererInterop>();
 
 await builder.Build().RunAsync();
