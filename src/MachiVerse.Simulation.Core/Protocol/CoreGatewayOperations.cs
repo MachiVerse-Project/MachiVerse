@@ -21,6 +21,31 @@ public interface ICoreGatewayDurableOperationIngressV1
 public sealed class CoreGatewayOperationProtocolV1
 {
     private const int MaxOperationsPerBatch = 4096;
+
+    private const int LifecycleUnknown = 1;
+    private const int LifecycleAccepted = 2;
+    private const int LifecycleScheduled = 3;
+    private const int LifecycleTerminal = 4;
+
+    private const int ResultSuccess = 1;
+    private const int ResultAccepted = 2;
+    private const int ResultPending = 3;
+    private const int ResultNoChange = 4;
+    private const int ResultDuplicate = 5;
+    private const int ResultRejected = 6;
+    private const int ResultFailed = 7;
+
+    private const int RetryDoNotRetry = 1;
+    private const int RetrySameIdentity = 2;
+
+    private const int BatchReceived = 1;
+    private const int BatchPartial = 2;
+    private const int BatchComplete = 3;
+    private const int BatchRejected = 4;
+
+    private const int LateReject = 1;
+    private const int LateDeferWithinGrace = 2;
+
     private readonly SqlitePersistenceStore _store;
     private readonly CoreMasterAuthorityCoordinatorV1 _master;
     private readonly ICoreGatewayDurableOperationIngressV1 _ingress;
@@ -89,18 +114,16 @@ public sealed class CoreGatewayOperationProtocolV1
             }
         }
 
-        var terminalOrScheduled = results.Count(static entry => entry.Lifecycle is
-            OperationLifecycleWireStateV1.Accepted or
-            OperationLifecycleWireStateV1.Scheduled or
-            OperationLifecycleWireStateV1.Terminal);
-        var rejected = results.Count(static entry => entry.Result.Status == ResultStatusV1.Rejected);
+        var terminalOrScheduled = results.Count(static entry =>
+            (int)entry.Lifecycle is LifecycleAccepted or LifecycleScheduled or LifecycleTerminal);
+        var rejected = results.Count(static entry => (int)entry.Result.Status == ResultRejected);
         var status = rejected == results.Count
-            ? BatchWireStatusV1.Rejected
+            ? (BatchWireStatusV1)BatchRejected
             : rejected > 0
-                ? BatchWireStatusV1.Partial
-                : BatchWireStatusV1.Complete;
+                ? (BatchWireStatusV1)BatchPartial
+                : (BatchWireStatusV1)BatchComplete;
         if (terminalOrScheduled == 0 && rejected == 0)
-            status = BatchWireStatusV1.Received;
+            status = (BatchWireStatusV1)BatchReceived;
 
         var response = new OperationBatchResultV1
         {
@@ -109,14 +132,14 @@ public sealed class CoreGatewayOperationProtocolV1
             Status = status,
             Result = new ResultV1
             {
-                Status = status == BatchWireStatusV1.Rejected ? ResultStatusV1.Rejected : ResultStatusV1.Success,
-                Code = status switch
+                Status = (int)status == BatchRejected ? (ResultStatusV1)ResultRejected : (ResultStatusV1)ResultSuccess,
+                Code = (int)status switch
                 {
-                    BatchWireStatusV1.Partial => "batch.partial",
-                    BatchWireStatusV1.Rejected => "request.invalid",
+                    BatchPartial => "batch.partial",
+                    BatchRejected => "request.invalid",
                     _ => "batch.complete",
                 },
-                RetryAdvice = RetryAdviceV1.DoNotRetry,
+                RetryAdvice = (RetryAdviceV1)RetryDoNotRetry,
             },
         };
         response.Entries.AddRange(results);
@@ -135,7 +158,7 @@ public sealed class CoreGatewayOperationProtocolV1
             return new OperationStatusResultV1
             {
                 OperationId = ByteString.CopyFrom(operationId.ToBytes()),
-                State = OperationLifecycleWireStateV1.Unknown,
+                State = (OperationLifecycleWireStateV1)LifecycleUnknown,
                 RichResultDetailsAvailable = false,
             };
         }
@@ -152,8 +175,8 @@ public sealed class CoreGatewayOperationProtocolV1
             GraceSteps = policy.GraceSteps,
             LatePolicy = policy.LatePolicy switch
             {
-                OperationLatePolicyV1.Reject => LatePolicyWireV1.Reject,
-                OperationLatePolicyV1.DeferWithinGrace => LatePolicyWireV1.DeferWithinGrace,
+                OperationLatePolicyV1.Reject => (LatePolicyWireV1)LateReject,
+                OperationLatePolicyV1.DeferWithinGrace => (LatePolicyWireV1)LateDeferWithinGrace,
                 _ => throw new InvalidDataException("operation.late-policy-invalid"),
             },
         };
@@ -196,14 +219,14 @@ public sealed class CoreGatewayOperationProtocolV1
         {
             OperationId = operation.OperationId,
             OperationPayloadDigest = operation.ImmutablePayloadDigest,
-            Lifecycle = OperationLifecycleWireStateV1.Unknown,
+            Lifecycle = (OperationLifecycleWireStateV1)LifecycleUnknown,
             Result = new ResultV1
             {
-                Status = ResultStatusV1.Rejected,
+                Status = (ResultStatusV1)ResultRejected,
                 Code = code,
                 RetryAdvice = code is "component.unavailable" or "component.resyncing"
-                    ? RetryAdviceV1.RetrySameIdentity
-                    : RetryAdviceV1.DoNotRetry,
+                    ? (RetryAdviceV1)RetrySameIdentity
+                    : (RetryAdviceV1)RetryDoNotRetry,
             },
         };
 
@@ -211,9 +234,9 @@ public sealed class CoreGatewayOperationProtocolV1
     {
         var lifecycle = state.Lifecycle switch
         {
-            DurableOperationLifecycleV1.AcceptedDurable => OperationLifecycleWireStateV1.Accepted,
-            DurableOperationLifecycleV1.ScheduledDurable => OperationLifecycleWireStateV1.Scheduled,
-            DurableOperationLifecycleV1.TerminalDurable => OperationLifecycleWireStateV1.Terminal,
+            DurableOperationLifecycleV1.AcceptedDurable => (OperationLifecycleWireStateV1)LifecycleAccepted,
+            DurableOperationLifecycleV1.ScheduledDurable => (OperationLifecycleWireStateV1)LifecycleScheduled,
+            DurableOperationLifecycleV1.TerminalDurable => (OperationLifecycleWireStateV1)LifecycleTerminal,
             _ => throw new InvalidDataException("persistence.operation-lifecycle-invalid"),
         };
         var result = new OperationStatusResultV1
@@ -234,7 +257,7 @@ public sealed class CoreGatewayOperationProtocolV1
             {
                 Status = ToWireStatus(status),
                 Code = state.ResultCode,
-                RetryAdvice = RetryAdviceV1.DoNotRetry,
+                RetryAdvice = (RetryAdviceV1)RetryDoNotRetry,
             };
         }
         return result;
@@ -250,36 +273,36 @@ public sealed class CoreGatewayOperationProtocolV1
             {
                 Status = ToWireStatus(terminal),
                 Code = observation.ResultCode.Value.Value,
-                RetryAdvice = RetryAdviceV1.DoNotRetry,
+                RetryAdvice = (RetryAdviceV1)RetryDoNotRetry,
             };
         }
         return new ResultV1
         {
-            Status = observation.Duplicate ? ResultStatusV1.Duplicate : ResultStatusV1.Accepted,
+            Status = observation.Duplicate ? (ResultStatusV1)ResultDuplicate : (ResultStatusV1)ResultAccepted,
             Code = observation.Lifecycle == OperationLifecycleStateV1.ScheduledDurable ? "operation.scheduled" : "operation.accepted",
-            RetryAdvice = RetryAdviceV1.RetrySameIdentity,
+            RetryAdvice = (RetryAdviceV1)RetrySameIdentity,
         };
     }
 
     private static OperationLifecycleWireStateV1 ToWireLifecycle(OperationLifecycleStateV1 lifecycle)
         => lifecycle switch
         {
-            OperationLifecycleStateV1.AcceptedDurable => OperationLifecycleWireStateV1.Accepted,
-            OperationLifecycleStateV1.ScheduledDurable => OperationLifecycleWireStateV1.Scheduled,
-            OperationLifecycleStateV1.TerminalDurable => OperationLifecycleWireStateV1.Terminal,
-            _ => OperationLifecycleWireStateV1.Unknown,
+            OperationLifecycleStateV1.AcceptedDurable => (OperationLifecycleWireStateV1)LifecycleAccepted,
+            OperationLifecycleStateV1.ScheduledDurable => (OperationLifecycleWireStateV1)LifecycleScheduled,
+            OperationLifecycleStateV1.TerminalDurable => (OperationLifecycleWireStateV1)LifecycleTerminal,
+            _ => (OperationLifecycleWireStateV1)LifecycleUnknown,
         };
 
     private static ResultStatusV1 ToWireStatus(CoreOperationResultStatusV1 status)
         => status switch
         {
-            CoreOperationResultStatusV1.Success => ResultStatusV1.Success,
-            CoreOperationResultStatusV1.Accepted => ResultStatusV1.Accepted,
-            CoreOperationResultStatusV1.Pending => ResultStatusV1.Pending,
-            CoreOperationResultStatusV1.NoChange => ResultStatusV1.NoChange,
-            CoreOperationResultStatusV1.Duplicate => ResultStatusV1.Duplicate,
-            CoreOperationResultStatusV1.Rejected => ResultStatusV1.Rejected,
-            CoreOperationResultStatusV1.Failed => ResultStatusV1.Failed,
+            CoreOperationResultStatusV1.Success => (ResultStatusV1)ResultSuccess,
+            CoreOperationResultStatusV1.Accepted => (ResultStatusV1)ResultAccepted,
+            CoreOperationResultStatusV1.Pending => (ResultStatusV1)ResultPending,
+            CoreOperationResultStatusV1.NoChange => (ResultStatusV1)ResultNoChange,
+            CoreOperationResultStatusV1.Duplicate => (ResultStatusV1)ResultDuplicate,
+            CoreOperationResultStatusV1.Rejected => (ResultStatusV1)ResultRejected,
+            CoreOperationResultStatusV1.Failed => (ResultStatusV1)ResultFailed,
             _ => throw new InvalidDataException("operation.result-status-invalid"),
         };
 
