@@ -70,6 +70,12 @@ internal static class Sim06DurableFinalizeSmoke
         };
         var continuity = SHA256.HashData("sim06-resulting-continuity"u8);
         var configDigest = state.Diagnostic.ConfigDigest.ToArray();
+        var material = new StepFinalizeMaterialV1(
+            candidate.ConfigGeneration,
+            configDigest,
+            continuity,
+            transitionHistory,
+            terminalOperations);
 
         var blockedStore = new RecordingTransitionStore(failBeforeCommit: false);
         var blockedCandidate = BuildCandidate(
@@ -84,28 +90,20 @@ internal static class Sim06DurableFinalizeSmoke
                     InvariantOutcomeV1.Fail),
             ]);
         await RequireRejectAsync(
-            () => new DurableStepCoordinatorV1(blockedStore).FinalizeAsync(
-                state,
+            () => new StepFinalizationCoordinatorV1(blockedStore).FinalizeAsync(
                 blockedCandidate,
                 scheduler,
-                continuity,
-                configDigest,
-                transitionHistory,
-                terminalOperations),
+                material),
             "step-finalize.commit-blocked-by-invariant");
         Require(blockedStore.Calls == 0,
             "Commit-blocked candidate must not reach persistence.");
 
         var crashingStore = new RecordingTransitionStore(failBeforeCommit: true);
         await RequireRejectAsync(
-            () => new DurableStepCoordinatorV1(crashingStore).FinalizeAsync(
-                state,
+            () => new StepFinalizationCoordinatorV1(crashingStore).FinalizeAsync(
                 candidate,
                 scheduler,
-                continuity,
-                configDigest,
-                transitionHistory,
-                terminalOperations),
+                material),
             "fixture.crash-before-commit");
 
         Require(crashingStore.Calls == 1,
@@ -124,19 +122,15 @@ internal static class Sim06DurableFinalizeSmoke
             "Pre-commit StepCandidate must never become confirmed-publishable after a failed commit.");
 
         var durableStore = new RecordingTransitionStore(failBeforeCommit: false);
-        var result = await new DurableStepCoordinatorV1(durableStore).FinalizeAsync(
-            state,
+        var result = await new StepFinalizationCoordinatorV1(durableStore).FinalizeAsync(
             candidate,
             scheduler,
-            continuity,
-            configDigest,
-            transitionHistory,
-            terminalOperations);
+            material);
 
         Require(durableStore.Calls == 1 && result.ResultingStep == basisStep + 1 && result.HistorySequence == 77,
             "Successful durable finalize must return the committed transition identity.");
-        Require(result.CanPublishConfirmed,
-            "Only a post-commit finalization result may authorize confirmed publication.");
+        Require(result.IsPublishable,
+            "Only a post-commit durable receipt may authorize confirmed publication.");
         Require(result.CandidateDiagnosticDigest.SequenceEqual(candidate.DiagnosticDigest),
             "Durable finalization must retain candidate diagnostic provenance.");
         Require(scheduler.FreezeStep is null && scheduler.NextSchedulableStep == basisStep + 1,
@@ -215,25 +209,22 @@ internal static class Sim06DurableFinalizeSmoke
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    private sealed class RecordingTransitionStore(bool failBeforeCommit) : IDurableStepTransitionStoreV1
+    private sealed class RecordingTransitionStore(bool failBeforeCommit) : IStepTransitionDurabilityV1
     {
         public int Calls { get; private set; }
 
-        public Task<DurableTransitionResult> PersistTransitionCommitAsync(
-            ulong effectiveStep,
-            ulong resultingStep,
-            byte[] resultingStateContinuityToken,
-            ulong activeConfigGeneration,
-            byte[] activeConfigDigest,
-            HistoryRecordMaterial history,
-            IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        public Task<DurableTransitionResult> CommitAsync(
+            StepCandidateV1 candidate,
+            StepFinalizeMaterialV1 material,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             Calls++;
             if (failBeforeCommit)
                 throw new InvalidDataException("fixture.crash-before-commit");
-            return Task.FromResult(new DurableTransitionResult(resultingStep, history.Sequence));
+            return Task.FromResult(new DurableTransitionResult(
+                candidate.TargetStep,
+                material.TransitionHistory.Sequence));
         }
     }
 }
