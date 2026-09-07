@@ -162,6 +162,8 @@ component = "simulation-core"
         catch (ArgumentException)
         {
         }
+
+        Sim05DurableOperationSmoke.RunAsync().GetAwaiter().GetResult();
     }
 
     private static void Require(bool condition, string message)
