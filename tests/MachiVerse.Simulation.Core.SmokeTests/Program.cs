@@ -286,5 +286,6 @@ await Sim11RuntimeGateSmoke.RunAsync();
 Sim12InfrastructureInformationSmoke.Run();
 Sim13CrossDomainTransactionSmoke.Run();
 Sim13DetailTransitionSmoke.Run();
+await Sim14CoreProtocolSmoke.RunAsync();
 
-Console.WriteLine("SIM-01..SIM-13 component smoke tests passed through cross-domain transaction and deterministic detail transition foundations.");
+Console.WriteLine("SIM-01..SIM-14 component smoke tests passed through Core protocol durability, Master authority, and confirmed publication foundations.");
