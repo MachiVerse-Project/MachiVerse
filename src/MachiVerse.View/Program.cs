@@ -1,5 +1,6 @@
 using MachiVerse.View;
 using MachiVerse.View.Configuration;
+using MachiVerse.View.Operations;
 using MachiVerse.View.Protocol;
 using MachiVerse.View.Rendering;
 using MachiVerse.View.State;
@@ -20,6 +21,9 @@ builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.H
 builder.Services.AddScoped<GatewayProtocolClient>();
 builder.Services.AddScoped<ConfirmedWorldStore>();
 builder.Services.AddScoped<PublicationConsumer>();
+builder.Services.AddScoped<PredictionStore>();
+builder.Services.AddScoped<ReconciliationCoordinator>();
+builder.Services.AddScoped<ViewOperationController>();
 builder.Services.AddScoped<ThreeRendererInterop>();
 
 await builder.Build().RunAsync();
