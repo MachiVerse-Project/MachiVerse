@@ -34,7 +34,7 @@ internal static class Sim13DurableAtomicitySmoke
                 invariantResults:
                 [
                     new InvariantResultV1(
-                        new StableToken("sim13." + registration.TransactionKind.Value["transaction.".Length..].Replace('-', '.') + ".atomic"),
+                        CrossDomainTransactionInvariantRegistryV1.GetRequiredInvariantIds(registration.TransactionKind).Single(),
                         InvariantSeverityV1.CommitBlocking,
                         InvariantOutcomeV1.Pass),
                 ]);
