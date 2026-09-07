@@ -267,12 +267,12 @@ public static class ParticipationDetailFloorV1
     {
         ArgumentNullException.ThrowIfNull(requirements);
         if (residentId.IsZero) throw new InvalidDataException("participation.detail-resident-zero");
-        var floor = (byte)0;
+        var floor = (byte)3;
         foreach (var requirement in requirements)
         {
             requirement.Validate();
             if (requirement.ResidentId == residentId && requirement.AppliesAt(step))
-                floor = Math.Max(floor, requirement.MinimumDetail);
+                floor = Math.Min(floor, requirement.MinimumDetail);
         }
         return floor;
     }
