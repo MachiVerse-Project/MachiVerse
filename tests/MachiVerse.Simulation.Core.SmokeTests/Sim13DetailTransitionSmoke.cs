@@ -28,6 +28,8 @@ component = "simulation-core"
         VerifyBudgetAndPermutation(policy);
         VerifyBudgetWorkerCountDeterminismAsync(policy).GetAwaiter().GetResult();
         VerifyFloors(policy);
+        VerifyTriggerSourceGate();
+        VerifyConservationAuthorityGate(policy);
         VerifyApplyAndCameraIndependence(policy);
         Sim13DetailConservationSmoke.Run();
     }
@@ -177,6 +179,93 @@ component = "simulation-core"
             "detail.bound-resident-floor/detail.active-transaction-floor: D0 guards must prevent demotion.");
     }
 
+    private static void VerifyTriggerSourceGate()
+    {
+        var rejected = false;
+        try
+        {
+            _ = new DetailTransitionCandidateV1(
+                Id(39),
+                new StableToken("resident"),
+                DetailLevelV1.D2RegionalAggregate,
+                DetailLevelV1.D0Entity,
+                requiredEffectiveStep: 0,
+                semanticPriority: 0,
+                (DetailTransitionTriggerSourceV1)255,
+                Id(3901),
+                triggerObservedStep: 0,
+                estimatedRecordCount: 1);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            rejected = true;
+        }
+
+        Require(rejected,
+            "detail.camera-independence: non-authoritative/unregistered trigger source must not enter the detail queue.");
+    }
+
+    private static void VerifyConservationAuthorityGate(DetailTransitionPolicyV1 policy)
+    {
+        var resident = new StableToken("resident");
+        var region = Region(41, resident, DetailLevelV1.D2RegionalAggregate, lastTransitionStep: 0);
+        var directory = new DetailDirectoryV1([region]);
+        var request = Transition(
+            region.DetailRegionId,
+            resident,
+            DetailLevelV1.D2RegionalAggregate,
+            DetailLevelV1.D0Entity,
+            requiredStep: 0,
+            triggerStep: 0,
+            trigger: 4101,
+            records: 10);
+        var plan = DetailTransitionPlannerV1.Plan(directory, [request], 30, policy);
+        var before = new DetailConservationSnapshotV1(
+            stockTotals: [new ConservedQuantityV1(new StableToken("material.test.g"), 10)]);
+        var afterLostStock = new DetailConservationSnapshotV1(
+            stockTotals: [new ConservedQuantityV1(new StableToken("material.test.g"), 9)]);
+        var failedValidation = DetailConservationInvariantV1.ValidateForTransitions(
+            plan.Selected,
+            before,
+            afterLostStock);
+
+        var blocked = false;
+        try
+        {
+            _ = directory.Apply(
+                plan.Selected,
+                plan.Deferred.Concat(plan.NotYetEligible),
+                transitionStep: 30,
+                failedValidation);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "detail.conservation-blocked")
+        {
+            blocked = true;
+        }
+        Require(blocked,
+            "detail.stock-conservation: failed conservation proof must block authority-changing detail Apply.");
+
+        var mismatchedValidation = DetailConservationInvariantV1.ValidateForTransitions(
+            [],
+            before,
+            before);
+        var mismatchRejected = false;
+        try
+        {
+            _ = directory.Apply(
+                plan.Selected,
+                plan.Deferred.Concat(plan.NotYetEligible),
+                transitionStep: 30,
+                mismatchedValidation);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "detail.conservation-transition-mismatch")
+        {
+            mismatchRejected = true;
+        }
+        Require(mismatchRejected,
+            "detail conservation proof must be bound to the exact canonical selected transition set.");
+    }
+
     private static void VerifyApplyAndCameraIndependence(DetailTransitionPolicyV1 policy)
     {
         var resident = new StableToken("resident");
@@ -197,7 +286,17 @@ component = "simulation-core"
         Require(first.Selected.Select(Key).SequenceEqual(second.Selected.Select(Key)),
             "detail.camera-independence: detail planner result must depend only on authoritative inputs.");
 
-        var applied = directory.Apply(first.Selected, first.Deferred.Concat(first.NotYetEligible), transitionStep: 30);
+        var conservationBefore = new DetailConservationSnapshotV1();
+        var conservationAfter = new DetailConservationSnapshotV1();
+        var validation = DetailConservationInvariantV1.ValidateForTransitions(
+            first.Selected,
+            conservationBefore,
+            conservationAfter);
+        var applied = directory.Apply(
+            first.Selected,
+            first.Deferred.Concat(first.NotYetEligible),
+            transitionStep: 30,
+            validation);
         var next = applied.GetRegion(region.DetailRegionId);
         Require(next.GetLevel(resident) == DetailLevelV1.D0Entity &&
                 next.LineageGeneration == region.LineageGeneration + 1 &&
@@ -235,12 +334,13 @@ component = "simulation-core"
             target,
             requiredStep,
             semanticPriority: 0,
+            DetailTransitionTriggerSourceV1.MutationIntent,
             Id(trigger),
             triggerStep,
             records);
 
     private static string Key(DetailTransitionCandidateV1 candidate)
-        => $"{candidate.RequiredEffectiveStep}:{candidate.SemanticPriority}:{candidate.DetailRegionId}:{candidate.DomainToken.Value}:{candidate.TriggerId}";
+        => $"{candidate.RequiredEffectiveStep}:{candidate.SemanticPriority}:{candidate.DetailRegionId}:{candidate.DomainToken.Value}:{candidate.TriggerSource}:{candidate.TriggerId}";
 
     private static OpaqueId128 Id(int value)
         => OpaqueId128.Parse(value.ToString("x32"));
