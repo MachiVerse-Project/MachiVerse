@@ -99,3 +99,87 @@ jobs:
         run: dotnet build src/MachiVerse.Administration.View/MachiVerse.Administration.View.csproj --configuration Release
       - name: Run Administration View smoke tests
         run: dotnet run --project tests/MachiVerse.Administration.View.SmokeTests --configuration Release
+
+  core-gateway-link:
+    name: Core to Gateway process link
+    if: github.head_ref != 'ci/int-01-core-gateway-link-smoke'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Core and Gateway
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release
+      - name: Launch Core and Gateway and verify confirmed resync
+        shell: bash
+        run: |
+          set -euo pipefail
+          core_log="$RUNNER_TEMP/alpha-core-link.log"
+          gateway_log="$RUNNER_TEMP/alpha-gateway-link.log"
+
+          MACHIVERSE_ALPHA_LOCAL=1 \
+          MACHIVERSE_WORLD_ROOT="$RUNNER_TEMP/machiverse-alpha-link-world" \
+          Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:5511 \
+          Kestrel__Endpoints__Grpc__Protocols=Http2 \
+          Kestrel__Endpoints__Health__Url=http://127.0.0.1:5510 \
+          Kestrel__Endpoints__Health__Protocols=Http1 \
+          dotnet run --project src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --no-build >"$core_log" 2>&1 &
+          core_pid=$!
+
+          cleanup() {
+            kill "${gateway_pid:-0}" 2>/dev/null || true
+            kill "$core_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5510/healthz >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$core_pid" 2>/dev/null; then
+              cat "$core_log"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          MACHIVERSE_ALPHA_LOCAL=1 \
+          MACHIVERSE_CORE_ENDPOINT=http://127.0.0.1:5511 \
+          ASPNETCORE_URLS=http://127.0.0.1:5520 \
+          dotnet run --project src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release --no-build >"$gateway_log" 2>&1 &
+          gateway_pid=$!
+
+          for _ in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:5520/healthz >"$RUNNER_TEMP/gateway-health.json"; then
+              if python3 - "$RUNNER_TEMP/gateway-health.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as handle:
+              data = json.load(handle)
+          core = data.get('core') or {}
+          assert data.get('status') == 'ready', data
+          assert core.get('negotiated') is True, data
+          assert core.get('syncState') == 'Synced', data
+          assert core.get('localMaster') is True, data
+          assert core.get('basisStep') == 0, data
+          PY
+              then
+                cat "$RUNNER_TEMP/gateway-health.json"
+                exit 0
+              fi
+            fi
+            if ! kill -0 "$gateway_pid" 2>/dev/null; then
+              cat "$gateway_log"
+              cat "$core_log"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          cat "$gateway_log"
+          cat "$core_log"
+          exit 1
