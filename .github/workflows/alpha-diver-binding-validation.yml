@@ -17,6 +17,7 @@ jobs:
   diver-binding:
     name: General View creates and recovers a confirmed Diver binding
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout pull request
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,6 +39,17 @@ jobs:
           gateway_log="$RUNNER_TEMP/alpha-diver-gateway.log"
           view_log="$RUNNER_TEMP/alpha-diver-view.log"
           browser_log="$RUNNER_TEMP/alpha-diver-browser.log"
+
+          stop_process() {
+            pid="${1:-0}"
+            if [ "$pid" -le 1 ] || ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 20); do
+              if ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+              sleep 0.25
+            done
+            kill -9 "$pid" 2>/dev/null || true
+          }
 
           start_core() {
             MACHIVERSE_ALPHA_LOCAL=1 \
@@ -93,10 +105,10 @@ jobs:
           }
 
           cleanup() {
-            kill "${browser_pid:-0}" 2>/dev/null || true
-            kill "${view_pid:-0}" 2>/dev/null || true
-            kill "${gateway_pid:-0}" 2>/dev/null || true
-            kill "${core_pid:-0}" 2>/dev/null || true
+            stop_process "${browser_pid:-0}"
+            stop_process "${view_pid:-0}"
+            stop_process "${gateway_pid:-0}"
+            stop_process "${core_pid:-0}"
           }
           trap cleanup EXIT
 
@@ -160,7 +172,7 @@ jobs:
           if(!text.includes('Status\nActive')) throw new Error('Binding did not become ACTIVE.\n'+text);
           if(!text.includes('Effective from Step\n2')) throw new Error('Binding effective Step is not 2.\n'+text);
           if(!text.includes('Projection basis Step\n3')) throw new Error('Confirmed binding basis is not Step 3.\n'+text);
-          if(!text.includes('Confirmed absence policy\nalpha.default')) throw new Error('Recovered binding policy is missing.\n'+text);
+          if(!text.includes('Confirmed absence policy\nalpha.default')) throw new Error('Binding policy is missing.\n'+text);
           if(!text.includes('Diver control UX\neligible')) throw new Error('Active binding did not enable Diver control UX.\n'+text);
 
           await clickLinkText('Back to world view');
@@ -177,11 +189,8 @@ jobs:
             exit "$browser_status"
           fi
 
-          kill "$gateway_pid"
-          wait "$gateway_pid" 2>/dev/null || true
-          kill "$core_pid"
-          wait "$core_pid" 2>/dev/null || true
-
+          stop_process "$gateway_pid"
+          stop_process "$core_pid"
           start_core
           wait_core
           start_gateway
