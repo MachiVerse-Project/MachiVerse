@@ -11,6 +11,7 @@ internal static class Sim13CrossDomainTransactionSmoke
         Sim13GoldenScenarioSmoke.Run();
         VerifyCrimeJusticeRequiredAny();
         VerifyTransactionIdentityPermutation();
+        VerifyFutureRootCausalityRejected();
         VerifyInvariantEvidenceBinding();
         VerifyAllTransactionKinds();
         VerifyWorkerCountDeterminismAsync().GetAwaiter().GetResult();
@@ -143,6 +144,35 @@ internal static class Sim13CrossDomainTransactionSmoke
 
         Require(forward == expected && reverse == expected,
             "determinism.transaction-id.vector: mv.transaction.v1 golden TransactionId mismatch.");
+    }
+
+    private static void VerifyFutureRootCausalityRejected()
+    {
+        const ulong basisStep = 42;
+        var worldId = Id("00000000000000000000000000013021");
+        var rootId = Id("00000000000000000000000000013022");
+        var futureRoot = new CausalityRefV1(CausalityRefKindV1.Operation, rootId.ToBytes(), basisStep + 1);
+        var kind = CrossDomainTransactionKindRegistryV1.Get("transaction.birth");
+        var participant = ReadyParticipant(kind, new StableToken("resident"));
+        var rejected = false;
+        try
+        {
+            _ = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+                worldId,
+                kind,
+                basisStep,
+                futureRoot,
+                [Id("00000000000000000000000000013023")],
+                0,
+                [participant],
+                [Invariant(kind, InvariantOutcomeV1.Pass)]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "transaction.root-causality-future")
+        {
+            rejected = true;
+        }
+        Require(rejected,
+            "SIM-13 transaction root causality must not reference a future Step.");
     }
 
     private static void VerifyInvariantEvidenceBinding()
