@@ -18,7 +18,9 @@ internal static class Admin04OperationSmoke
             PresentationTimeoutMs: 30000,
             ConfirmationUxTimeoutSeconds: 10,
             ReconnectInitialMs: 250,
-            ReconnectMaxMs: 10000);
+            ReconnectMaxMs: 10000,
+            GatewayEndpoint: new Uri("wss://localhost/ws/v1/admin"),
+            AllowInsecureLoopbackAlpha: false);
         var session = new AdminSessionProjectionStore();
         var confirmation = new HighImpactConfirmationController(config, () => now);
         var descriptor = new AdminOperationDescriptor(

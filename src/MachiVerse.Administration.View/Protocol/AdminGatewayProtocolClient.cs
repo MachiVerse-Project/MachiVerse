@@ -10,11 +10,22 @@ public sealed class AdminGatewayProtocolClient : IAsyncDisposable
     public AdminViewLifecycleState State { get; private set; } = AdminViewLifecycleState.Starting;
     public event Action<AdminViewLifecycleState>? StateChanged;
 
-    public async Task ConnectAsync(Uri endpoint, CancellationToken cancellationToken = default)
+    public Task ConnectAsync(Uri endpoint, CancellationToken cancellationToken = default)
+        => ConnectAsync(endpoint, allowInsecureLoopbackAlpha: false, cancellationToken);
+
+    public async Task ConnectAsync(
+        Uri endpoint,
+        bool allowInsecureLoopbackAlpha,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
-        if (!string.Equals(endpoint.Scheme, Uri.UriSchemeWss, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Gateway endpoint must use wss://.", nameof(endpoint));
+        var secure = string.Equals(endpoint.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+        var localAlpha = string.Equals(endpoint.Scheme, "ws", StringComparison.OrdinalIgnoreCase) &&
+                         allowInsecureLoopbackAlpha && endpoint.IsLoopback;
+        if (!secure && !localAlpha)
+            throw new ArgumentException(
+                "Admin Gateway endpoint must use wss:// unless an explicit loopback Alpha ws:// endpoint is enabled.",
+                nameof(endpoint));
 
         var reconnecting = State is AdminViewLifecycleState.Closed or AdminViewLifecycleState.Faulted;
         _socket?.Dispose();
@@ -34,14 +45,30 @@ public sealed class AdminGatewayProtocolClient : IAsyncDisposable
         }
     }
 
-    public async Task SendAsync(WireEnvelopeV1 envelope, CancellationToken cancellationToken = default)
+    public Task SendBootstrapAsync(WireEnvelopeV1 envelope, CancellationToken cancellationToken = default)
+        => SendBytesAsync(AdminGatewayBootstrapEnvelopeCodec.Encode(envelope), cancellationToken);
+
+    public async Task<WireEnvelopeV1> ReceiveBootstrapAsync(CancellationToken cancellationToken = default)
+        => AdminGatewayBootstrapEnvelopeCodec.Decode(await ReceiveBytesAsync(cancellationToken).ConfigureAwait(false));
+
+    public Task SendAsync(WireEnvelopeV1 envelope, CancellationToken cancellationToken = default)
+        => SendBytesAsync(AdminGatewayEnvelopeCodec.Encode(envelope), cancellationToken);
+
+    public async Task<WireEnvelopeV1> ReceiveAsync(CancellationToken cancellationToken = default)
+        => AdminGatewayEnvelopeCodec.Decode(await ReceiveBytesAsync(cancellationToken).ConfigureAwait(false));
+
+    public void MarkAuthenticating() => SetState(AdminViewLifecycleState.Authenticating);
+    public void MarkSyncing() => SetState(AdminViewLifecycleState.Syncing);
+    public void MarkReady() => SetState(AdminViewLifecycleState.Ready);
+    public void MarkDegraded() => SetState(AdminViewLifecycleState.Degraded);
+
+    private async Task SendBytesAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         var socket = RequireOpenSocket();
-        var bytes = AdminGatewayEnvelopeCodec.Encode(envelope);
         await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Binary, true, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<WireEnvelopeV1> ReceiveAsync(CancellationToken cancellationToken = default)
+    private async Task<byte[]> ReceiveBytesAsync(CancellationToken cancellationToken)
     {
         var socket = RequireOpenSocket();
         var buffer = new byte[64 * 1024];
@@ -62,13 +89,8 @@ public sealed class AdminGatewayProtocolClient : IAsyncDisposable
                 throw new InvalidDataException("protocol.limit-exceeded: envelope exceeds 8 MiB.");
             if (result.EndOfMessage) break;
         }
-        return AdminGatewayEnvelopeCodec.Decode(message.ToArray());
+        return message.ToArray();
     }
-
-    public void MarkAuthenticating() => SetState(AdminViewLifecycleState.Authenticating);
-    public void MarkSyncing() => SetState(AdminViewLifecycleState.Syncing);
-    public void MarkReady() => SetState(AdminViewLifecycleState.Ready);
-    public void MarkDegraded() => SetState(AdminViewLifecycleState.Degraded);
 
     private ClientWebSocket RequireOpenSocket()
         => _socket is { State: WebSocketState.Open } socket
