@@ -389,7 +389,6 @@ message AuditQueryV1 {
 message AuditRecordWireV1 {
   bytes audit_record_id = 1;
   uint64 timestamp_unix_millis = 2;
-  LogSeverityV1 severity = 3;
   string audit_event_kind = 3;
   bytes actor_account_ref = 4;
   optional bytes operation_id = 5;
