@@ -51,9 +51,11 @@ internal static class Sim12InfrastructureInformationSmoke
         var demands = new[] { new WeightedServiceDemandV1(b, 1, 8), new WeightedServiceDemandV1(a, 2, 8) };
         var forward = DeterministicWeightedDeficitRoundRobinV1.Allocate(demands, 9, 1);
         var reverse = DeterministicWeightedDeficitRoundRobinV1.Allocate(demands.Reverse(), 9, 1);
-        Require(forward.SequenceEqual(reverse) && forward.Sum(static x => x.Allocated) == 9 &&
-                forward.Single(x => x.ParticipantId == a).Allocated > forward.Single(x => x.ParticipantId == b).Allocated,
-            "domain.infrastructure.wdrr: stable weighted allocation failed.");
+        Require(forward.SequenceEqual(reverse) &&
+                forward.Sum(static x => x.Allocated) == 9 &&
+                forward.Single(x => x.ParticipantId == a).Allocated == 6 &&
+                forward.Single(x => x.ParticipantId == b).Allocated == 3,
+            "domain.infrastructure.wdrr: stable integer fairness sequence failed.");
     }
 
     private static void VerifyJacobi()
@@ -72,9 +74,14 @@ internal static class Sim12InfrastructureInformationSmoke
         };
         var power = PowerNetworkJacobiV1.Solve(nodes, coefficients);
         var water = WaterNetworkJacobiV1.Solve(nodes.Reverse(), coefficients.Reverse());
+        const long expectedRawAfter32Iterations = 2863311530L;
         Require(power.Iterations == 32 && water.Iterations == 32 &&
+                power.Values[a].Raw == expectedRawAfter32Iterations &&
+                power.Values[b].Raw == expectedRawAfter32Iterations &&
+                water.Values[a].Raw == expectedRawAfter32Iterations &&
+                water.Values[b].Raw == expectedRawAfter32Iterations &&
                 power.Values.OrderBy(static x => x.Key).SequenceEqual(water.Values.OrderBy(static x => x.Key)),
-            "domain.infrastructure.power.jacobi/domain.infrastructure.water.jacobi: fixed full-vector iteration failed.");
+            "domain.infrastructure.power.jacobi/domain.infrastructure.water.jacobi: fixed 32-iteration vector mismatch.");
     }
 
     private static void VerifyOutageCascade()
