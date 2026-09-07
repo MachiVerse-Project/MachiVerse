@@ -1,3 +1,4 @@
+using MachiVerse.Gateway.Audit;
 using MachiVerse.Gateway.Configuration;
 using MachiVerse.Gateway.Protocol;
 using MachiVerse.Gateway.State;
@@ -15,7 +16,14 @@ builder.Services.AddGrpc();
 
 if (alphaCoreOptions is not null)
 {
+    var componentDataDirectory = Environment.GetEnvironmentVariable("MACHIVERSE_GATEWAY_DATA_ROOT")
+        ?? Path.Combine(AppContext.BaseDirectory, "data", "gateway-alpha");
+
     builder.Services.AddSingleton(alphaCoreOptions);
+    builder.Services.AddSingleton(new AlphaGatewayConfigCoordinator(gatewayConfig, componentDataDirectory));
+    builder.Services.AddSingleton(_ => new GatewayAuditStoreV1(componentDataDirectory, gatewayConfig.Audit.QueryMaxPageSize));
+    builder.Services.AddSingleton<IAuditWriterV1>(sp => sp.GetRequiredService<GatewayAuditStoreV1>());
+    builder.Services.AddSingleton<ProtectedAdminAuditGateV1>();
     builder.Services.AddSingleton<ProtocolNegotiationState>();
     builder.Services.AddSingleton<SchedulingPolicyProjection>();
     builder.Services.AddSingleton<ConfirmedProjectionCache>();
