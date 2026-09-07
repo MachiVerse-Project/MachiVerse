@@ -8,6 +8,7 @@ internal static class Sim13CrossDomainTransactionSmoke
     internal static void Run()
     {
         VerifyRegistry();
+        VerifyCrimeJusticeRequiredAny();
         VerifyTransactionIdentityPermutation();
         VerifyAllTransactionKinds();
         VerifyWorkerCountDeterminismAsync().GetAwaiter().GetResult();
@@ -28,6 +29,8 @@ internal static class Sim13CrossDomainTransactionSmoke
                 $"{registration.TransactionKind.Value}: at least one required participant domain is required.");
             Require(!registration.RequiredDomains.Intersect(registration.OptionalDomains).Any(),
                 $"{registration.TransactionKind.Value}: required/optional participant sets must not overlap.");
+            Require(registration.RequiredAnyDomainGroups.All(static group => group.Count > 0),
+                $"{registration.TransactionKind.Value}: required-any participant groups must not be empty.");
         }
 
         var demolition = CrossDomainTransactionKindRegistryV1.GetRegistration(
@@ -42,6 +45,84 @@ internal static class Sim13CrossDomainTransactionSmoke
                 new StableToken("governance_security")
             ]),
             "transaction.demolition participant matrix must match the Phase 4 catalog.");
+
+        var crimeJustice = CrossDomainTransactionKindRegistryV1.GetRegistration(
+            CrossDomainTransactionKindRegistryV1.Get("transaction.crime-justice"));
+        Require(
+            crimeJustice.RequiredDomains.SequenceEqual([new StableToken("governance_security")]) &&
+            crimeJustice.OptionalDomains.SequenceEqual([new StableToken("society_economy")]) &&
+            crimeJustice.RequiredAnyDomainGroups.Count == 1 &&
+            crimeJustice.RequiredAnyDomainGroups[0].SequenceEqual([
+                new StableToken("physical_built"),
+                new StableToken("resident")
+            ]),
+            "transaction.crime-justice participant matrix must require governance plus resident/physical fact source.");
+    }
+
+    private static void VerifyCrimeJusticeRequiredAny()
+    {
+        const ulong basisStep = 300;
+        var worldId = Id("00000000000000000000000000013701");
+        var rootId = Id("00000000000000000000000000013702");
+        var root = new CausalityRefV1(CausalityRefKindV1.Operation, rootId.ToBytes(), basisStep);
+        var subject = Id("00000000000000000000000000013703");
+        var kind = CrossDomainTransactionKindRegistryV1.Get("transaction.crime-justice");
+        var passInvariant = Invariant(kind, InvariantOutcomeV1.Pass);
+        var governance = ReadyParticipant(kind, new StableToken("governance_security"));
+        var resident = ReadyParticipant(kind, new StableToken("resident"));
+        var physical = ReadyParticipant(kind, new StableToken("physical_built"));
+
+        var residentFact = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+            worldId,
+            kind,
+            basisStep,
+            root,
+            [subject],
+            stableLocalOrdinal: 0,
+            [governance, resident],
+            [passInvariant]);
+        Require(residentFact.CanFinalize && residentFact.Status == TransactionCandidateStatusV1.Valid,
+            "transaction.crime-justice: resident fact source must satisfy required-any participant group.");
+
+        var physicalFact = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+            worldId,
+            kind,
+            basisStep,
+            root,
+            [subject],
+            stableLocalOrdinal: 0,
+            [governance, physical],
+            [passInvariant]);
+        Require(physicalFact.CanFinalize && physicalFact.Status == TransactionCandidateStatusV1.Valid,
+            "transaction.crime-justice: physical fact source must satisfy required-any participant group.");
+
+        var noFactSource = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+            worldId,
+            kind,
+            basisStep,
+            root,
+            [subject],
+            stableLocalOrdinal: 0,
+            [governance],
+            [passInvariant]);
+        Require(!noFactSource.CanFinalize &&
+                noFactSource.Status == TransactionCandidateStatusV1.Invalid &&
+                noFactSource.FailureCode?.Value == "transaction.participant-missing",
+            "transaction.crime-justice: missing resident/physical fact source must fail atomically.");
+
+        var failedFactSource = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+            worldId,
+            kind,
+            basisStep,
+            root,
+            [subject],
+            stableLocalOrdinal: 0,
+            [governance, FailedParticipant(kind, new StableToken("resident"))],
+            [passInvariant]);
+        Require(!failedFactSource.CanFinalize &&
+                failedFactSource.Status == TransactionCandidateStatusV1.Invalid &&
+                failedFactSource.FailureCode?.Value == "transaction.required-participant-failed",
+            "transaction.crime-justice: failed required-any participant must fail atomically.");
     }
 
     private static void VerifyTransactionIdentityPermutation()
@@ -74,7 +155,7 @@ internal static class Sim13CrossDomainTransactionSmoke
         ulong ordinal = 0;
         foreach (var registration in CrossDomainTransactionKindRegistryV1.Registrations)
         {
-            var participants = registration.RequiredDomains
+            var participants = RequiredParticipantDomains(registration)
                 .Select(domain => ReadyParticipant(registration.TransactionKind, domain))
                 .ToArray();
             var passInvariant = Invariant(registration.TransactionKind, InvariantOutcomeV1.Pass);
@@ -179,7 +260,7 @@ internal static class Sim13CrossDomainTransactionSmoke
                     workerCount,
                     (item, _) =>
                     {
-                        var participants = item.Registration.RequiredDomains
+                        var participants = RequiredParticipantDomains(item.Registration)
                             .Select(domain => ReadyParticipant(item.Registration.TransactionKind, domain))
                             .Reverse()
                             .ToArray();
@@ -205,6 +286,11 @@ internal static class Sim13CrossDomainTransactionSmoke
             }
         }
     }
+
+    private static IEnumerable<StableToken> RequiredParticipantDomains(
+        CrossDomainTransactionKindRegistrationV1 registration)
+        => registration.RequiredDomains.Concat(
+            registration.RequiredAnyDomainGroups.Select(static group => group[0]));
 
     private static TransactionParticipantCandidateV1 ReadyParticipant(StableToken kind, StableToken domain)
         => Participant(kind, domain, TransactionParticipantOutcomeV1.Ready, "ready", null);
