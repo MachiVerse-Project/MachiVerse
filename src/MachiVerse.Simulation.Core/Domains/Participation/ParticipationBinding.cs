@@ -106,7 +106,7 @@ public static class ParticipationBindResolverV1
             var priorGeneration = existing.Concat(accepted)
                 .Where(item => item.DiverRef == request.DiverRef)
                 .Select(static item => item.BindingGeneration)
-                .DefaultIfEmpty(0)
+                .DefaultIfEmpty(0u)
                 .Max();
             if (request.BindingGeneration <= priorGeneration)
             {
