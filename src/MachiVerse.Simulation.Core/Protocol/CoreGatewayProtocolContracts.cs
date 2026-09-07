@@ -26,6 +26,7 @@ public static class CoreGatewayProtocolRegistryV1
     public const int MaxSerializedEnvelopeBytes = 8 * 1024 * 1024;
     public const int MaxPublicationChunkBytes = 1024 * 1024;
     public const uint MaxPublicationChunks = 65535;
+    public const int CompressionNone = 1;
 
     public static readonly IReadOnlyList<string> BaselineCapabilities = Array.AsReadOnly(new[]
     {
@@ -56,13 +57,20 @@ public static class CoreGatewayProtocolRegistryV1
             ["component.health"] = E("component.health", "protocol.component-health.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.Optional, OperationContextPolicyV1.None),
         };
 
-    public static IReadOnlyCollection<CoreGatewayMessageRegistryEntryV1> Entries => EntriesByType.Values;
+    public static IReadOnlyCollection<CoreGatewayMessageRegistryEntryV1> Entries => Array.AsReadOnly(EntriesByType.Values.ToArray());
+
     public static CoreGatewayMessageRegistryEntryV1 Get(string type)
         => EntriesByType.TryGetValue(type, out var entry)
             ? entry
             : throw new CoreGatewayProtocolException("protocol.unknown-message-type", $"Unknown mv.core-gateway message type: {type}");
 
-    private static CoreGatewayMessageRegistryEntryV1 E(string type, string schema, CoreGatewayMessageDirectionV1 direction, WorldContextPolicyV1 world, OperationContextPolicyV1 op, bool bootstrap = false)
+    private static CoreGatewayMessageRegistryEntryV1 E(
+        string type,
+        string schema,
+        CoreGatewayMessageDirectionV1 direction,
+        WorldContextPolicyV1 world,
+        OperationContextPolicyV1 op,
+        bool bootstrap = false)
         => new(new StableToken(type), new StableToken(schema), direction, world, op, bootstrap);
 }
 
@@ -77,23 +85,30 @@ public static partial class CoreGatewayWireValidatorV1
 {
     public static WireEnvelopeV1 DecodeAndValidate(ReadOnlySpan<byte> serialized, CoreGatewayMessageDirectionV1 direction, uint? generation = null)
     {
-        if (serialized.Length > CoreGatewayProtocolRegistryV1.MaxSerializedEnvelopeBytes) throw Error("protocol.limit-exceeded", "WireEnvelope exceeds 8 MiB.");
+        if (serialized.Length > CoreGatewayProtocolRegistryV1.MaxSerializedEnvelopeBytes)
+            throw Error("protocol.limit-exceeded", "WireEnvelope exceeds 8 MiB.");
         try
         {
             var envelope = WireEnvelopeV1.Parser.ParseFrom(serialized.ToArray());
             Validate(envelope, direction, generation);
             return envelope;
         }
-        catch (InvalidProtocolBufferException ex) { throw Error("protocol.malformed", "WireEnvelope protobuf decode failed.", ex); }
+        catch (InvalidProtocolBufferException ex)
+        {
+            throw Error("protocol.malformed", "WireEnvelope protobuf decode failed.", ex);
+        }
     }
 
     public static void Validate(WireEnvelopeV1 envelope, CoreGatewayMessageDirectionV1 direction, uint? generation = null)
     {
         ArgumentNullException.ThrowIfNull(envelope);
-        if (envelope.CalculateSize() > CoreGatewayProtocolRegistryV1.MaxSerializedEnvelopeBytes) throw Error("protocol.limit-exceeded", "WireEnvelope exceeds 8 MiB.");
-        if (envelope.EnvelopeVersion != 1) throw Error("protocol.malformed", "Unsupported envelope_version.");
+        if (envelope.CalculateSize() > CoreGatewayProtocolRegistryV1.MaxSerializedEnvelopeBytes)
+            throw Error("protocol.limit-exceeded", "WireEnvelope exceeds 8 MiB.");
+        if (envelope.EnvelopeVersion != 1)
+            throw Error("protocol.malformed", "Unsupported envelope_version.");
         ValidateStableToken(envelope.ProtocolId, "protocol_id");
-        if (!string.Equals(envelope.ProtocolId, CoreGatewayProtocolRegistryV1.ProtocolId, StringComparison.Ordinal)) throw Error("protocol.wrong-protocol", "ProtocolId does not match mv.core-gateway.");
+        if (!string.Equals(envelope.ProtocolId, CoreGatewayProtocolRegistryV1.ProtocolId, StringComparison.Ordinal))
+            throw Error("protocol.wrong-protocol", "ProtocolId does not match mv.core-gateway.");
         ValidateStableToken(envelope.MessageType, "message_type");
         ValidateStableToken(envelope.PayloadSchemaId, "payload_schema_id");
         ValidateId128(envelope.MessageId, "message_id", false);
@@ -102,27 +117,37 @@ public static partial class CoreGatewayWireValidatorV1
         if (envelope.HasCausationId) ValidateId128(envelope.CausationId, "causation_id", false);
 
         var entry = CoreGatewayProtocolRegistryV1.Get(envelope.MessageType);
-        if (entry.Direction != direction) throw Error("protocol.unknown-message-type", "Message direction is invalid.");
-        if (!string.Equals(entry.PayloadSchemaId.Value, envelope.PayloadSchemaId, StringComparison.Ordinal)) throw Error("protocol.payload-schema-mismatch", "MessageType/payload schema mismatch.");
-        if (envelope.PayloadSchemaVersion is null || envelope.PayloadSchemaVersion.Major != 1 || envelope.PayloadSchemaVersion.Minor != 0) throw Error("protocol.schema-unsupported", "Payload schema must be 1.0.");
+        if (entry.Direction != direction)
+            throw Error("protocol.unknown-message-type", "Message direction is invalid.");
+        if (!string.Equals(entry.PayloadSchemaId.Value, envelope.PayloadSchemaId, StringComparison.Ordinal))
+            throw Error("protocol.payload-schema-mismatch", "MessageType/payload schema mismatch.");
+        if (envelope.PayloadSchemaVersion is null || envelope.PayloadSchemaVersion.Major != 1 || envelope.PayloadSchemaVersion.Minor != 0)
+            throw Error("protocol.schema-unsupported", "Payload schema must be 1.0.");
 
         if (entry.Bootstrap)
         {
-            if (envelope.NegotiationGeneration != 0) throw Error("protocol.negotiation-stale", "Bootstrap generation must be 0.");
-            if (envelope.ProtocolVersion is null || envelope.ProtocolVersion.Major != 0 || envelope.ProtocolVersion.Minor != 0) throw Error("protocol.version-incompatible", "Bootstrap protocol version must be 0.0.");
+            if (envelope.NegotiationGeneration != 0)
+                throw Error("protocol.negotiation-stale", "Bootstrap generation must be 0.");
+            if (envelope.ProtocolVersion is null || envelope.ProtocolVersion.Major != 0 || envelope.ProtocolVersion.Minor != 0)
+                throw Error("protocol.version-incompatible", "Bootstrap protocol version must be 0.0.");
         }
         else
         {
-            if (envelope.ProtocolVersion is null || envelope.ProtocolVersion.Major != 1 || envelope.ProtocolVersion.Minor != 0) throw Error("protocol.version-incompatible", "Normal protocol version must be 1.0.");
-            if (envelope.NegotiationGeneration == 0 || generation is { } current && current != envelope.NegotiationGeneration) throw Error("protocol.negotiation-stale", "Negotiation generation is stale.");
+            if (envelope.ProtocolVersion is null || envelope.ProtocolVersion.Major != 1 || envelope.ProtocolVersion.Minor != 0)
+                throw Error("protocol.version-incompatible", "Normal protocol version must be 1.0.");
+            if (envelope.NegotiationGeneration == 0 || generation is { } current && current != envelope.NegotiationGeneration)
+                throw Error("protocol.negotiation-stale", "Negotiation generation is stale.");
         }
-        if ((int)envelope.PayloadCompression != (int)CompressionKindV1.None) throw Error("protocol.capability-missing", "Compression NONE is required by baseline profile.");
+
+        if ((int)envelope.PayloadCompression != CoreGatewayProtocolRegistryV1.CompressionNone)
+            throw Error("protocol.capability-missing", "Compression NONE is required by baseline profile.");
         ValidateContexts(envelope, entry);
     }
 
     public static void ValidateStableToken(string value, string field)
     {
-        if (value is null || !StableTokenPattern().IsMatch(value)) throw Error("protocol.malformed", $"Invalid StableToken in {field}.");
+        if (value is null || !StableTokenPattern().IsMatch(value))
+            throw Error("protocol.malformed", $"Invalid StableToken in {field}.");
     }
 
     public static byte[] ValidateId128(ByteString value, string field, bool allowZero)
@@ -130,7 +155,8 @@ public static partial class CoreGatewayWireValidatorV1
         ArgumentNullException.ThrowIfNull(value);
         if (value.Length != 16) throw Error("protocol.invalid-id", $"{field} must be exactly 16 bytes.");
         var bytes = value.ToByteArray();
-        if (!allowZero && bytes.AsSpan().IndexOfAnyExcept((byte)0) < 0) throw Error("protocol.invalid-id", $"{field} cannot be ZERO.");
+        if (!allowZero && bytes.AsSpan().IndexOfAnyExcept((byte)0) < 0)
+            throw Error("protocol.invalid-id", $"{field} cannot be ZERO.");
         return bytes;
     }
 
@@ -154,9 +180,12 @@ public static partial class CoreGatewayWireValidatorV1
             default:
                 if (envelope.WorldContext is null) throw Error("protocol.missing-required", "WorldContext required.");
                 ValidateWorld(envelope.WorldContext);
-                if (entry.WorldContextPolicy == WorldContextPolicyV1.RequiredWithBasisStep && !envelope.WorldContext.HasBasisStep) throw Error("protocol.missing-required", "basis_step required.");
-                if (entry.WorldContextPolicy == WorldContextPolicyV1.RequiredWithMasterGeneration && (!envelope.WorldContext.HasMasterGeneration || envelope.WorldContext.MasterGeneration == 0)) throw Error("protocol.missing-required", "master_generation required.");
-                if (entry.WorldContextPolicy == WorldContextPolicyV1.RequiredWithConfigGeneration && (!envelope.WorldContext.HasConfigGeneration || envelope.WorldContext.ConfigGeneration == 0)) throw Error("protocol.missing-required", "config_generation required.");
+                if (entry.WorldContextPolicy == WorldContextPolicyV1.RequiredWithBasisStep && !envelope.WorldContext.HasBasisStep)
+                    throw Error("protocol.missing-required", "basis_step required.");
+                if (entry.WorldContextPolicy == WorldContextPolicyV1.RequiredWithMasterGeneration && (!envelope.WorldContext.HasMasterGeneration || envelope.WorldContext.MasterGeneration == 0))
+                    throw Error("protocol.missing-required", "master_generation required.");
+                if (entry.WorldContextPolicy == WorldContextPolicyV1.RequiredWithConfigGeneration && (!envelope.WorldContext.HasConfigGeneration || envelope.WorldContext.ConfigGeneration == 0))
+                    throw Error("protocol.missing-required", "config_generation required.");
                 break;
         }
 
@@ -169,7 +198,8 @@ public static partial class CoreGatewayWireValidatorV1
                 if (envelope.OperationContext is not null) ValidateOperation(envelope.OperationContext);
                 break;
             case OperationContextPolicyV1.BatchRequired:
-                if (envelope.OperationContext is null || !envelope.OperationContext.HasBatchId) throw Error("protocol.missing-required", "Batch OperationContext required.");
+                if (envelope.OperationContext is null || !envelope.OperationContext.HasBatchId)
+                    throw Error("protocol.missing-required", "Batch OperationContext required.");
                 ValidateOperation(envelope.OperationContext);
                 break;
         }
@@ -178,36 +208,49 @@ public static partial class CoreGatewayWireValidatorV1
     private static void ValidateWorld(WorldContextWireV1 context)
     {
         ValidateId128(context.WorldId, "world_id", false);
-        if (context.HasMasterGeneration && context.MasterGeneration == 0) throw Error("protocol.field-out-of-range", "MasterGeneration starts at 1.");
-        if (context.HasConfigGeneration && context.ConfigGeneration == 0) throw Error("protocol.field-out-of-range", "ConfigGeneration starts at 1.");
+        if (context.HasMasterGeneration && context.MasterGeneration == 0)
+            throw Error("protocol.field-out-of-range", "MasterGeneration starts at 1.");
+        if (context.HasConfigGeneration && context.ConfigGeneration == 0)
+            throw Error("protocol.field-out-of-range", "ConfigGeneration starts at 1.");
     }
 
     private static void ValidateOperation(OperationContextWireV1 context)
     {
-        if (!context.HasOperationId && !context.HasBatchId) throw Error("protocol.missing-required", "OperationContext requires operation_id or batch_id.");
+        if (!context.HasOperationId && !context.HasBatchId)
+            throw Error("protocol.missing-required", "OperationContext requires operation_id or batch_id.");
         if (context.HasOperationId)
         {
             ValidateId128(context.OperationId, "operation_id", false);
             if (context.HasOperationPayloadDigest) ValidateHash256(context.OperationPayloadDigest, "operation_payload_digest");
         }
-        else if (context.HasOperationPayloadDigest) throw Error("protocol.malformed", "operation_payload_digest requires operation_id.");
+        else if (context.HasOperationPayloadDigest)
+        {
+            throw Error("protocol.malformed", "operation_payload_digest requires operation_id.");
+        }
         if (context.HasBatchId) ValidateId128(context.BatchId, "batch_id", false);
     }
 
-    private static CoreGatewayProtocolException Error(string code, string diagnostic, Exception? inner = null) => new(code, diagnostic, inner);
-    [GeneratedRegex("^[a-z0-9][a-z0-9._/-]{0,63}$", RegexOptions.CultureInvariant)] private static partial Regex StableTokenPattern();
+    private static CoreGatewayProtocolException Error(string code, string diagnostic, Exception? inner = null)
+        => new(code, diagnostic, inner);
+
+    [GeneratedRegex("^[a-z0-9][a-z0-9._/-]{0,63}$", RegexOptions.CultureInvariant)]
+    private static partial Regex StableTokenPattern();
 }
 
 public sealed record SupportedProtocolRangeV1(uint Major, uint MinMinor, uint MaxMinor);
 
 public sealed class CoreGatewayNegotiationProfileV1
 {
-    public CoreGatewayNegotiationProfileV1(IEnumerable<SupportedProtocolRangeV1>? versions = null, IEnumerable<string>? provided = null, IEnumerable<string>? required = null)
+    public CoreGatewayNegotiationProfileV1(
+        IEnumerable<SupportedProtocolRangeV1>? versions = null,
+        IEnumerable<string>? provided = null,
+        IEnumerable<string>? required = null)
     {
         SupportedVersions = NormalizeRanges(versions ?? [new SupportedProtocolRangeV1(1, 0, 0)]);
         ProvidedCapabilities = NormalizeTokens(provided ?? CoreGatewayProtocolRegistryV1.BaselineCapabilities);
         RequiredCapabilities = NormalizeTokens(required ?? CoreGatewayProtocolRegistryV1.BaselineCapabilities);
     }
+
     public IReadOnlyList<SupportedProtocolRangeV1> SupportedVersions { get; }
     public IReadOnlyList<string> ProvidedCapabilities { get; }
     public IReadOnlyList<string> RequiredCapabilities { get; }
@@ -215,8 +258,10 @@ public sealed class CoreGatewayNegotiationProfileV1
     private static IReadOnlyList<SupportedProtocolRangeV1> NormalizeRanges(IEnumerable<SupportedProtocolRangeV1> values)
     {
         var result = values.OrderBy(static x => x.Major).ToArray();
-        if (result.Length == 0 || result.Select(static x => x.Major).Distinct().Count() != result.Length) throw new InvalidDataException("protocol.version-range-invalid");
-        if (result.Any(static x => x.Major == 0 || x.Major > ushort.MaxValue || x.MinMinor > x.MaxMinor || x.MaxMinor > ushort.MaxValue)) throw new InvalidDataException("protocol.version-range-invalid");
+        if (result.Length == 0 || result.Select(static x => x.Major).Distinct().Count() != result.Length)
+            throw new InvalidDataException("protocol.version-range-invalid");
+        if (result.Any(static x => x.Major == 0 || x.Major > ushort.MaxValue || x.MinMinor > x.MaxMinor || x.MaxMinor > ushort.MaxValue))
+            throw new InvalidDataException("protocol.version-range-invalid");
         return Array.AsReadOnly(result);
     }
 
@@ -224,7 +269,8 @@ public sealed class CoreGatewayNegotiationProfileV1
     {
         var result = values.Order(StringComparer.Ordinal).ToArray();
         foreach (var value in result) CoreGatewayWireValidatorV1.ValidateStableToken(value, "capability");
-        if (result.Distinct(StringComparer.Ordinal).Count() != result.Length) throw new InvalidDataException("protocol.capability-duplicate");
+        if (result.Distinct(StringComparer.Ordinal).Count() != result.Length)
+            throw new InvalidDataException("protocol.capability-duplicate");
         return Array.AsReadOnly(result);
     }
 }
@@ -233,26 +279,51 @@ public static class CoreGatewayNegotiatorV1
 {
     public static ProtocolAcceptV1 Negotiate(ProtocolHelloV1 hello, CoreGatewayNegotiationProfileV1 profile)
     {
-        ArgumentNullException.ThrowIfNull(hello); ArgumentNullException.ThrowIfNull(profile);
+        ArgumentNullException.ThrowIfNull(hello);
+        ArgumentNullException.ThrowIfNull(profile);
         CoreGatewayWireValidatorV1.ValidateStableToken(hello.ProtocolId, "hello.protocol_id");
-        if (!string.Equals(hello.ProtocolId, CoreGatewayProtocolRegistryV1.ProtocolId, StringComparison.Ordinal)) throw new CoreGatewayProtocolException("protocol.wrong-protocol", "Hello ProtocolId mismatch.");
-        var peerRanges = hello.SupportedVersions.Select(static x => new SupportedProtocolRangeV1(x.Major, x.MinMinor, x.MaxMinor)).OrderBy(static x => x.Major).ToArray();
-        if (peerRanges.Length == 0 || peerRanges.Select(static x => x.Major).Distinct().Count() != peerRanges.Length || peerRanges.Any(static x => x.Major == 0 || x.Major > ushort.MaxValue || x.MinMinor > x.MaxMinor || x.MaxMinor > ushort.MaxValue)) throw new CoreGatewayProtocolException("protocol.version-incompatible", "Peer version ranges invalid.");
+        if (!string.Equals(hello.ProtocolId, CoreGatewayProtocolRegistryV1.ProtocolId, StringComparison.Ordinal))
+            throw new CoreGatewayProtocolException("protocol.wrong-protocol", "Hello ProtocolId mismatch.");
+
+        var peerRanges = hello.SupportedVersions
+            .Select(static x => new SupportedProtocolRangeV1(x.Major, x.MinMinor, x.MaxMinor))
+            .OrderBy(static x => x.Major)
+            .ToArray();
+        if (peerRanges.Length == 0 || peerRanges.Select(static x => x.Major).Distinct().Count() != peerRanges.Length ||
+            peerRanges.Any(static x => x.Major == 0 || x.Major > ushort.MaxValue || x.MinMinor > x.MaxMinor || x.MaxMinor > ushort.MaxValue))
+            throw new CoreGatewayProtocolException("protocol.version-incompatible", "Peer version ranges invalid.");
+
         var peerProvided = NormalizeCapabilities(hello.ProvidedCapabilities);
         var peerRequired = NormalizeCapabilities(hello.RequiredCapabilities);
-        if (peerRequired.Any(required => !profile.ProvidedCapabilities.Contains(required, StringComparer.Ordinal)) || profile.RequiredCapabilities.Any(required => !peerProvided.Contains(required, StringComparer.Ordinal))) throw new CoreGatewayProtocolException("protocol.capability-missing", "Required baseline capability is missing.");
+        if (peerRequired.Any(required => !profile.ProvidedCapabilities.Contains(required, StringComparer.Ordinal)) ||
+            profile.RequiredCapabilities.Any(required => !peerProvided.Contains(required, StringComparer.Ordinal)))
+            throw new CoreGatewayProtocolException("protocol.capability-missing", "Required baseline capability is missing.");
 
         (uint Major, uint Minor)? selected = null;
         foreach (var local in profile.SupportedVersions.OrderByDescending(static x => x.Major))
         {
             var peer = peerRanges.FirstOrDefault(x => x.Major == local.Major);
             if (peer is null) continue;
-            var low = Math.Max(local.MinMinor, peer.MinMinor); var high = Math.Min(local.MaxMinor, peer.MaxMinor);
-            if (low <= high) { selected = (local.Major, high); break; }
+            var low = Math.Max(local.MinMinor, peer.MinMinor);
+            var high = Math.Min(local.MaxMinor, peer.MaxMinor);
+            if (low <= high)
+            {
+                selected = (local.Major, high);
+                break;
+            }
         }
-        if (selected is null) throw new CoreGatewayProtocolException("protocol.version-incompatible", "No common protocol version.");
-        var accept = new ProtocolAcceptV1 { NegotiatedVersion = new ProtocolVersionV1 { Major = selected.Value.Major, Minor = selected.Value.Minor }, NegotiationGeneration = 1 };
-        accept.EffectiveOptionalCapabilities.AddRange(profile.ProvidedCapabilities.Intersect(peerProvided, StringComparer.Ordinal).Except(profile.RequiredCapabilities, StringComparer.Ordinal).Order(StringComparer.Ordinal));
+        if (selected is null)
+            throw new CoreGatewayProtocolException("protocol.version-incompatible", "No common protocol version.");
+
+        var accept = new ProtocolAcceptV1
+        {
+            NegotiatedVersion = new ProtocolVersionV1 { Major = selected.Value.Major, Minor = selected.Value.Minor },
+            NegotiationGeneration = 1,
+        };
+        accept.EffectiveOptionalCapabilities.AddRange(
+            profile.ProvidedCapabilities.Intersect(peerProvided, StringComparer.Ordinal)
+                .Except(profile.RequiredCapabilities, StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal));
         return accept;
     }
 
@@ -260,36 +331,119 @@ public static class CoreGatewayNegotiatorV1
     {
         var result = values.Order(StringComparer.Ordinal).ToArray();
         foreach (var value in result) CoreGatewayWireValidatorV1.ValidateStableToken(value, "capability");
-        if (result.Distinct(StringComparer.Ordinal).Count() != result.Length) throw new CoreGatewayProtocolException("protocol.capability-missing", "Duplicate capability.");
+        if (result.Distinct(StringComparer.Ordinal).Count() != result.Length)
+            throw new CoreGatewayProtocolException("protocol.capability-missing", "Duplicate capability.");
         return result;
     }
 }
 
 public interface IProtocolMessageIdSourceV1 { OpaqueId128 Next(); }
+
 public sealed class RandomProtocolMessageIdSourceV1 : IProtocolMessageIdSourceV1
 {
-    public OpaqueId128 Next() { Span<byte> bytes = stackalloc byte[16]; do RandomNumberGenerator.Fill(bytes); while (bytes.IndexOfAnyExcept((byte)0) < 0); return OpaqueId128.FromBytes(bytes); }
+    public OpaqueId128 Next()
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        do RandomNumberGenerator.Fill(bytes); while (bytes.IndexOfAnyExcept((byte)0) < 0);
+        return OpaqueId128.FromBytes(bytes);
+    }
 }
 
 public sealed class CoreGatewayEnvelopeFactoryV1
 {
-    private readonly OpaqueId128 _coreInstanceId; private readonly IProtocolMessageIdSourceV1 _ids;
-    public CoreGatewayEnvelopeFactoryV1(OpaqueId128 coreInstanceId, IProtocolMessageIdSourceV1? ids = null) { if (coreInstanceId.IsZero) throw new ArgumentException("Core instance id cannot be ZERO."); _coreInstanceId = coreInstanceId; _ids = ids ?? new RandomProtocolMessageIdSourceV1(); }
-    public WireEnvelopeV1 BootstrapResponse(WireEnvelopeV1 request, string type, IMessage payload) => Create(request, type, payload, 0, true, null, null);
-    public WireEnvelopeV1 NormalResponse(WireEnvelopeV1 request, string type, IMessage payload, uint generation, WorldContextWireV1? world = null, OperationContextWireV1? operation = null) => Create(request, type, payload, generation, false, world, operation);
-    public WireEnvelopeV1 Notification(string type, IMessage payload, uint generation, OpaqueId128 correlationId, WorldContextWireV1? world = null, OperationContextWireV1? operation = null)
+    private readonly OpaqueId128 _coreInstanceId;
+    private readonly IProtocolMessageIdSourceV1 _ids;
+
+    public CoreGatewayEnvelopeFactoryV1(OpaqueId128 coreInstanceId, IProtocolMessageIdSourceV1? ids = null)
     {
-        var entry = CoreGatewayProtocolRegistryV1.Get(type); if (entry.Direction != CoreGatewayMessageDirectionV1.CoreToGateway || entry.Bootstrap) throw new InvalidOperationException("Notification registry mismatch.");
-        var envelope = Base(type, entry.PayloadSchemaId.Value, payload, generation, false, correlationId, null); envelope.WorldContext = world; envelope.OperationContext = operation; CoreGatewayWireValidatorV1.Validate(envelope, CoreGatewayMessageDirectionV1.CoreToGateway, generation); return envelope;
+        if (coreInstanceId.IsZero) throw new ArgumentException("Core instance id cannot be ZERO.", nameof(coreInstanceId));
+        _coreInstanceId = coreInstanceId;
+        _ids = ids ?? new RandomProtocolMessageIdSourceV1();
     }
-    private WireEnvelopeV1 Create(WireEnvelopeV1 request, string type, IMessage payload, uint generation, bool bootstrap, WorldContextWireV1? world, OperationContextWireV1? operation)
+
+    public WireEnvelopeV1 BootstrapResponse(WireEnvelopeV1 request, string type, IMessage payload)
+        => Create(request, type, payload, 0, true, null, null);
+
+    public WireEnvelopeV1 NormalResponse(
+        WireEnvelopeV1 request,
+        string type,
+        IMessage payload,
+        uint generation,
+        WorldContextWireV1? world = null,
+        OperationContextWireV1? operation = null)
+        => Create(request, type, payload, generation, false, world, operation);
+
+    public WireEnvelopeV1 Notification(
+        string type,
+        IMessage payload,
+        uint generation,
+        OpaqueId128 correlationId,
+        WorldContextWireV1? world = null,
+        OperationContextWireV1? operation = null)
     {
-        var entry = CoreGatewayProtocolRegistryV1.Get(type); if (entry.Direction != CoreGatewayMessageDirectionV1.CoreToGateway || entry.Bootstrap != bootstrap) throw new InvalidOperationException("Response registry mismatch.");
-        var envelope = Base(type, entry.PayloadSchemaId.Value, payload, generation, bootstrap, OpaqueId128.FromBytes(request.CorrelationId.Span), OpaqueId128.FromBytes(request.MessageId.Span)); envelope.WorldContext = world; envelope.OperationContext = operation; CoreGatewayWireValidatorV1.Validate(envelope, CoreGatewayMessageDirectionV1.CoreToGateway, bootstrap ? null : generation); return envelope;
+        var entry = CoreGatewayProtocolRegistryV1.Get(type);
+        if (entry.Direction != CoreGatewayMessageDirectionV1.CoreToGateway || entry.Bootstrap)
+            throw new InvalidOperationException("Notification registry mismatch.");
+        var envelope = Base(type, entry.PayloadSchemaId.Value, payload, generation, false, correlationId, null);
+        envelope.WorldContext = world;
+        envelope.OperationContext = operation;
+        CoreGatewayWireValidatorV1.Validate(envelope, CoreGatewayMessageDirectionV1.CoreToGateway, generation);
+        return envelope;
     }
-    private WireEnvelopeV1 Base(string type, string schema, IMessage payload, uint generation, bool bootstrap, OpaqueId128 correlation, OpaqueId128? cause)
+
+    private WireEnvelopeV1 Create(
+        WireEnvelopeV1 request,
+        string type,
+        IMessage payload,
+        uint generation,
+        bool bootstrap,
+        WorldContextWireV1? world,
+        OperationContextWireV1? operation)
     {
-        var envelope = new WireEnvelopeV1 { EnvelopeVersion = 1, ProtocolId = CoreGatewayProtocolRegistryV1.ProtocolId, ProtocolVersion = new ProtocolVersionV1 { Major = bootstrap ? 0u : 1u, Minor = 0 }, NegotiationGeneration = generation, MessageType = type, MessageId = ByteString.CopyFrom(_ids.Next().ToBytes()), CorrelationId = ByteString.CopyFrom(correlation.ToBytes()), SenderInstanceId = ByteString.CopyFrom(_coreInstanceId.ToBytes()), PayloadSchemaId = schema, PayloadSchemaVersion = new SchemaVersionWireV1 { Major = 1, Minor = 0 }, PayloadCompression = CompressionKindV1.None, Payload = payload.ToByteString() };
-        if (cause is { } value) envelope.CausationId = ByteString.CopyFrom(value.ToBytes()); return envelope;
+        ArgumentNullException.ThrowIfNull(request);
+        var entry = CoreGatewayProtocolRegistryV1.Get(type);
+        if (entry.Direction != CoreGatewayMessageDirectionV1.CoreToGateway || entry.Bootstrap != bootstrap)
+            throw new InvalidOperationException("Response registry mismatch.");
+        var envelope = Base(
+            type,
+            entry.PayloadSchemaId.Value,
+            payload,
+            generation,
+            bootstrap,
+            OpaqueId128.FromBytes(request.CorrelationId.Span),
+            OpaqueId128.FromBytes(request.MessageId.Span));
+        envelope.WorldContext = world;
+        envelope.OperationContext = operation;
+        CoreGatewayWireValidatorV1.Validate(envelope, CoreGatewayMessageDirectionV1.CoreToGateway, bootstrap ? null : generation);
+        return envelope;
+    }
+
+    private WireEnvelopeV1 Base(
+        string type,
+        string schema,
+        IMessage payload,
+        uint generation,
+        bool bootstrap,
+        OpaqueId128 correlation,
+        OpaqueId128? cause)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        var envelope = new WireEnvelopeV1
+        {
+            EnvelopeVersion = 1,
+            ProtocolId = CoreGatewayProtocolRegistryV1.ProtocolId,
+            ProtocolVersion = new ProtocolVersionV1 { Major = bootstrap ? 0u : 1u, Minor = 0 },
+            NegotiationGeneration = generation,
+            MessageType = type,
+            MessageId = ByteString.CopyFrom(_ids.Next().ToBytes()),
+            CorrelationId = ByteString.CopyFrom(correlation.ToBytes()),
+            SenderInstanceId = ByteString.CopyFrom(_coreInstanceId.ToBytes()),
+            PayloadSchemaId = schema,
+            PayloadSchemaVersion = new SchemaVersionWireV1 { Major = 1, Minor = 0 },
+            PayloadCompression = (CompressionKindV1)CoreGatewayProtocolRegistryV1.CompressionNone,
+            Payload = payload.ToByteString(),
+        };
+        if (cause is { } value) envelope.CausationId = ByteString.CopyFrom(value.ToBytes());
+        return envelope;
     }
 }
