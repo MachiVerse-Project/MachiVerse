@@ -132,7 +132,7 @@ public sealed class AlphaSingleGatewayRuntime
                     continuity,
                     config.Generation,
                     config.Digest,
-                    masterGeneration: 1),
+                    1),
                 genesis,
                 cancellationToken);
             head = await store.ReadCoreProtocolHeadAsync(cancellationToken);
