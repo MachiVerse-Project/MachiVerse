@@ -18,6 +18,7 @@ public sealed record RegisteredGatewayV1(
 
 public sealed class CoreGatewaySessionRegistryV1
 {
+    private const int ReadinessUnspecified = 0;
     private readonly object _gate = new();
     private readonly SortedDictionary<OpaqueId128, RegisteredGatewayV1> _gateways = new();
 
@@ -31,11 +32,11 @@ public sealed class CoreGatewaySessionRegistryV1
         if (authenticatedGatewayLogicalId.IsZero)
             throw new ArgumentException("Authenticated Gateway identity cannot be ZERO.", nameof(authenticatedGatewayLogicalId));
         ArgumentNullException.ThrowIfNull(register);
-        var logicalId = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(register.GatewayLogicalId, "gateway_logical_id", allowZero: false));
-        var componentId = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(register.ComponentInstanceId, "component_instance_id", allowZero: false));
+        var logicalId = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(register.GatewayLogicalId, "gateway_logical_id", false));
+        var componentId = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(register.ComponentInstanceId, "component_instance_id", false));
         if (logicalId != authenticatedGatewayLogicalId)
             throw new CoreGatewayProtocolException("auth.unauthorized", "gateway.register identity does not match authenticated certificate identity.");
-        if (!Enum.IsDefined(register.Readiness) || register.Readiness == GatewayReadinessV1.Unspecified)
+        if (!Enum.IsDefined(register.Readiness) || (int)register.Readiness == ReadinessUnspecified)
             throw new CoreGatewayProtocolException("protocol.field-out-of-range", "Gateway readiness is unspecified or invalid.");
 
         var next = new RegisteredGatewayV1(
@@ -43,11 +44,11 @@ public sealed class CoreGatewaySessionRegistryV1
             componentId,
             register.Readiness,
             register.LastKnownMasterGeneration,
-            ConfirmedBasisStep: null,
-            ConfirmedContinuityToken: null,
-            PeerConnectionCount: 0,
-            ViewConnectionCount: 0,
-            AdminConnectionCount: 0);
+            null,
+            null,
+            0,
+            0,
+            0);
         lock (_gate)
         {
             _gateways[logicalId] = next;
@@ -58,11 +59,11 @@ public sealed class CoreGatewaySessionRegistryV1
     public RegisteredGatewayV1 Heartbeat(OpaqueId128 authenticatedGatewayLogicalId, GatewayHeartbeatV1 heartbeat)
     {
         ArgumentNullException.ThrowIfNull(heartbeat);
-        var logicalId = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(heartbeat.GatewayLogicalId, "gateway_logical_id", allowZero: false));
-        var componentId = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(heartbeat.ComponentInstanceId, "component_instance_id", allowZero: false));
+        var logicalId = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(heartbeat.GatewayLogicalId, "gateway_logical_id", false));
+        var componentId = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(heartbeat.ComponentInstanceId, "component_instance_id", false));
         if (logicalId != authenticatedGatewayLogicalId)
             throw new CoreGatewayProtocolException("auth.unauthorized", "gateway.heartbeat identity does not match authenticated certificate identity.");
-        if (!Enum.IsDefined(heartbeat.Readiness) || heartbeat.Readiness == GatewayReadinessV1.Unspecified)
+        if (!Enum.IsDefined(heartbeat.Readiness) || (int)heartbeat.Readiness == ReadinessUnspecified)
             throw new CoreGatewayProtocolException("protocol.field-out-of-range", "Gateway readiness is unspecified or invalid.");
         byte[]? continuity = null;
         if (heartbeat.HasConfirmedContinuityToken)
@@ -114,6 +115,12 @@ public sealed record CoreMasterAuthoritySnapshotV1(
 
 public sealed class CoreMasterAuthorityCoordinatorV1
 {
+    private const int ReadinessResyncing = 2;
+    private const int ReadinessReady = 3;
+    private const int RoleNonMaster = 1;
+    private const int RoleMaster = 2;
+    private const int RoleTransition = 3;
+
     private readonly SqlitePersistenceStore _store;
     private readonly CoreGatewaySessionRegistryV1 _sessions;
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
@@ -131,7 +138,7 @@ public sealed class CoreMasterAuthorityCoordinatorV1
     public async Task<CoreMasterAuthoritySnapshotV1> RecoverAsync(CancellationToken cancellationToken = default)
     {
         var head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
-        var recovered = new CoreMasterAuthoritySnapshotV1(head.MasterGeneration, CurrentMasterGatewayId: null);
+        var recovered = new CoreMasterAuthoritySnapshotV1(head.MasterGeneration, null);
         Volatile.Write(ref _current, recovered);
         return recovered;
     }
@@ -143,27 +150,25 @@ public sealed class CoreMasterAuthorityCoordinatorV1
     {
         if (gatewayLogicalId.IsZero) throw new ArgumentException("Gateway logical id cannot be ZERO.", nameof(gatewayLogicalId));
         var gateway = _sessions.RequireRegistered(gatewayLogicalId);
-        if (gateway.Readiness is not GatewayReadinessV1.Ready and not GatewayReadinessV1.Resyncing)
+        if ((int)gateway.Readiness is not (ReadinessResyncing or ReadinessReady))
             throw new CoreGatewayProtocolException("component.unavailable", "Gateway is not eligible for Master assignment.");
 
         await _mutationGate.WaitAsync(cancellationToken);
         try
         {
             var current = Current;
-            if (current.CurrentMasterGatewayId == gatewayLogicalId)
-                return current;
-            if (current.MasterGeneration == ulong.MaxValue)
-                throw new OverflowException("MasterGeneration cannot wrap.");
+            if (current.CurrentMasterGatewayId == gatewayLogicalId) return current;
+            if (current.MasterGeneration == ulong.MaxValue) throw new OverflowException("MasterGeneration cannot wrap.");
 
             var nextGeneration = current.MasterGeneration + 1;
             var head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
             if (head.MasterGeneration != current.MasterGeneration)
                 throw new CoreGatewayProtocolException("master.stale-generation", "Persisted MasterGeneration changed concurrently.");
             var anchor = await _store.ReadHistoryAnchorAsync(cancellationToken);
-            if (anchor.Sequence == ulong.MaxValue)
-                throw new OverflowException("HistorySequence cannot wrap.");
+            if (anchor.Sequence == ulong.MaxValue) throw new OverflowException("HistorySequence cannot wrap.");
 
             var physicalPayload = EncodeMasterGenerationChanged(current.MasterGeneration, nextGeneration, reasonCode);
+            var previousGeneration = current.MasterGeneration;
             var history = HistoryRecordMaterial.Create(
                 head.WorldId,
                 anchor.Sequence + 1,
@@ -176,16 +181,12 @@ public sealed class CoreMasterAuthorityCoordinatorV1
                 writer =>
                 {
                     writer.WriteMapStart(3);
-                    writer.WriteUnsigned(0); writer.WriteUnsigned(current.MasterGeneration);
+                    writer.WriteUnsigned(0); writer.WriteUnsigned(previousGeneration);
                     writer.WriteUnsigned(1); writer.WriteUnsigned(nextGeneration);
                     writer.WriteUnsigned(2); writer.WriteAsciiText(reasonCode.Value);
                 });
 
-            await _store.PersistMasterGenerationChangeAsync(
-                current.MasterGeneration,
-                nextGeneration,
-                history,
-                cancellationToken);
+            await _store.PersistMasterGenerationChangeAsync(previousGeneration, nextGeneration, history, cancellationToken);
             var next = new CoreMasterAuthoritySnapshotV1(nextGeneration, gatewayLogicalId);
             Volatile.Write(ref _current, next);
             return next;
@@ -221,9 +222,9 @@ public sealed class CoreMasterAuthorityCoordinatorV1
         var current = Current;
         var role = current.CurrentMasterGatewayId switch
         {
-            null => GatewayRoleV1.Transition,
-            { } id when id == gatewayLogicalId => GatewayRoleV1.Master,
-            _ => GatewayRoleV1.NonMaster,
+            null => (GatewayRoleV1)RoleTransition,
+            { } id when id == gatewayLogicalId => (GatewayRoleV1)RoleMaster,
+            _ => (GatewayRoleV1)RoleNonMaster,
         };
         var wire = new GatewayRoleStateV1
         {
