@@ -230,12 +230,12 @@ public sealed class CoreConfirmedPublicationCoordinatorV1
             current.Add(record);
             if (PayloadSize(publicationId, 0, current) <= CoreGatewayProtocolRegistryV1.MaxPublicationChunkBytes)
                 continue;
+
             current.RemoveAt(current.Count - 1);
             if (current.Count > 0)
-            {
                 groups.Add(current);
-                current = [record];
-            }
+
+            current = [record];
             if (PayloadSize(publicationId, 0, current) > CoreGatewayProtocolRegistryV1.MaxPublicationChunkBytes)
                 throw new CoreGatewayProtocolException("protocol.limit-exceeded", "A single projection record exceeds the 1 MiB publication chunk limit.");
         }
