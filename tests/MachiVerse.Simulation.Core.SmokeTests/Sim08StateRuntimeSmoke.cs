@@ -121,11 +121,27 @@ internal static class Sim08StateRuntimeSmoke
         var scheduler = new OperationSchedulerStateV1(state.Header.Step, null);
         var frozen = StepInputFreezerV1.Freeze(state, scheduler);
         var plan = StandardDomainExecutionPlanV1.Create();
+        var spatialToken = new StableToken("spatial");
+        var terrainPartition = new StableToken("spatial.terrain_geometry");
+        var terrainScope = new ConflictScopeV1(
+            spatialToken,
+            terrainPartition,
+            Id("00000000000000000000000000009710").ToBytes(),
+            new StableToken("geometry"));
+        var spatialIntent = PhysicalBuiltCrossDomainIntentFactoryV1.CreateSpatialTerrainMutation(
+            Id("00000000000000000000000000009711"),
+            phase: 3,
+            basisStep: state.Header.Step,
+            mutationKind: new StableToken("spatial.intent.geometry-carve"),
+            targetScope: terrainScope,
+            semanticPriority: 0,
+            resolutionMode: ConflictResolutionModeV1.CustomDeterministic,
+            semanticPayloadDigest: SHA256.HashData("sim08-physical-to-spatial-carve"u8));
 
         var runtimes = plan.Entries.Select(entry => entry.DomainToken.Value switch
         {
             "physical_built" => (IDomainRuntimeV1)new PhysicalBuiltDomainRuntimeV1(
-                static (_, _) => ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>([]),
+                (_, _) => ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>([spatialIntent]),
                 (context, _) => ValueTask.FromResult<IReadOnlyList<PartitionCandidateV1>>([
                     PhysicalBuiltPartitionCandidateFactoryV1.Create(
                         context.State,
@@ -144,9 +160,17 @@ internal static class Sim08StateRuntimeSmoke
                     physical.LocalPartitionCandidates[0].PartitionId.Value == "physical.container_location" &&
                     physical.LocalPartitionCandidates[0].OwnerDomain.Value == "physical_built",
                 "SIM-08 component gate: PhysicalBuilt DomainRuntime owner candidate mismatch.");
+            Require(physical.Intents.Count == 1 &&
+                    physical.Intents[0].SourceDomain.Value == "physical_built" &&
+                    physical.Intents[0].TargetDomain.Value == "spatial" &&
+                    physical.Intents[0].TargetPartitionId.Value == "spatial.terrain_geometry" &&
+                    physical.Intents[0].MutationKind.Value == "spatial.intent.geometry-carve",
+                "SIM-08 component gate: Physical terrain effect must cross owner boundary as canonical Spatial intent.");
 
             var snapshot = outputs.Select(output =>
                 output.DomainToken.Value + ":" +
+                string.Join(',', output.Intents.Select(static intent =>
+                    intent.MutationKind.Value + "->" + intent.TargetPartitionId.Value + "=" + Convert.ToHexString(intent.SemanticPayloadDigest))) + ":" +
                 string.Join(',', output.LocalPartitionCandidates.Select(static candidate =>
                     candidate.PartitionId.Value + "=" + Convert.ToHexString(candidate.CandidateDigest))))
                 .ToArray();
@@ -161,6 +185,17 @@ internal static class Sim08StateRuntimeSmoke
                 "spatial.terrain_geometry",
                 SHA256.HashData("sim08-foreign"u8)),
             "domain.partition-candidate-foreign-owner");
+        RequireReject(
+            () => PhysicalBuiltCrossDomainIntentFactoryV1.CreateSpatialTerrainMutation(
+                Id("00000000000000000000000000009712"),
+                phase: 3,
+                basisStep: state.Header.Step,
+                mutationKind: new StableToken("environment.intent.water-exchange"),
+                targetScope: terrainScope,
+                semanticPriority: 0,
+                resolutionMode: ConflictResolutionModeV1.CustomDeterministic,
+                semanticPayloadDigest: SHA256.HashData("sim08-invalid-foreign-intent"u8)),
+            "physical.spatial-intent-kind-invalid");
     }
 
     private static WorldStateV1 CreateWorldState()
