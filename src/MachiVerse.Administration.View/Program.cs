@@ -24,6 +24,13 @@ builder.Services.AddSingleton(new OperationalCommandCatalog());
 builder.Services.AddSingleton<ManagementProjectionStore>();
 builder.Services.AddSingleton<IManagementModuleBoundary>(static services => services.GetRequiredService<ManagementProjectionStore>());
 
+builder.Services.AddSingleton<AdminSessionProjectionStore>();
+builder.Services.AddSingleton(static services =>
+    new HighImpactConfirmationController(services.GetRequiredService<AdminViewConfig>()));
+// Simulation Admin Operation kinds remain registry-owned. Do not invent high-impact world mutations in the browser.
+builder.Services.AddSingleton(new AdminOperationCatalog());
+builder.Services.AddSingleton<SimulationAdminOperationController>();
+
 builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<AdminGatewayProtocolClient>();
 
