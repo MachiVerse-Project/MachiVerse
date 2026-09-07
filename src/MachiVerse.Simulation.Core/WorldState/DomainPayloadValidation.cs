@@ -268,8 +268,10 @@ public sealed class StandardDomainPayloadValidatorV1
                 ValidateToken(Require<string>(value, partitionId, field), partitionId, field.Name);
                 break;
             case DomainPayloadFieldKindV1.TokenList:
+                ValidateCanonicalTokenList(Require<IReadOnlyList<string>>(value, partitionId, field), partitionId, field.Name);
+                break;
             case DomainPayloadFieldKindV1.OrderedTokenList:
-                ValidateTokenList(Require<IReadOnlyList<string>>(value, partitionId, field), partitionId, field.Name);
+                ValidateSemanticTokenList(Require<IReadOnlyList<string>>(value, partitionId, field), partitionId, field.Name);
                 break;
             case DomainPayloadFieldKindV1.Ratio:
                 if (Require<uint>(value, partitionId, field) > 1_000_000u) ThrowRange(partitionId, field.Name);
@@ -326,9 +328,10 @@ public sealed class StandardDomainPayloadValidatorV1
                 ValidateOrderedMap(Require<IReadOnlyList<KeyValuePair<string, int>>>(value, partitionId, field), partitionId, field.Name);
                 break;
             case DomainPayloadFieldKindV1.OrderedNestedList:
+                ValidateNestedList(Require<IReadOnlyList<ICanonicalDomainNestedValueV1>>(value, partitionId, field), partitionId, field.Name);
+                break;
             case DomainPayloadFieldKindV1.RuleAst:
-                if (value is not ICanonicalDomainNestedValueV1)
-                    ThrowType(partitionId, field.Name, field.Kind);
+                ValidateNestedValue(Require<ICanonicalDomainNestedValueV1>(value, partitionId, field), partitionId, field.Name);
                 break;
             default:
                 throw new InvalidOperationException($"Unhandled payload field kind: {field.Kind}.");
@@ -376,7 +379,7 @@ public sealed class StandardDomainPayloadValidatorV1
         return partition != 0 ? partition : left.RecordId.CompareTo(right.RecordId);
     }
 
-    private static void ValidateTokenList(IReadOnlyList<string> values, string partitionId, string field)
+    private static void ValidateCanonicalTokenList(IReadOnlyList<string> values, string partitionId, string field)
     {
         string? previous = null;
         foreach (var value in values)
@@ -386,6 +389,12 @@ public sealed class StandardDomainPayloadValidatorV1
                 throw new InvalidDataException($"domain.payload.canonical-list-order:{partitionId}:{field}");
             previous = value;
         }
+    }
+
+    private static void ValidateSemanticTokenList(IReadOnlyList<string> values, string partitionId, string field)
+    {
+        foreach (var value in values)
+            ValidateToken(value, partitionId, field);
     }
 
     private static void ValidateOrderedMap<T>(
@@ -400,6 +409,34 @@ public sealed class StandardDomainPayloadValidatorV1
             if (previous is not null && string.CompareOrdinal(previous, item.Key) >= 0)
                 throw new InvalidDataException($"domain.payload.canonical-list-order:{partitionId}:{field}");
             previous = item.Key;
+        }
+    }
+
+    private static void ValidateNestedList(
+        IReadOnlyList<ICanonicalDomainNestedValueV1> values,
+        string partitionId,
+        string field)
+    {
+        foreach (var value in values)
+        {
+            if (value is null) ThrowType(partitionId, field, DomainPayloadFieldKindV1.OrderedNestedList);
+            ValidateNestedValue(value, partitionId, field);
+        }
+    }
+
+    private static void ValidateNestedValue(ICanonicalDomainNestedValueV1 value, string partitionId, string field)
+    {
+        try
+        {
+            value.ValidateCanonical();
+        }
+        catch (InvalidDataException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or OverflowException)
+        {
+            throw new InvalidDataException($"domain.payload.nested-invalid:{partitionId}:{field}", ex);
         }
     }
 
