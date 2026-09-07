@@ -3,6 +3,26 @@ using MachiVerse.Protocol.V1;
 
 namespace MachiVerse.Gateway.Publication;
 
+public enum GatewayOutboundRouteKindV1
+{
+    GeneralView = 1,
+    AdministrationView = 2,
+    PeerGateway = 3,
+}
+
+public sealed record GatewayOutboundRouteV1(
+    GatewayOutboundRouteKindV1 Kind,
+    byte[] RouteId)
+{
+    public void Validate()
+    {
+        if (!Enum.IsDefined(Kind))
+            throw new InvalidDataException("result.route-kind-invalid");
+        if (RouteId.Length != 16 || RouteId.AsSpan().IndexOfAnyExcept((byte)0) < 0)
+            throw new InvalidDataException("protocol.invalid-id:route_id");
+    }
+}
+
 public enum ResultRouteEnqueueStatusV1
 {
     Enqueued = 1,
@@ -11,7 +31,7 @@ public enum ResultRouteEnqueueStatusV1
 }
 
 public sealed record OperationResultDeliveryV1(
-    byte[] RouteId,
+    GatewayOutboundRouteV1 Route,
     byte[] OperationId,
     ResultV1 Result);
 
@@ -41,10 +61,11 @@ public sealed class OperationResultRouterV1
     public int Capacity => _capacity;
 
     public ResultRouteEnqueueResultV1 TryEnqueue(
-        ReadOnlySpan<byte> routeId,
+        GatewayOutboundRouteV1 route,
         OperationCustodyRecord custody)
     {
-        var route = RequireId128(routeId, nameof(routeId));
+        ArgumentNullException.ThrowIfNull(route);
+        route.Validate();
         ArgumentNullException.ThrowIfNull(custody);
         if (custody.State != GatewayCustodyState.Terminal || custody.TerminalResult is null)
             throw new InvalidDataException("result.non-terminal-custody");
@@ -64,8 +85,9 @@ public sealed class OperationResultRouterV1
                 "gateway.result-backpressure",
                 _pending.Count);
 
+        var copiedRoute = new GatewayOutboundRouteV1(route.Kind, route.RouteId.ToArray());
         _pending.Enqueue(new OperationResultDeliveryV1(
-            route,
+            copiedRoute,
             custody.OperationId.ToArray(),
             custody.TerminalResult.Clone()));
         _queuedKeys.Add(key);
@@ -79,17 +101,12 @@ public sealed class OperationResultRouterV1
     {
         if (_pending.Count == 0) return null;
         var delivery = _pending.Dequeue();
-        _queuedKeys.Remove(Key(delivery.RouteId, delivery.OperationId));
+        _queuedKeys.Remove(Key(delivery.Route, delivery.OperationId));
         return delivery;
     }
 
-    private static string Key(byte[] routeId, byte[] operationId)
-        => Convert.ToHexStringLower(routeId) + ":" + Convert.ToHexStringLower(operationId);
-
-    private static byte[] RequireId128(ReadOnlySpan<byte> value, string field)
-    {
-        if (value.Length != 16 || value.IndexOfAnyExcept((byte)0) < 0)
-            throw new InvalidDataException($"protocol.invalid-id:{field}");
-        return value.ToArray();
-    }
+    private static string Key(GatewayOutboundRouteV1 route, byte[] operationId)
+        => ((int)route.Kind).ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + ":" + Convert.ToHexStringLower(route.RouteId)
+            + ":" + Convert.ToHexStringLower(operationId);
 }
