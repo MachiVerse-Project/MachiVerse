@@ -73,12 +73,11 @@ public static class AuditRecordCodecV1
         return provisional with { RecordDigest = DomainHash(AuditDomainLabel, NormalizeWithoutDigest(provisional)) };
     }
 
-    // MV-DCBOR-v1 logical map. Unsigned schema field keys follow the P4-07 AuditRecord field order.
     public static byte[] NormalizeWithoutDigest(AuditRecordV1 record)
     {
         ValidateRecordShapeWithoutDigest(record);
         using var stream = new MemoryStream();
-        WriteMajor(stream, 5, 19); // map(19), fields 0..18 excluding record_digest
+        WriteMajor(stream, 5, 19);
         WritePair(stream, 0, s => WriteUnsigned(s, record.AuditSequence));
         WritePair(stream, 1, s => WriteBytes(s, record.PreviousDigest));
         WritePair(stream, 2, s => WriteText(s, record.AuditKind));
@@ -217,7 +216,7 @@ public static class AuditRecordCodecV1
 
     private static void WriteMajor(Stream s, byte major, ulong value)
     {
-        if (value < 24) { s.WriteByte((byte)((major << 5) | value)); return; }
+        if (value < 24) { s.WriteByte((byte)(((ulong)major << 5) | value)); return; }
         if (value <= byte.MaxValue) { s.WriteByte((byte)((major << 5) | 24)); s.WriteByte((byte)value); return; }
         if (value <= ushort.MaxValue) { Span<byte> b = stackalloc byte[2]; BinaryPrimitives.WriteUInt16BigEndian(b, (ushort)value); s.WriteByte((byte)((major << 5) | 25)); s.Write(b); return; }
         if (value <= uint.MaxValue) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteUInt32BigEndian(b, (uint)value); s.WriteByte((byte)((major << 5) | 26)); s.Write(b); return; }
