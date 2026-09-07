@@ -93,12 +93,14 @@
                             <td>@(operation.EffectiveStep?.ToString() ?? "-")</td>
                             <td>@(operation.TerminalResult?.Code ?? operation.LastReasonCode ?? "-")</td>
                             <td>
-                                @if (operation.State == AdminOperationLifecycleState.AwaitingConfirmation)
+                                @if (operation.State == AdminOperationLifecycleState.AwaitingConfirmation
+                                    && Confirmation.Snapshot.Fingerprint?.OperationId == operation.OperationId
+                                    && Confirmation.Snapshot.State == HighImpactConfirmationState.Required)
                                 {
                                     <button @onclick="() => BeginConfirmation(operation.OperationId)">Begin confirmation</button>
                                 }
-                                else if (operation.HighImpact
-                                    && operation.State == AdminOperationLifecycleState.AwaitingConfirmation
+                                else if (operation.State == AdminOperationLifecycleState.AwaitingConfirmation
+                                    && Confirmation.Snapshot.Fingerprint?.OperationId == operation.OperationId
                                     && Confirmation.Snapshot.State == HighImpactConfirmationState.Confirming)
                                 {
                                     <button @onclick="() => ConfirmOperation(operation.OperationId)">Confirm</button>
