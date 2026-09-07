@@ -135,7 +135,6 @@ internal static class Sim08StateRuntimeSmoke
             mutationKind: new StableToken("spatial.intent.geometry-carve"),
             targetScope: terrainScope,
             semanticPriority: 0,
-            resolutionMode: ConflictResolutionModeV1.CustomDeterministic,
             semanticPayloadDigest: SHA256.HashData("sim08-physical-to-spatial-carve"u8));
 
         var runtimes = plan.Entries.Select(entry => entry.DomainToken.Value switch
@@ -164,7 +163,8 @@ internal static class Sim08StateRuntimeSmoke
                     physical.Intents[0].SourceDomain.Value == "physical_built" &&
                     physical.Intents[0].TargetDomain.Value == "spatial" &&
                     physical.Intents[0].TargetPartitionId.Value == "spatial.terrain_geometry" &&
-                    physical.Intents[0].MutationKind.Value == "spatial.intent.geometry-carve",
+                    physical.Intents[0].MutationKind.Value == "spatial.intent.geometry-carve" &&
+                    physical.Intents[0].ResolutionMode == ConflictResolutionModeV1.CustomDeterministic,
                 "SIM-08 component gate: Physical terrain effect must cross owner boundary as canonical Spatial intent.");
 
             var snapshot = outputs.Select(output =>
@@ -193,7 +193,6 @@ internal static class Sim08StateRuntimeSmoke
                 mutationKind: new StableToken("environment.intent.water-exchange"),
                 targetScope: terrainScope,
                 semanticPriority: 0,
-                resolutionMode: ConflictResolutionModeV1.CustomDeterministic,
                 semanticPayloadDigest: SHA256.HashData("sim08-invalid-foreign-intent"u8)),
             "physical.spatial-intent-kind-invalid");
     }
