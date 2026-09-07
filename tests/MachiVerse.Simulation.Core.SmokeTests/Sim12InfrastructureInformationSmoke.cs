@@ -90,18 +90,23 @@ internal static class Sim12InfrastructureInformationSmoke
         var b = Id("00000000000000000000000000012a02");
         var c = Id("00000000000000000000000000012a03");
         var deps = new[] { new InfrastructureDependencyV1(b, c), new InfrastructureDependencyV1(a, b) };
-        var result = DeterministicOutageCascadeV1.Propagate(new[] { a }, deps);
+        var result = DeterministicBoundedOutageCascadeV1.Propagate(new[] { a }, deps, maximumAffected: 3);
         Require(result.SequenceEqual(new[] { a, b, c }),
-            "domain.infrastructure.outage-cascade: deterministic dependency propagation failed.");
+            "domain.infrastructure.outage-cascade: deterministic bounded dependency propagation failed.");
 
         RequireReject(
-            () => DeterministicOutageCascadeV1.Propagate(
+            () => DeterministicBoundedOutageCascadeV1.Propagate(new[] { a }, deps, maximumAffected: 2),
+            "infrastructure.outage-cascade-budget-exceeded",
+            "domain.infrastructure.outage-cascade");
+        RequireReject(
+            () => DeterministicBoundedOutageCascadeV1.Propagate(
                 new[] { a },
                 new[]
                 {
                     new InfrastructureDependencyV1(a, b),
                     new InfrastructureDependencyV1(b, a),
-                }),
+                },
+                maximumAffected: 3),
             "infrastructure.dependency-cycle-requires-coupled-policy",
             "domain.infrastructure.outage-cascade");
     }
