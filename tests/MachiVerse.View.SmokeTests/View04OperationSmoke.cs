@@ -15,10 +15,18 @@ internal static class View04OperationSmoke
 
         var predictions = new PredictionStore();
         using var reconciliation = new ReconciliationCoordinator(store, predictions);
-        var controller = new ViewOperationController(store, predictions, reconciliation);
+        const string descriptorKind = "fixture.view-action";
+        var catalog = new ViewOperationCatalog(
+        [
+            new ViewOperationDescriptor(
+                descriptorKind,
+                "fixture.view-action.v1",
+                PayloadSchemaMajor: 1,
+                PayloadSchemaMinor: 0)
+        ]);
+        var controller = new ViewOperationController(store, predictions, reconciliation, catalog);
         controller.SetAccessState(ViewMutationAccessState.Ready);
 
-        var descriptorKind = "fixture.view-action";
         var operationId = Id(40);
         var digest = Hash(41);
         var draft = Draft(descriptorKind, candidateStep: 105, payload: "input-a", predicted: "predicted-a");
@@ -47,6 +55,12 @@ internal static class View04OperationSmoke
             operationId,
             digest));
 
+        // Browser code cannot invent an OperationKind that was not explicitly registered.
+        AssertThrows<InvalidOperationException>(() => controller.Prepare(
+            Draft("fixture.unregistered", candidateStep: 106, payload: "unknown", predicted: string.Empty),
+            Id(46),
+            Hash(46)));
+
         var accepted = new OperationStatusResultV1
         {
             OperationId = operationId,
@@ -54,8 +68,8 @@ internal static class View04OperationSmoke
             State = (OperationLifecycleWireStateV1)2
         };
         Assert(controller.TryApplyResult(ResultEnvelope(accepted, operationId, digest, correlationByte: 60)));
-        Assert(controller.Operations.Single().State == ViewOperationLifecycleState.AckedOrAccepted);
-        Assert(controller.Operations.Single().EffectiveStep is null);
+        Assert(controller.Operations.Single(x => x.OperationId == Hex(operationId)).State == ViewOperationLifecycleState.AckedOrAccepted);
+        Assert(controller.Operations.Single(x => x.OperationId == Hex(operationId)).EffectiveStep is null);
 
         var scheduled = new OperationStatusResultV1
         {
@@ -65,7 +79,7 @@ internal static class View04OperationSmoke
             EffectiveStep = 108
         };
         Assert(controller.TryApplyResult(ResultEnvelope(scheduled, operationId, digest, correlationByte: 60)));
-        var scheduledProjection = controller.Operations.Single();
+        var scheduledProjection = controller.Operations.Single(x => x.OperationId == Hex(operationId));
         Assert(scheduledProjection.State == ViewOperationLifecycleState.PendingAuthoritative);
         Assert(scheduledProjection.CandidateStep == 105);
         Assert(scheduledProjection.EffectiveStep == 108);
@@ -84,7 +98,7 @@ internal static class View04OperationSmoke
             }
         };
         Assert(controller.TryApplyResult(ResultEnvelope(terminal, operationId, digest, correlationByte: 60)));
-        var terminalProjection = controller.Operations.Single();
+        var terminalProjection = controller.Operations.Single(x => x.OperationId == Hex(operationId));
         Assert(terminalProjection.State == ViewOperationLifecycleState.Terminal);
         Assert(terminalProjection.TerminalResult?.Code == "ok");
         Assert(terminalProjection.EffectiveStep == 108);
