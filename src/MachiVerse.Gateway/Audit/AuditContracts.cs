@@ -76,7 +76,7 @@ public static class AuditRecordCodecV1
     // MV-DCBOR-v1 logical map. Unsigned schema field keys follow the P4-07 AuditRecord field order.
     public static byte[] NormalizeWithoutDigest(AuditRecordV1 record)
     {
-        ValidateRecordShape(record);
+        ValidateRecordShapeWithoutDigest(record);
         using var stream = new MemoryStream();
         WriteMajor(stream, 5, 19); // map(19), fields 0..18 excluding record_digest
         WritePair(stream, 0, s => WriteUnsigned(s, record.AuditSequence));
@@ -105,6 +105,7 @@ public static class AuditRecordCodecV1
     {
         if (string.IsNullOrEmpty(label) || label.Any(static c => c > 0x7f))
             throw new InvalidDataException("audit.domain-hash-label-invalid");
+        if (mvDcbor.IsEmpty) throw new InvalidDataException("audit.domain-hash-value-empty");
         var labelBytes = Encoding.ASCII.GetBytes(label);
         var preimage = new byte[labelBytes.Length + 1 + mvDcbor.Length];
         labelBytes.CopyTo(preimage, 0);
@@ -145,16 +146,33 @@ public static class AuditRecordCodecV1
 
     private static void ValidateRecordShape(AuditRecordV1 record)
     {
+        ValidateRecordShapeWithoutDigest(record);
+        RequireLength(record.RecordDigest, 32, "record_digest");
+    }
+
+    private static void ValidateRecordShapeWithoutDigest(AuditRecordV1 record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
         if (record.AuditSequence == 0) throw new InvalidDataException("audit.sequence-zero");
         RequireLength(record.PreviousDigest, 32, "previous_digest");
         RequireLength(record.ComponentInstanceId, 16, "component_instance_id");
-        RequireLength(record.RecordDigest, 32, "record_digest");
         RequireOptionalLength(record.SessionRefDigest, 32, "session_ref_digest");
         RequireOptionalLength(record.OperationId, 16, "operation_id");
         RequireOptionalLength(record.CorrelationId, 16, "correlation_id");
         RequireOptionalLength(record.WorldId, 16, "world_id");
         RequireOptionalLength(record.RequestDigest, 32, "request_digest");
         RequireOptionalLength(record.ApprovalEvidenceDigest, 32, "approval_evidence_digest");
+        AuditEventKindRegistryV1.RequireKnown(record.AuditKind);
+        GatewayObservabilityRegistry.RequireStableToken(record.Component, "component");
+        if (record.ActorRef is not null) RequireSafeText(record.ActorRef, 512, "actor_ref");
+        if (record.TargetRef is not null) GatewayObservabilityRegistry.RequireStableToken(record.TargetRef, "target_ref");
+        GatewayObservabilityRegistry.RequireStableToken(record.ResultStatus, "result_status");
+        GatewayObservabilityRegistry.RequireStableToken(record.ResultCode, "result_code");
+        foreach (var (key, value) in record.SummaryFields)
+        {
+            GatewayObservabilityRegistry.RequireStableToken(key, "summary key");
+            RequireSafeText(value, 1024, $"summary field {key}");
+        }
         if (record.AuditSequence == 1 && !IsZero(record.PreviousDigest))
             throw new InvalidDataException("audit.sequence-one-previous-digest-nonzero");
     }
@@ -194,7 +212,7 @@ public static class AuditRecordCodecV1
     private static void WriteSigned(Stream s, long value)
     {
         if (value >= 0) WriteMajor(s, 0, (ulong)value);
-        else WriteMajor(s, 1, unchecked((ulong)(-1 - value)));
+        else WriteMajor(s, 1, checked((ulong)(-1 - value)));
     }
 
     private static void WriteMajor(Stream s, byte major, ulong value)
