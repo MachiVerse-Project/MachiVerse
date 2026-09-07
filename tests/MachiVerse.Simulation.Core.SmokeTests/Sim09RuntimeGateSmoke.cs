@@ -1,16 +1,13 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains;
+using MachiVerse.Simulation.Core.Domains.Participation;
 using MachiVerse.Simulation.Core.Domains.ResidentParticipation;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Sim09RuntimeGateSmoke
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
-    internal static void Initialize()
-        => RunAsync().GetAwaiter().GetResult();
-
     internal static async Task RunAsync()
     {
         var state = CreateWorldState();
@@ -76,8 +73,9 @@ internal static class Sim09RuntimeGateSmoke
             Require(resident.Intents.Count == 1 &&
                     resident.Intents[0].SourceDomain.Value == "resident" &&
                     resident.Intents[0].TargetDomain.Value == "physical_built" &&
-                    resident.Intents[0].TargetPartitionId.Value == "physical.presence",
-                "SIM-09 component gate: Resident physical effect must remain a Physical/Built intent.");
+                    resident.Intents[0].TargetPartitionId.Value == "physical.presence" &&
+                    resident.Intents[0].MutationKind.Value == "physical.intent.move",
+                "SIM-09 component gate: Resident physical effect must remain a canonical Physical/Built intent.");
 
             var snapshot = outputs.Select(output =>
                 output.DomainToken.Value + ":" +
@@ -103,6 +101,39 @@ internal static class Sim09RuntimeGateSmoke
                 "resident.behavior_state",
                 SHA256.HashData("sim09-participation-foreign"u8)),
             "domain.partition-candidate-foreign-owner");
+
+        VerifyParticipationInputPermutation();
+    }
+
+    private static void VerifyParticipationInputPermutation()
+    {
+        var diverA = Id("00000000000000000000000000010301");
+        var diverB = Id("00000000000000000000000000010302");
+        var resident = Id("00000000000000000000000000010303");
+        var scopeDigest = SHA256.HashData("sim09-participation-scope"u8);
+        var requestA = new ParticipationBindRequestV1(
+            Id("00000000000000000000000000010311"),
+            diverA,
+            resident,
+            1,
+            1,
+            new SameStepOrderKey(2, 40, scopeDigest, 0, Id("00000000000000000000000000010321")));
+        var requestB = new ParticipationBindRequestV1(
+            Id("00000000000000000000000000010312"),
+            diverB,
+            resident,
+            1,
+            1,
+            new SameStepOrderKey(2, 40, scopeDigest, 1, Id("00000000000000000000000000010322")));
+
+        var forward = ParticipationBindResolverV1.Resolve([], [requestB, requestA]);
+        var reverse = ParticipationBindResolverV1.Resolve([], [requestA, requestB]);
+        Require(forward.Accepted.Count == 1 &&
+                reverse.Accepted.Count == 1 &&
+                forward.Accepted[0].BindingId == requestA.BindingId &&
+                reverse.Accepted[0].BindingId == requestA.BindingId &&
+                forward.RejectedBindingIds.SequenceEqual(reverse.RejectedBindingIds),
+            "SIM-09 component gate: bind-request input permutation changed canonical resolution.");
     }
 
     private static WorldStateV1 CreateWorldState()
