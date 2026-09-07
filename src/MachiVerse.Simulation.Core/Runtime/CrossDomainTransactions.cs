@@ -138,12 +138,19 @@ public static class CrossDomainTransactionAssemblerV1
             .Count() != orderedParticipants.Length)
             throw new InvalidDataException("transaction.participant-duplicate");
 
-        var allowedDomains = registration.RequiredDomains.Concat(registration.OptionalDomains).ToHashSet();
+        var conditionalDomains = registration.RequiredAnyDomainGroups
+            .SelectMany(static group => group)
+            .ToHashSet();
+        var allowedDomains = registration.RequiredDomains
+            .Concat(registration.OptionalDomains)
+            .Concat(conditionalDomains)
+            .ToHashSet();
         if (orderedParticipants.Any(participant => !allowedDomains.Contains(participant.DomainToken)))
             throw new InvalidDataException("transaction.participant-domain-not-allowed");
         foreach (var participant in orderedParticipants)
         {
-            var expectedRequired = registration.RequiredDomains.Contains(participant.DomainToken);
+            var expectedRequired = registration.RequiredDomains.Contains(participant.DomainToken) ||
+                                   conditionalDomains.Contains(participant.DomainToken);
             if (participant.Required != expectedRequired)
                 throw new InvalidDataException("transaction.participant-requiredness-mismatch");
         }
@@ -158,6 +165,8 @@ public static class CrossDomainTransactionAssemblerV1
 
         var participantDomains = orderedParticipants.Select(static participant => participant.DomainToken).ToHashSet();
         var missingRequired = registration.RequiredDomains.FirstOrDefault(domain => !participantDomains.Contains(domain));
+        var missingRequiredAny = registration.RequiredAnyDomainGroups.FirstOrDefault(group =>
+            !group.Any(participantDomains.Contains));
         var failedRequired = orderedParticipants.FirstOrDefault(static participant =>
             participant.Required && participant.Outcome == TransactionParticipantOutcomeV1.Failed);
         var failedOptional = orderedParticipants.FirstOrDefault(static participant =>
@@ -165,7 +174,7 @@ public static class CrossDomainTransactionAssemblerV1
 
         TransactionCandidateStatusV1 status;
         StableToken? failureCode;
-        if (!EqualityComparer<StableToken>.Default.Equals(missingRequired, default))
+        if (!EqualityComparer<StableToken>.Default.Equals(missingRequired, default) || missingRequiredAny is not null)
         {
             status = TransactionCandidateStatusV1.Invalid;
             failureCode = ParticipantMissing;
