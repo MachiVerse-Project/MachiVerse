@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../Shared/ProtocolCanonical/ParticipationBindingIdentityV1.cs" Link="ProtocolCanonical/ParticipationBindingIdentityV1.cs" />
     <Protobuf Include="../../docs/protocols/schema/common.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
     <Protobuf Include="../../docs/protocols/schema/auth.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
     <Protobuf Include="../../docs/protocols/schema/payloads.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
