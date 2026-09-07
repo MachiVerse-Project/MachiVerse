@@ -59,6 +59,7 @@ public sealed class TransactionParticipantCandidateV1
 public sealed class CrossDomainTransactionCandidateV1
 {
     internal CrossDomainTransactionCandidateV1(
+        OpaqueId128 worldId,
         OpaqueId128 transactionId,
         StableToken transactionKind,
         ulong basisStep,
@@ -70,6 +71,7 @@ public sealed class CrossDomainTransactionCandidateV1
         byte[] diagnosticDigest,
         StableToken? failureCode)
     {
+        WorldId = worldId;
         TransactionId = transactionId;
         TransactionKind = transactionKind;
         BasisStep = basisStep;
@@ -82,6 +84,7 @@ public sealed class CrossDomainTransactionCandidateV1
         FailureCode = failureCode;
     }
 
+    public OpaqueId128 WorldId { get; }
     public OpaqueId128 TransactionId { get; }
     public StableToken TransactionKind { get; }
     public ulong BasisStep { get; }
@@ -102,6 +105,7 @@ public static class CrossDomainTransactionAssemblerV1
     private static readonly StableToken RequiredParticipantFailed = new("transaction.required-participant-failed");
     private static readonly StableToken ParticipantFailed = new("transaction.participant-failed");
     private static readonly StableToken InvariantFailed = new("transaction.invariant-failed");
+    private static readonly StableToken InvariantMissing = new("transaction.invariant-missing");
 
     public static CrossDomainTransactionCandidateV1 Assemble(
         OpaqueId128 worldId,
@@ -112,6 +116,7 @@ public static class CrossDomainTransactionAssemblerV1
         ulong stableLocalOrdinal,
         IEnumerable<TransactionParticipantCandidateV1> participants)
     {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
         ArgumentNullException.ThrowIfNull(rootCausalityRef);
         ArgumentNullException.ThrowIfNull(subjectRefs);
         ArgumentNullException.ThrowIfNull(participants);
@@ -196,6 +201,7 @@ public static class CrossDomainTransactionAssemblerV1
         }
 
         return CreateCandidate(
+            worldId,
             transactionId,
             transactionKind,
             basisStep,
@@ -221,18 +227,28 @@ public static class CrossDomainTransactionAssemblerV1
             .OrderBy(static result => result.InvariantId.Value, StringComparer.Ordinal)
             .ThenBy(static result => result.Severity)
             .ToArray();
+        var requiredInvariantIds = CrossDomainTransactionInvariantRegistryV1.GetRequiredInvariantIds(candidate.TransactionKind);
+        var missingRequiredInvariant = requiredInvariantIds.FirstOrDefault(requiredId =>
+            invariants.All(result =>
+                result.InvariantId != requiredId ||
+                result.Severity == InvariantSeverityV1.Diagnostic));
+        var requiredInvariantMissing = !EqualityComparer<StableToken>.Default.Equals(missingRequiredInvariant, default);
+
         var decision = InvariantBarrierV1.Evaluate(invariants);
         var failed = invariants.FirstOrDefault(static result =>
             result.Outcome == InvariantOutcomeV1.Fail &&
             result.Severity is InvariantSeverityV1.CommitBlocking or InvariantSeverityV1.FatalAuthority);
-        var status = decision.CanCommit
-            ? TransactionCandidateStatusV1.Valid
-            : TransactionCandidateStatusV1.Invalid;
-        StableToken? failureCode = decision.CanCommit
-            ? null
-            : failed?.DiagnosticCode ?? InvariantFailed;
+        var status = requiredInvariantMissing || !decision.CanCommit
+            ? TransactionCandidateStatusV1.Invalid
+            : TransactionCandidateStatusV1.Valid;
+        StableToken? failureCode = requiredInvariantMissing
+            ? InvariantMissing
+            : decision.CanCommit
+                ? null
+                : failed?.DiagnosticCode ?? InvariantFailed;
 
         return CreateCandidate(
+            candidate.WorldId,
             candidate.TransactionId,
             candidate.TransactionKind,
             candidate.BasisStep,
@@ -268,6 +284,7 @@ public static class CrossDomainTransactionAssemblerV1
     }
 
     private static CrossDomainTransactionCandidateV1 CreateCandidate(
+        OpaqueId128 worldId,
         OpaqueId128 transactionId,
         StableToken transactionKind,
         ulong basisStep,
@@ -279,6 +296,7 @@ public static class CrossDomainTransactionAssemblerV1
         StableToken? failureCode)
     {
         var diagnosticDigest = ComputeDiagnostic(
+            worldId,
             transactionId,
             transactionKind,
             basisStep,
@@ -289,6 +307,7 @@ public static class CrossDomainTransactionAssemblerV1
             failureCode);
 
         return new CrossDomainTransactionCandidateV1(
+            worldId,
             transactionId,
             transactionKind,
             basisStep,
@@ -302,6 +321,7 @@ public static class CrossDomainTransactionAssemblerV1
     }
 
     private static byte[] ComputeDiagnostic(
+        OpaqueId128 worldId,
         OpaqueId128 transactionId,
         StableToken transactionKind,
         ulong basisStep,
@@ -312,7 +332,7 @@ public static class CrossDomainTransactionAssemblerV1
         StableToken? failureCode)
         => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {
-            writer.WriteMapStart(8);
+            writer.WriteMapStart(9);
             writer.WriteUnsigned(0); writer.WriteBytes(transactionId.ToBytes());
             writer.WriteUnsigned(1); writer.WriteAsciiText(transactionKind.Value);
             writer.WriteUnsigned(2); writer.WriteUnsigned(basisStep);
@@ -349,7 +369,7 @@ public static class CrossDomainTransactionAssemblerV1
             writer.WriteArrayStart((ulong)invariants.Count);
             foreach (var invariant in invariants)
             {
-                writer.WriteMapStart(4);
+                writer.WriteMapStart(5);
                 writer.WriteUnsigned(0); writer.WriteAsciiText(invariant.InvariantId.Value);
                 writer.WriteUnsigned(1); writer.WriteUnsigned((uint)invariant.Severity);
                 writer.WriteUnsigned(2); writer.WriteUnsigned((uint)invariant.Outcome);
@@ -363,6 +383,24 @@ public static class CrossDomainTransactionAssemblerV1
                 {
                     writer.WriteArrayStart(0);
                 }
+                writer.WriteUnsigned(4);
+                writer.WriteArrayStart((ulong)invariant.ParticipantRefs.Count);
+                foreach (var participantRef in invariant.ParticipantRefs)
+                {
+                    writer.WriteMapStart(3);
+                    writer.WriteUnsigned(0); writer.WriteUnsigned((uint)participantRef.Kind);
+                    writer.WriteUnsigned(1); writer.WriteBytes(participantRef.Id);
+                    writer.WriteUnsigned(2);
+                    if (participantRef.BasisStep is { } participantBasisStep)
+                    {
+                        writer.WriteArrayStart(1);
+                        writer.WriteUnsigned(participantBasisStep);
+                    }
+                    else
+                    {
+                        writer.WriteArrayStart(0);
+                    }
+                }
             }
             writer.WriteUnsigned(6); writer.WriteUnsigned((uint)status);
             writer.WriteUnsigned(7);
@@ -375,5 +413,6 @@ public static class CrossDomainTransactionAssemblerV1
             {
                 writer.WriteArrayStart(0);
             }
+            writer.WriteUnsigned(8); writer.WriteBytes(worldId.ToBytes());
         });
 }
