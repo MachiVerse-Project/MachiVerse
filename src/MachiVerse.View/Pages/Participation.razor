@@ -1,0 +1,147 @@
+@page "/participation"
+@implements IDisposable
+@inject ViewSessionProjectionStore Session
+@inject ParticipationBindingProjectionStore Binding
+@inject DiverParticipationController Participation
+@inject ParticipationPreferenceCatalog PreferenceCatalog
+@inject AbsencePolicyProfileCatalog AbsenceCatalog
+
+<PageTitle>Participation</PageTitle>
+
+<main class="shell">
+    <h1>Diver Participation</h1>
+    <p>
+        Binding and absence-policy values below are server-confirmed projections. Local preference edits are presentation drafts only and never become binding authority by themselves.
+    </p>
+
+    <section>
+        <h2>Session / local eligibility</h2>
+        <dl>
+            <dt>Session state</dt>
+            <dd>@Session.Snapshot.State</dd>
+            <dt>Role</dt>
+            <dd>@(string.IsNullOrEmpty(Session.Snapshot.EffectiveRoleSet) ? "-" : Session.Snapshot.EffectiveRoleSet)</dd>
+            <dt>Session generation</dt>
+            <dd>@Session.Snapshot.SessionGeneration</dd>
+            <dt>Participation UX state</dt>
+            <dd>@Participation.State</dd>
+            <dt>Binding request UX</dt>
+            <dd>@(Participation.CanRequestBinding ? "eligible" : "unavailable")</dd>
+            <dt>Absence policy UX</dt>
+            <dd>@(Participation.CanEditAbsencePolicy ? "eligible" : "unavailable")</dd>
+            <dt>Diver control UX</dt>
+            <dd>@(Participation.CanSubmitControl ? "eligible" : "unavailable")</dd>
+        </dl>
+        <p>
+            These checks improve UX only. Gateway authorization remains mandatory for every protected request.
+        </p>
+    </section>
+
+    <section>
+        <h2>Confirmed binding</h2>
+        <dl>
+            <dt>Freshness</dt>
+            <dd>@Binding.Snapshot.Freshness</dd>
+            <dt>Status</dt>
+            <dd>@Binding.Snapshot.State</dd>
+            <dt>Binding ID</dt>
+            <dd><code>@(Binding.Snapshot.BindingId ?? "-")</code></dd>
+            <dt>Resident ID</dt>
+            <dd><code>@(Binding.Snapshot.ResidentId ?? "-")</code></dd>
+            <dt>Effective from Step</dt>
+            <dd>@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")</dd>
+            <dt>Projection basis Step</dt>
+            <dd>@(Binding.Snapshot.BasisStep?.ToString() ?? "-")</dd>
+            <dt>Confirmed absence policy</dt>
+            <dd>@(Binding.Snapshot.AbsencePolicyProfile ?? "-")</dd>
+            <dt>Reason</dt>
+            <dd>@(Binding.Snapshot.ReasonCode ?? "-")</dd>
+        </dl>
+
+        @if (Binding.Snapshot.State == ParticipationBindingState.ResidentDeceased)
+        {
+            <p>The previously bound resident is deceased. Old control is not continued; return to the normal participation flow.</p>
+        }
+        @if (Binding.Snapshot.Freshness == ParticipationProjectionFreshness.RefreshRequired)
+        {
+            <p>Reconnect refresh is required. The old projection is retained for context but is not current control authority.</p>
+        }
+    </section>
+
+    <section>
+        <h2>Local join preference draft</h2>
+        @if (PreferenceCatalog.Profiles.Count == 0)
+        {
+            <p>No server/owner-installed preference profiles are registered in this build. Arbitrary resident takeover or invented preference categories are not exposed.</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var profile in PreferenceCatalog.Profiles)
+                {
+                    <li>
+                        <strong>@profile.ProfileId</strong>
+                        @if (profile.AllowedPreferenceTokens.Count > 0)
+                        {
+                            <span> — @string.Join(", ", profile.AllowedPreferenceTokens)</span>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+        <dl>
+            <dt>Draft profile</dt>
+            <dd>@(Participation.Draft.JoinPreference.ProfileId ?? "-")</dd>
+            <dt>Draft preference tokens</dt>
+            <dd>@(Participation.Draft.JoinPreference.PreferenceTokens.Count == 0 ? "-" : string.Join(", ", Participation.Draft.JoinPreference.PreferenceTokens))</dd>
+        </dl>
+    </section>
+
+    <section>
+        <h2>Local absence-policy draft</h2>
+        @if (AbsenceCatalog.Profiles.Count == 0)
+        {
+            <p>No owner-installed absence policy profiles are registered in this build. Policy categories are not invented by the browser.</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var profile in AbsenceCatalog.Profiles)
+                {
+                    <li>@profile</li>
+                }
+            </ul>
+        }
+        <dl>
+            <dt>Draft profile</dt>
+            <dd>@(Participation.Draft.AbsencePolicy.ProfileId ?? "-")</dd>
+            <dt>Pending OperationId</dt>
+            <dd><code>@(Participation.Draft.PendingOperationId ?? "-")</code></dd>
+            <dt>Local reason</dt>
+            <dd>@(Participation.Draft.LastLocalReasonCode ?? "-")</dd>
+        </dl>
+        <p>Local edits are not shown as world-effective until authoritative Operation result and confirmed binding/policy projection arrive.</p>
+    </section>
+
+    <p><a href="/">Back to world view</a></p>
+</main>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+        Binding.Changed += OnBindingChanged;
+        Participation.Changed += OnParticipationChanged;
+    }
+
+    private void OnSessionChanged(ViewSessionProjection _) => _ = InvokeAsync(StateHasChanged);
+    private void OnBindingChanged(ParticipationBindingProjection _) => _ = InvokeAsync(StateHasChanged);
+    private void OnParticipationChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Session.Changed -= OnSessionChanged;
+        Binding.Changed -= OnBindingChanged;
+        Participation.Changed -= OnParticipationChanged;
+    }
+}
