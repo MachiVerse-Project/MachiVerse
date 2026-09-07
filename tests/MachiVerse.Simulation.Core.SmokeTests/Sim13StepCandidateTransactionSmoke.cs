@@ -23,11 +23,7 @@ internal static class Sim13StepCandidateTransactionSmoke
         var intentA = BirthIntent(basisStep, 1);
         var intentB = BirthIntent(basisStep, 2);
         var intents = new[] { intentA, intentB };
-        var outputs = StandardDomainExecutionPlanV1.Create().Entries
-            .Select(entry => entry.DomainToken == resident
-                ? new DomainCandidateOutputV1(entry.DomainToken, basisStep, intents, [residentPartition])
-                : new DomainCandidateOutputV1(entry.DomainToken, basisStep))
-            .ToArray();
+        var outputs = Outputs(resident, basisStep, intents, residentPartition);
         var resolutions = DeterministicIntentMergerV1.GroupByConflictScope(intents, basisStep)
             .Select(DeterministicIntentMergerV1.ResolveSequential)
             .ToArray();
@@ -73,6 +69,14 @@ internal static class Sim13StepCandidateTransactionSmoke
                 result.InvariantId.Value == "transaction.atomicity" &&
                 result.Outcome == InvariantOutcomeV1.Pass),
             "SIM-13 StepCandidate must record the aggregate transaction.atomicity invariant.");
+
+        VerifyRequiredTransactionCoverage(
+            worldId,
+            basisStep,
+            state,
+            frozen,
+            resident,
+            residentPartition);
 
         var invalid = BirthTransaction(
             worldId,
@@ -227,12 +231,79 @@ internal static class Sim13StepCandidateTransactionSmoke
         Sim13DurableAtomicitySmoke.Run();
     }
 
-    private static MutationIntentCandidateV1 BirthIntent(ulong basisStep, int subjectSuffix)
+    private static void VerifyRequiredTransactionCoverage(
+        OpaqueId128 worldId,
+        ulong basisStep,
+        WorldStateV1 state,
+        FrozenStepInputV1 frozen,
+        StableToken resident,
+        PartitionCandidateV1 residentPartition)
+    {
+        var requiredIntent = BirthIntent(basisStep, 9, transactionRequired: true);
+        var requiredOutputs = Outputs(resident, basisStep, [requiredIntent], residentPartition);
+        var requiredResolutions = DeterministicIntentMergerV1.GroupByConflictScope([requiredIntent], basisStep)
+            .Select(DeterministicIntentMergerV1.ResolveSequential)
+            .ToArray();
+
+        var uncoveredRejected = false;
+        try
+        {
+            _ = StepCandidateV1.Build(
+                OpaqueId128.Parse("00000000000000000000000000013398"),
+                state,
+                frozen,
+                requiredOutputs,
+                requiredResolutions);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "step-candidate.transaction-required-intent-uncovered")
+        {
+            uncoveredRejected = true;
+        }
+        Require(uncoveredRejected,
+            "SIM-13 transaction-scoped effective intent must not commit when transactionCandidates are omitted.");
+
+        var coveringTransaction = BirthTransaction(
+            worldId,
+            basisStep,
+            9,
+            8,
+            participantPresent: true,
+            residentPartition.CandidateDigest,
+            requiredIntent.IntentId);
+        var covered = StepCandidateV1.Build(
+            OpaqueId128.Parse("00000000000000000000000000013399"),
+            state,
+            frozen,
+            requiredOutputs,
+            requiredResolutions,
+            transactionCandidates: [coveringTransaction]);
+        Require(covered.CommitDecision.CanCommit,
+            "SIM-13 transaction-scoped effective intent must commit only when covered by the declared valid TransactionKind.");
+    }
+
+    private static DomainCandidateOutputV1[] Outputs(
+        StableToken resident,
+        ulong basisStep,
+        IReadOnlyCollection<MutationIntentCandidateV1> intents,
+        PartitionCandidateV1 residentPartition)
+        => StandardDomainExecutionPlanV1.Create().Entries
+            .Select(entry => entry.DomainToken == resident
+                ? new DomainCandidateOutputV1(entry.DomainToken, basisStep, intents, [residentPartition])
+                : new DomainCandidateOutputV1(entry.DomainToken, basisStep))
+            .ToArray();
+
+    private static MutationIntentCandidateV1 BirthIntent(
+        ulong basisStep,
+        int subjectSuffix,
+        bool transactionRequired = false)
     {
         var resident = new StableToken("resident");
         var partition = new StableToken("resident.identity_lifecycle");
         var subject = OpaqueId128.Parse((0x13500 + subjectSuffix).ToString("x32"));
         var intentId = OpaqueId128.Parse((0x13600 + subjectSuffix).ToString("x32"));
+        var requiredKind = transactionRequired
+            ? CrossDomainTransactionKindRegistryV1.Get("transaction.birth")
+            : (StableToken?)null;
         return new MutationIntentCandidateV1(
             intentId,
             phase: 3,
@@ -248,7 +319,8 @@ internal static class Sim13StepCandidateTransactionSmoke
                 new StableToken("lifecycle")),
             semanticPriority: 0,
             ConflictResolutionModeV1.Sequential,
-            SHA256.HashData(subject.ToBytes()));
+            SHA256.HashData(subject.ToBytes()),
+            requiredKind);
     }
 
     private static CrossDomainTransactionCandidateV1 BirthTransaction(
