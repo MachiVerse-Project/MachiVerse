@@ -11,6 +11,9 @@ public enum TransactionParticipantOutcomeV1 : byte
 
 public sealed class TransactionParticipantCandidateV1
 {
+    private static readonly IReadOnlyDictionary<StableToken, DomainExecutionPlanEntryV1> StandardPlanByDomain =
+        StandardDomainExecutionPlanV1.Create().Entries.ToDictionary(static entry => entry.DomainToken);
+
     public TransactionParticipantCandidateV1(
         StableToken domainToken,
         StableToken partitionId,
@@ -25,9 +28,8 @@ public sealed class TransactionParticipantCandidateV1
             throw new ArgumentException("Candidate effect digest must be 32 bytes.", nameof(candidateEffectDigest));
         ArgumentNullException.ThrowIfNull(intentIds);
 
-        var planEntry = StandardDomainExecutionPlanV1.Create().Entries
-            .SingleOrDefault(entry => entry.DomainToken == domainToken)
-            ?? throw new InvalidDataException("transaction.participant-domain-unregistered");
+        if (!StandardPlanByDomain.TryGetValue(domainToken, out var planEntry))
+            throw new InvalidDataException("transaction.participant-domain-unregistered");
         var partition = StandardDomainPartitionRegistry.Get(partitionId.Value);
         if (partition.OwnerDomain != domainToken || !planEntry.OwnedPartitions.Contains(partitionId))
             throw new InvalidDataException("transaction.participant-partition-owner-mismatch");
@@ -106,6 +108,10 @@ public static class CrossDomainTransactionAssemblerV1
     private static readonly StableToken ParticipantFailed = new("transaction.participant-failed");
     private static readonly StableToken InvariantFailed = new("transaction.invariant-failed");
     private static readonly StableToken InvariantMissing = new("transaction.invariant-missing");
+    private static readonly IReadOnlyDictionary<StableToken, ushort> DomainRankByDomain =
+        StandardDomainExecutionPlanV1.Create().Entries.ToDictionary(
+            static entry => entry.DomainToken,
+            static entry => entry.DomainRank);
 
     public static CrossDomainTransactionCandidateV1 Assemble(
         OpaqueId128 worldId,
@@ -120,10 +126,10 @@ public static class CrossDomainTransactionAssemblerV1
         ArgumentNullException.ThrowIfNull(rootCausalityRef);
         ArgumentNullException.ThrowIfNull(subjectRefs);
         ArgumentNullException.ThrowIfNull(participants);
+        if (rootCausalityRef.BasisStep is { } rootBasisStep && rootBasisStep > basisStep)
+            throw new InvalidDataException("transaction.root-causality-future");
 
         var registration = CrossDomainTransactionKindRegistryV1.GetRegistration(transactionKind);
-        var rankByDomain = StandardDomainExecutionPlanV1.Create().Entries
-            .ToDictionary(static entry => entry.DomainToken, static entry => entry.DomainRank);
 
         var subjects = subjectRefs.Order().ToArray();
         if (subjects.Any(static subject => subject.IsZero))
@@ -133,7 +139,7 @@ public static class CrossDomainTransactionAssemblerV1
 
         var orderedParticipants = participants
             .Select(participant => participant ?? throw new ArgumentNullException(nameof(participants)))
-            .OrderBy(participant => rankByDomain[participant.DomainToken])
+            .OrderBy(participant => DomainRankByDomain[participant.DomainToken])
             .ThenBy(static participant => participant.DomainToken.Value, StringComparer.Ordinal)
             .ThenBy(static participant => participant.PartitionId.Value, StringComparer.Ordinal)
             .ToArray();
