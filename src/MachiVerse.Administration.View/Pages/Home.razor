@@ -1,0 +1,26 @@
+@page "/"
+@inject AdminViewConfig Config
+@inject AdminGatewayProtocolClient Gateway
+
+<PageTitle>MachiVerse Administration</PageTitle>
+
+<main class="shell">
+    <h1>MachiVerse Administration View</h1>
+    <p>Gateway-only system-operator surface.</p>
+    <dl>
+        <dt>Security domain</dt>
+        <dd>@AdminSecurityDomain.DomainId</dd>
+        <dt>Lifecycle</dt>
+        <dd>@Gateway.State</dd>
+        <dt>Dashboard refresh</dt>
+        <dd>@Config.DashboardRefreshMs ms</dd>
+    </dl>
+
+    <nav>
+        <a href="monitoring">Open health / metrics / log / audit</a>
+        <br />
+        <a href="management">Open Config / operational command management</a>
+        <br />
+        <a href="operations">Open high-impact / simulation Admin Operations</a>
+    </nav>
+</main>

@@ -1,0 +1,172 @@
+@page "/operations"
+@implements IDisposable
+@inject AdminSessionProjectionStore Session
+@inject HighImpactConfirmationController Confirmation
+@inject SimulationAdminOperationController AdminOperations
+@inject AdminOperationCatalog OperationCatalog
+
+<PageTitle>High-impact operations</PageTitle>
+
+<main class="shell">
+    <h1>High-impact / simulation Admin Operations</h1>
+    <p>
+        Confirmation is a local fail-closed safety gate bound to the immutable request identity.
+        It is not an authorization credential and does not replace Gateway authorization.
+    </p>
+
+    <section>
+        <h2>Admin session</h2>
+        <dl>
+            <dt>State</dt>
+            <dd>@Session.Snapshot.State</dd>
+            <dt>Session generation</dt>
+            <dd>@Session.Snapshot.SessionGeneration</dd>
+            <dt>Operation permission</dt>
+            <dd>@(Session.Snapshot.HasPermission(AdminPermissionTokens.OperationSubmit) ? "available" : "unavailable")</dd>
+            <dt>Reason</dt>
+            <dd>@(Session.Snapshot.ReasonCode ?? "-")</dd>
+        </dl>
+    </section>
+
+    <section>
+        <h2>Confirmation</h2>
+        <dl>
+            <dt>State</dt>
+            <dd>@Confirmation.Snapshot.State</dd>
+            <dt>Request fingerprint</dt>
+            <dd>@(Confirmation.Snapshot.Fingerprint?.ToString() ?? "-")</dd>
+            <dt>Expires</dt>
+            <dd>@(Confirmation.Snapshot.ExpiresAt?.ToString("O") ?? "-")</dd>
+            <dt>Reason</dt>
+            <dd>@(Confirmation.Snapshot.ReasonCode ?? "-")</dd>
+        </dl>
+    </section>
+
+    <section>
+        <h2>Registered simulation Admin Operations</h2>
+        @if (OperationCatalog.Descriptors.Count == 0)
+        {
+            <p>
+                No canonical Admin operation descriptors are registered in this build.
+                Undefined world mutations are denied rather than invented in the browser.
+            </p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var descriptor in OperationCatalog.Descriptors)
+                {
+                    <li>@descriptor.OperationKind — @(descriptor.HighImpact ? "high-impact" : "standard")</li>
+                }
+            </ul>
+        }
+    </section>
+
+    <section>
+        <h2>Tracked operations</h2>
+        @if (AdminOperations.Operations.Count == 0)
+        {
+            <p>No Admin Operations have been prepared.</p>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>OperationId</th>
+                        <th>Kind</th>
+                        <th>State</th>
+                        <th>Candidate Step</th>
+                        <th>Effective Step</th>
+                        <th>Result</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var operation in AdminOperations.Operations)
+                    {
+                        <tr>
+                            <td><code>@operation.OperationId</code></td>
+                            <td>@operation.OperationKind</td>
+                            <td>@operation.State</td>
+                            <td>@(operation.CandidateStep?.ToString() ?? "-")</td>
+                            <td>@(operation.EffectiveStep?.ToString() ?? "-")</td>
+                            <td>@(operation.TerminalResult?.Code ?? operation.LastReasonCode ?? "-")</td>
+                            <td>
+                                @if (NeedsConfirmationStart(operation))
+                                {
+                                    <button @onclick="() => BeginConfirmation(operation.OperationId)">
+                                        @(Confirmation.Snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid ? "Reconfirm" : "Begin confirmation")
+                                    </button>
+                                }
+                                else if (operation.State == AdminOperationLifecycleState.AwaitingConfirmation
+                                    && Confirmation.Snapshot.Fingerprint?.OperationId == operation.OperationId
+                                    && Confirmation.Snapshot.State == HighImpactConfirmationState.Confirming)
+                                {
+                                    <button @onclick="() => ConfirmOperation(operation.OperationId)">Confirm</button>
+                                }
+                                else
+                                {
+                                    <span>-</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <p><a href="/">Back</a></p>
+</main>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Session.Changed += SessionChanged;
+        Confirmation.Changed += ProjectionChanged;
+        AdminOperations.Changed += ProjectionChanged;
+    }
+
+    private bool NeedsConfirmationStart(TrackedAdminOperation operation)
+    {
+        var snapshot = Confirmation.Snapshot;
+        if (!operation.HighImpact || snapshot.Fingerprint?.OperationId != operation.OperationId)
+        {
+            return false;
+        }
+
+        return operation.State == AdminOperationLifecycleState.AwaitingConfirmation
+            && snapshot.State == HighImpactConfirmationState.Required
+            || operation.State is AdminOperationLifecycleState.AwaitingConfirmation or AdminOperationLifecycleState.ReadyForSubmit
+                && snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid;
+    }
+
+    private void BeginConfirmation(string operationId)
+    {
+        AdminOperations.BeginConfirmation(ParseId(operationId));
+        StateHasChanged();
+    }
+
+    private void ConfirmOperation(string operationId)
+    {
+        _ = AdminOperations.Confirm(ParseId(operationId));
+        StateHasChanged();
+    }
+
+    private void SessionChanged(AdminSessionProjection session)
+        => _ = InvokeAsync(StateHasChanged);
+
+    private void ProjectionChanged()
+        => _ = InvokeAsync(StateHasChanged);
+
+    private static Google.Protobuf.ByteString ParseId(string value)
+        => Google.Protobuf.ByteString.CopyFrom(Convert.FromHexString(value));
+
+    public void Dispose()
+    {
+        Session.Changed -= SessionChanged;
+        Confirmation.Changed -= ProjectionChanged;
+        AdminOperations.Changed -= ProjectionChanged;
+    }
+}

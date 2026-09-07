@@ -1,0 +1,181 @@
+@page "/monitoring"
+@implements IDisposable
+@inject IMonitoringModuleBoundary MonitoringStore
+
+<PageTitle>Monitoring - MachiVerse Administration</PageTitle>
+
+<main class="shell">
+    <h1>Observability / Audit</h1>
+    <p>Gateway-projected management data only. Redacted or unavailable data is never reconstructed through direct component access.</p>
+
+    <section>
+        <h2>Channel status</h2>
+        <dl>
+            <dt>Health / metrics</dt>
+            <dd>@FormatChannel(_snapshot.HealthChannel)</dd>
+            <dt>Diagnostic log</dt>
+            <dd>@FormatChannel(_snapshot.LogChannel)</dd>
+            <dt>Management audit</dt>
+            <dd>@FormatChannel(_snapshot.AuditChannel)</dd>
+        </dl>
+    </section>
+
+    <section>
+        <h2>Management targets</h2>
+        @if (_snapshot.Targets.Count == 0)
+        {
+            <p>No target health projection has been received.</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>Component</th><th>Instance</th><th>Health</th><th>Observed</th></tr></thead>
+                <tbody>
+                @foreach (var target in _snapshot.Targets)
+                {
+                    <tr>
+                        <td>@target.ComponentKind</td>
+                        <td><code>@(target.LogicalInstanceId ?? "logical default")</code></td>
+                        <td>@target.HealthState</td>
+                        <td>@target.LastObservedAtUnixMillis</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section>
+        <h2>Metrics / conditions</h2>
+        @foreach (var component in _snapshot.Health)
+        {
+            <article>
+                <h3>@component.Target.StableKey</h3>
+                @if (component.Metrics.Count == 0)
+                {
+                    <p>No metrics in the current projection.</p>
+                }
+                else
+                {
+                    <table>
+                        <thead><tr><th>Metric</th><th>Value</th><th>Observed</th></tr></thead>
+                        <tbody>
+                        @foreach (var metric in component.Metrics)
+                        {
+                            <tr><td>@metric.Name</td><td><code>@metric.ValueJson</code></td><td>@metric.ObservedAtUnixMillis</td></tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+
+                @foreach (var condition in component.Conditions)
+                {
+                    <p><strong>@condition.Severity</strong> @condition.Code: @condition.Diagnostic</p>
+                }
+            </article>
+        }
+    </section>
+
+    <section>
+        <h2>Structured log page</h2>
+        <p><strong>Page trace:</strong> @FormatTrace(_snapshot.LogPageTrace)</p>
+        @if (_snapshot.Logs.Count == 0)
+        {
+            <p>No diagnostic log page has been received.</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>Time</th><th>Severity</th><th>Event</th><th>Source</th><th>Correlation</th></tr></thead>
+                <tbody>
+                @foreach (var record in _snapshot.Logs)
+                {
+                    <tr>
+                        <td>@record.TimestampUnixMillis</td>
+                        <td>@record.Severity</td>
+                        <td>@record.EventKind</td>
+                        <td>@record.SourceTargetKey</td>
+                        <td>@FormatCorrelation(record.Correlation)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section>
+        <h2>Management audit page</h2>
+        <p>Audit is kept as a distinct authority/presentation channel from diagnostic logs.</p>
+        <p><strong>Page trace:</strong> @FormatTrace(_snapshot.AuditPageTrace)</p>
+        @if (_snapshot.Audit.Count == 0)
+        {
+            <p>No audit page has been received.</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>Time</th><th>Event</th><th>Actor ref</th><th>Operation</th><th>Target</th><th>Result</th></tr></thead>
+                <tbody>
+                @foreach (var record in _snapshot.Audit)
+                {
+                    <tr>
+                        <td>@record.TimestampUnixMillis</td>
+                        <td>@record.AuditEventKind</td>
+                        <td><code>@record.ActorAccountRef</code></td>
+                        <td><code>@(record.OperationId ?? "-")</code></td>
+                        <td>@record.TargetKind</td>
+                        <td>@record.ResultCode</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+
+            <details>
+                <summary>CSV export preview</summary>
+                <pre>@AuditCsv</pre>
+            </details>
+        }
+    </section>
+</main>
+
+@code {
+    private MonitoringSnapshot _snapshot = default!;
+    private string AuditCsv => AuditExportFormatter.ToCsv(_snapshot.Audit);
+
+    protected override void OnInitialized()
+    {
+        _snapshot = MonitoringStore.Snapshot;
+        MonitoringStore.Changed += OnMonitoringChanged;
+    }
+
+    private void OnMonitoringChanged()
+    {
+        _snapshot = MonitoringStore.Snapshot;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static string FormatChannel(MonitoringChannelState channel)
+        => channel.ReasonCode is null ? channel.State.ToString() : $"{channel.State} ({channel.ReasonCode})";
+
+    private static string FormatCorrelation(CorrelationContextProjection context)
+    {
+        var parts = new List<string>();
+        if (context.CorrelationId is not null) parts.Add($"corr={context.CorrelationId}");
+        if (context.OperationId is not null) parts.Add($"op={context.OperationId}");
+        if (context.BatchId is not null) parts.Add($"batch={context.BatchId}");
+        if (context.SimulationStep is not null) parts.Add($"step={context.SimulationStep.Value}");
+        return parts.Count == 0 ? "-" : string.Join(" ", parts);
+    }
+
+    private static string FormatTrace(EnvelopeTraceProjection? trace)
+    {
+        if (trace is null) return "-";
+        var parts = new List<string>();
+        if (trace.MessageId is not null) parts.Add($"msg={trace.MessageId}");
+        if (trace.CorrelationId is not null) parts.Add($"corr={trace.CorrelationId}");
+        if (trace.CausationId is not null) parts.Add($"cause={trace.CausationId}");
+        return parts.Count == 0 ? "-" : string.Join(" ", parts);
+    }
+
+    public void Dispose() => MonitoringStore.Changed -= OnMonitoringChanged;
+}

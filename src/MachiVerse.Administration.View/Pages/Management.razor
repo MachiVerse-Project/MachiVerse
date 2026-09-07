@@ -1,0 +1,274 @@
+@page "/management"
+@implements IDisposable
+@inject IManagementModuleBoundary ManagementStore
+@inject OperationalCommandCatalog CommandCatalog
+
+<PageTitle>Management - MachiVerse Administration</PageTitle>
+
+<main class="shell">
+    <h1>Config / Operational Command Management</h1>
+    <p>Gateway protocol projections only. Target Config files and component internals are never accessed directly.</p>
+
+    <section>
+        <h2>Channel status</h2>
+        <dl>
+            <dt>Config</dt>
+            <dd>@FormatChannel(_snapshot.ConfigChannel)</dd>
+            <dt>Operational commands</dt>
+            <dd>@FormatChannel(_snapshot.CommandChannel)</dd>
+        </dl>
+    </section>
+
+    <section>
+        <h2>Config projections</h2>
+        @if (_snapshot.ConfigTargets.Count == 0)
+        {
+            <p>No Config projection has been received.</p>
+        }
+        else
+        {
+            @foreach (var config in _snapshot.ConfigTargets)
+            {
+                <article>
+                    <h3>@config.TargetKey</h3>
+                    <dl>
+                        <dt>ConfigGeneration</dt><dd>@config.ConfigGeneration</dd>
+                        <dt>ConfigDigest</dt><dd><code>@(config.ConfigDigest ?? "not provided")</code></dd>
+                        <dt>Result</dt><dd>@config.Result.Status / @config.Result.Code</dd>
+                    </dl>
+
+                    <table>
+                        <thead><tr><th>Key</th><th>Effective value</th><th>Impact</th><th>Mutability</th></tr></thead>
+                        <tbody>
+                        @foreach (var entry in config.Entries)
+                        {
+                            <tr>
+                                <td><code>@entry.Key</code></td>
+                                <td><code>@(entry.Redacted ? "[redacted]" : entry.EffectiveValueJson ?? "[not provided]")</code></td>
+                                <td>@entry.Impact</td>
+                                <td>@entry.Mutability</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                    <button @onclick="() => BeginDraft(config)">Start local draft at generation @config.ConfigGeneration</button>
+                </article>
+            }
+        }
+    </section>
+
+    <section>
+        <h2>Local Config draft editor</h2>
+        @if (_draftEditor.Target is null)
+        {
+            <p>Select a Config projection above to begin a local draft.</p>
+        }
+        else
+        {
+            <p>
+                Target: <code>@_draftEditor.Target.TargetKey</code>,
+                expected base ConfigGeneration: <strong>@_draftEditor.Target.ConfigGeneration</strong>.
+            </p>
+            <p>Local validation is presentation assistance only. Gateway authorization and owner-component validation remain authoritative.</p>
+
+            <label>
+                Config key
+                <select @bind="_draftKey">
+                    @foreach (var entry in EditableEntries)
+                    {
+                        <option value="@entry.Key">@entry.Key</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Wire value type
+                <select @bind="_draftKind">
+                    @foreach (var kind in Enum.GetValues<ConfigDraftValueKind>())
+                    {
+                        <option value="@kind">@kind</option>
+                    }
+                </select>
+            </label>
+            <label>
+                New value
+                <input @bind="_draftValue" />
+            </label>
+            <button @onclick="AddDraftEdit" disabled="@(EditableEntries.Count == 0)">Add / replace edit</button>
+            <button @onclick="ValidateDraft" disabled="@(_draftEditor.Edits.Count == 0)">Validate local draft shape</button>
+            <button @onclick="DiscardDraft">Discard local draft</button>
+
+            @if (!string.IsNullOrEmpty(_draftMessage))
+            {
+                <p>@_draftMessage</p>
+            }
+
+            @if (_draftEditor.Edits.Count == 0)
+            {
+                <p>No local edits.</p>
+            }
+            else
+            {
+                <table>
+                    <thead><tr><th>Key</th><th>Typed value</th><th>Action</th></tr></thead>
+                    <tbody>
+                    @foreach (var edit in _draftEditor.Edits)
+                    {
+                        <tr>
+                            <td><code>@edit.Key</code></td>
+                            <td><code>@FormatConfigValue(edit.Value)</code></td>
+                            <td><button @onclick="() => RemoveDraftEdit(edit.Key)">Remove</button></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+
+            <p>
+                Submit is intentionally not synthesized in the browser until a canonical request identity source provides a stable OperationId and Hash256 immutable payload digest.
+                Returning an applied value to an earlier setting is a new change request against the current generation, not generic Undo.
+            </p>
+        }
+    </section>
+
+    <section>
+        <h2>Tracked mutations</h2>
+        @if (_snapshot.Mutations.Count == 0)
+        {
+            <p>No Config change or state-changing operational command has been prepared.</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>Kind</th><th>Request</th><th>OperationId</th><th>State</th><th>Result</th><th>Generation</th><th>Effective step</th></tr></thead>
+                <tbody>
+                @foreach (var mutation in _snapshot.Mutations)
+                {
+                    <tr>
+                        <td>@mutation.Kind</td>
+                        <td>@mutation.RequestKind</td>
+                        <td><code>@mutation.OperationId</code></td>
+                        <td>@mutation.State</td>
+                        <td>@(mutation.ResultCode ?? "-")</td>
+                        <td>@FormatGeneration(mutation)</td>
+                        <td>@(mutation.EffectiveStep?.ToString() ?? "-")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section>
+        <h2>Operational command catalog</h2>
+        @if (CommandCatalog.Descriptors.Count == 0)
+        {
+            <p>No Standard Protocol v1 command kinds are currently registered. Arbitrary command names, shell commands, scripts, and internal method calls remain disabled.</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>Command</th><th>Payload schema</th><th>Permission</th><th>Impact</th><th>State-changing</th></tr></thead>
+                <tbody>
+                @foreach (var descriptor in CommandCatalog.Descriptors)
+                {
+                    <tr>
+                        <td><code>@descriptor.CommandKind</code></td>
+                        <td><code>@descriptor.PayloadSchemaId @descriptor.PayloadSchemaMajor.@descriptor.PayloadSchemaMinor</code></td>
+                        <td><code>@descriptor.RequiredPermission</code></td>
+                        <td>@descriptor.ImpactClassification</td>
+                        <td>@descriptor.StateChanging</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+</main>
+
+@code {
+    private ManagementSnapshot _snapshot = default!;
+    private readonly ConfigDraftEditor _draftEditor = new();
+    private string _draftKey = string.Empty;
+    private ConfigDraftValueKind _draftKind = ConfigDraftValueKind.String;
+    private string _draftValue = string.Empty;
+    private string? _draftMessage;
+
+    private IReadOnlyList<ConfigEntryProjection> EditableEntries
+        => _draftEditor.Target?.Entries.Where(static entry => !entry.Sensitive).ToArray()
+            ?? Array.Empty<ConfigEntryProjection>();
+
+    protected override void OnInitialized()
+    {
+        _snapshot = ManagementStore.Snapshot;
+        ManagementStore.Changed += OnManagementChanged;
+    }
+
+    private void OnManagementChanged()
+    {
+        _snapshot = ManagementStore.Snapshot;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void BeginDraft(ConfigTargetProjection config)
+    {
+        _draftEditor.Begin(config);
+        _draftKey = EditableEntries.FirstOrDefault()?.Key ?? string.Empty;
+        _draftValue = string.Empty;
+        _draftMessage = null;
+    }
+
+    private void AddDraftEdit()
+    {
+        try
+        {
+            _draftEditor.SetEdit(_draftKey, _draftKind, _draftValue);
+            _draftMessage = $"Local edit prepared for {_draftKey}.";
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidOperationException or KeyNotFoundException)
+        {
+            _draftMessage = ex.Message;
+        }
+    }
+
+    private void RemoveDraftEdit(string key)
+    {
+        _draftEditor.RemoveEdit(key);
+        _draftMessage = $"Removed local edit for {key}.";
+    }
+
+    private void ValidateDraft()
+    {
+        try
+        {
+            var draft = _draftEditor.BuildDraft(ManagementStore);
+            _draftMessage = $"Local draft shape valid: {draft.Edits.Count} edit(s), expected base generation {draft.BaseConfigGeneration}.";
+        }
+        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
+        {
+            _draftMessage = ex.Message;
+        }
+    }
+
+    private void DiscardDraft()
+    {
+        _draftEditor.DiscardLocalDraft();
+        _draftKey = string.Empty;
+        _draftValue = string.Empty;
+        _draftMessage = "Local draft discarded. No server state or audit history was changed.";
+    }
+
+    private static string FormatConfigValue(MachiVerse.Protocol.V1.ConfigValueWireV1 value)
+        => Google.Protobuf.JsonFormatter.Default.Format(value);
+
+    private static string FormatChannel(ManagementChannelState channel)
+        => channel.ReasonCode is null ? channel.State.ToString() : $"{channel.State} ({channel.ReasonCode})";
+
+    private static string FormatGeneration(TrackedManagementMutation mutation)
+    {
+        var before = mutation.ExpectedBaseGeneration?.ToString() ?? "-";
+        var after = mutation.ResultingGeneration?.ToString() ?? "-";
+        return $"{before} -> {after}";
+    }
+
+    public void Dispose() => ManagementStore.Changed -= OnManagementChanged;
+}
