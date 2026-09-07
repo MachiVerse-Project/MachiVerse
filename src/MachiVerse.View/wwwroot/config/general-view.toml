@@ -1,0 +1,46 @@
+[meta]
+format = "machiverse-config"
+schema_version = "1.0"
+component = "general-view"
+
+[render]
+target-fps = 60
+max-pixel-ratio = 2.0
+lod-bias = 0
+max-visible-objects = 100000
+
+[interpolation]
+delay-ms = 100
+
+[prediction]
+enabled = true
+max-horizon-ms = 150
+
+[reconcile]
+soft-duration-ms = 120
+max-soft-duration-ms = 500
+
+[cache]
+max-mebibytes = 256
+
+[asset]
+max-concurrency = 8
+
+[protocol]
+receive-queue-capacity = 256
+
+[operation]
+pending-capacity = 1024
+
+[network]
+reconnect-initial-ms = 250
+reconnect-max-ms = 10000
+reconnect-multiplier-permille = 2000
+
+[ui]
+locale = "auto"
+reduced-motion-default = false
+show-prediction-indicator = true
+
+[observability]
+client-log-level = "warn"

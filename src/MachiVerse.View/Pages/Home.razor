@@ -1,0 +1,113 @@
+@page "/"
+@implements IAsyncDisposable
+@inject GeneralViewConfig Config
+@inject GatewayProtocolClient Gateway
+@inject ConfirmedWorldStore ConfirmedStore
+@inject SceneProjectionAdapterRegistry SceneAdapters
+@inject ThreeRendererInterop Renderer
+
+<PageTitle>MachiVerse</PageTitle>
+
+<main class="shell">
+    <h1>MachiVerse General View</h1>
+    <p>Confirmed-state presentation / Three.js renderer foundation.</p>
+    <p><a href="/participation">Open Diver Participation</a></p>
+    <dl>
+        <dt>Lifecycle</dt>
+        <dd>@Gateway.State</dd>
+        <dt>Target FPS</dt>
+        <dd>@Config.TargetFps</dd>
+        <dt>Renderer</dt>
+        <dd>@(_rendererStatus?.Initialized == true ? $"Three.js r{_rendererStatus.ThreeRevision} / {_rendererStatus.BackendMode}" : "initializing")</dd>
+        @if (_rendererStatus is { } status)
+        {
+            <dt>Renderer state</dt>
+            <dd>@status.RendererState</dd>
+            <dt>Scene objects</dt>
+            <dd>@status.SceneObjectCount</dd>
+        }
+        @if (_rendererStatus?.BasisStep is { } basisStep)
+        {
+            <dt>Rendered confirmed basis</dt>
+            <dd>@basisStep</dd>
+        }
+        @if (_rendererError is not null)
+        {
+            <dt>Renderer error</dt>
+            <dd>@_rendererError</dd>
+        }
+    </dl>
+    <canvas id="machiverse-scene" aria-label="MachiVerse world presentation surface"></canvas>
+</main>
+
+@code {
+    private RendererStatus? _rendererStatus;
+    private string? _rendererError;
+    private bool _rendererInitialized;
+    private bool _disposed;
+
+    protected override void OnInitialized()
+    {
+        ConfirmedStore.Changed += OnConfirmedChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        try
+        {
+            _rendererStatus = await Renderer.InitializeHostAsync(
+                "machiverse-scene",
+                Config.MaxPixelRatio);
+            _rendererInitialized = true;
+            await RefreshProjectionAsync();
+        }
+        catch (Exception ex)
+        {
+            _rendererError = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    private void OnConfirmedChanged()
+    {
+        if (_disposed) return;
+        _ = InvokeAsync(RefreshProjectionAsync);
+    }
+
+    private async Task RefreshProjectionAsync()
+    {
+        if (!_rendererInitialized || _disposed) return;
+
+        try
+        {
+            if (ConfirmedStore.Current is { } confirmed)
+            {
+                await Renderer.ApplySceneProjectionAsync(SceneProjectionModel.FromConfirmed(confirmed, SceneAdapters));
+            }
+            else
+            {
+                // SYNCING/RESYNCING/world-change must not keep an old confirmed-looking scene.
+                await Renderer.ClearSceneProjectionAsync();
+            }
+
+            _rendererStatus = await Renderer.GetStatusAsync();
+            _rendererError = null;
+        }
+        catch (Exception ex)
+        {
+            _rendererError = ex.Message;
+        }
+
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        ConfirmedStore.Changed -= OnConfirmedChanged;
+        await Renderer.DisposeAsync();
+    }
+}
