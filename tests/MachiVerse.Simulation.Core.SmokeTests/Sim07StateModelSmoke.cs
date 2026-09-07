@@ -93,6 +93,13 @@ internal static class Sim07StateModelSmoke
             "SIM-07 registry: canonical Spatial geometry-deform intent missing.");
         Require(SpatialEnvironmentKindRegistryV1.EnvironmentEvents.Any(static token => token.Value == "environment.hazard.started"),
             "SIM-07 registry: canonical Environment hazard event missing.");
+        Require(SpatialEnvironmentKindRegistryV1.HazardForeignTargetIntents.Select(static token => token.Value)
+                .SequenceEqual([
+                    "physical.intent.apply-damage",
+                    "resident.intent.apply-injury",
+                    "infrastructure.intent.propagate-outage"
+                ]),
+            "SIM-07 hazard boundary: damage/injury/outage must use canonical foreign-owner intents rather than direct writes.");
     }
 
     private static void RequireReject(Action action, string expectedMessage)
