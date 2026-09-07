@@ -4,7 +4,6 @@ using MachiVerse.Simulation.Core.Runtime;
 
 internal static class Sim08CrossOwnerIntentSmoke
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Run()
     {
         var physicalBuilt = new StableToken("physical_built");
