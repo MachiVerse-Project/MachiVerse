@@ -134,8 +134,8 @@
         Participation.Changed += OnParticipationChanged;
     }
 
-    private void OnSessionChanged(ViewSessionProjection _) => _ = InvokeAsync(StateHasChanged);
-    private void OnBindingChanged(ParticipationBindingProjection _) => _ = InvokeAsync(StateHasChanged);
+    private void OnSessionChanged(ViewSessionProjection snapshot) => _ = InvokeAsync(StateHasChanged);
+    private void OnBindingChanged(ParticipationBindingProjection projection) => _ = InvokeAsync(StateHasChanged);
     private void OnParticipationChanged() => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
