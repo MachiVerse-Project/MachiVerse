@@ -57,7 +57,7 @@ public sealed class MasterLoginCoordinator(
         var reply = await masterClient.BeginAsync(request, cancellationToken);
         ValidateMasterReply(reply.MasterGeneration, reply.SenderGatewayId, authority.MasterGeneration);
         var payload = reply.Payload ?? throw new InvalidDataException("auth.identity-verification-failed");
-        if ((int)payload.Result?.Status! != 1)
+        if (payload.Result is null || (int)payload.Result.Status != 1)
             throw new InvalidDataException(payload.Result?.Code ?? "auth.identity-verification-failed");
         if (payload.MasterGeneration != authority.MasterGeneration)
             throw new InvalidDataException("auth.master-changed");
@@ -132,13 +132,13 @@ public sealed class MasterLoginCoordinator(
         }
 
         var payload = reply.Payload ?? throw new InvalidDataException("auth.identity-verification-failed");
-        if ((int)payload.Result?.Status! != 1)
+        if (payload.Result is null || (int)payload.Result.Status != 1)
         {
             transactions.Reject(transaction.LoginTransactionId);
             throw new InvalidDataException(payload.Result?.Code ?? "auth.identity-verification-failed");
         }
-        if (!payload.HasSessionId || payload.SessionId.Length != 16 || payload.SessionId.Span.IndexOfAnyExcept((byte)0) < 0 ||
-            !payload.HasSessionGeneration || payload.SessionGeneration == 0)
+        if (payload.SessionId.Length != 16 || payload.SessionId.Span.IndexOfAnyExcept((byte)0) < 0 ||
+            payload.SessionGeneration == 0)
         {
             transactions.Reject(transaction.LoginTransactionId);
             throw new InvalidDataException("auth.identity-verification-failed");
@@ -183,7 +183,7 @@ public sealed class MasterLoginCoordinator(
             throw new InvalidDataException("auth.identity-verification-failed");
         var methods = assertion.AuthenticationMethods.ToArray();
         if (methods.Any(string.IsNullOrWhiteSpace) ||
-            methods.OrderBy(static item => item, StringComparer.Ordinal).Distinct(StringComparer.Ordinal).Count() != methods.Length)
+            methods.Distinct(StringComparer.Ordinal).Count() != methods.Length)
             throw new InvalidDataException("auth.identity-verification-failed");
     }
 
