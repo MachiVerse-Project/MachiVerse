@@ -28,6 +28,7 @@ component = "simulation-core"
         VerifyBudgetAndPermutation(policy);
         VerifyFloors(policy);
         VerifyApplyAndCameraIndependence(policy);
+        Sim13DetailConservationSmoke.Run();
     }
 
     private static void VerifyHysteresis(DetailTransitionPolicyV1 policy)
