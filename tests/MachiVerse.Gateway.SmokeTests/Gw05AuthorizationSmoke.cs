@@ -23,10 +23,18 @@ internal static class Gw05AuthorizationSmoke
 
         var adminPermissions = PermissionRegistry.ValidateExplicitAdminPermissions(new[]
         {
-            "admin.operation.submit",
             "admin.audit.read",
+            "admin.command.execute.low-impact",
+            "admin.config.read",
+            "admin.config.write.simulation",
+            "admin.health.read",
+            "admin.log.read",
+            "admin.metrics.read",
+            "admin.operation.submit",
+            "admin.security.revoke-session",
+            "admin.session.read",
         });
-        Require(adminPermissions.SequenceEqual(new[] { "admin.audit.read", "admin.operation.submit" }),
+        Require(adminPermissions.SequenceEqual(adminPermissions.OrderBy(static permission => permission, StringComparer.Ordinal)),
             "Admin permissions must normalize to canonical order.");
 
         var crossDomainRejected = false;
@@ -115,6 +123,71 @@ internal static class Gw05AuthorizationSmoke
         var denied = service.AuthorizeOperation(spectatorSession, operation, registry, expectedSessionGeneration: 1);
         Require(denied.Outcome == AuthorizationOutcomeV1.Deny && denied.ReasonCode == "auth.unauthorized",
             "Missing required permission must reject before forwarding.");
+
+        var publicProjection = RequestAuthorizationPolicies.AuthorizeViewSubscription(
+            service, spectatorSession, "view.public.v1", expectedSessionGeneration: 1);
+        Require(publicProjection.Outcome == AuthorizationOutcomeV1.Allow,
+            "Spectator must be able to subscribe to the public projection.");
+        var participantProjectionDenied = RequestAuthorizationPolicies.AuthorizeViewSubscription(
+            service, spectatorSession, "view.participant.v1", expectedSessionGeneration: 1);
+        Require(participantProjectionDenied.Outcome == AuthorizationOutcomeV1.Deny &&
+                participantProjectionDenied.Permission == "view.world.read.participant",
+            "Higher-privilege View projection must reject rather than silently downgrade.");
+        var participantProjection = RequestAuthorizationPolicies.AuthorizeViewSubscription(
+            service, diverSession, "view.participant.v1", expectedSessionGeneration: 4);
+        Require(participantProjection.Outcome == AuthorizationOutcomeV1.Allow,
+            "Diver must be able to subscribe to participant projection.");
+        var unknownProjectionRejected = false;
+        try
+        {
+            _ = RequestAuthorizationPolicies.AuthorizeViewSubscription(
+                service, diverSession, "view.unknown.v1", expectedSessionGeneration: 4);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "protocol.projection-unsupported")
+        {
+            unknownProjectionRejected = true;
+        }
+        Require(unknownProjectionRejected, "Unknown projection profile must fail closed.");
+
+        var adminSession = store.CreateMasterGranted(
+            Enumerable.Repeat((byte)0x68, 16).ToArray(),
+            sessionGeneration: 2,
+            Enumerable.Repeat((byte)0x69, 16).ToArray(),
+            Array.Empty<byte>(),
+            (AuthDomainWireV1)2,
+            "admin.standard",
+            adminPermissions,
+            issuedMasterGeneration: 7,
+            now).Session;
+        PermissionRegistry.ValidateSessionProjection(store.ToWireState(adminSession));
+
+        var adminHealth = RequestAuthorizationPolicies.AuthorizeAdminHealthQuery(
+            service, adminSession, includeMetrics: true, expectedSessionGeneration: 2);
+        Require(adminHealth.Outcome == AuthorizationOutcomeV1.Allow && adminHealth.Permission == "admin.metrics.read",
+            "Admin health query with metrics must require both health and metrics permissions.");
+        var adminLog = RequestAuthorizationPolicies.AuthorizeAdminLogQuery(service, adminSession, 2);
+        Require(adminLog.Outcome == AuthorizationOutcomeV1.Allow, "Admin log permission should be allowed.");
+        var adminConfigRead = RequestAuthorizationPolicies.AuthorizeAdminConfigRead(service, adminSession, 2);
+        Require(adminConfigRead.Outcome == AuthorizationOutcomeV1.Allow, "Admin config read permission should be allowed.");
+        var adminConfigWrite = RequestAuthorizationPolicies.AuthorizeAdminConfigChange(
+            service, adminSession, AdminConfigImpactV1.Simulation, operationId, 2);
+        Require(adminConfigWrite.Outcome == AuthorizationOutcomeV1.Allow &&
+                adminConfigWrite.Permission == "admin.config.write.simulation" &&
+                adminConfigWrite.OperationId is not null && adminConfigWrite.OperationId.AsSpan().SequenceEqual(operationId),
+            "Simulation-impact Config change must require simulation write permission and retain OperationId.");
+        var highImpactDenied = RequestAuthorizationPolicies.AuthorizeAdminOperationalCommand(
+            service, adminSession, highImpact: true, operationId, 2);
+        Require(highImpactDenied.Outcome == AuthorizationOutcomeV1.Deny &&
+                highImpactDenied.Permission == "admin.command.execute.high-impact",
+            "High-impact command must not inherit low-impact authority.");
+        Require(RequestAuthorizationPolicies.AuthorizeAdminAuditQuery(service, adminSession, 2).Outcome == AuthorizationOutcomeV1.Allow,
+            "Admin audit read permission should be allowed.");
+        Require(RequestAuthorizationPolicies.AuthorizeAdminOperationSubmit(service, adminSession, operationId, 2).Outcome == AuthorizationOutcomeV1.Allow,
+            "Admin Operation submit permission should be allowed.");
+        Require(RequestAuthorizationPolicies.AuthorizeAdminSessionRead(service, adminSession, 2).Outcome == AuthorizationOutcomeV1.Allow,
+            "Admin session read permission should be allowed.");
+        Require(RequestAuthorizationPolicies.AuthorizeAdminSessionRevoke(service, adminSession, 2).Outcome == AuthorizationOutcomeV1.Allow,
+            "Admin session revoke permission should be allowed.");
 
         var wrongDomain = service.AuthorizePermission(
             diverSession,
