@@ -1,3 +1,6 @@
+using System.Collections.ObjectModel;
+using System.Security.Cryptography;
+using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -8,9 +11,13 @@ public sealed class FrozenStepInputV1
     public FrozenStepInputV1(
         OpaqueId128 worldId,
         ulong basisStep,
+        ulong configGeneration,
+        ReadOnlySpan<byte> configDigest,
         IEnumerable<ScheduledOperationRefV1> scheduledOperations)
     {
         if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
+        if (configGeneration == 0) throw new ArgumentOutOfRangeException(nameof(configGeneration));
+        if (configDigest.Length != 32) throw new ArgumentException("ConfigDigest must be exactly 32 bytes.", nameof(configDigest));
         ArgumentNullException.ThrowIfNull(scheduledOperations);
 
         var ordered = scheduledOperations
@@ -28,17 +35,51 @@ public sealed class FrozenStepInputV1
 
         WorldId = worldId;
         BasisStep = basisStep;
+        ConfigGeneration = configGeneration;
+        ConfigDigest = configDigest.ToArray();
         ScheduledOperations = Array.AsReadOnly(ordered);
     }
 
     public OpaqueId128 WorldId { get; }
     public ulong BasisStep { get; }
+    public ulong ConfigGeneration { get; }
+    public byte[] ConfigDigest { get; }
     public IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations { get; }
 }
 
 public static class StepInputFreezerV1
 {
     public static FrozenStepInputV1 Freeze(WorldStateV1 state, OperationSchedulerStateV1 scheduler)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return Freeze(
+            state,
+            scheduler,
+            state.Header.ConfigGeneration,
+            state.Diagnostic.ConfigDigest);
+    }
+
+    public static FrozenStepInputV1 Freeze(
+        WorldStateV1 state,
+        OperationSchedulerStateV1 scheduler,
+        EffectiveCoreConfig activeConfig)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(activeConfig);
+        if (activeConfig.Generation < state.Header.ConfigGeneration)
+            throw new InvalidDataException("step-input.config-generation-behind-state");
+        if (activeConfig.Generation == state.Header.ConfigGeneration &&
+            !CryptographicOperations.FixedTimeEquals(activeConfig.Digest, state.Diagnostic.ConfigDigest))
+            throw new InvalidDataException("step-input.config-digest-mismatch-at-generation");
+
+        return Freeze(state, scheduler, activeConfig.Generation, activeConfig.Digest);
+    }
+
+    private static FrozenStepInputV1 Freeze(
+        WorldStateV1 state,
+        OperationSchedulerStateV1 scheduler,
+        ulong configGeneration,
+        ReadOnlySpan<byte> configDigest)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -51,27 +92,42 @@ public static class StepInputFreezerV1
 
         var scheduled = scheduler.ForEffectiveStep(step);
         scheduler.FreezeExternalInput(step);
-        return new FrozenStepInputV1(state.Header.WorldId, step, scheduled);
+        return new FrozenStepInputV1(
+            state.Header.WorldId,
+            step,
+            configGeneration,
+            configDigest,
+            scheduled);
     }
 }
+
+public sealed record DomainSameStepDependencyV1(
+    StableToken ProducerDomain,
+    StableToken ConsumerDomain);
 
 public sealed record DomainExecutionPlanEntryV1(
     StableToken DomainToken,
     ushort DomainRank,
-    IReadOnlyList<StableToken> OwnedPartitions);
+    IReadOnlyList<StableToken> OwnedPartitions,
+    IReadOnlyList<StableToken> SameStepDependencies);
 
 public sealed class StandardDomainExecutionPlanV1
 {
-    private StandardDomainExecutionPlanV1(IReadOnlyList<DomainExecutionPlanEntryV1> entries)
+    private StandardDomainExecutionPlanV1(
+        IReadOnlyList<DomainExecutionPlanEntryV1> entries,
+        IReadOnlyList<IReadOnlyList<DomainExecutionPlanEntryV1>> executionWaves)
     {
         Entries = entries;
+        ExecutionWaves = executionWaves;
     }
 
     public IReadOnlyList<DomainExecutionPlanEntryV1> Entries { get; }
+    public IReadOnlyList<IReadOnlyList<DomainExecutionPlanEntryV1>> ExecutionWaves { get; }
 
-    public static StandardDomainExecutionPlanV1 Create()
+    public static StandardDomainExecutionPlanV1 Create(
+        IEnumerable<DomainSameStepDependencyV1>? sameStepDependencies = null)
     {
-        var entries = StandardDomainPartitionRegistry.Entries
+        var baseEntries = StandardDomainPartitionRegistry.Entries
             .GroupBy(static partition => partition.OwnerDomain)
             .Select(static group =>
             {
@@ -82,21 +138,77 @@ public sealed class StandardDomainExecutionPlanV1
                     .ToArray();
                 if (group.Any(item => item.OwnerDomainRank != first.OwnerDomainRank))
                     throw new InvalidDataException("step-plan.domain-rank-mismatch");
-                return new DomainExecutionPlanEntryV1(
-                    first.OwnerDomain,
-                    first.OwnerDomainRank,
-                    Array.AsReadOnly(partitions));
+                return (first.OwnerDomain, first.OwnerDomainRank, Partitions: Array.AsReadOnly(partitions));
             })
-            .OrderBy(static entry => entry.DomainRank)
-            .ThenBy(static entry => entry.DomainToken.Value, StringComparer.Ordinal)
+            .OrderBy(static entry => entry.OwnerDomainRank)
+            .ThenBy(static entry => entry.OwnerDomain.Value, StringComparer.Ordinal)
             .ToArray();
 
-        if (entries.Length != 8)
+        if (baseEntries.Length != 8)
             throw new InvalidDataException("step-plan.standard-domain-count-mismatch");
-        if (entries.Sum(static entry => entry.OwnedPartitions.Count) != StandardDomainPartitionRegistry.StandardPartitionCount)
+        if (baseEntries.Sum(static entry => entry.Partitions.Count) != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("step-plan.standard-partition-count-mismatch");
 
-        return new StandardDomainExecutionPlanV1(Array.AsReadOnly(entries));
+        var registered = baseEntries
+            .Select(static entry => entry.OwnerDomain)
+            .ToHashSet();
+        var dependenciesByConsumer = registered.ToDictionary(
+            static token => token,
+            static _ => new SortedSet<string>(StringComparer.Ordinal));
+        var seen = new HashSet<(StableToken Producer, StableToken Consumer)>();
+
+        foreach (var dependency in (sameStepDependencies ?? Array.Empty<DomainSameStepDependencyV1>())
+                     .OrderBy(static item => item.ConsumerDomain.Value, StringComparer.Ordinal)
+                     .ThenBy(static item => item.ProducerDomain.Value, StringComparer.Ordinal))
+        {
+            ArgumentNullException.ThrowIfNull(dependency);
+            if (!registered.Contains(dependency.ProducerDomain) || !registered.Contains(dependency.ConsumerDomain))
+                throw new InvalidDataException("step-plan.same-step-dependency-domain-unregistered");
+            if (dependency.ProducerDomain == dependency.ConsumerDomain)
+                throw new InvalidDataException("step-plan.same-step-dependency-self-cycle");
+            if (!seen.Add((dependency.ProducerDomain, dependency.ConsumerDomain)))
+                throw new InvalidDataException("step-plan.same-step-dependency-duplicate");
+            dependenciesByConsumer[dependency.ConsumerDomain].Add(dependency.ProducerDomain.Value);
+        }
+
+        var entries = baseEntries.Select(entry =>
+        {
+            var dependencies = dependenciesByConsumer[entry.OwnerDomain]
+                .Select(static value => new StableToken(value))
+                .ToArray();
+            return new DomainExecutionPlanEntryV1(
+                entry.OwnerDomain,
+                entry.OwnerDomainRank,
+                entry.Partitions,
+                Array.AsReadOnly(dependencies));
+        }).ToArray();
+
+        var byDomain = entries.ToDictionary(static entry => entry.DomainToken);
+        var remaining = entries.Select(static entry => entry.DomainToken).ToHashSet();
+        var completed = new HashSet<StableToken>();
+        var waves = new List<IReadOnlyList<DomainExecutionPlanEntryV1>>();
+
+        while (remaining.Count != 0)
+        {
+            var ready = remaining
+                .Select(token => byDomain[token])
+                .Where(entry => entry.SameStepDependencies.All(completed.Contains))
+                .OrderBy(static entry => entry.DomainToken.Value, StringComparer.Ordinal)
+                .ToArray();
+            if (ready.Length == 0)
+                throw new InvalidDataException("step-plan.same-step-dependency-cycle");
+
+            waves.Add(Array.AsReadOnly(ready));
+            foreach (var entry in ready)
+            {
+                remaining.Remove(entry.DomainToken);
+                completed.Add(entry.DomainToken);
+            }
+        }
+
+        return new StandardDomainExecutionPlanV1(
+            Array.AsReadOnly(entries),
+            Array.AsReadOnly(waves.ToArray()));
     }
 }
 
@@ -105,7 +217,8 @@ public sealed class DomainRuntimeContextV1
     public DomainRuntimeContextV1(
         WorldStateV1 state,
         FrozenStepInputV1 frozenInput,
-        DomainExecutionPlanEntryV1 planEntry)
+        DomainExecutionPlanEntryV1 planEntry,
+        IReadOnlyDictionary<StableToken, DomainCandidateOutputV1>? completedDependencyOutputs = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(frozenInput);
@@ -113,14 +226,24 @@ public sealed class DomainRuntimeContextV1
         if (state.Header.WorldId != frozenInput.WorldId || state.Header.Step != frozenInput.BasisStep)
             throw new InvalidDataException("domain-runtime.frozen-input-basis-mismatch");
 
+        var dependencies = completedDependencyOutputs is null
+            ? new Dictionary<StableToken, DomainCandidateOutputV1>()
+            : new Dictionary<StableToken, DomainCandidateOutputV1>(completedDependencyOutputs);
+        if (!planEntry.SameStepDependencies.ToHashSet().SetEquals(dependencies.Keys))
+            throw new InvalidDataException("domain-runtime.dependency-output-coverage-mismatch");
+        if (dependencies.Any(pair => pair.Value.DomainToken != pair.Key || pair.Value.BasisStep != frozenInput.BasisStep))
+            throw new InvalidDataException("domain-runtime.dependency-output-basis-mismatch");
+
         State = state;
         FrozenInput = frozenInput;
         PlanEntry = planEntry;
+        CompletedDependencyOutputs = new ReadOnlyDictionary<StableToken, DomainCandidateOutputV1>(dependencies);
     }
 
     public WorldStateV1 State { get; }
     public FrozenStepInputV1 FrozenInput { get; }
     public DomainExecutionPlanEntryV1 PlanEntry { get; }
+    public IReadOnlyDictionary<StableToken, DomainCandidateOutputV1> CompletedDependencyOutputs { get; }
 }
 
 public sealed class DomainCandidateOutputV1
@@ -179,20 +302,32 @@ public static class DomainRuntimeExecutorV1
         if (byDomain.Count != plan.Entries.Count || plan.Entries.Any(entry => !byDomain.ContainsKey(entry.DomainToken)))
             throw new InvalidDataException("domain-runtime.plan-coverage-mismatch");
 
-        var outputs = await DeterministicBatchExecutor.RunAsync(
-            plan.Entries,
-            workerCount,
-            async (entry, ct) =>
-            {
-                var runtime = byDomain[entry.DomainToken];
-                var output = await runtime.ExecuteAsync(new DomainRuntimeContextV1(state, frozenInput, entry), ct);
-                if (output.DomainToken != entry.DomainToken || output.BasisStep != frozenInput.BasisStep)
-                    throw new InvalidDataException("domain-runtime.output-basis-mismatch");
-                return output;
-            },
-            cancellationToken);
+        var completed = new Dictionary<StableToken, DomainCandidateOutputV1>();
+        foreach (var wave in plan.ExecutionWaves)
+        {
+            var outputs = await DeterministicBatchExecutor.RunAsync(
+                wave,
+                workerCount,
+                async (entry, ct) =>
+                {
+                    var dependencyOutputs = entry.SameStepDependencies.ToDictionary(
+                        static token => token,
+                        token => completed[token]);
+                    var runtime = byDomain[entry.DomainToken];
+                    var output = await runtime.ExecuteAsync(
+                        new DomainRuntimeContextV1(state, frozenInput, entry, dependencyOutputs),
+                        ct);
+                    if (output.DomainToken != entry.DomainToken || output.BasisStep != frozenInput.BasisStep)
+                        throw new InvalidDataException("domain-runtime.output-basis-mismatch");
+                    return output;
+                },
+                cancellationToken);
 
-        return outputs;
+            for (var index = 0; index < wave.Count; index++)
+                completed.Add(wave[index].DomainToken, outputs[index]);
+        }
+
+        return plan.Entries.Select(entry => completed[entry.DomainToken]).ToArray();
     }
 }
 
