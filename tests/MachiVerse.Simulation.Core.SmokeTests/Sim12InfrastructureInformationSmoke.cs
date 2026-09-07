@@ -11,6 +11,7 @@ internal static class Sim12InfrastructureInformationSmoke
         VerifyJacobi();
         VerifyOutageCascade();
         VerifyDeliveryBeliefSeparation();
+        Sim12RuntimeGateSmoke.RunAsync().GetAwaiter().GetResult();
     }
 
     private static void VerifyDijkstraTie()
@@ -85,6 +86,17 @@ internal static class Sim12InfrastructureInformationSmoke
         var result = DeterministicOutageCascadeV1.Propagate(new[] { a }, deps);
         Require(result.SequenceEqual(new[] { a, b, c }),
             "domain.infrastructure.outage-cascade: deterministic dependency propagation failed.");
+
+        RequireReject(
+            () => DeterministicOutageCascadeV1.Propagate(
+                new[] { a },
+                new[]
+                {
+                    new InfrastructureDependencyV1(a, b),
+                    new InfrastructureDependencyV1(b, a),
+                }),
+            "infrastructure.dependency-cycle-requires-coupled-policy",
+            "domain.infrastructure.outage-cascade");
     }
 
     private static void VerifyDeliveryBeliefSeparation()
@@ -95,11 +107,29 @@ internal static class Sim12InfrastructureInformationSmoke
             Id("00000000000000000000000000012b03"),
             new StableToken("claim.weather.report"), 20, 0, InformationDeliveryStatusV1.Queued);
         var delivered = delivery.MarkDelivered();
-        Require(delivered.Status == InformationDeliveryStatusV1.Delivered && delivered.ClaimRef == delivery.ClaimRef,
-            "domain.information.delivery-belief-separation: delivery must preserve claim identity and only change delivery lifecycle.");
+        Require(delivered.Status == InformationDeliveryStatusV1.Delivered &&
+                delivered.ClaimRef == delivery.ClaimRef &&
+                delivered.SourceRef == delivery.SourceRef &&
+                delivered.DestinationRef == delivery.DestinationRef,
+            "domain.information.delivery-belief-separation: delivery must preserve claim/participant identity and only change delivery lifecycle.");
     }
 
     private static OpaqueId128 Id(string value) => OpaqueId128.Parse(value);
+
+    private static void RequireReject(Action action, string expected, string acceptance)
+    {
+        try
+        {
+            action();
+        }
+        catch (InvalidDataException ex) when (ex.Message == expected)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException($"{acceptance}: expected SIM-12 rejection {expected}");
+    }
+
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
