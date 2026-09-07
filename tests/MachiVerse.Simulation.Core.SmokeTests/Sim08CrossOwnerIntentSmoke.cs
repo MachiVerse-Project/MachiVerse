@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains;
 using MachiVerse.Simulation.Core.Runtime;
 
 internal static class Sim08CrossOwnerIntentSmoke
@@ -14,17 +15,13 @@ internal static class Sim08CrossOwnerIntentSmoke
             OpaqueId128.Parse("00000000000000000000000000009801").ToBytes(),
             new StableToken("geometry"));
 
-        var intent = new MutationIntentCandidateV1(
+        var intent = PhysicalBuiltCrossDomainIntentFactoryV1.CreateSpatialTerrainMutation(
             OpaqueId128.Parse("00000000000000000000000000009802"),
             phase: 3,
-            sourceDomain: physicalBuilt,
-            targetDomain: spatial,
-            targetPartitionId: new StableToken("spatial.terrain_geometry"),
             basisStep: 42,
             mutationKind: new StableToken("spatial.intent.geometry-carve"),
             targetScope: scope,
             semanticPriority: 0,
-            resolutionMode: ConflictResolutionModeV1.CustomDeterministic,
             semanticPayloadDigest: SHA256.HashData("sim08-physical-built-to-spatial"u8));
 
         var output = new DomainCandidateOutputV1(
@@ -36,8 +33,33 @@ internal static class Sim08CrossOwnerIntentSmoke
         Require(emitted.SourceDomain == physicalBuilt &&
                 emitted.TargetDomain == spatial &&
                 emitted.TargetPartitionId.Value == "spatial.terrain_geometry" &&
-                emitted.MutationKind.Value == "spatial.intent.geometry-carve",
+                emitted.MutationKind.Value == "spatial.intent.geometry-carve" &&
+                emitted.ResolutionMode == ConflictResolutionModeV1.CustomDeterministic,
             "SIM-08 component gate: terrain geometry effects must cross the owner boundary as a canonical Spatial MutationIntent.");
+
+        RequireReject(
+            () => PhysicalBuiltCrossDomainIntentFactoryV1.CreateSpatialTerrainMutation(
+                OpaqueId128.Parse("00000000000000000000000000009803"),
+                phase: 3,
+                basisStep: 42,
+                mutationKind: new StableToken("spatial.intent.detail-promote"),
+                targetScope: scope,
+                semanticPriority: 0,
+                semanticPayloadDigest: new byte[32]),
+            "physical.spatial-intent-kind-invalid");
+    }
+
+    private static void RequireReject(Action action, string expected)
+    {
+        try
+        {
+            action();
+        }
+        catch (InvalidDataException ex) when (ex.Message == expected)
+        {
+            return;
+        }
+        throw new InvalidOperationException($"Expected SIM-08 rejection: {expected}");
     }
 
     private static void Require(bool condition, string message)
