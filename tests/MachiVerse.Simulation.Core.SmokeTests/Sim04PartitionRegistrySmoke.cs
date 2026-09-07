@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.State;
 
 internal static class Sim04PartitionRegistrySmoke
@@ -56,5 +57,78 @@ internal static class Sim04PartitionRegistrySmoke
             if (entry.PersistenceClass != PersistenceClassV1.AuthoritativeAlways)
                 throw new InvalidOperationException($"Standard partition must be AUTHORITATIVE_ALWAYS: {entry.PartitionId.Value}");
         }
+
+        var registration = registry.GetRequired(new StableToken("resident.identity_lifecycle"));
+        var recordA = new DomainRecordEnvelopeV1(
+            OpaqueId128.Parse("00000000000000000000000000000011"),
+            registration.RecordSchema,
+            revision: 1,
+            createdStep: 0,
+            retiredStep: null,
+            DetailLevelV1.D0Entity,
+            lineageRef: null,
+            payload: new byte[] { 1 });
+        var recordB = new DomainRecordEnvelopeV1(
+            OpaqueId128.Parse("00000000000000000000000000000010"),
+            registration.RecordSchema,
+            revision: 1,
+            createdStep: 0,
+            retiredStep: null,
+            DetailLevelV1.D0Entity,
+            lineageRef: null,
+            payload: new byte[] { 2 });
+        var header = new PartitionStateHeaderV1(
+            registration.PartitionId,
+            registration.OwnerDomain,
+            registration.PartitionSchema,
+            Revision: 1,
+            BasisStep: 0,
+            DetailLevelV1.D0Entity,
+            ItemCount: 2,
+            new Hash256(Enumerable.Repeat((byte)0x42, 32).ToArray()));
+
+        var partition = DomainPartitionStateV1.CreateOwned(
+            registration,
+            registration.OwnerDomain,
+            header,
+            new[] { recordA, recordB });
+        if (partition.Records[0].RecordId != recordB.RecordId || partition.Records[1].RecordId != recordA.RecordId)
+            throw new InvalidOperationException("Partition records must iterate by PartitionRecordId bytewise ascending.");
+
+        var foreignRejected = false;
+        try
+        {
+            _ = DomainPartitionStateV1.CreateOwned(
+                registration,
+                new StableToken("society_economy"),
+                header,
+                new[] { recordA, recordB });
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "state.partition.foreign-owner-mutation-rejected")
+        {
+            foreignRejected = true;
+        }
+        if (!foreignRejected)
+            throw new InvalidOperationException("Foreign owner direct mutation must be rejected.");
+
+        var revisionRejected = false;
+        try
+        {
+            _ = new DomainRecordEnvelopeV1(
+                OpaqueId128.Parse("00000000000000000000000000000012"),
+                registration.RecordSchema,
+                revision: 0,
+                createdStep: 0,
+                retiredStep: null,
+                DetailLevelV1.D0Entity,
+                lineageRef: null,
+                payload: ReadOnlySpan<byte>.Empty);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            revisionRejected = true;
+        }
+        if (!revisionRejected)
+            throw new InvalidOperationException("DomainRecordEnvelope revision 0 must be rejected.");
     }
 }
