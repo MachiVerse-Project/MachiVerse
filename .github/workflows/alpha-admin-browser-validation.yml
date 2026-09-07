@@ -16,7 +16,7 @@ concurrency:
 jobs:
   administration-view-browser:
     name: Administration View browser reaches read-only Ready
-    if: github.head_ref != 'ci/int-01-admin-browser-smoke'
+    if: github.head_ref != 'ci/int-01-admin-browser-smoke' && github.head_ref != 'ci/int-01-admin-browser-polling'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pull request
@@ -37,6 +37,7 @@ jobs:
           core_log="$RUNNER_TEMP/alpha-admin-core.log"
           gateway_log="$RUNNER_TEMP/alpha-admin-gateway.log"
           admin_log="$RUNNER_TEMP/alpha-admin-view.log"
+          browser_log="$RUNNER_TEMP/alpha-admin-browser.log"
 
           MACHIVERSE_ALPHA_LOCAL=1 \
           MACHIVERSE_WORLD_ROOT="$RUNNER_TEMP/machiverse-alpha-admin-world" \
@@ -48,6 +49,7 @@ jobs:
           core_pid=$!
 
           cleanup() {
+            kill "${browser_pid:-0}" 2>/dev/null || true
             kill "${admin_pid:-0}" 2>/dev/null || true
             kill "${gateway_pid:-0}" 2>/dev/null || true
             kill "$core_pid" 2>/dev/null || true
@@ -111,26 +113,107 @@ jobs:
             --no-sandbox \
             --disable-gpu \
             --disable-dev-shm-usage \
-            --virtual-time-budget=20000 \
-            --dump-dom http://127.0.0.1:5560/ >"$RUNNER_TEMP/admin-view-dom.html" 2>"$RUNNER_TEMP/admin-view-browser.log" || {
-              cat "$RUNNER_TEMP/admin-view-browser.log"
-              cat "$admin_log"
-              exit 1
-            }
+            --remote-debugging-address=127.0.0.1 \
+            --remote-debugging-port=9222 \
+            --user-data-dir="$RUNNER_TEMP/alpha-admin-chrome-profile" \
+            http://127.0.0.1:5560/ >"$RUNNER_TEMP/alpha-admin-browser.stdout" 2>"$browser_log" &
+          browser_pid=$!
 
-          cat "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dd>Ready</dd>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Admin session</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dd>Active</dd>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Health projection</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dd>Loaded</dd>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Config projection</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Config generation</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dd>1</dd>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Health targets</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          grep -q '<dt>Config targets</dt>' "$RUNNER_TEMP/admin-view-dom.html"
-          if grep -q '<dt>Gateway error</dt>' "$RUNNER_TEMP/admin-view-dom.html"; then
-            echo "Administration View surfaced a Gateway error."
-            cat "$RUNNER_TEMP/admin-view-dom.html"
-            exit 1
+          devtools_ready=0
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9222/json/list >"$RUNNER_TEMP/admin-devtools-pages.json"; then devtools_ready=1; break; fi
+            if ! kill -0 "$browser_pid" 2>/dev/null; then cat "$browser_log"; exit 1; fi
+            sleep 1
+          done
+          if [ "$devtools_ready" -ne 1 ]; then cat "$browser_log"; exit 1; fi
+
+          set +e
+          node <<'JS'
+          const pages = await (await fetch('http://127.0.0.1:9222/json/list')).json();
+          const page = pages.find(item => item.type === 'page' && item.url.includes('127.0.0.1:5560')) ?? pages.find(item => item.type === 'page');
+          if (!page?.webSocketDebuggerUrl) {
+            console.error('No Chrome DevTools page WebSocket found.', pages);
+            process.exit(2);
+          }
+          if (typeof WebSocket === 'undefined') {
+            console.error('Runner Node.js does not provide global WebSocket.');
+            process.exit(3);
+          }
+
+          const socket = new WebSocket(page.webSocketDebuggerUrl);
+          const pending = new Map();
+          let nextId = 1;
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('DevTools WebSocket open timeout')), 5000);
+            socket.onopen = () => { clearTimeout(timer); resolve(); };
+            socket.onerror = event => { clearTimeout(timer); reject(new Error(`DevTools WebSocket error: ${event.message ?? 'unknown'}`)); };
+          });
+          socket.onmessage = event => {
+            const message = JSON.parse(event.data);
+            if (!message.id) return;
+            const waiter = pending.get(message.id);
+            if (!waiter) return;
+            pending.delete(message.id);
+            if (message.error) waiter.reject(new Error(JSON.stringify(message.error)));
+            else waiter.resolve(message.result);
+          };
+
+          function send(method, params = {}) {
+            const id = nextId++;
+            return new Promise((resolve, reject) => {
+              const timer = setTimeout(() => {
+                pending.delete(id);
+                reject(new Error(`CDP timeout for ${method}`));
+              }, 5000);
+              pending.set(id, {
+                resolve: value => { clearTimeout(timer); resolve(value); },
+                reject: error => { clearTimeout(timer); reject(error); }
+              });
+              socket.send(JSON.stringify({ id, method, params }));
+            });
+          }
+
+          await send('Runtime.enable');
+          let lastText = '';
+          for (let attempt = 0; attempt < 80; attempt++) {
+            const result = await send('Runtime.evaluate', {
+              expression: 'document.body ? document.body.innerText : ""',
+              returnByValue: true
+            });
+            lastText = result?.result?.value ?? '';
+            if (lastText.includes('Gateway error')) {
+              console.error('Administration View surfaced Gateway error:\n' + lastText);
+              socket.close();
+              process.exit(4);
+            }
+            const ready =
+              lastText.includes('Lifecycle\nReady') &&
+              lastText.includes('Admin session\nActive') &&
+              lastText.includes('Health projection\nLoaded') &&
+              lastText.includes('Config projection\nLoaded') &&
+              lastText.includes('Config generation\n1') &&
+              lastText.includes('Health targets\n1') &&
+              lastText.includes('Config targets\n1');
+            if (ready) {
+              console.log(lastText);
+              socket.close();
+              process.exit(0);
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          console.error('Administration View did not reach Ready. Last DOM text:\n' + lastText);
+          socket.close();
+          process.exit(5);
+          JS
+          browser_status=$?
+          set -e
+
+          if [ "$browser_status" -ne 0 ]; then
+            echo "--- Gateway log ---"
+            cat "$gateway_log"
+            echo "--- Administration View log ---"
+            cat "$admin_log"
+            echo "--- Browser log ---"
+            cat "$browser_log"
+            exit "$browser_status"
           fi
