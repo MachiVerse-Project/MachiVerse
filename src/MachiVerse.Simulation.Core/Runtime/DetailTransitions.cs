@@ -139,7 +139,7 @@ public sealed class DetailTransitionCandidateV1
         TriggerId = triggerId;
         TriggerObservedStep = triggerObservedStep;
         EstimatedRecordCount = estimatedRecordCount;
-        Direction = targetLevel < currentLevel
+        Direction = (byte)targetLevel < (byte)currentLevel
             ? DetailTransitionDirectionV1.Promotion
             : DetailTransitionDirectionV1.Demotion;
     }
@@ -333,9 +333,9 @@ public static class DetailTransitionPlannerV1
     {
         if (candidate.Direction != DetailTransitionDirectionV1.Demotion)
             return false;
-        if (region.HasGuard(DetailTransitionGuardV1.BoundResident) && candidate.TargetLevel > policy.BoundResidentFloor)
+        if (region.HasGuard(DetailTransitionGuardV1.BoundResident) && (byte)candidate.TargetLevel > (byte)policy.BoundResidentFloor)
             return true;
-        if (region.HasGuard(DetailTransitionGuardV1.ActiveTransaction) && candidate.TargetLevel > policy.ActiveTransactionFloor)
+        if (region.HasGuard(DetailTransitionGuardV1.ActiveTransaction) && (byte)candidate.TargetLevel > (byte)policy.ActiveTransactionFloor)
             return true;
         return false;
     }
