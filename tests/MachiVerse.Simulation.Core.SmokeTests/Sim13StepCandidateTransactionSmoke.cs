@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
@@ -11,25 +12,55 @@ internal static class Sim13StepCandidateTransactionSmoke
         var worldId = OpaqueId128.Parse("00000000000000000000000000013300");
         var state = CreateWorldState(worldId, basisStep);
         var frozen = new FrozenStepInputV1(worldId, basisStep, 1, new byte[32], []);
+        var resident = new StableToken("resident");
+        var residentPartitionId = new StableToken("resident.identity_lifecycle");
+        var residentPartition = new PartitionCandidateV1(
+            residentPartitionId,
+            resident,
+            basisRevision: 1,
+            basisStep,
+            SHA256.HashData("sim13-resident-birth-effects"u8));
+        var intentA = BirthIntent(basisStep, 1);
+        var intentB = BirthIntent(basisStep, 2);
+        var intents = new[] { intentA, intentB };
         var outputs = StandardDomainExecutionPlanV1.Create().Entries
-            .Select(entry => new DomainCandidateOutputV1(entry.DomainToken, basisStep))
+            .Select(entry => entry.DomainToken == resident
+                ? new DomainCandidateOutputV1(entry.DomainToken, basisStep, intents, [residentPartition])
+                : new DomainCandidateOutputV1(entry.DomainToken, basisStep))
+            .ToArray();
+        var resolutions = DeterministicIntentMergerV1.GroupByConflictScope(intents, basisStep)
+            .Select(DeterministicIntentMergerV1.ResolveSequential)
             .ToArray();
 
-        var validA = BirthTransaction(worldId, basisStep, 1, 0, valid: true);
-        var validB = BirthTransaction(worldId, basisStep, 2, 1, valid: true);
+        var validA = BirthTransaction(
+            worldId,
+            basisStep,
+            1,
+            0,
+            participantPresent: true,
+            residentPartition.CandidateDigest,
+            intentA.IntentId);
+        var validB = BirthTransaction(
+            worldId,
+            basisStep,
+            2,
+            1,
+            participantPresent: true,
+            residentPartition.CandidateDigest,
+            intentB.IntentId);
         var candidateA = StepCandidateV1.Build(
             OpaqueId128.Parse("00000000000000000000000000013390"),
             state,
             frozen,
             outputs,
-            [],
+            resolutions,
             transactionCandidates: [validB, validA]);
         var candidateB = StepCandidateV1.Build(
             OpaqueId128.Parse("00000000000000000000000000013391"),
             state,
             frozen,
             outputs.Reverse(),
-            [],
+            resolutions.Reverse(),
             transactionCandidates: [validA, validB]);
 
         Require(candidateA.CommitDecision.CanCommit && candidateA.TransactionCandidates.Count == 2,
@@ -43,13 +74,20 @@ internal static class Sim13StepCandidateTransactionSmoke
                 result.Outcome == InvariantOutcomeV1.Pass),
             "SIM-13 StepCandidate must record the aggregate transaction.atomicity invariant.");
 
-        var invalid = BirthTransaction(worldId, basisStep, 3, 2, valid: false);
+        var invalid = BirthTransaction(
+            worldId,
+            basisStep,
+            3,
+            2,
+            participantPresent: false,
+            residentPartition.CandidateDigest,
+            intentA.IntentId);
         var blocked = StepCandidateV1.Build(
             OpaqueId128.Parse("00000000000000000000000000013392"),
             state,
             frozen,
             outputs,
-            [],
+            resolutions,
             transactionCandidates: [invalid]);
         Require(!blocked.CommitDecision.CanCommit &&
                 blocked.InvariantResults.Single(result => result.InvariantId.Value == "transaction.atomicity").Outcome == InvariantOutcomeV1.Fail,
@@ -61,13 +99,20 @@ internal static class Sim13StepCandidateTransactionSmoke
         var basisMismatchRejected = false;
         try
         {
-            var future = BirthTransaction(worldId, basisStep + 1, 4, 3, valid: true);
+            var future = BirthTransaction(
+                worldId,
+                basisStep + 1,
+                4,
+                3,
+                participantPresent: true,
+                residentPartition.CandidateDigest,
+                intentA.IntentId);
             _ = StepCandidateV1.Build(
                 OpaqueId128.Parse("00000000000000000000000000013393"),
                 state,
                 frozen,
                 outputs,
-                [],
+                resolutions,
                 transactionCandidates: [future]);
         }
         catch (InvalidDataException ex) when (ex.Message == "step-candidate.transaction-basis-mismatch")
@@ -77,7 +122,133 @@ internal static class Sim13StepCandidateTransactionSmoke
         Require(basisMismatchRejected,
             "SIM-13 StepCandidate must reject transaction candidates from a different basis Step.");
 
+        var worldMismatchRejected = false;
+        try
+        {
+            var foreign = BirthTransaction(
+                OpaqueId128.Parse("000000000000000000000000000133ff"),
+                basisStep,
+                5,
+                4,
+                participantPresent: true,
+                residentPartition.CandidateDigest,
+                intentA.IntentId);
+            _ = StepCandidateV1.Build(
+                OpaqueId128.Parse("00000000000000000000000000013394"),
+                state,
+                frozen,
+                outputs,
+                resolutions,
+                transactionCandidates: [foreign]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "step-candidate.transaction-world-mismatch")
+        {
+            worldMismatchRejected = true;
+        }
+        Require(worldMismatchRejected,
+            "SIM-13 StepCandidate must reject a transaction assembled for another world.");
+
+        var wrongEffectRejected = false;
+        try
+        {
+            var wrongEffect = BirthTransaction(
+                worldId,
+                basisStep,
+                6,
+                5,
+                participantPresent: true,
+                SHA256.HashData("unrelated-partition-effect"u8),
+                intentA.IntentId);
+            _ = StepCandidateV1.Build(
+                OpaqueId128.Parse("00000000000000000000000000013395"),
+                state,
+                frozen,
+                outputs,
+                resolutions,
+                transactionCandidates: [wrongEffect]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "step-candidate.transaction-participant-effect-digest-mismatch")
+        {
+            wrongEffectRejected = true;
+        }
+        Require(wrongEffectRejected,
+            "SIM-13 StepCandidate must bind transaction candidate effect digest to the actual partition candidate.");
+
+        var missingIntentRejected = false;
+        try
+        {
+            var missingIntent = BirthTransaction(
+                worldId,
+                basisStep,
+                7,
+                6,
+                participantPresent: true,
+                residentPartition.CandidateDigest,
+                OpaqueId128.Parse("00000000000000000000000000013999"));
+            _ = StepCandidateV1.Build(
+                OpaqueId128.Parse("00000000000000000000000000013396"),
+                state,
+                frozen,
+                outputs,
+                resolutions,
+                transactionCandidates: [missingIntent]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "step-candidate.transaction-participant-intent-missing")
+        {
+            missingIntentRejected = true;
+        }
+        Require(missingIntentRejected,
+            "SIM-13 StepCandidate must reject transaction participant intent refs absent from the assembled Step.");
+
+        var fatalTransaction = BirthTransaction(
+            worldId,
+            basisStep,
+            8,
+            7,
+            participantPresent: true,
+            residentPartition.CandidateDigest,
+            intentA.IntentId,
+            invariantOutcome: InvariantOutcomeV1.Fail,
+            invariantSeverity: InvariantSeverityV1.FatalAuthority);
+        var fatalBlocked = StepCandidateV1.Build(
+            OpaqueId128.Parse("00000000000000000000000000013397"),
+            state,
+            frozen,
+            outputs,
+            resolutions,
+            transactionCandidates: [fatalTransaction]);
+        var atomicity = fatalBlocked.InvariantResults.Single(result => result.InvariantId.Value == "transaction.atomicity");
+        Require(!fatalBlocked.CommitDecision.CanCommit &&
+                fatalBlocked.CommitDecision.FatalAuthorityFailure &&
+                atomicity.Severity == InvariantSeverityV1.FatalAuthority &&
+                atomicity.Outcome == InvariantOutcomeV1.Fail,
+            "SIM-13 fatal transaction invariant must remain FatalAuthority at the Step barrier.");
+
         Sim13DurableAtomicitySmoke.Run();
+    }
+
+    private static MutationIntentCandidateV1 BirthIntent(ulong basisStep, int subjectSuffix)
+    {
+        var resident = new StableToken("resident");
+        var partition = new StableToken("resident.identity_lifecycle");
+        var subject = OpaqueId128.Parse((0x13500 + subjectSuffix).ToString("x32"));
+        var intentId = OpaqueId128.Parse((0x13600 + subjectSuffix).ToString("x32"));
+        return new MutationIntentCandidateV1(
+            intentId,
+            phase: 3,
+            sourceDomain: resident,
+            targetDomain: resident,
+            targetPartitionId: partition,
+            basisStep,
+            new StableToken("resident.intent.lifecycle-transition"),
+            new ConflictScopeV1(
+                resident,
+                new StableToken("resident"),
+                subject.ToBytes(),
+                new StableToken("lifecycle")),
+            semanticPriority: 0,
+            ConflictResolutionModeV1.Sequential,
+            SHA256.HashData(subject.ToBytes()));
     }
 
     private static CrossDomainTransactionCandidateV1 BirthTransaction(
@@ -85,14 +256,17 @@ internal static class Sim13StepCandidateTransactionSmoke
         ulong basisStep,
         int subjectSuffix,
         ulong ordinal,
-        bool valid)
+        bool participantPresent,
+        byte[] candidateEffectDigest,
+        OpaqueId128 intentId,
+        InvariantOutcomeV1 invariantOutcome = InvariantOutcomeV1.Pass,
+        InvariantSeverityV1 invariantSeverity = InvariantSeverityV1.CommitBlocking)
     {
         var kind = CrossDomainTransactionKindRegistryV1.Get("transaction.birth");
         var rootId = OpaqueId128.Parse((0x13400 + subjectSuffix).ToString("x32"));
         var root = new CausalityRefV1(CausalityRefKindV1.Operation, rootId.ToBytes(), basisStep);
         var subject = OpaqueId128.Parse((0x13500 + subjectSuffix).ToString("x32"));
-        var intentId = OpaqueId128.Parse((0x13600 + subjectSuffix).ToString("x32"));
-        var participants = valid
+        var participants = participantPresent
             ? new[]
             {
                 new TransactionParticipantCandidateV1(
@@ -101,7 +275,7 @@ internal static class Sim13StepCandidateTransactionSmoke
                     [intentId],
                     required: true,
                     TransactionParticipantOutcomeV1.Ready,
-                    SHA256.HashData(subject.ToBytes()))
+                    candidateEffectDigest)
             }
             : Array.Empty<TransactionParticipantCandidateV1>();
         return CrossDomainTransactionAssemblerV1.AssembleAndValidate(
@@ -113,9 +287,9 @@ internal static class Sim13StepCandidateTransactionSmoke
             ordinal,
             participants,
             [new InvariantResultV1(
-                new StableToken("sim13.birth.atomic"),
-                InvariantSeverityV1.CommitBlocking,
-                InvariantOutcomeV1.Pass)]);
+                CrossDomainTransactionInvariantRegistryV1.GetRequiredInvariantIds(kind).Single(),
+                invariantSeverity,
+                invariantOutcome)]);
     }
 
     private static WorldStateV1 CreateWorldState(OpaqueId128 worldId, ulong step)
@@ -128,7 +302,7 @@ internal static class Sim13StepCandidateTransactionSmoke
                 basisStep: step,
                 detailLevel: DetailLevelV1.D0Entity,
                 itemCount: 0,
-                canonicalDigest: SHA256.HashData(System.Text.Encoding.ASCII.GetBytes(entry.PartitionId.Value)))));
+                canonicalDigest: SHA256.HashData(Encoding.ASCII.GetBytes(entry.PartitionId.Value)))));
         var header = new WorldStateHeaderV1(
             worldId,
             step,
