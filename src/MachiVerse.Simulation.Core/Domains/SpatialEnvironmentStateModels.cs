@@ -153,6 +153,13 @@ public static class SpatialEnvironmentKindRegistryV1
         "environment.intent.hazard-driver-add", "environment.intent.water-exchange",
         "environment.intent.ecosystem-pressure");
 
+    // Environment hazard consequences never mutate foreign owner state directly. These
+    // canonical target-owner intents are the Phase 4 boundary for damage, injury and outage propagation.
+    public static IReadOnlyList<StableToken> HazardForeignTargetIntents { get; } = Tokens(
+        "physical.intent.apply-damage",
+        "resident.intent.apply-injury",
+        "infrastructure.intent.propagate-outage");
+
     private static IReadOnlyList<StableToken> Tokens(params string[] values)
     {
         var tokens = values.Select(static value => new StableToken(value)).ToArray();
