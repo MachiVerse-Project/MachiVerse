@@ -1,0 +1,13 @@
+using System.Runtime.CompilerServices;
+
+internal static class Sim08AcceptanceSmoke
+{
+    [ModuleInitializer]
+    internal static void Run()
+    {
+        Sim08CollisionSmoke.Run();
+        Sim08HandoffSmoke.Run();
+        Sim08SequentialImpulseSmoke.Run();
+        Sim08StateRuntimeSmoke.RunAsync().GetAwaiter().GetResult();
+    }
+}
