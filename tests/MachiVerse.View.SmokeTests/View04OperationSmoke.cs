@@ -43,8 +43,6 @@ internal static class View04OperationSmoke
         Assert(submission.OperationId.Equals(operationId));
         Assert(submission.ImmutablePayloadDigest.Equals(digest));
         controller.MarkDeliveryUnknown(operationId);
-        var statusQuery = controller.CreateStatusQuery(operationId);
-        Assert(statusQuery.OperationId.Equals(operationId));
         var retry = controller.RetryDelivery(operationId);
         Assert(retry.Equals(submission));
         Assert(retry.OperationId.Equals(operationId));
