@@ -60,8 +60,8 @@ public sealed class ParticipationBindingProjectionStore
         {
             throw new InvalidDataException("participation.binding.state payload schema mismatch.");
         }
-        if (!envelope.HasBasisStep)
-            throw new InvalidDataException("participation.binding.state requires basis_step context.");
+        if (envelope.WorldContext is null || !envelope.WorldContext.HasBasisStep)
+            throw new InvalidDataException("participation.binding.state requires world_context.basis_step.");
 
         ParticipationBindingViewV1 wire;
         try
@@ -72,7 +72,7 @@ public sealed class ParticipationBindingProjectionStore
         {
             throw new InvalidDataException("participation.binding.state structural decode failed.", ex);
         }
-        Apply(wire, envelope.BasisStep);
+        Apply(wire, envelope.WorldContext.BasisStep);
         return true;
     }
 
