@@ -3,10 +3,10 @@ using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
 
 internal static class Sim10MarketLedgerSmoke
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Run()
     {
         VerifyCallAuction();
+        VerifyTiePrice();
         VerifyLedger();
         VerifyPayment();
         VerifyProduction();
@@ -34,18 +34,39 @@ internal static class Sim10MarketLedgerSmoke
         var forward = DeterministicCallAuctionV1.Clear(orders, 4);
         var reverse = DeterministicCallAuctionV1.Clear(orders.Reverse(), 4);
         Require(forward.Status == MarketClearingStatusV1.Cleared &&
-                forward.ClearingPriceMicrounit == 100 &&
-                forward.ExecutedQuantity == 6,
-            "domain.market.clearing: executable quantity / lowest final tie price mismatch.");
+                forward.ClearingPriceMicrounit == 110 &&
+                forward.ExecutedQuantity == 10,
+            "domain.market.clearing: maximum executable quantity clearing mismatch.");
         Require(forward.ClearingPriceMicrounit == reverse.ClearingPriceMicrounit &&
                 forward.ExecutedQuantity == reverse.ExecutedQuantity &&
                 forward.Trades.SequenceEqual(reverse.Trades),
-            "domain.market.permutation: input order changed deterministic call-auction result.");
+            "domain.market.arrival-independence: input order changed deterministic call-auction result.");
         Require(forward.Trades[0].BuyOrderId == buyLowId &&
                 forward.Trades[0].SellOrderId == sellLowId &&
                 forward.Trades[0].BuyerRef == ownerA &&
                 forward.Trades[0].SellerRef == ownerC,
-            "domain.market.allocation: eligible-step/order-id canonical allocation mismatch.");
+            "domain.market.clearing: eligible-step/order-id canonical allocation mismatch.");
+    }
+
+    private static void VerifyTiePrice()
+    {
+        var buyer = Id("00000000000000000000000000011501");
+        var seller = Id("00000000000000000000000000011502");
+        var orders = new[]
+        {
+            new MarketOrderV1(
+                Id("00000000000000000000000000011510"), buyer,
+                MarketOrderSideV1.Buy, 100, 5, 1),
+            new MarketOrderV1(
+                Id("00000000000000000000000000011511"), seller,
+                MarketOrderSideV1.Sell, 90, 5, 1),
+        };
+
+        var result = DeterministicCallAuctionV1.Clear(orders, 1);
+        Require(result.Status == MarketClearingStatusV1.Cleared &&
+                result.ExecutedQuantity == 5 &&
+                result.ClearingPriceMicrounit == 90,
+            "domain.market.tie-price: equal executable quantity/imbalance must choose lowest candidate price.");
     }
 
     private static void VerifyLedger()
@@ -60,13 +81,15 @@ internal static class Sim10MarketLedgerSmoke
         var credit = new LedgerEntryV1(
             Id("00000000000000000000000000011211"), accountA, currency,
             LedgerEntryKindV1.Credit, 1_000);
+
         var forward = new BalancedLedgerTransactionV1(transaction, [debit, credit]).ValidateAndCanonicalize();
         var reverse = new BalancedLedgerTransactionV1(transaction, [credit, debit]).ValidateAndCanonicalize();
         Require(forward.SequenceEqual(reverse),
-            "domain.ledger.order: input order changed canonical ledger posting order.");
+            "domain.ledger.double-entry: input order changed canonical ledger posting order.");
         RequireReject(
             () => _ = new BalancedLedgerTransactionV1(transaction, [debit]).ValidateAndCanonicalize(),
-            "society.ledger-unbalanced");
+            "society.ledger-unbalanced",
+            "domain.ledger.unbalanced");
     }
 
     private static void VerifyPayment()
@@ -76,15 +99,16 @@ internal static class Sim10MarketLedgerSmoke
             Id("00000000000000000000000000011301"), currency, 500, 0);
         var destination = new FinanceAccountBalanceV1(
             Id("00000000000000000000000000011302"), currency, 100, 0);
+
         var insufficient = DeterministicPaymentV1.Apply(source, destination, 501);
         Require(insufficient.Status == PaymentApplyStatusV1.InsufficientFunds &&
                 insufficient.Source == source && insufficient.Destination == destination,
-            "domain.ledger.insufficient-funds: rejected payment must not mutate account balances.");
+            "domain.payment.insufficient: rejected payment must not mutate account balances.");
         var settled = DeterministicPaymentV1.Apply(source, destination, 300);
         Require(settled.Status == PaymentApplyStatusV1.Applied &&
                 settled.Source.BalanceMicrounit == 200 &&
                 settled.Destination.BalanceMicrounit == 400,
-            "domain.ledger.payment: deterministic payment settlement mismatch.");
+            "domain.ledger.double-entry: deterministic payment settlement mismatch.");
     }
 
     private static void VerifyProduction()
@@ -97,8 +121,12 @@ internal static class Sim10MarketLedgerSmoke
             [new ProductionMaterialV1(ingot, 1)]);
         var stock = new Dictionary<StableToken, long> { [ore] = 6, [ingot] = 1 };
         var next = DeterministicProductionV1.Apply(stock, recipe, 2);
-        Require(next[ore] == 2 && next[ingot] == 3 && stock[ore] == 6,
-            "domain.society.production: economic production calculation must be checked and non-mutating to basis input.");
+        Require(next[ore] == 2 && next[ingot] == 3 && stock[ore] == 6 && stock[ingot] == 1,
+            "domain.production.conservation: recipe application must consume/produce exact integer quantities without mutating basis stock.");
+        RequireReject(
+            () => _ = DeterministicProductionV1.Apply(stock, recipe, 4),
+            "society.production.insufficient-input",
+            "domain.production.conservation");
     }
 
     private static void VerifyProperty()
@@ -109,17 +137,26 @@ internal static class Sim10MarketLedgerSmoke
             Id("00000000000000000000000000011403"),
             1);
         var transferred = right.TransferTo(Id("00000000000000000000000000011404"));
-        Require(transferred.SubjectId == right.SubjectId && transferred.HolderId != right.HolderId,
-            "domain.society.property: ownership transfer must change economic holder without implying physical relocation.");
+        Require(transferred.SubjectId == right.SubjectId &&
+                transferred.RightId == right.RightId &&
+                transferred.Quantity == right.Quantity &&
+                transferred.HolderId != right.HolderId,
+            "domain.property.physical-separation: ownership transfer changes only economic holder semantics and does not replace the physical subject identity.");
     }
 
     private static OpaqueId128 Id(string value) => OpaqueId128.Parse(value);
 
-    private static void RequireReject(Action action, string expected)
+    private static void RequireReject(Action action, string expected, string acceptance)
     {
-        try { action(); }
-        catch (InvalidDataException ex) when (ex.Message == expected) { return; }
-        throw new InvalidOperationException($"Expected SIM-10 rejection: {expected}");
+        try
+        {
+            action();
+        }
+        catch (InvalidDataException ex) when (ex.Message == expected)
+        {
+            return;
+        }
+        throw new InvalidOperationException($"{acceptance}: expected SIM-10 rejection {expected}");
     }
 
     private static void Require(bool condition, string message)
