@@ -6,7 +6,10 @@ public sealed record ProductionMaterialV1(StableToken Material, long Quantity)
 {
     public void Validate()
     {
-        if (Quantity <= 0) throw new InvalidDataException("society.production.quantity-nonpositive");
+        if (string.IsNullOrEmpty(Material.Value))
+            throw new InvalidDataException("society.production.material-invalid");
+        if (Quantity <= 0)
+            throw new InvalidDataException("society.production.quantity-nonpositive");
     }
 }
 
@@ -17,6 +20,8 @@ public sealed class ProductionRecipeV1
         IEnumerable<ProductionMaterialV1> inputs,
         IEnumerable<ProductionMaterialV1> outputs)
     {
+        if (string.IsNullOrEmpty(recipeId.Value))
+            throw new InvalidDataException("society.production.recipe-id-invalid");
         ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(outputs);
         RecipeId = recipeId;
@@ -52,6 +57,10 @@ public sealed class ProductionRecipeV1
 
 public static class DeterministicProductionV1
 {
+    private static readonly IComparer<StableToken> TokenComparer =
+        Comparer<StableToken>.Create(static (left, right) =>
+            string.CompareOrdinal(left.Value, right.Value));
+
     public static IReadOnlyDictionary<StableToken, long> Apply(
         IReadOnlyDictionary<StableToken, long> stock,
         ProductionRecipeV1 recipe,
@@ -59,12 +68,17 @@ public static class DeterministicProductionV1
     {
         ArgumentNullException.ThrowIfNull(stock);
         ArgumentNullException.ThrowIfNull(recipe);
-        if (batches <= 0) throw new InvalidDataException("society.production.batch-nonpositive");
+        if (batches <= 0)
+            throw new InvalidDataException("society.production.batch-nonpositive");
 
-        var next = new SortedDictionary<StableToken, long>(stock);
-        foreach (var pair in next)
+        var next = new SortedDictionary<StableToken, long>(TokenComparer);
+        foreach (var pair in stock)
         {
-            if (pair.Value < 0) throw new InvalidDataException("society.production.stock-negative");
+            if (string.IsNullOrEmpty(pair.Key.Value))
+                throw new InvalidDataException("society.production.stock-material-invalid");
+            if (pair.Value < 0)
+                throw new InvalidDataException("society.production.stock-negative");
+            next.Add(pair.Key, pair.Value);
         }
 
         try
@@ -102,13 +116,15 @@ public sealed record SocietyPropertyRightV1(
     {
         if (RightId.IsZero || SubjectId.IsZero || HolderId.IsZero)
             throw new InvalidDataException("society.property-id-zero");
-        if (Quantity <= 0) throw new InvalidDataException("society.property-quantity-nonpositive");
+        if (Quantity <= 0)
+            throw new InvalidDataException("society.property-quantity-nonpositive");
     }
 
     public SocietyPropertyRightV1 TransferTo(OpaqueId128 newHolderId)
     {
         Validate();
-        if (newHolderId.IsZero) throw new InvalidDataException("society.property-holder-zero");
+        if (newHolderId.IsZero)
+            throw new InvalidDataException("society.property-holder-zero");
         return this with { HolderId = newHolderId };
     }
 }
