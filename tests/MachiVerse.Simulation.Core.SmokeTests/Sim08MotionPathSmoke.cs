@@ -11,6 +11,7 @@ internal static class Sim08MotionPathSmoke
         VerifyNoRouteAndBudget();
         VerifyInputPermutation();
         Sim08CollisionSmoke.Run();
+        Sim08SequentialImpulseSmoke.Run();
     }
 
     private static void VerifySemiImplicitEuler()
