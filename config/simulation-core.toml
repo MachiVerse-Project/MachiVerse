@@ -1,0 +1,4 @@
+[meta]
+format = "machiverse-config"
+schema_version = "1.0"
+component = "simulation-core"
