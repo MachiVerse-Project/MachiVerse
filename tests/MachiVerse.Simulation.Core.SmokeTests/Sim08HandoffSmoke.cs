@@ -38,6 +38,7 @@ internal static class Sim08HandoffSmoke
         var subject = Ref("physical.container_location", "00000000000000000000000000009201");
         var source = Ref("built.space", "00000000000000000000000000009202");
         var target = Ref("built.space", "00000000000000000000000000009203");
+        var wrongSource = Ref("built.space", "00000000000000000000000000009204");
         var basis = new PhysicalContainerLocationV1(
             subject,
             source,
@@ -79,7 +80,7 @@ internal static class Sim08HandoffSmoke
         RequireInvalidData(
             () => authority.CommitTransfer(
                 subject,
-                prepared with { SourceRef = target },
+                prepared with { SourceRef = wrongSource },
                 target,
                 null,
                 new StableToken("contained"),
