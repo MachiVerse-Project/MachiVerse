@@ -7,10 +7,6 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Sim09RuntimeSmoke
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
-    internal static void Initialize()
-        => RunAsync().GetAwaiter().GetResult();
-
     internal static async Task RunAsync()
     {
         var state = CreateWorldState();
