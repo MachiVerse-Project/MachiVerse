@@ -19,7 +19,7 @@ public sealed record AuthorizationDecisionV1(
     AuthorizationOutcomeV1 Outcome,
     string ReasonCode)
 {
-    public AuthorizationDecisionV1 Clone()
+    public AuthorizationDecisionV1 Copy()
         => this with
         {
             DecisionId = DecisionId.ToArray(),
