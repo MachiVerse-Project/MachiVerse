@@ -66,13 +66,13 @@ jobs:
           MACHIVERSE_ALPHA_LOCAL=1 \
           MACHIVERSE_CORE_ENDPOINT=http://127.0.0.1:5611 \
           MACHIVERSE_GATEWAY_DATA_ROOT="$gateway_data" \
-          ASPNETCORE_URLS=http://127.0.0.1:5620 \
+          ASPNETCORE_URLS=http://127.0.0.1:5520 \
           dotnet run --project src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release --no-build >"$gateway_log" 2>&1 &
           gateway_pid=$!
 
           gateway_ready=0
           for _ in $(seq 1 45); do
-            if curl --fail --silent http://127.0.0.1:5620/healthz >"$RUNNER_TEMP/config-gateway-health.json"; then
+            if curl --fail --silent http://127.0.0.1:5520/healthz >"$RUNNER_TEMP/config-gateway-health.json"; then
               if python3 - "$RUNNER_TEMP/config-gateway-health.json" <<'PY'
           import json, sys
           data=json.load(open(sys.argv[1], encoding='utf-8'))
