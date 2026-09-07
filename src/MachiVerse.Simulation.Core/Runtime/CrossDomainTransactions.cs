@@ -189,7 +189,7 @@ public static class CrossDomainTransactionAssemblerV1
         var status = decision.CanCommit
             ? TransactionCandidateStatusV1.Valid
             : TransactionCandidateStatusV1.Invalid;
-        var failureCode = decision.CanCommit
+        StableToken? failureCode = decision.CanCommit
             ? null
             : failed?.DiagnosticCode ?? InvariantFailed;
 
