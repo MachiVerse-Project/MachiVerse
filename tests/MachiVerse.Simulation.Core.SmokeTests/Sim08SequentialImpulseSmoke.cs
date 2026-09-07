@@ -37,21 +37,23 @@ internal static class Sim08SequentialImpulseSmoke
         var a = Id("00000000000000000000000000008b01");
         var b = Id("00000000000000000000000000008b02");
         var c = Id("00000000000000000000000000008b03");
+        var d = Id("00000000000000000000000000008b04");
         var bodies = new[]
         {
             new SequentialImpulseBodyV1(a, 1000, new VelocityUmPerSecondV1(2000, 0, 0)),
             new SequentialImpulseBodyV1(b, 1000, new VelocityUmPerSecondV1(0, 0, 0)),
-            new SequentialImpulseBodyV1(c, 1000, new VelocityUmPerSecondV1(-1000, 0, 0)),
+            new SequentialImpulseBodyV1(c, 1000, new VelocityUmPerSecondV1(500, 0, 0)),
+            new SequentialImpulseBodyV1(d, 1000, new VelocityUmPerSecondV1(-500, 0, 0)),
         };
         var contacts = new[]
         {
-            new SequentialImpulseContactV1(b, c, Id("00000000000000000000000000008b12"), new ContactNormalQ30V1(1 << 30, 0, 0), 0, 0),
+            new SequentialImpulseContactV1(c, d, Id("00000000000000000000000000008b12"), new ContactNormalQ30V1(1 << 30, 0, 0), 0, 0),
             new SequentialImpulseContactV1(a, b, Id("00000000000000000000000000008b11"), new ContactNormalQ30V1(1 << 30, 0, 0), 0, 0),
         };
 
         var forward = DeterministicSequentialImpulseV1.SolveOrReject(bodies, contacts);
         var reverse = DeterministicSequentialImpulseV1.SolveOrReject(bodies.Reverse(), contacts.Reverse());
-        foreach (var id in new[] { a, b, c })
+        foreach (var id in new[] { a, b, c, d })
             Require(forward.Velocities[id] == reverse.Velocities[id],
                 "domain.physical.sequential-impulse: input permutation changed body velocity result.");
     }
