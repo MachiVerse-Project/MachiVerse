@@ -54,6 +54,28 @@ WHERE operation_id=$operation_id;
         return ReadDurableOperationState(reader);
     }
 
+    public async Task<DurableOperationStateV1?> ReadLatestTerminalByResultCodeAsync(
+        string resultCode,
+        CancellationToken cancellationToken = default)
+    {
+        _ = new StableToken(resultCode);
+        await using var command = _connection.CreateCommand();
+        command.CommandText = """
+SELECT operation_id, payload_digest, lifecycle,
+       accepted_sequence, scheduled_sequence, effective_step,
+       terminal_sequence, terminal_status, result_code, rich_result_payload
+FROM operation_state
+WHERE lifecycle=$terminal_lifecycle AND result_code=$result_code
+ORDER BY terminal_sequence DESC
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("$terminal_lifecycle", TerminalLifecycle);
+        command.Parameters.AddWithValue("$result_code", resultCode);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return ReadDurableOperationState(reader);
+    }
+
     public async Task<DirectTerminalPersistenceResultV1> PersistRejectedUnseenOperationAsync(
         OpaqueId128 operationId,
         byte[] operationPayloadDigest,
