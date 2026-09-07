@@ -1,6 +1,5 @@
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Domains.Spatial;
-using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Sim08PrimitiveCollisionSmoke
 {
@@ -40,9 +39,9 @@ internal static class Sim08PrimitiveCollisionSmoke
 
     private static void VerifyOrientedBox()
     {
-        var identity = new QuaternionQ30V1(0, 0, 0, 1 << 30);
+        var identity = new MachiVerse.Simulation.Core.Domains.QuaternionQ30V1(0, 0, 0, 1 << 30);
         const int sinCos45Q30 = 759_250_125;
-        var rotate90Z = new QuaternionQ30V1(0, 0, sinCos45Q30, sinCos45Q30);
+        var rotate90Z = new MachiVerse.Simulation.Core.Domains.QuaternionQ30V1(0, 0, sinCos45Q30, sinCos45Q30);
         var longBoxRotated = new OrientedBoxColliderV1(
             new Vec3MmV1(0, 0, 0),
             new Vec3MmV1(1_000, 100, 100),
