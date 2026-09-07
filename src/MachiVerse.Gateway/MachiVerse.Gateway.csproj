@@ -22,5 +22,6 @@
     <Protobuf Include="../../docs/protocols/schema/common.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="Both" />
     <Protobuf Include="../../docs/protocols/schema/auth.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
     <Protobuf Include="../../docs/protocols/schema/payloads.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
+    <Content Include="../../config/gateway.toml" Link="config/gateway.toml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
