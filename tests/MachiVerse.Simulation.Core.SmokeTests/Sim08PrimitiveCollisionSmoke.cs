@@ -3,7 +3,6 @@ using MachiVerse.Simulation.Core.Domains.Spatial;
 
 internal static class Sim08PrimitiveCollisionSmoke
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Run()
     {
         VerifySphere();
