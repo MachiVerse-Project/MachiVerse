@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject IManagementModuleBoundary ManagementStore
 @inject OperationalCommandCatalog CommandCatalog
+@inject MachiVerse.Administration.View.Protocol.AdminGatewaySession GatewaySession
 
 <PageTitle>Management - MachiVerse Administration</PageTitle>
 
@@ -51,7 +52,7 @@
                         }
                         </tbody>
                     </table>
-                    <button @onclick="() => BeginDraft(config)">Start local draft at generation @config.ConfigGeneration</button>
+                    <button @onclick="() => BeginDraft(config)" disabled="@(!config.Entries.Any(static entry => string.Equals(entry.Mutability, "runtime-safe-alpha", StringComparison.Ordinal)))">Start local draft at generation @config.ConfigGeneration</button>
                 </article>
             }
         }
@@ -69,7 +70,7 @@
                 Target: <code>@_draftEditor.Target.TargetKey</code>,
                 expected base ConfigGeneration: <strong>@_draftEditor.Target.ConfigGeneration</strong>.
             </p>
-            <p>Local validation is presentation assistance only. Gateway authorization and owner-component validation remain authoritative.</p>
+            <p>Local validation is presentation assistance only. Gateway authorization, generation check, audit, and owner validation remain authoritative.</p>
 
             <label>
                 Config key
@@ -95,11 +96,12 @@
             </label>
             <button @onclick="AddDraftEdit" disabled="@(EditableEntries.Count == 0)">Add / replace edit</button>
             <button @onclick="ValidateDraft" disabled="@(_draftEditor.Edits.Count == 0)">Validate local draft shape</button>
+            <button @onclick="SubmitDraftAsync" disabled="@(_draftEditor.Edits.Count == 0 || !GatewaySession.Started || _submitting)">Submit Config change</button>
             <button @onclick="DiscardDraft">Discard local draft</button>
 
             @if (!string.IsNullOrEmpty(_draftMessage))
             {
-                <p>@_draftMessage</p>
+                <p id="config-draft-message">@_draftMessage</p>
             }
 
             @if (_draftEditor.Edits.Count == 0)
@@ -124,8 +126,8 @@
             }
 
             <p>
-                Submit is intentionally not synthesized in the browser until a canonical request identity source provides a stable OperationId and Hash256 immutable payload digest.
-                Returning an applied value to an earlier setting is a new change request against the current generation, not generic Undo.
+                A successful submission refreshes the confirmed Config projection but keeps this local draft's original base generation.
+                Submitting that old draft again is a new Operation and must be rejected if its expected generation is stale.
             </p>
         }
     </section>
@@ -189,12 +191,15 @@
     private ManagementSnapshot _snapshot = default!;
     private readonly ConfigDraftEditor _draftEditor = new();
     private string _draftKey = string.Empty;
-    private ConfigDraftValueKind _draftKind = ConfigDraftValueKind.String;
+    private ConfigDraftValueKind _draftKind = ConfigDraftValueKind.Uint;
     private string _draftValue = string.Empty;
     private string? _draftMessage;
+    private bool _submitting;
 
     private IReadOnlyList<ConfigEntryProjection> EditableEntries
-        => _draftEditor.Target?.Entries.Where(static entry => !entry.Sensitive).ToArray()
+        => _draftEditor.Target?.Entries
+            .Where(static entry => !entry.Sensitive && string.Equals(entry.Mutability, "runtime-safe-alpha", StringComparison.Ordinal))
+            .ToArray()
             ?? Array.Empty<ConfigEntryProjection>();
 
     protected override void OnInitialized()
@@ -213,6 +218,7 @@
     {
         _draftEditor.Begin(config);
         _draftKey = EditableEntries.FirstOrDefault()?.Key ?? string.Empty;
+        _draftKind = ConfigDraftValueKind.Uint;
         _draftValue = string.Empty;
         _draftMessage = null;
     }
@@ -246,6 +252,26 @@
         catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
         {
             _draftMessage = ex.Message;
+        }
+    }
+
+    private async Task SubmitDraftAsync()
+    {
+        if (_submitting) return;
+        _submitting = true;
+        try
+        {
+            var draft = _draftEditor.BuildDraft(ManagementStore);
+            var result = await GatewaySession.SubmitConfigChangeAsync(draft);
+            _draftMessage = $"Config change result: {result.Result?.Code ?? "result.missing"}; resulting generation {result.ResultingGeneration}.";
+        }
+        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or IOException)
+        {
+            _draftMessage = ex.Message;
+        }
+        finally
+        {
+            _submitting = false;
         }
     }
 
