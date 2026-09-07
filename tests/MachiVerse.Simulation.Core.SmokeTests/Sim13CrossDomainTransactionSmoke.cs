@@ -10,6 +10,7 @@ internal static class Sim13CrossDomainTransactionSmoke
         VerifyRegistry();
         VerifyTransactionIdentityPermutation();
         VerifyAllTransactionKinds();
+        Sim13StepCandidateTransactionSmoke.Run();
     }
 
     private static void VerifyRegistry()
