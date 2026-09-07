@@ -75,17 +75,17 @@ internal static class Admin04OperationSmoke
         {
             OperationId = operationId,
             OperationPayloadDigest = digest,
-            State = (OperationLifecycleWireStateV1)2, // ACCEPTED
+            State = (OperationLifecycleWireStateV1)2,
         };
         Assert(controller.TryApply(ResultEnvelope(accepted, correlationFirstByte: 60)));
         Assert(controller.Operations.Single().State == AdminOperationLifecycleState.Accepted);
-        Assert(controller.Operations.Single().EffectiveStep is null); // candidate is not authoritative.
+        Assert(controller.Operations.Single().EffectiveStep is null);
 
         var scheduled = new OperationStatusResultV1
         {
             OperationId = operationId,
             OperationPayloadDigest = digest,
-            State = (OperationLifecycleWireStateV1)3, // SCHEDULED
+            State = (OperationLifecycleWireStateV1)3,
             EffectiveStep = 110,
         };
         Assert(controller.TryApply(ResultEnvelope(scheduled, correlationFirstByte: 60)));
@@ -96,13 +96,13 @@ internal static class Admin04OperationSmoke
         {
             OperationId = operationId,
             OperationPayloadDigest = digest,
-            State = (OperationLifecycleWireStateV1)4, // TERMINAL
+            State = (OperationLifecycleWireStateV1)4,
             EffectiveStep = 110,
             TerminalResult = new ResultV1
             {
-                Status = (ResultStatusV1)1, // SUCCESS
+                Status = (ResultStatusV1)1,
                 Code = "ok",
-                RetryAdvice = (RetryAdviceV1)1, // DO_NOT_RETRY
+                RetryAdvice = (RetryAdviceV1)1,
             },
         };
         Assert(controller.TryApply(ResultEnvelope(terminal, correlationFirstByte: 60)));
@@ -110,6 +110,10 @@ internal static class Admin04OperationSmoke
         Assert(tracked.State == AdminOperationLifecycleState.Terminal);
         Assert(tracked.TerminalResult?.Code == "ok");
         Assert(tracked.CorrelationId == Hex(Id(60)));
+
+        var badContext = ResultEnvelope(terminal, correlationFirstByte: 60);
+        badContext.OperationContext!.OperationId = Id(98);
+        AssertThrows<InvalidDataException>(() => controller.TryApply(badContext));
 
         var audit = new AuditRecordProjection(
             AuditRecordId: Hex(Id(61)),
@@ -128,29 +132,39 @@ internal static class Admin04OperationSmoke
         var badAudit = audit with { ImmutablePayloadDigest = Hex(Digest(99)) };
         Assert(controller.CorrelateAudit(operationId, [badAudit]).State == AuditCorrelationState.DigestMismatch);
 
-        // Expired confirmation cannot submit.
         var expiringId = Id(42);
-        controller.Prepare(Draft(descriptor.OperationKind, 120, "expiring"), expiringId, Digest(42));
+        var expiringDigest = Digest(42);
+        var expiringRequest = controller.Prepare(Draft(descriptor.OperationKind, 120, "expiring"), expiringId, expiringDigest);
         controller.BeginConfirmation(expiringId);
         _ = controller.Confirm(expiringId);
         now = now.AddSeconds(11);
         Assert(controller.Confirmation.State == HighImpactConfirmationState.ExpiredOrInvalid);
         AssertThrows<InvalidOperationException>(() => controller.TakeForSubmission(expiringId));
+        controller.BeginConfirmation(expiringId);
+        _ = controller.Confirm(expiringId);
+        var expiringSubmission = controller.TakeForSubmission(expiringId);
+        Assert(expiringSubmission.Equals(expiringRequest));
 
-        // Session generation change invalidates already-confirmed evidence.
         var generationChangeId = Id(43);
-        controller.Prepare(Draft(descriptor.OperationKind, 130, "generation-change"), generationChangeId, Digest(43));
+        var generationDigest = Digest(43);
+        var generationRequest = controller.Prepare(
+            Draft(descriptor.OperationKind, 130, "generation-change"),
+            generationChangeId,
+            generationDigest);
         controller.BeginConfirmation(generationChangeId);
         _ = controller.Confirm(generationChangeId);
         ApplyActiveSession(session, generation: 8);
         Assert(controller.Confirmation.State == HighImpactConfirmationState.ExpiredOrInvalid);
+        Assert(controller.Operations.Single(x => x.OperationId == Hex(generationChangeId)).State == AdminOperationLifecycleState.AwaitingConfirmation);
         AssertThrows<InvalidOperationException>(() => controller.TakeForSubmission(generationChangeId));
+        controller.BeginConfirmation(generationChangeId);
+        _ = controller.Confirm(generationChangeId);
+        Assert(controller.TakeForSubmission(generationChangeId).Equals(generationRequest));
 
-        // Severe revoke stops new protected mutations and invalidates pending confirmation.
         var revokePendingId = Id(44);
         controller.Prepare(Draft(descriptor.OperationKind, 140, "revoke"), revokePendingId, Digest(44));
         controller.BeginConfirmation(revokePendingId);
-        ApplySession(session, generation: 8, status: 3); // REVOKED
+        ApplySession(session, generation: 8, status: 3);
         Assert(session.Snapshot.State == AdminSessionAccessState.Revoked);
         Assert(controller.Confirmation.State == HighImpactConfirmationState.ExpiredOrInvalid);
         Assert(controller.Operations.Single(x => x.OperationId == Hex(revokePendingId)).State == AdminOperationLifecycleState.Unauthorized);
@@ -159,7 +173,6 @@ internal static class Admin04OperationSmoke
             Id(45),
             Digest(45)));
 
-        // Session payload validation remains Admin-domain-specific and ordered.
         var invalidPermissions = SessionWire(generation: 9, status: 1);
         invalidPermissions.EffectivePermissions.Clear();
         invalidPermissions.EffectivePermissions.Add("admin.operation.submit");
@@ -190,7 +203,7 @@ internal static class Admin04OperationSmoke
         var wire = new AuthSessionStateV1
         {
             SessionId = Id(50),
-            AuthDomain = (AuthDomainWireV1)2, // ADMIN_VIEW
+            AuthDomain = (AuthDomainWireV1)2,
             EffectiveRoleSet = "admin.operator",
             SessionGeneration = generation,
             Status = (SessionWireStatusV1)status,
@@ -201,13 +214,21 @@ internal static class Admin04OperationSmoke
     }
 
     private static WireEnvelopeV1 ResultEnvelope(OperationStatusResultV1 payload, byte correlationFirstByte)
-        => new()
+    {
+        var context = new OperationContextWireV1 { OperationId = payload.OperationId };
+        if (payload.HasOperationPayloadDigest)
+        {
+            context.OperationPayloadDigest = payload.OperationPayloadDigest;
+        }
+        return new WireEnvelopeV1
         {
             MessageType = "operation.result",
             PayloadSchemaId = "protocol.operation-status-result.v1",
             CorrelationId = Id(correlationFirstByte),
+            OperationContext = context,
             Payload = payload.ToByteString(),
         };
+    }
 
     private static ByteString Id(byte first)
     {
