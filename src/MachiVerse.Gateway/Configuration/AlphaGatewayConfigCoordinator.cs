@@ -93,17 +93,15 @@ public sealed class AlphaGatewayConfigCoordinator
                 return CompleteLocked(
                     operationKey,
                     digestHex,
-                    ResultStatusV1.Rejected,
-                    "config.generation-stale",
-                    RetryAdviceV1.ResyncThenRetry,
-                    _state.Generation,
-                    ComputeConfigDigest(_state.Values));
+                    status: 6,
+                    code: "config.generation-stale",
+                    retryAdvice: 4,
+                    generation: _state.Generation,
+                    digest: ComputeConfigDigest(_state.Values));
             }
 
             if (request.HasRequestedEffectiveStep)
-            {
                 return RejectLocked(operationKey, digestHex, "config.invalid");
-            }
 
             var candidate = new Dictionary<string, ulong>(_state.Values, StringComparer.Ordinal);
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -125,7 +123,7 @@ public sealed class AlphaGatewayConfigCoordinator
                     invalidCode = "config.static-change-offline";
                     break;
                 }
-                if (change.Value is null || change.Value.ValueCase != ConfigValueWireV1.ValueOneofCase.UintValue || change.Value.UintValue > int.MaxValue)
+                if (change.Value is null || (int)change.Value.ValueCase != 3 || change.Value.UintValue > int.MaxValue)
                 {
                     invalidCode = "config.invalid";
                     break;
@@ -148,11 +146,11 @@ public sealed class AlphaGatewayConfigCoordinator
                 return CompleteLocked(
                     operationKey,
                     digestHex,
-                    ResultStatusV1.NoChange,
-                    "config.no-change",
-                    RetryAdviceV1.DoNotRetry,
-                    _state.Generation,
-                    ComputeConfigDigest(_state.Values));
+                    status: 4,
+                    code: "config.no-change",
+                    retryAdvice: 1,
+                    generation: _state.Generation,
+                    digest: ComputeConfigDigest(_state.Values));
             }
 
             var nextGeneration = checked(_state.Generation + 1);
@@ -161,11 +159,11 @@ public sealed class AlphaGatewayConfigCoordinator
             return CompleteLocked(
                 operationKey,
                 digestHex,
-                ResultStatusV1.Success,
-                "config.change.applied",
-                RetryAdviceV1.DoNotRetry,
-                nextGeneration,
-                nextDigest);
+                status: 1,
+                code: "config.change.applied",
+                retryAdvice: 1,
+                generation: nextGeneration,
+                digest: nextDigest);
         }
     }
 
@@ -173,26 +171,26 @@ public sealed class AlphaGatewayConfigCoordinator
         => CompleteLocked(
             operationKey,
             immutableDigest,
-            ResultStatusV1.Rejected,
+            status: 6,
             code,
-            RetryAdviceV1.DoNotRetry,
-            _state.Generation,
-            ComputeConfigDigest(_state.Values));
+            retryAdvice: 1,
+            generation: _state.Generation,
+            digest: ComputeConfigDigest(_state.Values));
 
     private AlphaGatewayConfigApplyResult CompleteLocked(
         string operationKey,
         string immutableDigest,
-        ResultStatusV1 status,
+        int status,
         string code,
-        RetryAdviceV1 retryAdvice,
+        int retryAdvice,
         ulong generation,
         byte[] digest)
     {
         var operation = new PersistentOperation(
             immutableDigest,
-            (int)status,
+            status,
             code,
-            (int)retryAdvice,
+            retryAdvice,
             generation,
             Convert.ToHexStringLower(digest));
         _state.Operations[operationKey] = operation;
