@@ -22,7 +22,6 @@ public static class PhysicalBuiltCrossDomainIntentFactoryV1
         StableToken mutationKind,
         ConflictScopeV1 targetScope,
         int semanticPriority,
-        ConflictResolutionModeV1 resolutionMode,
         ReadOnlySpan<byte> semanticPayloadDigest)
     {
         ArgumentNullException.ThrowIfNull(targetScope);
@@ -41,7 +40,7 @@ public static class PhysicalBuiltCrossDomainIntentFactoryV1
             mutationKind,
             targetScope,
             semanticPriority,
-            resolutionMode,
+            ConflictResolutionModeV1.CustomDeterministic,
             semanticPayloadDigest);
     }
 }
