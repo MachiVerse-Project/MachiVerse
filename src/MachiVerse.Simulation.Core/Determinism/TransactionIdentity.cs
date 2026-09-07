@@ -1,38 +1,6 @@
+using MachiVerse.Simulation.Core.Runtime;
+
 namespace MachiVerse.Simulation.Core.Determinism;
-
-public enum CausalityRefKindV1 : byte
-{
-    Operation = 0,
-    Event = 1,
-    Intent = 2,
-    Entity = 3,
-    Transaction = 4,
-    ConfigGeneration = 5,
-    HistoryRecord = 6,
-    PartitionRevision = 7,
-}
-
-public sealed record CausalityRefV1
-{
-    public CausalityRefV1(
-        CausalityRefKindV1 kind,
-        ReadOnlySpan<byte> identityBytes,
-        ulong? basisStep = null)
-    {
-        if (!Enum.IsDefined(kind))
-            throw new InvalidDataException("transaction.causality-kind-invalid");
-        if (identityBytes.Length == 0 || identityBytes.Length > 64)
-            throw new InvalidDataException("transaction.causality-identity-size-invalid");
-
-        Kind = kind;
-        IdentityBytes = identityBytes.ToArray();
-        BasisStep = basisStep;
-    }
-
-    public CausalityRefKindV1 Kind { get; }
-    public byte[] IdentityBytes { get; }
-    public ulong? BasisStep { get; }
-}
 
 public static class TransactionIdentityV1
 {
@@ -79,7 +47,7 @@ public static class TransactionIdentityV1
     {
         writer.WriteMapStart(3);
         writer.WriteUnsigned(0); writer.WriteUnsigned((uint)reference.Kind);
-        writer.WriteUnsigned(1); writer.WriteBytes(reference.IdentityBytes);
+        writer.WriteUnsigned(1); writer.WriteBytes(reference.Id);
         writer.WriteUnsigned(2);
         if (reference.BasisStep is { } basisStep)
         {
