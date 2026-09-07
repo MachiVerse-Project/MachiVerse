@@ -240,7 +240,7 @@ public sealed class AlphaAdminBridge(
         {
             var guarded = await _auditGate.ForwardAsync(
                 BuildConfigChangeRequestAudit(request, change, sessionId),
-                _ => ValueTask.FromResult(ApplyOrRejectByPolicy(change)),
+                _ => ValueTask.FromResult(_configCoordinator.Apply(change)),
                 result => BuildConfigChangeResultAudit(request, change, sessionId, result),
                 cancellationToken);
             apply = guarded.Result;
@@ -252,15 +252,17 @@ public sealed class AlphaAdminBridge(
         {
             var current = _configCoordinator.Current;
             apply = new AlphaGatewayConfigApplyResult(
-                Rejected("component.unavailable", retryAdvice: 3), current, false);
+                Rejected("component.unavailable", retryAdvice: 3),
+                current.Generation,
+                current.Digest,
+                false);
         }
 
-        var wireResult = NormalizeCoordinatorResult(apply.Result);
         var payload = new ConfigChangeResultV1
         {
-            Result = wireResult,
-            ResultingGeneration = apply.Snapshot.Generation,
-            ResultingConfigDigest = ByteString.CopyFrom(apply.Snapshot.Digest),
+            Result = apply.Result,
+            ResultingGeneration = apply.ResultingGeneration,
+            ResultingConfigDigest = ByteString.CopyFrom(apply.ResultingConfigDigest),
         };
         var operation = new OperationContextWireV1
         {
@@ -273,15 +275,6 @@ public sealed class AlphaAdminBridge(
             "protocol.config-change-result.v1",
             payload,
             operation), cancellationToken);
-    }
-
-    private AlphaGatewayConfigApplyResult ApplyOrRejectByPolicy(ConfigChangeRequestV1 change)
-    {
-        if (change.HasRequestedEffectiveStep)
-            return new AlphaGatewayConfigApplyResult(Rejected("config.invalid"), _configCoordinator.Current, false);
-        if (change.Changes.Any(item => !AlphaGatewayConfigPolicy.IsRuntimeMutable(item.Key)))
-            return new AlphaGatewayConfigApplyResult(Rejected("config.static-change-offline"), _configCoordinator.Current, false);
-        return _configCoordinator.Apply(change);
     }
 
     private AuditRecordDraftV1 BuildConfigChangeRequestAudit(
@@ -316,8 +309,7 @@ public sealed class AlphaAdminBridge(
         ByteString sessionId,
         AlphaGatewayConfigApplyResult apply)
     {
-        var normalized = NormalizeCoordinatorResult(apply.Result);
-        var applied = (int)normalized.Status is 1 or 4;
+        var applied = (int)apply.Result.Status is 1 or 4;
         return new AuditRecordDraftV1(
             applied ? "audit.admin.config-change-applied" : "audit.admin.config-change-rejected",
             UnixTimeNs(),
@@ -330,40 +322,15 @@ public sealed class AlphaAdminBridge(
             "gateway",
             null,
             null,
-            apply.Snapshot.Generation,
+            apply.ResultingGeneration,
             change.ImmutablePayloadDigest.ToByteArray(),
             applied ? "success" : "rejected",
-            normalized.Code,
+            apply.Result.Code,
             null,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["replayed"] = apply.Replayed ? "true" : "false",
             });
-    }
-
-    private static ResultV1 NormalizeCoordinatorResult(ResultV1 result)
-    {
-        var normalized = result.Clone();
-        switch (result.Code)
-        {
-            case "config.change.applied":
-                normalized.Status = (ResultStatusV1)1;
-                normalized.RetryAdvice = (RetryAdviceV1)1;
-                break;
-            case "config.no-change":
-                normalized.Status = (ResultStatusV1)4;
-                normalized.RetryAdvice = (RetryAdviceV1)1;
-                break;
-            case "config.generation-stale":
-                normalized.Status = (ResultStatusV1)6;
-                normalized.RetryAdvice = (RetryAdviceV1)4;
-                break;
-            default:
-                if ((int)normalized.Status is not (1 or 4)) normalized.Status = (ResultStatusV1)6;
-                if ((int)normalized.RetryAdvice == 0) normalized.RetryAdvice = (RetryAdviceV1)1;
-                break;
-        }
-        return normalized;
     }
 
     private static ConfigEntryWireV1 UIntEntry(string key, ulong value)
