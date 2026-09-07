@@ -196,13 +196,38 @@ internal static class Sim09ResidentCoreSmoke
         var accepted = new ParticipationBindRequestV1(
             Id("0000000000000000000000000000b013"), diverB, residentB, 1, 11,
             new SameStepOrderKey(2, 40, digest, 2, Id("0000000000000000000000000000b023")));
+        var requests = new[] { accepted, blockedSameDiver, blockedSameResident };
 
-        var resolution = ParticipationBindResolverV1.Resolve(
-            [existing], [accepted, blockedSameDiver, blockedSameResident]);
+        var resolution = ParticipationBindResolverV1.Resolve([existing], requests);
+        var reversed = ParticipationBindResolverV1.Resolve([existing], requests.Reverse());
         Require(resolution.Accepted.Count == 1 && resolution.Accepted[0].BindingId == accepted.BindingId,
             "domain.participation.binding: one-to-one active binding resolution mismatch.");
         Require(resolution.RejectedBindingIds.Count == 2,
             "domain.participation.binding: conflicting binding requests must be rejected.");
+        Require(resolution.Accepted.Select(static item => item.BindingId).SequenceEqual(
+                    reversed.Accepted.Select(static item => item.BindingId)) &&
+                resolution.RejectedBindingIds.SequenceEqual(reversed.RejectedBindingIds),
+            "domain.participation.binding: request input permutation changed semantic resolution.");
+
+        var diverC = Id("0000000000000000000000000000b030");
+        var historical = new ParticipationBindingStateV1(
+            Id("0000000000000000000000000000b031"),
+            diverC,
+            Id("0000000000000000000000000000b032"),
+            ParticipationBindingStatusV1.Released,
+            5,
+            9,
+            2);
+        var stale = new ParticipationBindRequestV1(
+            Id("0000000000000000000000000000b033"),
+            diverC,
+            Id("0000000000000000000000000000b034"),
+            2,
+            11,
+            new SameStepOrderKey(2, 40, digest, 0, Id("0000000000000000000000000000b035")));
+        var staleResolution = ParticipationBindResolverV1.Resolve([historical], [stale]);
+        Require(staleResolution.Accepted.Count == 0 && staleResolution.RejectedBindingIds.SequenceEqual([stale.BindingId]),
+            "domain.participation.binding-generation: stale generation must be rejected.");
     }
 
     private static void VerifyParticipationControlAndPolicy()
@@ -228,13 +253,31 @@ internal static class Sim09ResidentCoreSmoke
             binding.DiverRef,
             binding.BindingId,
             3,
-            [new StableToken("safety"), new StableToken("routine")],
+            [
+                new ParticipationPolicyRuleV1(20, new StableToken("routine")),
+                new ParticipationPolicyRuleV1(10, new StableToken("safety")),
+                new ParticipationPolicyRuleV1(20, new StableToken("social")),
+            ],
             20);
-        var revised = policy.Revise(3, [new StableToken("safety"), new StableToken("work")], 23);
+        Require(policy.PriorityRules.Select(static rule => (rule.Priority, rule.RuleId.Value)).SequenceEqual([
+                (10, "safety"), (20, "routine"), (20, "social")
+            ]),
+            "domain.participation.absence-policy: rules must normalize by priority then rule id.");
+
+        var revised = policy.Revise(
+            3,
+            [
+                new ParticipationPolicyRuleV1(10, new StableToken("safety")),
+                new ParticipationPolicyRuleV1(30, new StableToken("work")),
+            ],
+            23);
         Require(revised.PolicyGeneration == 4 && revised.EffectiveFromStep == 23,
             "domain.participation.absence-policy: generation/effective step transition mismatch.");
         RequireReject(
-            () => revised.Revise(3, [new StableToken("safety")], 24),
+            () => revised.Revise(
+                3,
+                [new ParticipationPolicyRuleV1(10, new StableToken("safety"))],
+                24),
             "participation.absence-policy-stale-generation");
     }
 
