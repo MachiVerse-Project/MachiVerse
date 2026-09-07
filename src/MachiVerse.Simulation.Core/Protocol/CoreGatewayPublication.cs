@@ -9,6 +9,8 @@ namespace MachiVerse.Simulation.Core.Protocol;
 
 public sealed class CoreProjectionFrameV1
 {
+    private const int MutationUnspecified = 0;
+
     public CoreProjectionFrameV1(IEnumerable<ProjectionRecordV1> records, ReadOnlySpan<byte> projectionSchemaDigest)
     {
         ArgumentNullException.ThrowIfNull(records);
@@ -26,7 +28,7 @@ public sealed class CoreProjectionFrameV1
             CoreGatewayWireValidatorV1.ValidateId128(record.RecordId, "record_id", allowZero: false);
             if (record.RecordSchemaVersion is null || record.RecordSchemaVersion.Major == 0 || record.RecordSchemaVersion.Major > ushort.MaxValue || record.RecordSchemaVersion.Minor > ushort.MaxValue)
                 throw new CoreGatewayProtocolException("protocol.schema-unsupported", "Projection record schema version is invalid.");
-            if (!Enum.IsDefined(record.MutationKind) || record.MutationKind == ProjectionMutationKindV1.Unspecified)
+            if (!Enum.IsDefined(record.MutationKind) || (int)record.MutationKind == MutationUnspecified)
                 throw new CoreGatewayProtocolException("protocol.field-out-of-range", "Projection mutation kind is invalid.");
             var key = (record.RecordSchemaId, Convert.ToHexString(record.RecordId.Span));
             if (!keys.Add(key))
@@ -70,6 +72,12 @@ public sealed class RandomProtocolPublicationIdSourceV1 : IProtocolPublicationId
 
 public sealed class CoreConfirmedPublicationCoordinatorV1
 {
+    private const int MutationUpsert = 1;
+    private const int PublicationFull = 1;
+    private const int PublicationDelta = 2;
+    private const int ResyncUnspecified = 0;
+    private const int ResyncContinueIfPossible = 1;
+
     private readonly SqlitePersistenceStore _store;
     private readonly ICoreStateProjectionSourceV1 _projectionSource;
     private readonly IProtocolPublicationIdSourceV1 _publicationIds;
@@ -96,9 +104,9 @@ public sealed class CoreConfirmedPublicationCoordinatorV1
         {
             var head = await RequireDurableFinalizedStateAsync(state, cancellationToken);
             var frame = _projectionSource.BuildFull(state);
-            if (frame.Records.Any(static record => record.MutationKind != ProjectionMutationKindV1.Upsert))
+            if (frame.Records.Any(static record => (int)record.MutationKind != MutationUpsert))
                 throw new CoreGatewayProtocolException("protocol.malformed", "FULL publication may contain only UPSERT records.");
-            var bundle = BuildBundle(PublicationKindV1.Full, state.Header.Step, head.StateContinuityToken, baseToken: null, frame);
+            var bundle = BuildBundle((PublicationKindV1)PublicationFull, state.Header.Step, head.StateContinuityToken, baseToken: null, frame);
             _lastPublished = new PublishedAuthoritySnapshotV1(state, head.StateContinuityToken.ToArray(), frame.ProjectionSchemaDigest.ToArray());
             return bundle;
         }
@@ -123,7 +131,7 @@ public sealed class CoreConfirmedPublicationCoordinatorV1
             var frame = _projectionSource.BuildDelta(last.State, state);
             if (!CryptographicOperations.FixedTimeEquals(frame.ProjectionSchemaDigest, last.ProjectionSchemaDigest))
                 throw new CoreGatewayProtocolException("protocol.schema-unsupported", "Projection schema changed across DELTA base; FULL publication is required.");
-            var bundle = BuildBundle(PublicationKindV1.Delta, state.Header.Step, head.StateContinuityToken, last.ContinuityToken, frame);
+            var bundle = BuildBundle((PublicationKindV1)PublicationDelta, state.Header.Step, head.StateContinuityToken, last.ContinuityToken, frame);
             _lastPublished = new PublishedAuthoritySnapshotV1(state, head.StateContinuityToken.ToArray(), frame.ProjectionSchemaDigest.ToArray());
             return bundle;
         }
@@ -143,7 +151,7 @@ public sealed class CoreConfirmedPublicationCoordinatorV1
         var requestedWorld = OpaqueId128.FromBytes(CoreGatewayWireValidatorV1.ValidateId128(request.WorldId, "world_id", allowZero: false));
         if (requestedWorld != currentState.Header.WorldId)
             throw new CoreGatewayProtocolException("world.not-found", "Resync request targets another WorldId.");
-        if (!Enum.IsDefined(request.Preference) || request.Preference == ResyncPreferenceV1.Unspecified)
+        if (!Enum.IsDefined(request.Preference) || (int)request.Preference == ResyncUnspecified)
             throw new CoreGatewayProtocolException("protocol.field-out-of-range", "Resync preference is unspecified.");
         if (request.HasClientContinuityToken)
             CoreGatewayWireValidatorV1.ValidateHash256(request.ClientContinuityToken, "client_continuity_token");
@@ -151,7 +159,7 @@ public sealed class CoreConfirmedPublicationCoordinatorV1
             throw new CoreGatewayProtocolException("protocol.missing-required", "client_basis_step and client_continuity_token must be supplied together.");
 
         var last = Volatile.Read(ref _lastPublished);
-        var canContinue = request.Preference == ResyncPreferenceV1.ContinueIfPossible &&
+        var canContinue = (int)request.Preference == ResyncContinueIfPossible &&
             request.HasClientBasisStep && request.HasClientContinuityToken &&
             last is not null &&
             request.ClientBasisStep == last.State.Header.Step &&
@@ -186,9 +194,9 @@ public sealed class CoreConfirmedPublicationCoordinatorV1
     {
         if (continuityToken.Length != 32)
             throw new InvalidDataException("Durable state continuity token is not 32 bytes.");
-        if (kind == PublicationKindV1.Delta && (baseToken is null || baseToken.Length != 32))
+        if ((int)kind == PublicationDelta && (baseToken is null || baseToken.Length != 32))
             throw new InvalidDataException("DELTA publication requires a 32-byte base token.");
-        if (kind == PublicationKindV1.Full && baseToken is not null)
+        if ((int)kind == PublicationFull && baseToken is not null)
             throw new InvalidDataException("FULL publication cannot carry a base token.");
 
         var publicationId = _publicationIds.Next();
@@ -249,7 +257,7 @@ public sealed class CoreConfirmedPublicationCoordinatorV1
                 ChunkIndex = checked((uint)index),
                 ChunkCount = chunkCount,
                 UncompressedPayloadDigest = ByteString.CopyFrom(SHA256.HashData(bytes)),
-                Compression = CompressionKindV1.None,
+                Compression = (CompressionKindV1)CoreGatewayProtocolRegistryV1.CompressionNone,
                 Payload = ByteString.CopyFrom(bytes),
             });
         }
