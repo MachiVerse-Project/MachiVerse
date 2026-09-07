@@ -26,6 +26,7 @@ component = "simulation-core"
 
         VerifyHysteresis(policy);
         VerifyBudgetAndPermutation(policy);
+        VerifyBudgetWorkerCountDeterminismAsync(policy).GetAwaiter().GetResult();
         VerifyFloors(policy);
         VerifyApplyAndCameraIndependence(policy);
         Sim13DetailConservationSmoke.Run();
@@ -106,6 +107,47 @@ component = "simulation-core"
             .ToArray();
         Require(forward.Selected.Select(Key).SequenceEqual(expected),
             "detail.budget.defer-order: canonical queue key must choose the same regions before budget exhaustion.");
+    }
+
+    private static async Task VerifyBudgetWorkerCountDeterminismAsync(DetailTransitionPolicyV1 policy)
+    {
+        var resident = new StableToken("resident");
+        var regions = Enumerable.Range(50, 6)
+            .Select(index => Region(index, resident, DetailLevelV1.D3BoundarySummary, lastTransitionStep: 0))
+            .ToArray();
+        var directory = new DetailDirectoryV1(regions);
+        var requests = regions
+            .Select((region, index) => Transition(
+                region.DetailRegionId,
+                resident,
+                DetailLevelV1.D3BoundarySummary,
+                DetailLevelV1.D0Entity,
+                requiredStep: 50,
+                triggerStep: 0,
+                trigger: 5000 + index,
+                records: 4000))
+            .ToArray();
+
+        string[]? baseline = null;
+        foreach (var workerCount in new[] { 1, 4, 8, 16 })
+        {
+            foreach (var input in new[] { requests, requests.Reverse().ToArray() })
+            {
+                var generated = await DeterministicBatchExecutor.RunAsync(
+                    input,
+                    workerCount,
+                    (request, _) => ValueTask.FromResult(request));
+                var plan = DetailTransitionPlannerV1.Plan(directory, generated, 100, policy);
+                var canonical = plan.Selected.Select(candidate => "S:" + Key(candidate))
+                    .Concat(plan.Deferred.Select(candidate => "D:" + Key(candidate)))
+                    .Concat(plan.NotYetEligible.Select(candidate => "N:" + Key(candidate)))
+                    .ToArray();
+
+                baseline ??= canonical;
+                Require(canonical.SequenceEqual(baseline),
+                    $"detail.budget.defer-order: worker/input permutation changed plan at worker-count={workerCount}.");
+            }
+        }
     }
 
     private static void VerifyFloors(DetailTransitionPolicyV1 policy)
