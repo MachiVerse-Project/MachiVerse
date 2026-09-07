@@ -1,0 +1,167 @@
+using System.Security.Cryptography;
+using System.Text;
+using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Runtime;
+
+internal static class Sim13CrossDomainTransactionSmoke
+{
+    internal static void Run()
+    {
+        VerifyRegistry();
+        VerifyTransactionIdentityPermutation();
+        VerifyAllTransactionKinds();
+    }
+
+    private static void VerifyRegistry()
+    {
+        Require(CrossDomainTransactionKindRegistryV1.Entries.Count == CrossDomainTransactionKindRegistryV1.StandardKindCount &&
+                CrossDomainTransactionKindRegistryV1.StandardKindCount == 17 &&
+                CrossDomainTransactionKindRegistryV1.Registrations.Count == 17 &&
+                CrossDomainTransactionKindRegistryV1.Entries.Distinct().Count() == 17,
+            "SIM-13 transaction registry must contain exactly 17 stable kinds.");
+
+        foreach (var registration in CrossDomainTransactionKindRegistryV1.Registrations)
+        {
+            Require(registration.RequiredDomains.Count > 0,
+                $"{registration.TransactionKind.Value}: at least one required participant domain is required.");
+            Require(!registration.RequiredDomains.Intersect(registration.OptionalDomains).Any(),
+                $"{registration.TransactionKind.Value}: required/optional participant sets must not overlap.");
+        }
+    }
+
+    private static void VerifyTransactionIdentityPermutation()
+    {
+        var worldId = Id("00000000000000000000000000013001");
+        var rootId = Id("00000000000000000000000000013002");
+        var root = new CausalityRefV1(CausalityRefKindV1.Operation, rootId.ToBytes(), 42);
+        var subjectLow = Id("00000000000000000000000000013010");
+        var subjectHigh = Id("00000000000000000000000000013011");
+        var kind = CrossDomainTransactionKindRegistryV1.Get("transaction.market-sale-delivery");
+        var forward = TransactionIdentityV1.Derive(worldId, kind, 42, root, [subjectHigh, subjectLow], 7);
+        var reverse = TransactionIdentityV1.Derive(worldId, kind, 42, root, [subjectLow, subjectHigh], 7);
+
+        Require(forward == reverse && !forward.IsZero,
+            "determinism.transaction-id.vector: transaction identity must be stable across subject permutations.");
+    }
+
+    private static void VerifyAllTransactionKinds()
+    {
+        var worldId = Id("00000000000000000000000000013101");
+        var rootId = Id("00000000000000000000000000013102");
+        var root = new CausalityRefV1(CausalityRefKindV1.Operation, rootId.ToBytes(), 100);
+        var subjects = new[]
+        {
+            Id("00000000000000000000000000013110"),
+            Id("00000000000000000000000000013111"),
+        };
+
+        ulong ordinal = 0;
+        foreach (var registration in CrossDomainTransactionKindRegistryV1.Registrations)
+        {
+            var participants = registration.RequiredDomains
+                .Select(domain => ReadyParticipant(registration.TransactionKind, domain))
+                .ToArray();
+            var passInvariant = Invariant(registration.TransactionKind, InvariantOutcomeV1.Pass);
+
+            var success = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+                worldId,
+                registration.TransactionKind,
+                basisStep: 100,
+                root,
+                subjects.Reverse(),
+                ordinal,
+                participants.Reverse(),
+                [passInvariant]);
+            var replay = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+                worldId,
+                registration.TransactionKind,
+                basisStep: 100,
+                root,
+                subjects,
+                ordinal,
+                participants,
+                [passInvariant]);
+
+            Require(success.CanFinalize && !success.IsAuthoritative &&
+                    success.Status == TransactionCandidateStatusV1.Valid &&
+                    success.TransactionId == replay.TransactionId &&
+                    success.DiagnosticDigest.SequenceEqual(replay.DiagnosticDigest),
+                $"{registration.TransactionKind.Value}.success/replay: deterministic candidate mismatch.");
+
+            var missing = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+                worldId,
+                registration.TransactionKind,
+                basisStep: 100,
+                root,
+                subjects,
+                ordinal,
+                participants.Skip(1),
+                [passInvariant]);
+            Require(!missing.CanFinalize && !missing.IsAuthoritative &&
+                    missing.Status == TransactionCandidateStatusV1.Invalid &&
+                    missing.FailureCode?.Value == "transaction.participant-missing",
+                $"{registration.TransactionKind.Value}.required-participant-failure: transaction must fail atomically.");
+
+            var failedRequiredParticipants = participants.ToArray();
+            failedRequiredParticipants[0] = FailedParticipant(
+                registration.TransactionKind,
+                failedRequiredParticipants[0].DomainToken);
+            var failedRequired = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+                worldId,
+                registration.TransactionKind,
+                basisStep: 100,
+                root,
+                subjects,
+                ordinal,
+                failedRequiredParticipants,
+                [passInvariant]);
+            Require(!failedRequired.CanFinalize && failedRequired.Status == TransactionCandidateStatusV1.Invalid,
+                $"{registration.TransactionKind.Value}.required-participant-failure: failed participant must block finalization.");
+
+            var failedInvariant = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+                worldId,
+                registration.TransactionKind,
+                basisStep: 100,
+                root,
+                subjects,
+                ordinal,
+                participants,
+                [Invariant(registration.TransactionKind, InvariantOutcomeV1.Fail)]);
+            Require(!failedInvariant.CanFinalize && !failedInvariant.IsAuthoritative &&
+                    failedInvariant.Status == TransactionCandidateStatusV1.Invalid &&
+                    failedInvariant.FailureCode?.Value == "transaction.invariant-failed",
+                $"{registration.TransactionKind.Value}.invariant-failure: transaction must fail atomically.");
+
+            Require(!success.IsAuthoritative,
+                $"{registration.TransactionKind.Value}.crash-before-commit: candidate state must never become authority before durable finalize.");
+
+            ordinal++;
+        }
+    }
+
+    private static TransactionParticipantCandidateV1 ReadyParticipant(StableToken kind, StableToken domain)
+        => new(
+            domain,
+            TransactionParticipantOutcomeV1.Ready,
+            SHA256.HashData(Encoding.ASCII.GetBytes(kind.Value + ":" + domain.Value)));
+
+    private static TransactionParticipantCandidateV1 FailedParticipant(StableToken kind, StableToken domain)
+        => new(
+            domain,
+            TransactionParticipantOutcomeV1.Failed,
+            SHA256.HashData(Encoding.ASCII.GetBytes(kind.Value + ":" + domain.Value + ":failed")),
+            new StableToken("transaction.required-participant-failed"));
+
+    private static InvariantResultV1 Invariant(StableToken kind, InvariantOutcomeV1 outcome)
+        => new(
+            new StableToken("sim13." + kind.Value["transaction.".Length..].Replace('-', '.') + ".atomic"),
+            InvariantSeverityV1.CommitBlocking,
+            outcome);
+
+    private static OpaqueId128 Id(string value) => OpaqueId128.Parse(value);
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+}
