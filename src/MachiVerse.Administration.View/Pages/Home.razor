@@ -1,6 +1,11 @@
 @page "/"
+@implements IDisposable
 @inject AdminViewConfig Config
 @inject AdminGatewayProtocolClient Gateway
+@inject AdminGatewaySession GatewaySession
+@inject AdminSessionProjectionStore SessionStore
+@inject MonitoringProjectionStore Monitoring
+@inject ManagementProjectionStore Management
 
 <PageTitle>MachiVerse Administration</PageTitle>
 
@@ -12,8 +17,30 @@
         <dd>@AdminSecurityDomain.DomainId</dd>
         <dt>Lifecycle</dt>
         <dd>@Gateway.State</dd>
+        <dt>Gateway</dt>
+        <dd>@Config.GatewayEndpoint</dd>
+        <dt>Admin session</dt>
+        <dd>@SessionStore.Snapshot.State</dd>
+        <dt>Health projection</dt>
+        <dd>@(GatewaySession.HealthLoaded ? "Loaded" : "Pending")</dd>
+        <dt>Config projection</dt>
+        <dd>@(GatewaySession.ConfigLoaded ? "Loaded" : "Pending")</dd>
+        @if (GatewaySession.ConfigGeneration is { } generation)
+        {
+            <dt>Config generation</dt>
+            <dd>@generation</dd>
+        }
+        <dt>Health targets</dt>
+        <dd>@Monitoring.Snapshot.Health.Count</dd>
+        <dt>Config targets</dt>
+        <dd>@Management.Snapshot.ConfigTargets.Count</dd>
         <dt>Dashboard refresh</dt>
         <dd>@Config.DashboardRefreshMs ms</dd>
+        @if (GatewaySession.LastError is { } error)
+        {
+            <dt>Gateway error</dt>
+            <dd>@error</dd>
+        }
     </dl>
 
     <nav>
@@ -24,3 +51,35 @@
         <a href="operations">Open high-impact / simulation Admin Operations</a>
     </nav>
 </main>
+
+@code {
+    protected override void OnInitialized()
+    {
+        GatewaySession.Changed += OnSessionChanged;
+        Gateway.StateChanged += OnGatewayStateChanged;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await GatewaySession.StartAsync();
+        }
+        catch
+        {
+            // The session owns the bounded diagnostic and fail-closed lifecycle state.
+        }
+    }
+
+    private void OnSessionChanged()
+        => _ = InvokeAsync(StateHasChanged);
+
+    private void OnGatewayStateChanged(AdminViewLifecycleState _)
+        => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        GatewaySession.Changed -= OnSessionChanged;
+        Gateway.StateChanged -= OnGatewayStateChanged;
+    }
+}
