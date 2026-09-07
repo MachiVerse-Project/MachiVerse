@@ -2,7 +2,7 @@
 @implements IDisposable
 @inject AdminSessionProjectionStore Session
 @inject HighImpactConfirmationController Confirmation
-@inject SimulationAdminOperationController Operations
+@inject SimulationAdminOperationController AdminOperations
 @inject AdminOperationCatalog OperationCatalog
 
 <PageTitle>High-impact operations</PageTitle>
@@ -64,7 +64,7 @@
 
     <section>
         <h2>Tracked operations</h2>
-        @if (Operations.Operations.Count == 0)
+        @if (AdminOperations.Operations.Count == 0)
         {
             <p>No Admin Operations have been prepared.</p>
         }
@@ -83,7 +83,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var operation in Operations.Operations)
+                    @foreach (var operation in AdminOperations.Operations)
                     {
                         <tr>
                             <td><code>@operation.OperationId</code></td>
@@ -125,18 +125,18 @@
     {
         Session.Changed += SessionChanged;
         Confirmation.Changed += ProjectionChanged;
-        Operations.Changed += ProjectionChanged;
+        AdminOperations.Changed += ProjectionChanged;
     }
 
     private void BeginConfirmation(string operationId)
     {
-        Operations.BeginConfirmation(ParseId(operationId));
+        AdminOperations.BeginConfirmation(ParseId(operationId));
         StateHasChanged();
     }
 
     private void ConfirmOperation(string operationId)
     {
-        _ = Operations.Confirm(ParseId(operationId));
+        _ = AdminOperations.Confirm(ParseId(operationId));
         StateHasChanged();
     }
 
@@ -153,6 +153,6 @@
     {
         Session.Changed -= SessionChanged;
         Confirmation.Changed -= ProjectionChanged;
-        Operations.Changed -= ProjectionChanged;
+        AdminOperations.Changed -= ProjectionChanged;
     }
 }
