@@ -4,7 +4,6 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Sim08HandoffSmoke
 {
-    [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Run()
     {
         VerifyExclusiveLocationAuthority();
