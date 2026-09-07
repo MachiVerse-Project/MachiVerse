@@ -33,14 +33,18 @@ internal static class Sim10MarketLedgerSmoke
 
         var forward = DeterministicCallAuctionV1.Clear(orders, 4);
         var reverse = DeterministicCallAuctionV1.Clear(orders.Reverse(), 4);
-        Require(forward.HasTrade && forward.ClearingPriceMicrounit == 100 && forward.ExecutableQuantity == 6,
+        Require(forward.Status == MarketClearingStatusV1.Cleared &&
+                forward.ClearingPriceMicrounit == 100 &&
+                forward.ExecutedQuantity == 6,
             "domain.market.clearing: executable quantity / lowest final tie price mismatch.");
-        Require(forward == reverse ||
-                (forward.ClearingPriceMicrounit == reverse.ClearingPriceMicrounit &&
-                 forward.ExecutableQuantity == reverse.ExecutableQuantity &&
-                 forward.Trades.SequenceEqual(reverse.Trades)),
+        Require(forward.ClearingPriceMicrounit == reverse.ClearingPriceMicrounit &&
+                forward.ExecutedQuantity == reverse.ExecutedQuantity &&
+                forward.Trades.SequenceEqual(reverse.Trades),
             "domain.market.permutation: input order changed deterministic call-auction result.");
-        Require(forward.Trades[0].BuyOrderId == buyLowId && forward.Trades[0].SellOrderId == sellLowId,
+        Require(forward.Trades[0].BuyOrderId == buyLowId &&
+                forward.Trades[0].SellOrderId == sellLowId &&
+                forward.Trades[0].BuyerRef == ownerA &&
+                forward.Trades[0].SellerRef == ownerC,
             "domain.market.allocation: eligible-step/order-id canonical allocation mismatch.");
     }
 
@@ -50,27 +54,36 @@ internal static class Sim10MarketLedgerSmoke
         var currency = new StableToken("currency.test");
         var accountA = Id("00000000000000000000000000011201");
         var accountB = Id("00000000000000000000000000011202");
-        var debit = new LedgerPostingV1(Id("00000000000000000000000000011210"), accountB, currency, LedgerEntryKindV1.Debit, 1_000);
-        var credit = new LedgerPostingV1(Id("00000000000000000000000000011211"), accountA, currency, LedgerEntryKindV1.Credit, 1_000);
-        var forward = new BalancedLedgerTransactionV1(transaction, [debit, credit]);
-        var reverse = new BalancedLedgerTransactionV1(transaction, [credit, debit]);
-        Require(forward.Postings.SequenceEqual(reverse.Postings),
+        var debit = new LedgerEntryV1(
+            Id("00000000000000000000000000011210"), accountB, currency,
+            LedgerEntryKindV1.Debit, 1_000);
+        var credit = new LedgerEntryV1(
+            Id("00000000000000000000000000011211"), accountA, currency,
+            LedgerEntryKindV1.Credit, 1_000);
+        var forward = new BalancedLedgerTransactionV1(transaction, [debit, credit]).ValidateAndCanonicalize();
+        var reverse = new BalancedLedgerTransactionV1(transaction, [credit, debit]).ValidateAndCanonicalize();
+        Require(forward.SequenceEqual(reverse),
             "domain.ledger.order: input order changed canonical ledger posting order.");
         RequireReject(
-            () => _ = new BalancedLedgerTransactionV1(transaction, [debit]),
-            "society.ledger.unbalanced");
+            () => _ = new BalancedLedgerTransactionV1(transaction, [debit]).ValidateAndCanonicalize(),
+            "society.ledger-unbalanced");
     }
 
     private static void VerifyPayment()
     {
         var currency = new StableToken("currency.test");
-        var source = new FinanceAccountBalanceV1(Id("00000000000000000000000000011301"), currency, 500);
-        var destination = new FinanceAccountBalanceV1(Id("00000000000000000000000000011302"), currency, 100);
-        var insufficient = DeterministicPaymentV1.Settle(source, destination, 501);
-        Require(insufficient.Status == PaymentSettlementStatusV1.InsufficientFunds && insufficient.Source == source && insufficient.Destination == destination,
+        var source = new FinanceAccountBalanceV1(
+            Id("00000000000000000000000000011301"), currency, 500, 0);
+        var destination = new FinanceAccountBalanceV1(
+            Id("00000000000000000000000000011302"), currency, 100, 0);
+        var insufficient = DeterministicPaymentV1.Apply(source, destination, 501);
+        Require(insufficient.Status == PaymentApplyStatusV1.InsufficientFunds &&
+                insufficient.Source == source && insufficient.Destination == destination,
             "domain.ledger.insufficient-funds: rejected payment must not mutate account balances.");
-        var settled = DeterministicPaymentV1.Settle(source, destination, 300);
-        Require(settled.Status == PaymentSettlementStatusV1.Settled && settled.Source.BalanceMicrounit == 200 && settled.Destination.BalanceMicrounit == 400,
+        var settled = DeterministicPaymentV1.Apply(source, destination, 300);
+        Require(settled.Status == PaymentApplyStatusV1.Applied &&
+                settled.Source.BalanceMicrounit == 200 &&
+                settled.Destination.BalanceMicrounit == 400,
             "domain.ledger.payment: deterministic payment settlement mismatch.");
     }
 
