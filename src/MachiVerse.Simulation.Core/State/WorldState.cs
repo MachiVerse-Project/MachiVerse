@@ -5,10 +5,10 @@ namespace MachiVerse.Simulation.Core.State;
 // Phase 4 fixes these logical references in WorldStateV1 but does not fix an in-memory pointer or
 // compiled DTO representation for the referenced roots. Keep them abstract so SIM-05/SIM-06 can
 // provide component-local concrete state without inventing persistence/wire identity here.
-public interface SchedulerStateRefV1;
-public interface OperationStateRefV1;
-public interface DetailDirectoryRefV1;
-public interface DomainRegistryRefV1;
+public interface SchedulerStateRefV1 { }
+public interface OperationStateRefV1 { }
+public interface DetailDirectoryRefV1 { }
+public interface DomainRegistryRefV1 { }
 
 public sealed record WorldStateHeaderV1(
     SchemaRefV1 Schema,
