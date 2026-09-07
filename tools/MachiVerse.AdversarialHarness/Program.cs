@@ -8,36 +8,31 @@ namespace MachiVerse.AdversarialHarness;
 internal static class Program
 {
     private const int EnvelopeLimitBytes = 8 * 1024 * 1024;
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        WriteIndented = true
-    };
+    private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
 
-    private static readonly string[] CrashOperations =
+    private static readonly string[] RequiredCrashOperations =
     [
-        "audit-append",
-        "migration-generation-switch",
-        "operation-acceptance",
-        "operation-scheduling",
-        "snapshot-commit",
-        "transition-commit"
+        "audit-append", "migration-generation-switch", "operation-acceptance",
+        "operation-scheduling", "snapshot-commit", "transition-commit"
     ];
 
-    private static readonly string[] CrashPoints =
+    private static readonly string[] RequiredCrashPoints =
     [
-        "before-db-begin",
-        "before-fsync-or-commit",
-        "before-response-or-publication",
-        "immediately-after-commit",
-        "mid-write"
+        "before-db-begin", "before-fsync-or-commit", "before-response-or-publication",
+        "immediately-after-commit", "mid-write"
     ];
 
-    private static readonly string[] FuzzCategories = ["law-ast", "protobuf", "snapshot", "toml", "websocket"];
-    private static readonly HashSet<string> Mutations = new(StringComparer.Ordinal)
+    private static readonly string[] RequiredFuzzCategories =
+    [
+        "history", "law-ast", "log-audit-filter", "protobuf",
+        "snapshot", "stable-token", "toml", "websocket"
+    ];
+
+    private static readonly HashSet<string> SupportedMutations = new(StringComparer.Ordinal)
     {
         "append-zero", "duplicate-prefix", "empty", "flip-first-bit", "oversize-metadata", "truncate-half"
     };
+
     private static readonly HashSet<string> SecurityDispositions = new(StringComparer.Ordinal)
     {
         "deny", "no-auto-release", "no-secret", "tamper-detected"
@@ -47,10 +42,9 @@ internal static class Program
     {
         try
         {
-            var command = args.Length == 0 ? "verify" : args[0];
             var root = FindRepositoryRoot(Directory.GetCurrentDirectory());
-            var path = Path.Combine(root, "tests", "adversarial-fixtures", "v1", "harness-manifest.json");
-            var raw = File.ReadAllText(path, Encoding.UTF8);
+            var manifestPath = Path.Combine(root, "tests", "adversarial-fixtures", "v1", "harness-manifest.json");
+            var raw = File.ReadAllText(manifestPath, Encoding.UTF8);
             var manifest = JsonSerializer.Deserialize<HarnessManifest>(raw, Json)
                 ?? throw new InvalidDataException("QA-03 manifest decoded to null.");
 
@@ -58,26 +52,11 @@ internal static class Program
             var corpus = BuildCorpus(manifest);
             ValidateCorpus(corpus);
 
-            if (command == "verify")
-            {
-                var repeat = BuildCorpus(manifest);
-                var digest = CorpusDigest(corpus);
-                if (!string.Equals(digest, CorpusDigest(repeat), StringComparison.Ordinal))
-                    throw new InvalidDataException("Repeated materialization produced a different corpus digest.");
-
-                Console.WriteLine("QA-03 adversarial harness verification PASS");
-                Console.WriteLine($"Crash cases: {corpus.CrashCases.Count}");
-                Console.WriteLine($"Fuzz mutation cases: {corpus.MutationCases.Count}");
-                Console.WriteLine($"Security negative cases: {corpus.SecurityCases.Count}");
-                Console.WriteLine($"Corpus SHA-256: {digest}");
-                return 0;
-            }
-
+            var command = args.Length == 0 ? "verify" : args[0];
+            if (command == "verify") return Verify(corpus);
             if (command == "materialize")
             {
-                var output = args.Length > 1
-                    ? Path.GetFullPath(args[1])
-                    : Path.Combine(root, "artifacts", "qa-03-adversarial-corpus");
+                var output = args.Length > 1 ? Path.GetFullPath(args[1]) : Path.Combine(root, "artifacts", "qa-03-adversarial-corpus");
                 Materialize(corpus, output);
                 return 0;
             }
@@ -91,33 +70,40 @@ internal static class Program
         }
     }
 
+    private static int Verify(MaterializedCorpus corpus)
+    {
+        var digest = CorpusDigest(corpus);
+        var secondDigest = CorpusDigest(BuildCorpus(corpus.Manifest));
+        if (digest != secondDigest) throw new InvalidDataException("Repeated materialization produced a different corpus digest.");
+
+        Console.WriteLine("QA-03 adversarial harness verification PASS");
+        Console.WriteLine($"Crash cases: {corpus.CrashCases.Count}");
+        Console.WriteLine($"Fuzz mutation cases: {corpus.MutationCases.Count}");
+        Console.WriteLine($"Security negative cases: {corpus.SecurityCases.Count}");
+        Console.WriteLine($"Corpus SHA-256: {digest}");
+        return 0;
+    }
+
     private static void ValidateManifest(HarnessManifest manifest, string raw)
     {
-        if (manifest.SchemaVersion != "1.0")
-            throw new InvalidDataException("Unsupported QA-03 manifest schemaVersion.");
+        if (manifest.SchemaVersion != "1.0") throw new InvalidDataException("Unsupported manifest schemaVersion.");
         ValidateAsciiToken(manifest.MutationSeed, "mutationSeed");
-        RequireExactCanonical(manifest.CrashOperations, CrashOperations, "crashOperations");
-        RequireExactCanonical(manifest.CrashPoints, CrashPoints, "crashPoints");
+        RequireExactCanonical(manifest.CrashOperations, RequiredCrashOperations, "crashOperations");
+        RequireExactCanonical(manifest.CrashPoints, RequiredCrashPoints, "crashPoints");
 
         RequireCanonical(manifest.FuzzTargets.Select(x => x.Id), "fuzzTargets.id");
-        var categories = manifest.FuzzTargets
-            .Select(x => x.Category)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(x => x, StringComparer.Ordinal)
-            .ToArray();
-        if (!categories.SequenceEqual(FuzzCategories, StringComparer.Ordinal))
-            throw new InvalidDataException("Fuzz corpus must exactly cover law-ast/protobuf/snapshot/toml/websocket.");
+        var categories = manifest.FuzzTargets.Select(x => x.Category).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        if (!categories.SequenceEqual(RequiredFuzzCategories, StringComparer.Ordinal))
+            throw new InvalidDataException("Fuzz targets must cover the eight P4-08 malformed-input target classes exactly.");
 
         foreach (var target in manifest.FuzzTargets)
         {
             ValidateAsciiToken(target.Id, "fuzz target id");
             ValidateTestCaseId(target.TestCaseId);
-            if (target.SeedText.Length == 0)
-                throw new InvalidDataException($"Fuzz target '{target.Id}' has an empty seed.");
-            if (target.ExpectedDisposition != "reject-or-explicit-failure")
-                throw new InvalidDataException($"Fuzz target '{target.Id}' is not fail-closed.");
+            if (target.SeedText.Length == 0) throw new InvalidDataException($"Fuzz target '{target.Id}' has an empty seed.");
+            if (target.ExpectedDisposition != "reject-or-explicit-failure") throw new InvalidDataException($"Fuzz target '{target.Id}' is not fail-closed.");
             RequireCanonical(target.Mutations, $"{target.Id}.mutations");
-            if (target.Mutations.Length < 4 || target.Mutations.Any(x => !Mutations.Contains(x)))
+            if (target.Mutations.Length < 4 || target.Mutations.Any(x => !SupportedMutations.Contains(x)))
                 throw new InvalidDataException($"Fuzz target '{target.Id}' has an invalid mutation plan.");
         }
 
@@ -126,10 +112,8 @@ internal static class Program
         {
             ValidateAsciiToken(item.Id, "security case id");
             ValidateTestCaseId(item.TestCaseId);
-            if (!item.SyntheticOnly)
-                throw new InvalidDataException($"Security case '{item.Id}' must be synthetic-only.");
-            if (!SecurityDispositions.Contains(item.ExpectedDisposition))
-                throw new InvalidDataException($"Security case '{item.Id}' has an unsupported disposition.");
+            if (!item.SyntheticOnly) throw new InvalidDataException($"Security case '{item.Id}' must be synthetic-only.");
+            if (!SecurityDispositions.Contains(item.ExpectedDisposition)) throw new InvalidDataException($"Security case '{item.Id}' has unsupported disposition.");
         }
 
         ValidateAdapter(manifest.AdapterContract);
@@ -142,67 +126,55 @@ internal static class Program
         foreach (var operation in manifest.CrashOperations)
         foreach (var point in manifest.CrashPoints)
             crash.Add(new CrashCase(
-                CaseId("crash", operation, point),
-                operation,
-                point,
+                CaseId("crash", operation, point), operation, point,
                 point is "immediately-after-commit" or "before-response-or-publication"
                     ? "durable-fact-recovered-without-duplicate-or-false-negative"
                     : "pre-transition-authority-preserved-no-partial-durable-success"));
 
-        var fuzz = new List<MutationCase>();
+        var mutations = new List<MutationCase>();
         foreach (var target in manifest.FuzzTargets)
         {
             var seed = Encoding.UTF8.GetBytes(target.SeedText);
             foreach (var mutation in target.Mutations)
             {
-                var bytes = Mutate(seed, mutation, out var declaredLength);
-                fuzz.Add(new MutationCase(
-                    CaseId("fuzz", target.Id, mutation),
-                    target.Id,
-                    target.Category,
-                    target.TestCaseId,
-                    mutation,
-                    Convert.ToBase64String(bytes),
-                    declaredLength,
-                    Sha256(bytes),
-                    target.ExpectedDisposition));
+                var payload = Mutate(seed, mutation, out var declaredLength);
+                mutations.Add(new MutationCase(
+                    CaseId("fuzz", target.Id, mutation), target.Id, target.Category, target.TestCaseId, mutation,
+                    Convert.ToBase64String(payload), declaredLength, Sha256(payload), target.ExpectedDisposition));
             }
         }
 
-        var security = manifest.SecurityCases.Select(item => new SecurityNegativeCase(
-            CaseId("security", item.Id), item.Id, item.TestCaseId, item.ExpectedDisposition, item.SyntheticOnly)).ToArray();
-        return new MaterializedCorpus(manifest, crash, fuzz, security);
+        var security = manifest.SecurityCases.Select(x => new SecurityNegativeCase(
+            CaseId("security", x.Id), x.Id, x.TestCaseId, x.ExpectedDisposition, x.SyntheticOnly)).ToArray();
+        return new MaterializedCorpus(manifest, crash, mutations, security);
     }
 
     private static void ValidateCorpus(MaterializedCorpus corpus)
     {
-        if (corpus.CrashCases.Count != 30)
-            throw new InvalidDataException("Crash matrix must be exactly 6 operations x 5 injection points = 30 cases.");
-        Unique(corpus.CrashCases.Select(x => x.CaseId), "crash case ids");
-        Unique(corpus.MutationCases.Select(x => x.CaseId), "mutation case ids");
-        Unique(corpus.SecurityCases.Select(x => x.CaseId), "security case ids");
+        if (corpus.CrashCases.Count != 30) throw new InvalidDataException("Crash matrix must be exactly 6 x 5 = 30 cases.");
+        if (corpus.MutationCases.Count != corpus.Manifest.FuzzTargets.Sum(x => x.Mutations.Length)) throw new InvalidDataException("Mutation materialization count mismatch.");
+        Unique(corpus.CrashCases.Select(x => x.CaseId), "crash case IDs");
+        Unique(corpus.MutationCases.Select(x => x.CaseId), "mutation case IDs");
+        Unique(corpus.SecurityCases.Select(x => x.CaseId), "security case IDs");
 
         foreach (var item in corpus.MutationCases)
         {
             var bytes = Convert.FromBase64String(item.PayloadBase64);
             if (item.Mutation == "oversize-metadata")
             {
-                if (item.DeclaredLength <= EnvelopeLimitBytes)
-                    throw new InvalidDataException("oversize-metadata did not cross the 8 MiB limit.");
+                if (item.DeclaredLength <= EnvelopeLimitBytes) throw new InvalidDataException("oversize-metadata does not cross 8 MiB.");
             }
             else if (item.DeclaredLength != bytes.Length)
             {
                 throw new InvalidDataException($"Declared length mismatch in '{item.CaseId}'.");
             }
-
-            if (item.PayloadSha256 != Sha256(bytes))
-                throw new InvalidDataException($"Payload digest mismatch in '{item.CaseId}'.");
+            if (item.PayloadSha256 != Sha256(bytes)) throw new InvalidDataException($"Payload digest mismatch in '{item.CaseId}'.");
         }
     }
 
     private static byte[] Mutate(byte[] seed, string mutation, out int declaredLength)
     {
-        byte[] result = mutation switch
+        var payload = mutation switch
         {
             "append-zero" => [.. seed, 0],
             "duplicate-prefix" => [.. seed[..Math.Min(8, seed.Length)], .. seed],
@@ -212,16 +184,16 @@ internal static class Program
             "truncate-half" => seed[..Math.Max(1, seed.Length / 2)],
             _ => throw new InvalidDataException($"Unsupported mutation '{mutation}'.")
         };
-        declaredLength = mutation == "oversize-metadata" ? EnvelopeLimitBytes + 1 : result.Length;
-        return result;
+        declaredLength = mutation == "oversize-metadata" ? EnvelopeLimitBytes + 1 : payload.Length;
+        return payload;
     }
 
     private static byte[] FlipFirstBit(byte[] seed)
     {
-        var result = seed.ToArray();
-        if (result.Length == 0) return [1];
-        result[0] ^= 1;
-        return result;
+        var payload = seed.ToArray();
+        if (payload.Length == 0) return [1];
+        payload[0] ^= 1;
+        return payload;
     }
 
     private static void ValidateAdapter(AdapterContract adapter)
@@ -232,7 +204,7 @@ internal static class Program
         RequireCanonical(adapter.AllowedOutcomes, "adapter.allowedOutcomes");
         RequireExactSet(adapter.RequestFields, ["caseId", "category", "declaredLength", "expectedDisposition", "payloadBase64"], "adapter.requestFields");
         RequireExactSet(adapter.ResultFields, ["caseId", "diagnosticDigest", "outcome", "reasonCode"], "adapter.resultFields");
-        if (string.IsNullOrWhiteSpace(adapter.Rule)) throw new InvalidDataException("Target adapter authority rule is missing.");
+        if (string.IsNullOrWhiteSpace(adapter.Rule)) throw new InvalidDataException("Target adapter authority rule missing.");
     }
 
     private static void RejectSecretMaterial(string raw)
@@ -245,7 +217,7 @@ internal static class Program
             "eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}"
         ];
         if (patterns.Any(pattern => Regex.IsMatch(raw, pattern, RegexOptions.CultureInvariant)))
-            throw new InvalidDataException("Adversarial corpus appears to contain real credential/private-key material.");
+            throw new InvalidDataException("Corpus appears to contain credential/private-key material.");
     }
 
     private static void Materialize(MaterializedCorpus corpus, string output)
@@ -276,10 +248,7 @@ internal static class Program
     }
 
     private static string CaseId(params string[] parts)
-    {
-        var semantic = string.Join("\0", parts);
-        return $"qa03.{string.Join('.', parts)}.{Sha256(Encoding.UTF8.GetBytes(semantic))[..16]}";
-    }
+        => $"qa03.{string.Join('.', parts)}.{Sha256(Encoding.UTF8.GetBytes(string.Join("\0", parts)))[..16]}";
 
     private static void ValidateAsciiToken(string value, string field)
     {
@@ -303,23 +272,21 @@ internal static class Program
     {
         var a = actual.OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var e = expected.OrderBy(x => x, StringComparer.Ordinal).ToArray();
-        if (!a.SequenceEqual(e, StringComparer.Ordinal))
-            throw new InvalidDataException($"{field} does not match the required set.");
+        if (!a.SequenceEqual(e, StringComparer.Ordinal)) throw new InvalidDataException($"{field} does not match required set.");
     }
 
     private static void RequireCanonical(IEnumerable<string> values, string field)
     {
         var a = values.ToArray();
-        var s = a.OrderBy(x => x, StringComparer.Ordinal).ToArray();
-        if (!a.SequenceEqual(s, StringComparer.Ordinal) || a.Distinct(StringComparer.Ordinal).Count() != a.Length)
+        var sorted = a.OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        if (!a.SequenceEqual(sorted, StringComparer.Ordinal) || a.Distinct(StringComparer.Ordinal).Count() != a.Length)
             throw new InvalidDataException($"{field} must be unique ordinal-ascending.");
     }
 
     private static void Unique(IEnumerable<string> values, string field)
     {
         var a = values.ToArray();
-        if (a.Distinct(StringComparer.Ordinal).Count() != a.Length)
-            throw new InvalidDataException($"Duplicate {field}.");
+        if (a.Distinct(StringComparer.Ordinal).Count() != a.Length) throw new InvalidDataException($"Duplicate {field}.");
     }
 
     private static string Sha256(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
@@ -328,10 +295,7 @@ internal static class Program
     private static string FindRepositoryRoot(string start)
     {
         for (var current = new DirectoryInfo(start); current is not null; current = current.Parent)
-        {
-            if (File.Exists(Path.Combine(current.FullName, "tests", "adversarial-fixtures", "v1", "harness-manifest.json")))
-                return current.FullName;
-        }
+            if (File.Exists(Path.Combine(current.FullName, "tests", "adversarial-fixtures", "v1", "harness-manifest.json"))) return current.FullName;
         throw new DirectoryNotFoundException("Could not locate QA-03 manifest from current directory.");
     }
 }
