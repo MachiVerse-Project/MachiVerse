@@ -11,6 +11,7 @@ internal static class Sim13CrossDomainTransactionSmoke
         Sim13GoldenScenarioSmoke.Run();
         VerifyCrimeJusticeRequiredAny();
         VerifyTransactionIdentityPermutation();
+        VerifyInvariantEvidenceBinding();
         VerifyAllTransactionKinds();
         VerifyWorkerCountDeterminismAsync().GetAwaiter().GetResult();
         Sim13StepCandidateTransactionSmoke.Run();
@@ -32,6 +33,8 @@ internal static class Sim13CrossDomainTransactionSmoke
                 $"{registration.TransactionKind.Value}: required/optional participant sets must not overlap.");
             Require(registration.RequiredAnyDomainGroups.All(static group => group.Count > 0),
                 $"{registration.TransactionKind.Value}: required-any participant groups must not be empty.");
+            Require(CrossDomainTransactionInvariantRegistryV1.GetRequiredInvariantIds(registration.TransactionKind).Count > 0,
+                $"{registration.TransactionKind.Value}: required invariant registry coverage is mandatory.");
         }
 
         var demolition = CrossDomainTransactionKindRegistryV1.GetRegistration(
@@ -142,6 +145,42 @@ internal static class Sim13CrossDomainTransactionSmoke
             "determinism.transaction-id.vector: mv.transaction.v1 golden TransactionId mismatch.");
     }
 
+    private static void VerifyInvariantEvidenceBinding()
+    {
+        const ulong basisStep = 77;
+        var worldId = Id("00000000000000000000000000013801");
+        var rootId = Id("00000000000000000000000000013802");
+        var root = new CausalityRefV1(CausalityRefKindV1.Operation, rootId.ToBytes(), basisStep);
+        var subject = Id("00000000000000000000000000013803");
+        var kind = CrossDomainTransactionKindRegistryV1.Get("transaction.birth");
+        var participant = ReadyParticipant(kind, new StableToken("resident"));
+        var refA = new CausalityRefV1(CausalityRefKindV1.Entity, Id("00000000000000000000000000013810").ToBytes(), basisStep);
+        var refB = new CausalityRefV1(CausalityRefKindV1.Entity, Id("00000000000000000000000000013811").ToBytes(), basisStep);
+
+        var first = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+            worldId,
+            kind,
+            basisStep,
+            root,
+            [subject],
+            0,
+            [participant],
+            [Invariant(kind, InvariantOutcomeV1.Pass, participantRefs: [refA])]);
+        var second = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+            worldId,
+            kind,
+            basisStep,
+            root,
+            [subject],
+            0,
+            [participant],
+            [Invariant(kind, InvariantOutcomeV1.Pass, participantRefs: [refB])]);
+
+        Require(first.TransactionId == second.TransactionId &&
+                !first.DiagnosticDigest.SequenceEqual(second.DiagnosticDigest),
+            "SIM-13 transaction diagnostic must bind invariant participant refs.");
+    }
+
     private static void VerifyAllTransactionKinds()
     {
         var worldId = Id("00000000000000000000000000013101");
@@ -185,6 +224,20 @@ internal static class Sim13CrossDomainTransactionSmoke
                     success.TransactionId == replay.TransactionId &&
                     success.DiagnosticDigest.SequenceEqual(replay.DiagnosticDigest),
                 $"{registration.TransactionKind.Value}.success/replay: deterministic candidate mismatch.");
+
+            var missingInvariant = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
+                worldId,
+                registration.TransactionKind,
+                basisStep: 100,
+                root,
+                subjects,
+                ordinal,
+                participants,
+                []);
+            Require(!missingInvariant.CanFinalize &&
+                    missingInvariant.Status == TransactionCandidateStatusV1.Invalid &&
+                    missingInvariant.FailureCode?.Value == "transaction.invariant-missing",
+                $"{registration.TransactionKind.Value}: missing registered invariant must fail closed.");
 
             var missing = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
                 worldId,
@@ -325,11 +378,18 @@ internal static class Sim13CrossDomainTransactionSmoke
             diagnosticCode);
     }
 
-    private static InvariantResultV1 Invariant(StableToken kind, InvariantOutcomeV1 outcome)
+    private static InvariantResultV1 Invariant(
+        StableToken kind,
+        InvariantOutcomeV1 outcome,
+        InvariantSeverityV1 severity = InvariantSeverityV1.CommitBlocking,
+        IEnumerable<CausalityRefV1>? participantRefs = null,
+        StableToken? diagnosticCode = null)
         => new(
-            new StableToken("sim13." + kind.Value["transaction.".Length..].Replace('-', '.') + ".atomic"),
-            InvariantSeverityV1.CommitBlocking,
-            outcome);
+            CrossDomainTransactionInvariantRegistryV1.GetRequiredInvariantIds(kind).Single(),
+            severity,
+            outcome,
+            participantRefs,
+            diagnosticCode);
 
     private static OpaqueId128 Id(string value) => OpaqueId128.Parse(value);
 
