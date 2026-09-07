@@ -20,5 +20,6 @@
   <ItemGroup>
     <Protobuf Include="../../docs/protocols/schema/common.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="Server" />
     <Protobuf Include="../../docs/protocols/schema/payloads.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
+    <Content Include="../../config/simulation-core.toml" Link="config/simulation-core.toml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
