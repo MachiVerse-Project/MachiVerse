@@ -64,6 +64,7 @@ internal static class Sim07EnvironmentSmoke
             "Hydrology minimum-head selection must be input-permutation independent.");
 
         Sim07EnvironmentProcessesSmoke.RunAsync().GetAwaiter().GetResult();
+        Sim07AdvancedSmoke.RunAsync().GetAwaiter().GetResult();
     }
 
     private static void RequireReject(Func<IReadOnlyDictionary<SpatialCellKeyV1, long>> action, string expectedMessage)
