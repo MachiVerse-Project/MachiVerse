@@ -26,7 +26,7 @@ internal static class Sim07EnvironmentSmoke
             "domain.environment.flux.conservation: shared transfers produced the wrong stocks.");
         Require(forward.OrderBy(static pair => pair.Key).SequenceEqual(reversed.OrderBy(static pair => pair.Key)),
             "domain.environment.atmosphere.permutation: flux input order changed the result.");
-        Require(forward.Values.Aggregate(0L, checked((sum, value) => sum + value)) == 120,
+        Require(forward.Values.Aggregate(0L, static (sum, value) => checked(sum + value)) == 120,
             "domain.environment.flux.conservation: total stock changed without source/sink.");
 
         RequireReject(
