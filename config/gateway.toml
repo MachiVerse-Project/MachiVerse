@@ -54,6 +54,10 @@ session-idle-lifetime-seconds = 3600
 session-absolute-lifetime-seconds = 43200
 max-active-sessions-per-account = 16
 
+[audit]
+retention-days = 400
+query-max-page-size = 1000
+
 [observability]
 log-level = "info"
 metric-export-interval-ms = 1000

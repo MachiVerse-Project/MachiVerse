@@ -19,6 +19,10 @@ public sealed record GatewayOutboundQueueConfig(
     int MaxClientBacklog,
     int PublicationBufferMs);
 
+public sealed record GatewayAuditConfig(
+    int RetentionDays,
+    int QueryMaxPageSize);
+
 public sealed record GatewayConfig(
     int ConnectTimeoutMs,
     int ReconnectInitialMs,
@@ -29,4 +33,5 @@ public sealed record GatewayConfig(
     int SessionAbsoluteLifetimeSeconds,
     GatewayOidcConfig Oidc,
     GatewayOutboundQueueConfig OutboundQueues,
+    GatewayAuditConfig Audit,
     TomlTable Raw);
