@@ -64,7 +64,7 @@ internal static class Sim07StateModelSmoke
             PressurePascal: 101_325,
             TemperatureMilliKelvin: 293_150,
             HumidityPpm: 500_000,
-            WindMicrometrePerSecond: new Vec3MmV1(1_000, 0, 0),
+            WindUmPerSecond: new Velocity3UmPerSecondV1(1_000, 0, 0),
             WaterVaporMassGram: 50,
             LiquidWaterMassGram: 5,
             GasCompositionPpb: new Dictionary<StableToken, uint>
