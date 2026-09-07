@@ -1,3 +1,4 @@
+using MachiVerse.Gateway.Auth;
 using MachiVerse.Gateway.Authorization;
 using MachiVerse.Gateway.State;
 
@@ -73,17 +74,20 @@ public sealed class PublicationBufferV1
     public PublicationSubscriberSnapshotV1 RegisterViewSubscriber(
         ReadOnlySpan<byte> subscriptionId,
         string projectionProfile,
-        AuthorizationDecisionV1 authorization)
+        GatewayAuthorizationService authorizationService,
+        GatewaySessionSnapshot session,
+        ulong expectedSessionGeneration)
     {
         var id = RequireId128(subscriptionId, nameof(subscriptionId));
-        ArgumentNullException.ThrowIfNull(authorization);
-        if (authorization.Outcome != AuthorizationOutcomeV1.Allow)
-            throw new InvalidDataException(authorization.ReasonCode);
-        if (authorization.SessionId.Length != 16 || authorization.SessionId.AsSpan().IndexOfAnyExcept((byte)0) < 0)
-            throw new InvalidDataException("auth.unauthenticated");
-        var expectedTarget = "world.subscribe/" + projectionProfile;
-        if (!string.Equals(authorization.TargetKind, expectedTarget, StringComparison.Ordinal))
-            throw new InvalidDataException("auth.publication-decision-target-mismatch");
+        ArgumentNullException.ThrowIfNull(authorizationService);
+        ArgumentNullException.ThrowIfNull(session);
+
+        var authorization = RequestAuthorizationPolicies.AuthorizeViewSubscription(
+            authorizationService,
+            session,
+            projectionProfile,
+            expectedSessionGeneration);
+        authorizationService.RequireAllowed(authorization);
 
         var key = Convert.ToHexStringLower(id);
         if (_subscribers.ContainsKey(key))
