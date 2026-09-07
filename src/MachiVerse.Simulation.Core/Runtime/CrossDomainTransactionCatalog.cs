@@ -13,7 +13,8 @@ public enum TransactionCandidateStatusV1 : byte
 public sealed record CrossDomainTransactionKindRegistrationV1(
     StableToken TransactionKind,
     IReadOnlyList<StableToken> RequiredDomains,
-    IReadOnlyList<StableToken> OptionalDomains);
+    IReadOnlyList<StableToken> OptionalDomains,
+    IReadOnlyList<IReadOnlyList<StableToken>> RequiredAnyDomainGroups);
 
 public static class CrossDomainTransactionKindRegistryV1
 {
@@ -40,7 +41,11 @@ public static class CrossDomainTransactionKindRegistryV1
         Register("transaction.market-sale-delivery", [SocietyEconomy, PhysicalBuilt], [InfrastructureInformation]),
         Register("transaction.information-transmission", [InfrastructureInformation], [SocietyEconomy, Resident]),
         Register("transaction.public-record", [InfrastructureInformation], [GovernanceSecurity, SocietyEconomy]),
-        Register("transaction.crime-justice", [GovernanceSecurity], [Resident, PhysicalBuilt, SocietyEconomy]),
+        Register(
+            "transaction.crime-justice",
+            [GovernanceSecurity],
+            [SocietyEconomy],
+            [[Resident, PhysicalBuilt]]),
         Register("transaction.border-crossing", [GovernanceSecurity, PhysicalBuilt], [InfrastructureInformation]),
         Register("transaction.natural-disaster-cascade", [Environment, PhysicalBuilt, Resident, InfrastructureInformation], [Spatial, GovernanceSecurity]),
         Register("transaction.infrastructure-outage-cascade", [InfrastructureInformation], [PhysicalBuilt, SocietyEconomy, Resident]),
@@ -86,19 +91,35 @@ public static class CrossDomainTransactionKindRegistryV1
     private static CrossDomainTransactionKindRegistrationV1 Register(
         string transactionKind,
         IEnumerable<StableToken> requiredDomains,
-        IEnumerable<StableToken> optionalDomains)
+        IEnumerable<StableToken> optionalDomains,
+        IEnumerable<IEnumerable<StableToken>>? requiredAnyDomainGroups = null)
     {
         var required = CanonicalDomains(requiredDomains);
         var optional = CanonicalDomains(optionalDomains);
+        var requiredAny = (requiredAnyDomainGroups ?? Array.Empty<IEnumerable<StableToken>>())
+            .Select(CanonicalDomains)
+            .OrderBy(static group => group[0].Value, StringComparer.Ordinal)
+            .Select(static group => (IReadOnlyList<StableToken>)group)
+            .ToArray();
+
         if (required.Intersect(optional).Any())
             throw new InvalidOperationException("Transaction participant domain cannot be both required and optional.");
         if (required.Count == 0)
-            throw new InvalidOperationException("Transaction registration must have at least one required participant domain.");
+            throw new InvalidOperationException("Transaction registration must have at least one direct required participant domain.");
+        if (requiredAny.Any(static group => group.Count == 0))
+            throw new InvalidOperationException("Conditional participant group cannot be empty.");
+
+        var conditionalDomains = requiredAny.SelectMany(static group => group).ToArray();
+        if (conditionalDomains.Distinct().Count() != conditionalDomains.Length)
+            throw new InvalidOperationException("Conditional participant domain cannot appear in more than one group.");
+        if (conditionalDomains.Intersect(required).Any() || conditionalDomains.Intersect(optional).Any())
+            throw new InvalidOperationException("Conditional participant domain cannot also be direct required or optional.");
 
         return new CrossDomainTransactionKindRegistrationV1(
             new StableToken(transactionKind),
             required,
-            optional);
+            optional,
+            Array.AsReadOnly(requiredAny));
     }
 
     private static IReadOnlyList<StableToken> CanonicalDomains(IEnumerable<StableToken> domains)
