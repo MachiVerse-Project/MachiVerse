@@ -8,6 +8,7 @@ internal static class Sim13CrossDomainTransactionSmoke
     internal static void Run()
     {
         VerifyRegistry();
+        Sim13GoldenScenarioSmoke.Run();
         VerifyCrimeJusticeRequiredAny();
         VerifyTransactionIdentityPermutation();
         VerifyAllTransactionKinds();
