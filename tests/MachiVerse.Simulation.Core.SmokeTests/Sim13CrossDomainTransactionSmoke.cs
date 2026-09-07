@@ -207,17 +207,36 @@ internal static class Sim13CrossDomainTransactionSmoke
     }
 
     private static TransactionParticipantCandidateV1 ReadyParticipant(StableToken kind, StableToken domain)
-        => new(
-            domain,
-            TransactionParticipantOutcomeV1.Ready,
-            SHA256.HashData(Encoding.ASCII.GetBytes(kind.Value + ":" + domain.Value)));
+        => Participant(kind, domain, TransactionParticipantOutcomeV1.Ready, "ready", null);
 
     private static TransactionParticipantCandidateV1 FailedParticipant(StableToken kind, StableToken domain)
-        => new(
+        => Participant(
+            kind,
             domain,
             TransactionParticipantOutcomeV1.Failed,
-            SHA256.HashData(Encoding.ASCII.GetBytes(kind.Value + ":" + domain.Value + ":failed")),
+            "failed",
             new StableToken("transaction.required-participant-failed"));
+
+    private static TransactionParticipantCandidateV1 Participant(
+        StableToken kind,
+        StableToken domain,
+        TransactionParticipantOutcomeV1 outcome,
+        string suffix,
+        StableToken? diagnosticCode)
+    {
+        var entry = StandardDomainExecutionPlanV1.Create().Entries.Single(item => item.DomainToken == domain);
+        var partitionId = entry.OwnedPartitions[0];
+        var intentId = HashSuite.Trunc128(SHA256.HashData(Encoding.ASCII.GetBytes(
+            kind.Value + ":" + domain.Value + ":" + suffix)));
+        return new TransactionParticipantCandidateV1(
+            domain,
+            partitionId,
+            [intentId],
+            required: true,
+            outcome,
+            SHA256.HashData(Encoding.ASCII.GetBytes(kind.Value + ":" + domain.Value + ":" + suffix)),
+            diagnosticCode);
+    }
 
     private static InvariantResultV1 Invariant(StableToken kind, InvariantOutcomeV1 outcome)
         => new(
