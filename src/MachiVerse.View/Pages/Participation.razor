@@ -2,7 +2,7 @@
 @implements IDisposable
 @inject ViewSessionProjectionStore Session
 @inject ParticipationBindingProjectionStore Binding
-@inject DiverParticipationController Participation
+@inject DiverParticipationController ParticipationController
 @inject ParticipationPreferenceCatalog PreferenceCatalog
 @inject AbsencePolicyProfileCatalog AbsenceCatalog
 
@@ -24,13 +24,13 @@
             <dt>Session generation</dt>
             <dd>@Session.Snapshot.SessionGeneration</dd>
             <dt>Participation UX state</dt>
-            <dd>@Participation.State</dd>
+            <dd>@ParticipationController.State</dd>
             <dt>Binding request UX</dt>
-            <dd>@(Participation.CanRequestBinding ? "eligible" : "unavailable")</dd>
+            <dd>@(ParticipationController.CanRequestBinding ? "eligible" : "unavailable")</dd>
             <dt>Absence policy UX</dt>
-            <dd>@(Participation.CanEditAbsencePolicy ? "eligible" : "unavailable")</dd>
+            <dd>@(ParticipationController.CanEditAbsencePolicy ? "eligible" : "unavailable")</dd>
             <dt>Diver control UX</dt>
-            <dd>@(Participation.CanSubmitControl ? "eligible" : "unavailable")</dd>
+            <dd>@(ParticipationController.CanSubmitControl ? "eligible" : "unavailable")</dd>
         </dl>
         <p>
             These checks improve UX only. Gateway authorization remains mandatory for every protected request.
@@ -91,9 +91,9 @@
         }
         <dl>
             <dt>Draft profile</dt>
-            <dd>@(Participation.Draft.JoinPreference.ProfileId ?? "-")</dd>
+            <dd>@(ParticipationController.Draft.JoinPreference.ProfileId ?? "-")</dd>
             <dt>Draft preference tokens</dt>
-            <dd>@(Participation.Draft.JoinPreference.PreferenceTokens.Count == 0 ? "-" : string.Join(", ", Participation.Draft.JoinPreference.PreferenceTokens))</dd>
+            <dd>@(ParticipationController.Draft.JoinPreference.PreferenceTokens.Count == 0 ? "-" : string.Join(", ", ParticipationController.Draft.JoinPreference.PreferenceTokens))</dd>
         </dl>
     </section>
 
@@ -114,11 +114,11 @@
         }
         <dl>
             <dt>Draft profile</dt>
-            <dd>@(Participation.Draft.AbsencePolicy.ProfileId ?? "-")</dd>
+            <dd>@(ParticipationController.Draft.AbsencePolicy.ProfileId ?? "-")</dd>
             <dt>Pending OperationId</dt>
-            <dd><code>@(Participation.Draft.PendingOperationId ?? "-")</code></dd>
+            <dd><code>@(ParticipationController.Draft.PendingOperationId ?? "-")</code></dd>
             <dt>Local reason</dt>
-            <dd>@(Participation.Draft.LastLocalReasonCode ?? "-")</dd>
+            <dd>@(ParticipationController.Draft.LastLocalReasonCode ?? "-")</dd>
         </dl>
         <p>Local edits are not shown as world-effective until authoritative Operation result and confirmed binding/policy projection arrive.</p>
     </section>
@@ -131,17 +131,17 @@
     {
         Session.Changed += OnSessionChanged;
         Binding.Changed += OnBindingChanged;
-        Participation.Changed += OnParticipationChanged;
+        ParticipationController.Changed += OnParticipationChanged;
     }
 
     private void OnSessionChanged(ViewSessionProjection snapshot) => _ = InvokeAsync(StateHasChanged);
-    private void OnBindingChanged(ParticipationBindingProjection projection) => _ = InvokeAsync(StateHasChanged);
+    private void OnBindingChanged(ParticipationBindingProjection snapshot) => _ = InvokeAsync(StateHasChanged);
     private void OnParticipationChanged() => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
         Session.Changed -= OnSessionChanged;
         Binding.Changed -= OnBindingChanged;
-        Participation.Changed -= OnParticipationChanged;
+        ParticipationController.Changed -= OnParticipationChanged;
     }
 }
