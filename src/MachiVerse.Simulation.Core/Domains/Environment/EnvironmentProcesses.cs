@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Spatial;
+using MachiVerse.Simulation.Core.Runtime;
 
 namespace MachiVerse.Simulation.Core.Domains.Environment;
 
@@ -21,7 +22,7 @@ public static class GroundwaterJacobiV1
 
         var canonicalCells = initialHeadMm.Keys.OrderBy(static cell => cell).ToArray();
         IReadOnlyDictionary<SpatialCellKeyV1, long> previous = new ReadOnlyDictionary<SpatialCellKeyV1, long>(
-            new SortedDictionary<SpatialCellKeyV1, long>(initialHeadMm));
+            new SortedDictionary<SpatialCellKeyV1, long>(initialHeadMm.ToDictionary(static pair => pair.Key, static pair => pair.Value)));
 
         for (var iteration = 0; iteration < IterationCount; iteration++)
         {
