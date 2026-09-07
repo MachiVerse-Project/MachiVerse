@@ -210,7 +210,7 @@ public static class StandardDomainPayloadSchemaRegistry
         if (separator <= 0 || separator == encoded.Length - 1)
             throw new InvalidOperationException($"Invalid payload field rule: {encoded}.");
         var rawName = encoded[..separator];
-        var optional = rawName.EndsWith('?', StringComparison.Ordinal);
+        var optional = rawName.EndsWith("?", StringComparison.Ordinal);
         var name = optional ? rawName[..^1] : rawName;
         if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Payload field name is empty.");
         if (!Enum.TryParse<DomainPayloadFieldKindV1>(encoded[(separator + 1)..], ignoreCase: false, out var kind))
