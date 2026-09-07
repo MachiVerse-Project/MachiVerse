@@ -11,6 +11,7 @@ internal static class Sim08MotionPathSmoke
         VerifyNoRouteAndBudget();
         VerifyInputPermutation();
         Sim08CollisionSmoke.Run();
+        Sim08PrimitiveCollisionSmoke.Run();
         Sim08SequentialImpulseSmoke.Run();
         Sim08HandoffSmoke.Run();
         Sim08StateRuntimeSmoke.RunAsync().GetAwaiter().GetResult();
