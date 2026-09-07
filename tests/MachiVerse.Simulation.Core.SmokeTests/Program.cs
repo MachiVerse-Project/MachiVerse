@@ -259,5 +259,6 @@ await PersistenceSnapshotSmoke.RunAsync();
 await PersistenceMigrationSmoke.RunAsync();
 await PortableWorldExportSmoke.RunAsync();
 Sim04WorldStateSmoke.Run();
+Sim04DiagnosticSmoke.Run();
 
 Console.WriteLine("SIM-01/SIM-02/SIM-03/SIM-04 foundation smoke tests passed.");
