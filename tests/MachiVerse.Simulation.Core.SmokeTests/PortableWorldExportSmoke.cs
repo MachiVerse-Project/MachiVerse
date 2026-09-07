@@ -64,6 +64,42 @@ internal static class PortableWorldExportSmoke
                 throw new InvalidOperationException("Standard MVLOG001 history segment is missing.");
             PortableWorldBundleV1.ValidateBundleStructure(exportFinal);
 
+            var trailingSegment = Path.Combine(root, "trailing.mvlog");
+            File.Copy(Path.Combine(exportFinal, "history", "00000000.mvlog"), trailingSegment);
+            await using (var append = new FileStream(trailingSegment, FileMode.Append, FileAccess.Write, FileShare.None))
+            {
+                await append.WriteAsync(new byte[] { 0xff });
+                await append.FlushAsync();
+                append.Flush(flushToDisk: true);
+            }
+            var trailingRejected = false;
+            try
+            {
+                _ = await PortableWorldBundleV1.ValidateHistorySegmentAsync(trailingSegment);
+            }
+            catch (InvalidDataException ex) when (ex.Message == "persistence.export-history-trailing-bytes")
+            {
+                trailingRejected = true;
+            }
+            if (!trailingRejected)
+                throw new InvalidOperationException("MVLOG001 validation must reject trailing bytes.");
+
+            var missingManifest = Path.Combine(root, "missing-export-manifest");
+            Directory.CreateDirectory(Path.Combine(missingManifest, "snapshot"));
+            Directory.CreateDirectory(Path.Combine(missingManifest, "history"));
+            await File.WriteAllBytesAsync(Path.Combine(missingManifest, "snapshot", "manifest.pb"), new byte[] { 1 });
+            var manifestRejected = false;
+            try
+            {
+                PortableWorldBundleV1.ValidateBundleStructure(missingManifest);
+            }
+            catch (InvalidDataException ex) when (ex.Message == "persistence.export-manifest-missing")
+            {
+                manifestRejected = true;
+            }
+            if (!manifestRejected)
+                throw new InvalidOperationException("MachiVerseWorldExportV1 must require export-manifest.pb.");
+
             var persistenceRoot = Path.Combine(root, "persistence");
             var worldId = OpaqueId128.Parse("00000000000000000000000000000051");
             var active = PersistenceLayout.Resolve(persistenceRoot, worldId, 1);
