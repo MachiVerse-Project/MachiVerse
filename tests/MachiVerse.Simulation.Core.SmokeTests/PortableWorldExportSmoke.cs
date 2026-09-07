@@ -9,26 +9,14 @@ internal static class PortableWorldExportSmoke
         try
         {
             var sourceSnapshot = Path.Combine(root, "source-snapshot");
-            Directory.CreateDirectory(Path.Combine(sourceSnapshot, "chunks"));
-            await File.WriteAllBytesAsync(Path.Combine(sourceSnapshot, "manifest.pb"), new byte[] { 1, 2, 3 });
-            await File.WriteAllBytesAsync(Path.Combine(sourceSnapshot, "chunks", "00000000.mvchunk"), new byte[] { 4, 5, 6 });
+            Directory.CreateDirectory(sourceSnapshot);
+            await File.WriteAllBytesAsync(Path.Combine(sourceSnapshot, "snapshot-payload.bin"), new byte[] { 1, 2, 3, 4 });
 
             var exportFinal = Path.Combine(root, "portable-export");
             var export = PortableWorldExport.Prepare(exportFinal);
-            await PortableWorldBundleV1.CopyCommittedSnapshotAsync(export, sourceSnapshot);
-            await PortableWorldBundleV1.WriteManifestAsync(export, new byte[] { 20, 21, 22 });
-
-            var segmentDigest = Enumerable.Repeat((byte)0x5a, 32).ToArray();
-            await PortableWorldBundleV1.WriteHistorySegmentAsync(
-                export,
-                segmentIndex: 0,
-                firstSequence: 6,
-                serializedRecords: new ReadOnlyMemory<byte>[]
-                {
-                    new byte[] { 10, 11, 12 },
-                    new byte[] { 13, 14 }
-                },
-                segmentLogicalDigest: segmentDigest);
+            await PortableWorldExport.CopyDirectoryDurablyAsync(export, sourceSnapshot, "fixture/snapshot");
+            await PortableWorldExport.WriteArtifactDurablyAsync(export, "fixture/history.bin", new byte[] { 10, 11, 12 });
+            await PortableWorldExport.WriteArtifactDurablyAsync(export, "fixture/metadata.bin", new byte[] { 20, 21, 22 });
 
             var traversalRejected = false;
             try
@@ -44,25 +32,22 @@ internal static class PortableWorldExportSmoke
 
             await PortableWorldExport.FinalizeValidatedAsync(
                 export,
-                async (stagingDirectory, cancellationToken) =>
+                static (stagingDirectory, _) =>
                 {
-                    PortableWorldBundleV1.ValidateBundleStructure(stagingDirectory);
-                    var header = await PortableWorldBundleV1.ValidateHistorySegmentAsync(
-                        Path.Combine(stagingDirectory, "history", "00000000.mvlog"),
-                        cancellationToken);
-                    if (header.FirstSequence != 6 || header.LastSequence != 7 || header.RecordCount != 2)
-                        throw new InvalidDataException("fixture.export-history-range-invalid");
-                    if (!header.LogicalDigest.SequenceEqual(segmentDigest))
-                        throw new InvalidDataException("fixture.export-history-digest-invalid");
+                    if (!File.Exists(Path.Combine(stagingDirectory, "fixture", "metadata.bin")))
+                        throw new InvalidDataException("fixture.export-metadata-missing");
+                    if (!File.Exists(Path.Combine(stagingDirectory, "fixture", "snapshot", "snapshot-payload.bin")))
+                        throw new InvalidDataException("fixture.export-snapshot-missing");
+                    if (!File.Exists(Path.Combine(stagingDirectory, "fixture", "history.bin")))
+                        throw new InvalidDataException("fixture.export-history-missing");
+                    return Task.CompletedTask;
                 });
 
             if (!Directory.Exists(exportFinal) || Directory.Exists(export.StagingDirectory))
                 throw new InvalidOperationException("Validated portable export must publish atomically.");
-            if (!File.Exists(Path.Combine(exportFinal, "export-manifest.pb")))
-                throw new InvalidOperationException("Standard portable export manifest is missing.");
-            if (!File.Exists(Path.Combine(exportFinal, "history", "00000000.mvlog")))
-                throw new InvalidOperationException("Standard MVLOG001 history segment is missing.");
-            PortableWorldBundleV1.ValidateBundleStructure(exportFinal);
+            if (File.Exists(Path.Combine(exportFinal, "export-manifest.pb")) ||
+                Directory.EnumerateFiles(exportFinal, "*.mvlog", SearchOption.AllDirectories).Any())
+                throw new InvalidOperationException("SIM-03 must not invent an unresolved export bundle format.");
 
             var persistenceRoot = Path.Combine(root, "persistence");
             var worldId = OpaqueId128.Parse("00000000000000000000000000000051");
@@ -77,14 +62,15 @@ internal static class PortableWorldExportSmoke
 
             await PortableWorldImport.LoadAndActivateAsync(
                 import,
-                static async (exportDirectory, expectedWorldId, cancellationToken) =>
+                static (exportDirectory, expectedWorldId, _) =>
                 {
-                    PortableWorldBundleV1.ValidateBundleStructure(exportDirectory);
+                    if (!Directory.Exists(exportDirectory))
+                        throw new InvalidDataException("persistence.export-missing");
                     if (expectedWorldId.IsZero)
                         throw new InvalidDataException("fixture.export-world-id-invalid");
-                    _ = await PortableWorldBundleV1.ValidateHistorySegmentAsync(
-                        Path.Combine(exportDirectory, "history", "00000000.mvlog"),
-                        cancellationToken);
+                    if (!File.Exists(Path.Combine(exportDirectory, "fixture", "metadata.bin")))
+                        throw new InvalidDataException("fixture.export-metadata-missing");
+                    return Task.CompletedTask;
                 },
                 static async (_, staging, cancellationToken) =>
                 {
