@@ -251,7 +251,8 @@ public sealed class DomainCandidateOutputV1
     public DomainCandidateOutputV1(
         StableToken domainToken,
         ulong basisStep,
-        IEnumerable<MutationIntentCandidateV1>? intents = null)
+        IEnumerable<MutationIntentCandidateV1>? intents = null,
+        IEnumerable<PartitionCandidateV1>? localPartitionCandidates = null)
     {
         var ordered = (intents ?? Array.Empty<MutationIntentCandidateV1>())
             .OrderBy(static intent => intent.OrderKey)
@@ -261,14 +262,26 @@ public sealed class DomainCandidateOutputV1
         if (ordered.Any(intent => intent.SourceDomain != domainToken || intent.BasisStep != basisStep))
             throw new InvalidDataException("domain-output.intent-source-mismatch");
 
+        var local = (localPartitionCandidates ?? Array.Empty<PartitionCandidateV1>())
+            .OrderBy(static candidate => candidate.PartitionId.Value, StringComparer.Ordinal)
+            .ToArray();
+        if (local.Select(static candidate => candidate.PartitionId).Distinct().Count() != local.Length)
+            throw new InvalidDataException("domain-output.duplicate-partition-candidate");
+        if (local.Any(candidate => candidate.OwnerDomain != domainToken))
+            throw new InvalidDataException("domain-output.foreign-partition-candidate");
+        if (local.Any(candidate => candidate.BasisStep != basisStep || candidate.TargetStep != basisStep + 1))
+            throw new InvalidDataException("domain-output.partition-candidate-basis-mismatch");
+
         DomainToken = domainToken;
         BasisStep = basisStep;
         Intents = Array.AsReadOnly(ordered);
+        LocalPartitionCandidates = Array.AsReadOnly(local);
     }
 
     public StableToken DomainToken { get; }
     public ulong BasisStep { get; }
     public IReadOnlyList<MutationIntentCandidateV1> Intents { get; }
+    public IReadOnlyList<PartitionCandidateV1> LocalPartitionCandidates { get; }
 }
 
 public interface IDomainRuntimeV1
