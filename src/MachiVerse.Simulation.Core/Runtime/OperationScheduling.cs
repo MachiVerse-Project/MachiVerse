@@ -143,7 +143,7 @@ public static class OperationSchedulingPlannerV1
             ? AddChecked(canonicalCandidate, deadlineWindow)
             : null;
         var effectiveDeadline = MinNullable(policyDeadline, admission.RequestedDeadlineStep);
-        var graceLimit = effectiveDeadline is { } deadline
+        ulong? graceLimit = effectiveDeadline is { } deadline
             ? AddChecked(deadline, policy.GraceSteps)
             : null;
 
