@@ -28,6 +28,32 @@ jobs:
         run: dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
       - name: Run Simulation Core smoke tests
         run: dotnet run --project tests/MachiVerse.Simulation.Core.SmokeTests --configuration Release
+      - name: Launch Alpha Core and verify health
+        if: github.head_ref != 'ci/int-01-core-launch-smoke'
+        shell: bash
+        env:
+          MACHIVERSE_ALPHA_LOCAL: '1'
+          MACHIVERSE_WORLD_ROOT: ${{ runner.temp }}/machiverse-alpha-core
+          ASPNETCORE_URLS: http://127.0.0.1:5510
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/machiverse-alpha-core.log"
+          dotnet run --project src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --no-build >"$log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5510/healthz >"$RUNNER_TEMP/core-health.json"; then
+              cat "$RUNNER_TEMP/core-health.json"
+              exit 0
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat "$log"
+              exit 1
+            fi
+            sleep 1
+          done
+          cat "$log"
+          exit 1
 
   gateway:
     name: Gateway build and smoke
