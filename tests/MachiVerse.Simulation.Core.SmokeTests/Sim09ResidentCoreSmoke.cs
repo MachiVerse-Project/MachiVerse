@@ -1,6 +1,7 @@
 using MachiVerse.Simulation.Core.Determinism;
-using MachiVerse.Simulation.Core.Domains.Participation;
 using MachiVerse.Simulation.Core.Domains.Resident;
+using MachiVerse.Simulation.Core.Domains.ResidentParticipation;
+using MachiVerse.Simulation.Core.Runtime;
 
 internal static class Sim09ResidentCoreSmoke
 {
@@ -15,6 +16,8 @@ internal static class Sim09ResidentCoreSmoke
         VerifyParticipationOneToOne();
         VerifyParticipationControlAndPolicy();
         VerifyParticipationDeathAndDetailFloor();
+        VerifyDeliveryPerceptionBeliefSeparation();
+        VerifyPhysicalIntentBoundary();
     }
 
     private static void VerifyLifecycle()
@@ -160,24 +163,24 @@ internal static class Sim09ResidentCoreSmoke
         var diverB = Id("0000000000000000000000000000b002");
         var residentA = Id("0000000000000000000000000000b003");
         var residentB = Id("0000000000000000000000000000b004");
-        var existing = new ParticipationBindingStateV1(
+        var existing = new ParticipationBindingV1(
             Id("0000000000000000000000000000b010"), diverA, residentA,
             ParticipationBindingStatusV1.Active, 10, null, 1);
         var digest = new byte[32];
 
-        var blockedSameResident = new ParticipationBindRequestV1(
+        var blockedSameResident = BindRequest(
             Id("0000000000000000000000000000b011"), diverB, residentA, 1, 11,
             new SameStepOrderKey(2, 40, digest, 0, Id("0000000000000000000000000000b021")));
-        var blockedSameDiver = new ParticipationBindRequestV1(
+        var blockedSameDiver = BindRequest(
             Id("0000000000000000000000000000b012"), diverA, residentB, 2, 11,
             new SameStepOrderKey(2, 40, digest, 1, Id("0000000000000000000000000000b022")));
-        var accepted = new ParticipationBindRequestV1(
+        var accepted = BindRequest(
             Id("0000000000000000000000000000b013"), diverB, residentB, 1, 11,
             new SameStepOrderKey(2, 40, digest, 2, Id("0000000000000000000000000000b023")));
 
         var resolution = ParticipationBindResolverV1.Resolve(
             [existing], [accepted, blockedSameDiver, blockedSameResident]);
-        Require(resolution.Accepted.Count == 1 && resolution.Accepted[0].BindingId == accepted.BindingId,
+        Require(resolution.Accepted.Count == 1 && resolution.Accepted[0].BindingId == accepted.Binding.BindingId,
             "domain.participation.binding: one-to-one active binding resolution mismatch.");
         Require(resolution.RejectedBindingIds.Count == 2,
             "domain.participation.binding: conflicting binding requests must be rejected.");
@@ -185,7 +188,7 @@ internal static class Sim09ResidentCoreSmoke
 
     private static void VerifyParticipationControlAndPolicy()
     {
-        var binding = new ParticipationBindingStateV1(
+        var binding = new ParticipationBindingV1(
             Id("0000000000000000000000000000c001"),
             Id("0000000000000000000000000000c002"),
             Id("0000000000000000000000000000c003"),
@@ -218,7 +221,7 @@ internal static class Sim09ResidentCoreSmoke
 
     private static void VerifyParticipationDeathAndDetailFloor()
     {
-        var binding = new ParticipationBindingStateV1(
+        var binding = new ParticipationBindingV1(
             Id("0000000000000000000000000000d001"),
             Id("0000000000000000000000000000d002"),
             Id("0000000000000000000000000000d003"),
@@ -242,6 +245,70 @@ internal static class Sim09ResidentCoreSmoke
         Require(ParticipationDetailFloorV1.Resolve(binding.ResidentId, 30, requirements) == 0,
             "domain.participation.detail-floor: strongest active detail floor mismatch.");
     }
+
+    private static void VerifyDeliveryPerceptionBeliefSeparation()
+    {
+        var projection = new ResidentCognitionProjectionV1();
+        var delivery = new ResidentInformationDeliveryV1(
+            Id("0000000000000000000000000000e001"),
+            Id("0000000000000000000000000000e002"),
+            Id("0000000000000000000000000000e003"),
+            new StableToken("claim.weather-rain"),
+            40);
+        projection.ReceiveDelivery(delivery);
+        Require(projection.Beliefs.Count == 0,
+            "domain.resident.belief.delivery-separation: delivery alone must not mutate belief.");
+
+        var observation = projection.PerceiveDelivery(
+            delivery.DeliveryId,
+            Id("0000000000000000000000000000e004"),
+            750_000,
+            41);
+        Require(projection.Beliefs.Count == 0,
+            "domain.resident.belief.delivery-separation: perception construction alone must not mutate belief.");
+        projection.ApplyPerception(observation);
+        Require(projection.Beliefs.Count == 1 && projection.Beliefs[0].ConfidencePpm == 750_000,
+            "domain.resident.belief.delivery-separation: explicit perception application mismatch.");
+    }
+
+    private static void VerifyPhysicalIntentBoundary()
+    {
+        var decision = new ResidentPhysicalActionDecisionV1(
+            Id("0000000000000000000000000000f001"),
+            Id("0000000000000000000000000000f002"),
+            55,
+            new StableToken("physical.intent.move"),
+            Enumerable.Repeat((byte)7, 32).ToArray());
+        var scope = new ConflictScopeV1(
+            new StableToken("physical_built"),
+            new StableToken("physical.presence"),
+            decision.ResidentId.ToBytes(),
+            new StableToken("pose"));
+        var intent = ResidentPhysicalIntentFactoryV1.CreateMoveIntent(decision, 2, scope, 0);
+        Require(intent.SourceDomain == new StableToken("resident") &&
+                intent.TargetDomain == new StableToken("physical_built") &&
+                intent.TargetPartitionId == new StableToken("physical.presence") &&
+                intent.MutationKind == new StableToken("physical.intent.move"),
+            "domain.resident.physical-separation: resident action must cross the PhysicalBuilt owner boundary as an intent.");
+    }
+
+    private static ParticipationBindRequestV1 BindRequest(
+        OpaqueId128 bindingId,
+        OpaqueId128 diverRef,
+        OpaqueId128 residentId,
+        uint generation,
+        ulong effectiveStep,
+        SameStepOrderKey orderKey)
+        => new(
+            new ParticipationBindingV1(
+                bindingId,
+                diverRef,
+                residentId,
+                ParticipationBindingStatusV1.Active,
+                effectiveStep,
+                null,
+                generation),
+            orderKey);
 
     private static ResidentGoapStateV1 State(string label)
         => new(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
