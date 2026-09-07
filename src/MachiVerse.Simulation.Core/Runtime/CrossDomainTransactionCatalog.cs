@@ -32,7 +32,7 @@ public static class CrossDomainTransactionKindRegistryV1
     [
         Register("transaction.mining-excavation", [Spatial, Environment, PhysicalBuilt], [SocietyEconomy]),
         Register("transaction.construction", [PhysicalBuilt, SocietyEconomy], [GovernanceSecurity, Spatial]),
-        Register("transaction.demolition", [PhysicalBuilt], [Spatial, SocietyEconomy, GovernanceSecurity]),
+        Register("transaction.demolition", [PhysicalBuilt, SocietyEconomy], [Spatial, GovernanceSecurity]),
         Register("transaction.birth", [Resident], [SocietyEconomy]),
         Register("transaction.death", [Resident], [Participation, SocietyEconomy, GovernanceSecurity]),
         Register("transaction.disease-transmission", [Resident], [Environment, InfrastructureInformation]),
