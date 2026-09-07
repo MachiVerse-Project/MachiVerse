@@ -210,7 +210,7 @@ public sealed class LoginTransactionStore(ILoginSecretStore secretStore)
             !returnPath.StartsWith("/", StringComparison.Ordinal) ||
             returnPath.StartsWith("//", StringComparison.Ordinal) ||
             returnPath.Contains('\\') ||
-            Uri.TryCreate(returnPath, UriKind.Absolute, out _))
+            returnPath.Any(static ch => char.IsControl(ch)))
             throw new InvalidDataException("auth.return-path-invalid");
     }
 
