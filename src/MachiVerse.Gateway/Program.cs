@@ -21,6 +21,7 @@ if (alphaCoreOptions is not null)
     builder.Services.AddSingleton<ConfirmedProjectionCache>();
     builder.Services.AddSingleton<ResyncCoordinator>();
     builder.Services.AddSingleton(new MasterAuthorityTracker(alphaCoreOptions.GatewayLogicalId));
+    builder.Services.AddSingleton<AlphaViewBridge>();
     builder.Services.AddHostedService<AlphaCoreConnectionWorker>();
 }
 
@@ -36,4 +37,14 @@ app.MapGet("/healthz", () =>
         core,
     });
 });
+
+if (alphaCoreOptions is not null)
+{
+    app.Map("/ws/v1/view", async context =>
+    {
+        var bridge = context.RequestServices.GetRequiredService<AlphaViewBridge>();
+        await bridge.HandleAsync(context);
+    });
+}
+
 await app.RunAsync();
