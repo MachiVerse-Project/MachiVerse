@@ -93,10 +93,40 @@ internal static class Sim07SpatialSmoke
         Require(canonicalA.ForSubject(subjectA).Single() == relationA,
             "domain.spatial.containment: subject lookup returned the wrong canonical relation.");
 
+        VerifyIndexRebuild();
+
         SpatialGeometryRevisionV1.RequireCurrent(7, 7);
         RequireReject(
             () => SpatialGeometryRevisionV1.RequireCurrent(6, 7),
             "spatial.geometry-stale-revision");
+    }
+
+    private static void VerifyIndexRebuild()
+    {
+        var recordA = OpaqueId128.Parse("00000000000000000000000000000731");
+        var recordB = OpaqueId128.Parse("00000000000000000000000000000732");
+        var recordC = OpaqueId128.Parse("00000000000000000000000000000733");
+        var entries = new[]
+        {
+            new SpatialIndexEntryV1(recordC, new AabbMmV1(new Vec3MmV1(7_500, 0, 0), new Vec3MmV1(8_500, 500, 500))),
+            new SpatialIndexEntryV1(recordA, new AabbMmV1(new Vec3MmV1(-500, -500, -500), new Vec3MmV1(500, 500, 500))),
+            new SpatialIndexEntryV1(recordB, new AabbMmV1(new Vec3MmV1(250, 250, 250), new Vec3MmV1(1_250, 1_250, 1_250))),
+        };
+        var query = new AabbMmV1(new Vec3MmV1(0, 0, 0), new Vec3MmV1(2_000, 2_000, 2_000));
+        var rebuiltA = HierarchicalAabbGridV1.Rebuild(entries);
+        var rebuiltB = HierarchicalAabbGridV1.Rebuild(entries.Reverse());
+        var candidatesA = rebuiltA.QueryCandidates(query);
+        var candidatesB = rebuiltB.QueryCandidates(query);
+
+        Require(HierarchicalAabbGridV1.StandardCellEdgesMm.SequenceEqual([1_000L, 8_000L, 64_000L, 512_000L, 4_096_000L]),
+            "domain.spatial.index.rebuild: standard hierarchical AABB grid levels mismatch.");
+        Require(candidatesA.SequenceEqual(candidatesB),
+            "domain.spatial.index.rebuild: rebuild input order changed query candidate order.");
+        Require(candidatesA.SequenceEqual(candidatesA.OrderBy(static id => id)),
+            "domain.spatial.index.rebuild: query candidates must be RecordId bytewise ascending.");
+        Require(rebuiltA.CanonicalCells.Select(static pair => pair.Key)
+                .SequenceEqual(rebuiltB.CanonicalCells.Select(static pair => pair.Key)),
+            "domain.spatial.index.rebuild: canonical cell layout changed after rebuild.");
     }
 
     private static void SetSample(int[] samples, int x, int y, int z, int value)
