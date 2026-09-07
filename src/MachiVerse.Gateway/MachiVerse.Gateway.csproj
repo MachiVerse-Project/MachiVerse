@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../Shared/ProtocolCanonical/ConfigChangeIdentityV1.cs" Link="Protocol/Canonical/ConfigChangeIdentityV1.cs" />
     <Protobuf Include="../../docs/protocols/schema/common.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="Both" />
     <Protobuf Include="../../docs/protocols/schema/auth.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
     <Protobuf Include="../../docs/protocols/schema/payloads.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
