@@ -46,22 +46,33 @@ public static class CoreGatewayProtocolRegistryV1
     public const int MaxPublicationChunkBytes = 1024 * 1024;
     public const uint MaxPublicationChunks = 65535;
 
+    public static readonly IReadOnlyList<string> BaselineCapabilities = Array.AsReadOnly(new[]
+    {
+        "protocol.operation-batch.v1",
+        "protocol.operation-status.v1",
+        "protocol.protobuf.v1",
+        "protocol.state-full.v1",
+    });
+
     private static readonly IReadOnlyDictionary<string, CoreGatewayMessageRegistryEntryV1> EntriesByType =
         new Dictionary<string, CoreGatewayMessageRegistryEntryV1>(StringComparer.Ordinal)
         {
-            ["protocol.hello"] = Entry("protocol.hello", "protocol.hello", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.None, OperationContextPolicyV1.None, bootstrap: true),
-            ["protocol.accept"] = Entry("protocol.accept", "protocol.accept", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.None, OperationContextPolicyV1.None, bootstrap: true),
-            ["protocol.reject"] = Entry("protocol.reject", "protocol.reject", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.None, OperationContextPolicyV1.None, bootstrap: true),
-            ["operation.batch.submit"] = Entry("operation.batch.submit", "protocol.operation-batch", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.RequiredWithMasterGeneration, OperationContextPolicyV1.BatchRequired),
-            ["operation.batch.result"] = Entry("operation.batch.result", "protocol.operation-batch-result", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.Required, OperationContextPolicyV1.BatchRequired),
-            ["operation.status.query"] = Entry("operation.status.query", "protocol.operation-status-query", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.Required, OperationContextPolicyV1.None),
-            ["operation.status.result"] = Entry("operation.status.result", "protocol.operation-status-result", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.Required, OperationContextPolicyV1.Optional),
-            ["world.state.begin"] = Entry("world.state.begin", "protocol.state-publication", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithBasisStep, OperationContextPolicyV1.None),
-            ["world.state.chunk"] = Entry("world.state.chunk", "protocol.state-publication-chunk", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithBasisStep, OperationContextPolicyV1.None),
-            ["world.state.resync-request"] = Entry("world.state.resync-request", "protocol.state-resync-request", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.Required, OperationContextPolicyV1.None),
-            ["world.scheduling-policy"] = Entry("world.scheduling-policy", "protocol.scheduling-policy", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithConfigGeneration, OperationContextPolicyV1.None),
-            ["master.generation.changed"] = Entry("master.generation.changed", "protocol.master-generation", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithMasterGeneration, OperationContextPolicyV1.None),
-            ["component.health"] = Entry("component.health", "protocol.component-health", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.Optional, OperationContextPolicyV1.None),
+            ["protocol.hello"] = Entry("protocol.hello", "protocol.hello.v1", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.None, OperationContextPolicyV1.None, bootstrap: true),
+            ["protocol.accept"] = Entry("protocol.accept", "protocol.accept.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.None, OperationContextPolicyV1.None, bootstrap: true),
+            ["protocol.reject"] = Entry("protocol.reject", "protocol.reject.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.None, OperationContextPolicyV1.None, bootstrap: true),
+            ["gateway.register"] = Entry("gateway.register", "protocol.gateway-register.v1", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.None, OperationContextPolicyV1.None),
+            ["gateway.heartbeat"] = Entry("gateway.heartbeat", "protocol.gateway-heartbeat.v1", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.Optional, OperationContextPolicyV1.None),
+            ["gateway.role-state"] = Entry("gateway.role-state", "protocol.gateway-role-state.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithMasterGeneration, OperationContextPolicyV1.None),
+            ["master.generation.changed"] = Entry("master.generation.changed", "protocol.master-generation-state.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithMasterGeneration, OperationContextPolicyV1.None),
+            ["world.scheduling-policy"] = Entry("world.scheduling-policy", "protocol.scheduling-policy.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithConfigGeneration, OperationContextPolicyV1.None),
+            ["operation.batch.submit"] = Entry("operation.batch.submit", "protocol.operation-batch.v1", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.RequiredWithMasterGeneration, OperationContextPolicyV1.BatchRequired),
+            ["operation.batch.result"] = Entry("operation.batch.result", "protocol.operation-batch-result.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.Required, OperationContextPolicyV1.BatchRequired),
+            ["operation.status.query"] = Entry("operation.status.query", "protocol.operation-status-query.v1", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.Required, OperationContextPolicyV1.None),
+            ["operation.status.result"] = Entry("operation.status.result", "protocol.operation-status-result.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.Required, OperationContextPolicyV1.None),
+            ["world.state.begin"] = Entry("world.state.begin", "protocol.state-publication.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithBasisStep, OperationContextPolicyV1.None),
+            ["world.state.chunk"] = Entry("world.state.chunk", "protocol.state-publication-chunk.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.RequiredWithBasisStep, OperationContextPolicyV1.None),
+            ["world.state.resync-request"] = Entry("world.state.resync-request", "protocol.state-resync-request.v1", CoreGatewayMessageDirectionV1.GatewayToCore, WorldContextPolicyV1.Required, OperationContextPolicyV1.None),
+            ["component.health"] = Entry("component.health", "protocol.component-health.v1", CoreGatewayMessageDirectionV1.CoreToGateway, WorldContextPolicyV1.Optional, OperationContextPolicyV1.None),
         };
 
     public static IReadOnlyCollection<CoreGatewayMessageRegistryEntryV1> Entries => EntriesByType.Values;
@@ -294,8 +305,8 @@ public sealed class CoreGatewayNegotiationProfileV1
         IEnumerable<string>? requiredCapabilities = null)
     {
         SupportedVersions = NormalizeRanges(supportedVersions ?? [new SupportedProtocolRangeV1(1, 0, 0)]);
-        ProvidedCapabilities = NormalizeTokens(providedCapabilities ?? Array.Empty<string>(), "provided_capabilities");
-        RequiredCapabilities = NormalizeTokens(requiredCapabilities ?? Array.Empty<string>(), "required_capabilities");
+        ProvidedCapabilities = NormalizeTokens(providedCapabilities ?? CoreGatewayProtocolRegistryV1.BaselineCapabilities, "provided_capabilities");
+        RequiredCapabilities = NormalizeTokens(requiredCapabilities ?? CoreGatewayProtocolRegistryV1.BaselineCapabilities, "required_capabilities");
     }
 
     public IReadOnlyList<SupportedProtocolRangeV1> SupportedVersions { get; }
