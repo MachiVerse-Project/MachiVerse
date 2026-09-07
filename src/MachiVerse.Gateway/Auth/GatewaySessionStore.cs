@@ -59,46 +59,39 @@ public sealed class GatewaySessionStore
         IEnumerable<string> effectivePermissions,
         ulong issuedMasterGeneration,
         DateTimeOffset now)
+        => CreateCore(
+            AuthSecurityPrimitives.RandomId128(),
+            sessionGeneration: 1,
+            accountId,
+            diverRef,
+            authDomain,
+            effectiveRoleSet,
+            effectivePermissions,
+            issuedMasterGeneration,
+            now);
+
+    public NewGatewaySession CreateMasterGranted(
+        ReadOnlySpan<byte> sessionId,
+        ulong sessionGeneration,
+        ReadOnlySpan<byte> accountId,
+        ReadOnlySpan<byte> diverRef,
+        AuthDomainWireV1 authDomain,
+        string effectiveRoleSet,
+        IEnumerable<string> effectivePermissions,
+        ulong issuedMasterGeneration,
+        DateTimeOffset now)
     {
-        var account = RequireId128(accountId, "account_id");
-        var diver = diverRef.IsEmpty ? null : RequireId128(diverRef, "diver_ref");
-        RequireAuthDomain(authDomain);
-        if (issuedMasterGeneration == 0) throw new InvalidDataException("auth.master-changed");
-        ArgumentException.ThrowIfNullOrWhiteSpace(effectiveRoleSet);
-        var permissions = NormalizePermissions(effectivePermissions);
-
-        var sessionId = AuthSecurityPrimitives.RandomId128();
-        var handleBytes = AuthSecurityPrimitives.RandomSecret256();
-        var handle = AuthSecurityPrimitives.Base64UrlEncode(handleBytes);
-        var handleDigest = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(handleBytes));
-        var sessionIdHex = Convert.ToHexStringLower(sessionId);
-
-        lock (_gate)
-        {
-            ExpireDueSessions(now);
-            var activeForAccount = _bySessionId.Values.Count(item =>
-                item.Snapshot.Status == GatewaySessionStatus.Active &&
-                item.Snapshot.AccountId.AsSpan().SequenceEqual(account));
-            if (activeForAccount >= _maxActiveSessionsPerAccount)
-                throw new InvalidDataException("auth.session-limit");
-
-            var snapshot = new GatewaySessionSnapshot(
-                sessionId,
-                account,
-                diver,
-                authDomain,
-                effectiveRoleSet,
-                permissions,
-                issuedMasterGeneration,
-                SessionGeneration: 1,
-                CreatedAt: now,
-                LastSecurityEventAt: now,
-                LastSeenAt: now,
-                Status: GatewaySessionStatus.Active);
-            _bySessionId.Add(sessionIdHex, new StoredSession(snapshot, handleDigest));
-            _sessionIdByHandleDigest.Add(handleDigest, sessionIdHex);
-            return new NewGatewaySession(Clone(snapshot), handle);
-        }
+        if (sessionGeneration == 0) throw new InvalidDataException("auth.session-stale");
+        return CreateCore(
+            RequireId128(sessionId, "session_id"),
+            sessionGeneration,
+            accountId,
+            diverRef,
+            authDomain,
+            effectiveRoleSet,
+            effectivePermissions,
+            issuedMasterGeneration,
+            now);
     }
 
     public GatewaySessionSnapshot ResolveHandle(
@@ -171,6 +164,62 @@ public sealed class GatewaySessionStore
         };
         wire.EffectivePermissions.AddRange(session.EffectivePermissions);
         return wire;
+    }
+
+    private NewGatewaySession CreateCore(
+        ReadOnlySpan<byte> sessionId,
+        ulong sessionGeneration,
+        ReadOnlySpan<byte> accountId,
+        ReadOnlySpan<byte> diverRef,
+        AuthDomainWireV1 authDomain,
+        string effectiveRoleSet,
+        IEnumerable<string> effectivePermissions,
+        ulong issuedMasterGeneration,
+        DateTimeOffset now)
+    {
+        var id = RequireId128(sessionId, "session_id");
+        var account = RequireId128(accountId, "account_id");
+        var diver = diverRef.IsEmpty ? null : RequireId128(diverRef, "diver_ref");
+        RequireAuthDomain(authDomain);
+        if (sessionGeneration == 0) throw new InvalidDataException("auth.session-stale");
+        if (issuedMasterGeneration == 0) throw new InvalidDataException("auth.master-changed");
+        ArgumentException.ThrowIfNullOrWhiteSpace(effectiveRoleSet);
+        var permissions = NormalizePermissions(effectivePermissions);
+
+        var handleBytes = AuthSecurityPrimitives.RandomSecret256();
+        var handle = AuthSecurityPrimitives.Base64UrlEncode(handleBytes);
+        var handleDigest = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(handleBytes));
+        var sessionIdHex = Convert.ToHexStringLower(id);
+
+        lock (_gate)
+        {
+            ExpireDueSessions(now);
+            if (_bySessionId.ContainsKey(sessionIdHex))
+                throw new InvalidDataException("auth.session-duplicate");
+
+            var activeForAccount = _bySessionId.Values.Count(item =>
+                item.Snapshot.Status == GatewaySessionStatus.Active &&
+                item.Snapshot.AccountId.AsSpan().SequenceEqual(account));
+            if (activeForAccount >= _maxActiveSessionsPerAccount)
+                throw new InvalidDataException("auth.session-limit");
+
+            var snapshot = new GatewaySessionSnapshot(
+                id,
+                account,
+                diver,
+                authDomain,
+                effectiveRoleSet,
+                permissions,
+                issuedMasterGeneration,
+                sessionGeneration,
+                CreatedAt: now,
+                LastSecurityEventAt: now,
+                LastSeenAt: now,
+                Status: GatewaySessionStatus.Active);
+            _bySessionId.Add(sessionIdHex, new StoredSession(snapshot, handleDigest));
+            _sessionIdByHandleDigest.Add(handleDigest, sessionIdHex);
+            return new NewGatewaySession(Clone(snapshot), handle);
+        }
     }
 
     private GatewaySessionSnapshot RequireUsable(GatewaySessionSnapshot session, DateTimeOffset now)
