@@ -8,21 +8,25 @@ using MachiVerse.Protocol.V1;
 namespace MachiVerse.Gateway.Protocol;
 
 /// <summary>
-/// INT-01 local-only Gateway -> General View bridge. This is intentionally guarded by the
-/// local Alpha host configuration and must not be treated as the release browser auth/TLS path.
-/// It exercises the canonical mv.gateway-view envelope, login, subscription, and confirmed
-/// publication contracts without introducing a second state authority.
+/// INT-01 local-only Gateway -> General View bridge. This remains loopback-only and does not
+/// replace the release browser auth/TLS path. It forwards exactly one Alpha world-affecting
+/// operation kind through the existing Gateway→Core authority path.
 /// </summary>
 public sealed class AlphaViewBridge(
     AlphaCoreLinkOptions coreOptions,
     AlphaCoreLinkState coreLinkState,
-    ConfirmedProjectionCache confirmedCache)
+    SchedulingPolicyProjection scheduling,
+    ConfirmedProjectionCache confirmedCache,
+    AlphaCoreOperationRouter operations)
 {
     private const string ProtocolId = "mv.gateway-view";
     private const string ProjectionProfile = "standard";
+    private const string BindingSchemaId = "protocol.participation-binding-view.v1";
     private readonly AlphaCoreLinkOptions _coreOptions = coreOptions ?? throw new ArgumentNullException(nameof(coreOptions));
     private readonly AlphaCoreLinkState _coreLinkState = coreLinkState ?? throw new ArgumentNullException(nameof(coreLinkState));
+    private readonly SchedulingPolicyProjection _scheduling = scheduling ?? throw new ArgumentNullException(nameof(scheduling));
     private readonly ConfirmedProjectionCache _confirmedCache = confirmedCache ?? throw new ArgumentNullException(nameof(confirmedCache));
+    private readonly AlphaCoreOperationRouter _operations = operations ?? throw new ArgumentNullException(nameof(operations));
 
     public async Task HandleAsync(HttpContext context)
     {
@@ -32,7 +36,6 @@ public sealed class AlphaViewBridge(
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
-
         if (!IsLoopback(context.Connection.RemoteIpAddress))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -41,7 +44,7 @@ public sealed class AlphaViewBridge(
 
         var core = _coreLinkState.Current;
         if (!core.Enabled || !string.Equals(core.Status, "ready", StringComparison.Ordinal) ||
-            core.WorldId is null || _confirmedCache.Current is null)
+            core.WorldId is null || _confirmedCache.Current is null || _scheduling.Current is null)
         {
             context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
             return;
@@ -52,8 +55,7 @@ public sealed class AlphaViewBridge(
         {
             var helloEnvelope = await ReceiveEnvelopeAsync(socket, context.RequestAborted);
             ValidateBootstrapHello(helloEnvelope);
-            var hello = ProtocolHelloV1.Parser.ParseFrom(helloEnvelope.Payload);
-            ValidateHello(hello);
+            ValidateHello(ProtocolHelloV1.Parser.ParseFrom(helloEnvelope.Payload));
 
             var accept = new ProtocolAcceptV1
             {
@@ -69,13 +71,16 @@ public sealed class AlphaViewBridge(
                 throw new InvalidDataException("auth.unauthorized: Alpha View bridge accepts GENERAL_VIEW only.");
 
             var sessionId = RandomId128();
-            var loginResult = new AuthLoginResultV1
-            {
-                Result = Success("auth.login.local-alpha"),
-                SessionId = sessionId,
-                SessionGeneration = 1,
-            };
-            await SendAsync(socket, NormalResponse(loginEnvelope, "auth.login.result", "protocol.auth-login-result", loginResult), context.RequestAborted);
+            await SendAsync(socket, NormalResponse(
+                loginEnvelope,
+                "auth.login.result",
+                "protocol.auth-login-result",
+                new AuthLoginResultV1
+                {
+                    Result = Success("auth.login.local-alpha"),
+                    SessionId = sessionId,
+                    SessionGeneration = 1,
+                }), context.RequestAborted);
 
             var sessionState = new AuthSessionStateV1
             {
@@ -85,9 +90,14 @@ public sealed class AlphaViewBridge(
                 SessionGeneration = 1,
                 Status = (SessionWireStatusV1)1,
             };
-            sessionState.EffectivePermissions.Add("view.world.read");
-            await SendAsync(socket, Notification("auth.session.changed", "protocol.auth-session-state", sessionState), context.RequestAborted);
+            sessionState.EffectivePermissions.Add("view.operation.diver");
+            sessionState.EffectivePermissions.Add("view.participation.bind");
+            sessionState.EffectivePermissions.Add("view.session.read.self");
+            sessionState.EffectivePermissions.Add("view.world.read.participant");
+            sessionState.EffectivePermissions.Add("view.world.subscribe");
+            await SendAsync(socket, Notification("auth.session.changed", "protocol.auth-session-state.v1", sessionState), context.RequestAborted);
 
+            ByteString? activeSubscriptionId = null;
             while (socket.State == WebSocketState.Open && !context.RequestAborted.IsCancellationRequested)
             {
                 var request = await ReceiveNormalAsync(socket, context.RequestAborted);
@@ -97,13 +107,24 @@ public sealed class AlphaViewBridge(
                     {
                         var subscription = ViewSubscriptionRequestV1.Parser.ParseFrom(request.Payload);
                         ValidateSubscription(subscription);
-                        await SendConfirmedFullAsync(socket, subscription.SubscriptionId, request, context.RequestAborted);
+                        activeSubscriptionId = subscription.SubscriptionId.Clone();
+                        await SendConfirmedFullAsync(socket, activeSubscriptionId, request, context.RequestAborted);
+                        await SendBindingStateAsync(socket, request, context.RequestAborted);
                         break;
                     }
                     case "world.state.resync-request":
                     {
                         _ = StateResyncRequestV1.Parser.ParseFrom(request.Payload);
-                        await SendConfirmedFullAsync(socket, RandomId128(), request, context.RequestAborted);
+                        activeSubscriptionId ??= RandomId128();
+                        await SendConfirmedFullAsync(socket, activeSubscriptionId, request, context.RequestAborted);
+                        await SendBindingStateAsync(socket, request, context.RequestAborted);
+                        break;
+                    }
+                    case "participation.binding.request":
+                    {
+                        if (activeSubscriptionId is null)
+                            throw new InvalidDataException("protocol.missing-required: world.subscribe is required before binding operations.");
+                        await HandleBindingRequestAsync(socket, activeSubscriptionId, request, context.RequestAborted);
                         break;
                     }
                     default:
@@ -127,18 +148,103 @@ public sealed class AlphaViewBridge(
         }
     }
 
-    private async Task SendConfirmedFullAsync(
+    private async Task HandleBindingRequestAsync(
         WebSocket socket,
         ByteString subscriptionId,
         WireEnvelopeV1 request,
         CancellationToken cancellationToken)
     {
-        RequireId128(subscriptionId, "subscription_id");
-        var snapshot = _confirmedCache.Current ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
-        var link = _coreLinkState.Current;
-        if (link.WorldId is null) throw new InvalidDataException("world.not-found");
-        var worldId = ByteString.CopyFrom(Convert.FromHexString(link.WorldId));
+        if (request.WorldContext is null || !request.WorldContext.HasBasisStep)
+            throw new InvalidDataException("protocol.world-context-missing");
+        var operation = StandardOperationV1.Parser.ParseFrom(request.Payload);
+        RequireId128(operation.OperationId, "operation_id");
+        if (operation.ImmutablePayloadDigest.Length != 32)
+            throw new InvalidDataException("protocol.invalid-hash:immutable_payload_digest");
+        if (request.OperationContext is null || !request.OperationContext.HasOperationId ||
+            !request.OperationContext.OperationId.Equals(operation.OperationId) ||
+            !request.OperationContext.HasOperationPayloadDigest ||
+            !request.OperationContext.OperationPayloadDigest.Equals(operation.ImmutablePayloadDigest))
+            throw new InvalidDataException("protocol.payload-schema-mismatch: operation context does not match binding request.");
+        if (!string.Equals(operation.OperationKind, "participation.binding.create", StringComparison.Ordinal))
+            throw new InvalidDataException("auth.unauthorized: Alpha View bridge permits only participation.binding.create.");
 
+        var before = _confirmedCache.Current ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
+        if (request.WorldContext.BasisStep != before.BasisStep)
+            throw new InvalidDataException("world.basis-stale");
+        var result = await _operations.SubmitAsync(operation, cancellationToken);
+        var entry = result.Entries.SingleOrDefault(item => item.OperationId.Equals(operation.OperationId))
+            ?? throw new InvalidDataException("protocol.operation-result-missing");
+        var status = new OperationStatusResultV1
+        {
+            OperationId = entry.OperationId,
+            State = entry.Lifecycle,
+            OperationPayloadDigest = entry.OperationPayloadDigest,
+            RichResultDetailsAvailable = false,
+        };
+        if (entry.HasEffectiveStep) status.EffectiveStep = entry.EffectiveStep;
+        if ((int)entry.Lifecycle == 4) status.TerminalResult = entry.Result?.Clone();
+        var operationContext = new OperationContextWireV1
+        {
+            OperationId = operation.OperationId,
+            OperationPayloadDigest = operation.ImmutablePayloadDigest,
+        };
+        await SendAsync(socket, NormalResponse(
+            request,
+            "operation.result",
+            "protocol.operation-status-result.v1",
+            status,
+            operation: operationContext), cancellationToken);
+
+        if ((int)entry.Lifecycle != 4 || entry.Result is null || (int)entry.Result.Status is not (1 or 4 or 5))
+            return;
+
+        var advanced = await WaitForConfirmedAdvanceAsync(before.BasisStep, cancellationToken);
+        await SendConfirmedFullAsync(socket, subscriptionId, request, cancellationToken, advanced);
+        await SendBindingStateAsync(socket, request, cancellationToken, advanced);
+    }
+
+    private async Task<ConfirmedStateSnapshot> WaitForConfirmedAdvanceAsync(ulong previousBasisStep, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_confirmedCache.Current is { } current && current.BasisStep > previousBasisStep)
+                return current;
+            await Task.Delay(25, cancellationToken);
+        }
+        throw new InvalidDataException("component.core-confirmed-state-timeout");
+    }
+
+    private async Task SendBindingStateAsync(
+        WebSocket socket,
+        WireEnvelopeV1 request,
+        CancellationToken cancellationToken,
+        ConfirmedStateSnapshot? suppliedSnapshot = null)
+    {
+        var snapshot = suppliedSnapshot ?? _confirmedCache.Current
+            ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
+        var record = snapshot.Records.Values.SingleOrDefault(item => string.Equals(item.SchemaId, BindingSchemaId, StringComparison.Ordinal))
+            ?? throw new InvalidDataException("component.binding-projection-unavailable");
+        var binding = ParticipationBindingViewV1.Parser.ParseFrom(record.Payload);
+        var world = CurrentWorldContext(snapshot.BasisStep);
+        await SendAsync(socket, NormalResponse(
+            request,
+            "participation.binding.state",
+            BindingSchemaId,
+            binding,
+            world), cancellationToken);
+    }
+
+    private async Task SendConfirmedFullAsync(
+        WebSocket socket,
+        ByteString subscriptionId,
+        WireEnvelopeV1 request,
+        CancellationToken cancellationToken,
+        ConfirmedStateSnapshot? suppliedSnapshot = null)
+    {
+        RequireId128(subscriptionId, "subscription_id");
+        var snapshot = suppliedSnapshot ?? _confirmedCache.Current
+            ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
         var publicationId = RandomId128();
         var payload = new ProjectionChunkPayloadV1
         {
@@ -173,15 +279,11 @@ public sealed class AlphaViewBridge(
             ChunkCount = 1,
             ProjectionSchemaDigest = ByteString.CopyFrom(snapshot.ProjectionSchemaDigest),
         };
-        var world = new WorldContextWireV1
-        {
-            WorldId = worldId,
-            BasisStep = snapshot.BasisStep,
-        };
+        var world = CurrentWorldContext(snapshot.BasisStep);
         await SendAsync(socket, NormalResponse(
             request,
             "world.state.begin",
-            "protocol.state-publication",
+            "protocol.state-publication.v1",
             publication,
             world), cancellationToken);
 
@@ -197,25 +299,38 @@ public sealed class AlphaViewBridge(
         await SendAsync(socket, NormalResponse(
             request,
             "world.state.chunk",
-            "protocol.state-publication-chunk",
+            "protocol.state-publication-chunk.v1",
             chunk,
             world), cancellationToken);
     }
 
+    private WorldContextWireV1 CurrentWorldContext(ulong basisStep)
+    {
+        var link = _coreLinkState.Current;
+        if (link.WorldId is null) throw new InvalidDataException("world.not-found");
+        var policy = _scheduling.Current ?? throw new InvalidDataException("component.scheduling-policy-unavailable");
+        return new WorldContextWireV1
+        {
+            WorldId = ByteString.CopyFrom(Convert.FromHexString(link.WorldId)),
+            BasisStep = basisStep,
+            ConfigGeneration = policy.OwnerConfigGeneration,
+        };
+    }
+
     private WireEnvelopeV1 BootstrapResponse(WireEnvelopeV1 request, string messageType, string schema, IMessage payload)
-        => CreateEnvelope(request, messageType, schema, payload, bootstrap: true, world: null);
+        => CreateEnvelope(request, messageType, schema, payload, bootstrap: true, world: null, operation: null);
 
     private WireEnvelopeV1 NormalResponse(
         WireEnvelopeV1 request,
         string messageType,
         string schema,
         IMessage payload,
-        WorldContextWireV1? world = null)
-        => CreateEnvelope(request, messageType, schema, payload, bootstrap: false, world);
+        WorldContextWireV1? world = null,
+        OperationContextWireV1? operation = null)
+        => CreateEnvelope(request, messageType, schema, payload, bootstrap: false, world, operation);
 
     private WireEnvelopeV1 Notification(string messageType, string schema, IMessage payload)
-    {
-        var envelope = new WireEnvelopeV1
+        => new()
         {
             EnvelopeVersion = 1,
             ProtocolId = ProtocolId,
@@ -230,8 +345,6 @@ public sealed class AlphaViewBridge(
             PayloadCompression = (CompressionKindV1)1,
             Payload = payload.ToByteString(),
         };
-        return envelope;
-    }
 
     private WireEnvelopeV1 CreateEnvelope(
         WireEnvelopeV1 request,
@@ -239,7 +352,8 @@ public sealed class AlphaViewBridge(
         string schema,
         IMessage payload,
         bool bootstrap,
-        WorldContextWireV1? world)
+        WorldContextWireV1? world,
+        OperationContextWireV1? operation)
     {
         var envelope = new WireEnvelopeV1
         {
@@ -257,6 +371,7 @@ public sealed class AlphaViewBridge(
             PayloadCompression = (CompressionKindV1)1,
             Payload = payload.ToByteString(),
             WorldContext = world,
+            OperationContext = operation,
         };
         return envelope;
     }
