@@ -4,10 +4,10 @@ using MachiVerse.Simulation.Core.State;
 
 internal static class Sim04WorldStateSmoke
 {
-    private sealed class SchedulerRef : SchedulerStateRefV1;
-    private sealed class OperationRef : OperationStateRefV1;
-    private sealed class DetailRef : DetailDirectoryRefV1;
-    private sealed class RegistryRef : DomainRegistryRefV1;
+    private sealed class SchedulerRef : SchedulerStateRefV1 { }
+    private sealed class OperationRef : OperationStateRefV1 { }
+    private sealed class DetailRef : DetailDirectoryRefV1 { }
+    private sealed class RegistryRef : DomainRegistryRefV1 { }
 
     [ModuleInitializer]
     internal static void Initialize() => Run();
@@ -75,7 +75,6 @@ internal static class Sim04WorldStateSmoke
         var missingRejected = false;
         try
         {
-            _ = new OrderedPartitionDirectoryV1(partitions[..^1]);
             new OrderedPartitionDirectoryV1(partitions[..^1]).ValidateStandardCoverage(registry);
         }
         catch (InvalidDataException ex) when (ex.Message == "state.world.standard-partition-count-mismatch")
