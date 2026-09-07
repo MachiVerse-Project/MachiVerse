@@ -225,7 +225,7 @@ public sealed class DerivedRecordIndexV1<TKey> where TKey : notnull
         {
             var keys = selectKeys(record)
                 ?? throw new InvalidDataException("domain.index-null-key-sequence");
-            foreach (var key in keys.Distinct(result._entries.Comparer))
+            foreach (var key in keys)
             {
                 if (!result._entries.TryGetValue(key, out var ids))
                 {
