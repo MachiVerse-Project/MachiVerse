@@ -127,15 +127,29 @@ try
 
     foreach (var table in new[]
     {
-        "persistence_meta", "history_record", "operation_state", "scheduled_operation",
-        "simulation_config_state", "core_operational_state", "snapshot_catalog"
+        "persistence_meta",
+        "history_record",
+        "operation_state",
+        "scheduled_operation",
+        "simulation_config_state",
+        "core_operational_state",
+        "snapshot_catalog"
     })
+    {
         Require(await store.HasTableAsync(table), $"SIM-03 schema table missing: {table}");
+    }
 
     var zeroDigest = new byte[32];
     var genesisRecord = HistoryRecordMaterial.Create(
-        worldId, 1, zeroDigest, "world.genesis.v1", "core.world-genesis.v1", 1, 0, [0, 1, 2, 3],
-        writer =>
+        worldId,
+        sequence: 1,
+        previousRecordDigest: zeroDigest,
+        recordType: "world.genesis.v1",
+        payloadSchemaId: "core.world-genesis.v1",
+        payloadSchemaMajor: 1,
+        payloadSchemaMinor: 0,
+        payloadBytes: [0, 1, 2, 3],
+        writeNormalizedPayload: writer =>
         {
             writer.WriteMapStart(6);
             writer.WriteUnsigned(0); writer.WriteBytes(worldId.ToBytes());
@@ -146,32 +160,61 @@ try
             writer.WriteUnsigned(5); writer.WriteUnsigned(1);
         });
     var initialContinuity = HistoryIntegrity.ComputeGenesisContinuityToken(worldId, genesisRecord.RecordDigest);
-    await store.InitializeWorldMetadataAsync(new WorldPersistenceMetadataSeed(worldId, 1, seed, initialContinuity, 1, initial.Digest, 1), genesisRecord);
+
+    await store.InitializeWorldMetadataAsync(
+        new WorldPersistenceMetadataSeed(
+            worldId,
+            PersistenceGeneration: 1,
+            seed,
+            initialContinuity,
+            ConfigGeneration: 1,
+            initial.Digest,
+            MasterGeneration: 1),
+        genesisRecord);
+
     var initialAnchor = await store.ReadHistoryAnchorAsync();
-    Require(initialAnchor.Sequence == 1 && initialAnchor.Digest.SequenceEqual(genesisRecord.RecordDigest), "Genesis metadata/history must commit atomically at sequence 1.");
+    Require(initialAnchor.Sequence == 1 && initialAnchor.Digest.SequenceEqual(genesisRecord.RecordDigest),
+        "Genesis metadata/history must commit atomically at sequence 1.");
     Require(await store.HistoryAnchorExistsAsync(1, genesisRecord.RecordDigest), "Genesis history anchor must be queryable for recovery.");
 
     var operationId = OpaqueId128.Parse("00000000000000000000000000000020");
     var operationDigest = SHA256.HashData("operation-payload"u8);
     var acceptedRecord = HistoryRecordMaterial.Create(
-        worldId, 2, initialAnchor.Digest, "operation.accepted.v1", "core.operation-accepted.v1", 1, 0, [1, 2, 3, 4],
-        writer =>
+        worldId,
+        sequence: 2,
+        previousRecordDigest: initialAnchor.Digest,
+        recordType: "operation.accepted.v1",
+        payloadSchemaId: "core.operation-accepted.v1",
+        payloadSchemaMajor: 1,
+        payloadSchemaMinor: 0,
+        payloadBytes: [1, 2, 3, 4],
+        writeNormalizedPayload: writer =>
         {
             writer.WriteMapStart(2);
             writer.WriteUnsigned(0); writer.WriteBytes(operationId.ToBytes());
             writer.WriteUnsigned(1); writer.WriteBytes(operationDigest);
         });
+
     var accepted = await store.PersistAcceptedOperationAsync(operationId, operationDigest, acceptedRecord);
     Require(accepted.Status == DurableAcceptanceStatus.Accepted && accepted.AcceptedSequence == 2, "Durable Operation acceptance failed.");
     var anchorAfterAccept = await store.ReadHistoryAnchorAsync();
-    Require(anchorAfterAccept.Sequence == 2 && anchorAfterAccept.Digest.SequenceEqual(acceptedRecord.RecordDigest), "History anchor must advance atomically with Operation acceptance.");
+    Require(anchorAfterAccept.Sequence == 2 && anchorAfterAccept.Digest.SequenceEqual(acceptedRecord.RecordDigest),
+        "History anchor must advance atomically with Operation acceptance.");
+
     var duplicate = await store.PersistAcceptedOperationAsync(operationId, operationDigest, acceptedRecord);
-    Require(duplicate.Status == DurableAcceptanceStatus.Duplicate && duplicate.AcceptedSequence == 2, "Same OperationId/digest must resolve as duplicate without new history.");
+    Require(duplicate.Status == DurableAcceptanceStatus.Duplicate && duplicate.AcceptedSequence == 2,
+        "Same OperationId/digest must resolve as duplicate without new history.");
     Require((await store.ReadHistoryAnchorAsync()).Sequence == 2, "Duplicate acceptance must not append history.");
 
     var mismatchRejected = false;
-    try { await store.PersistAcceptedOperationAsync(operationId, SHA256.HashData("different-payload"u8), acceptedRecord); }
-    catch (InvalidDataException ex) when (ex.Message == "protocol.operation-payload-mismatch") { mismatchRejected = true; }
+    try
+    {
+        await store.PersistAcceptedOperationAsync(operationId, SHA256.HashData("different-payload"u8), acceptedRecord);
+    }
+    catch (InvalidDataException ex) when (ex.Message == "protocol.operation-payload-mismatch")
+    {
+        mismatchRejected = true;
+    }
     Require(mismatchRejected, "Same OperationId with different digest must be rejected.");
 
     var badChainRejected = false;
@@ -180,8 +223,15 @@ try
         var secondOperation = OpaqueId128.Parse("00000000000000000000000000000021");
         var secondDigest = SHA256.HashData("operation-2"u8);
         var badRecord = HistoryRecordMaterial.Create(
-            worldId, 3, zeroDigest, "operation.accepted.v1", "core.operation-accepted.v1", 1, 0, [4, 3, 2, 1],
-            writer =>
+            worldId,
+            sequence: 3,
+            previousRecordDigest: zeroDigest,
+            recordType: "operation.accepted.v1",
+            payloadSchemaId: "core.operation-accepted.v1",
+            payloadSchemaMajor: 1,
+            payloadSchemaMinor: 0,
+            payloadBytes: [4, 3, 2, 1],
+            writeNormalizedPayload: writer =>
             {
                 writer.WriteMapStart(2);
                 writer.WriteUnsigned(0); writer.WriteBytes(secondOperation.ToBytes());
@@ -189,7 +239,10 @@ try
             });
         await store.PersistAcceptedOperationAsync(secondOperation, secondDigest, badRecord);
     }
-    catch (InvalidDataException ex) when (ex.Message == "persistence.history-previous-digest-mismatch") { badChainRejected = true; }
+    catch (InvalidDataException ex) when (ex.Message == "persistence.history-previous-digest-mismatch")
+    {
+        badChainRejected = true;
+    }
     Require(badChainRejected, "Broken history predecessor must reject the whole durable acceptance transaction.");
     Require((await store.ReadHistoryAnchorAsync()).Sequence == 2, "Rejected acceptance must not advance history anchor.");
 
