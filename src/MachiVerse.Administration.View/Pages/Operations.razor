@@ -93,11 +93,11 @@
                             <td>@(operation.EffectiveStep?.ToString() ?? "-")</td>
                             <td>@(operation.TerminalResult?.Code ?? operation.LastReasonCode ?? "-")</td>
                             <td>
-                                @if (operation.State == AdminOperationLifecycleState.AwaitingConfirmation
-                                    && Confirmation.Snapshot.Fingerprint?.OperationId == operation.OperationId
-                                    && Confirmation.Snapshot.State == HighImpactConfirmationState.Required)
+                                @if (NeedsConfirmationStart(operation))
                                 {
-                                    <button @onclick="() => BeginConfirmation(operation.OperationId)">Begin confirmation</button>
+                                    <button @onclick="() => BeginConfirmation(operation.OperationId)">
+                                        @(Confirmation.Snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid ? "Reconfirm" : "Begin confirmation")
+                                    </button>
                                 }
                                 else if (operation.State == AdminOperationLifecycleState.AwaitingConfirmation
                                     && Confirmation.Snapshot.Fingerprint?.OperationId == operation.OperationId
@@ -126,6 +126,20 @@
         Session.Changed += SessionChanged;
         Confirmation.Changed += ProjectionChanged;
         AdminOperations.Changed += ProjectionChanged;
+    }
+
+    private bool NeedsConfirmationStart(TrackedAdminOperation operation)
+    {
+        var snapshot = Confirmation.Snapshot;
+        if (!operation.HighImpact || snapshot.Fingerprint?.OperationId != operation.OperationId)
+        {
+            return false;
+        }
+
+        return operation.State == AdminOperationLifecycleState.AwaitingConfirmation
+            && snapshot.State == HighImpactConfirmationState.Required
+            || operation.State is AdminOperationLifecycleState.AwaitingConfirmation or AdminOperationLifecycleState.ReadyForSubmit
+                && snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid;
     }
 
     private void BeginConfirmation(string operationId)
