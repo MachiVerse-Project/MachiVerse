@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 
@@ -109,6 +110,8 @@ public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 du
             throw new InvalidDataException("step-finalize.candidate-must-be-non-authoritative");
         if (material.ActiveConfigGeneration != candidate.ConfigGeneration)
             throw new InvalidDataException("step-finalize.config-generation-mismatch");
+        if (!CryptographicOperations.FixedTimeEquals(material.ActiveConfigDigest, candidate.ConfigDigest))
+            throw new InvalidDataException("step-finalize.config-digest-mismatch");
         if (scheduler.FreezeStep != candidate.BasisStep || scheduler.NextSchedulableStep != candidate.TargetStep)
             throw new InvalidDataException("step-finalize.scheduler-freeze-mismatch");
         if (material.TransitionHistory.WorldId != candidate.WorldId)
