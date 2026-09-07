@@ -15,6 +15,45 @@ public enum LawPredicateNodeKindV1 : byte
     TimeStepRange = 9,
 }
 
+public static class LawPredicateNodeKindRegistryV1
+{
+    public static LawPredicateNodeKindV1 Decode(string kind)
+        => kind switch
+        {
+            "AND" => LawPredicateNodeKindV1.And,
+            "OR" => LawPredicateNodeKindV1.Or,
+            "NOT" => LawPredicateNodeKindV1.Not,
+            "FACT_EQUALS" => LawPredicateNodeKindV1.FactEquals,
+            "FACT_RANGE" => LawPredicateNodeKindV1.FactRange,
+            "SUBJECT_HAS_STATUS" => LawPredicateNodeKindV1.SubjectHasStatus,
+            "RELATION_EXISTS" => LawPredicateNodeKindV1.RelationExists,
+            "SPATIAL_WITHIN" => LawPredicateNodeKindV1.SpatialWithin,
+            "TIME_STEP_RANGE" => LawPredicateNodeKindV1.TimeStepRange,
+            _ => throw new InvalidDataException("governance.law-ast-node-unregistered"),
+        };
+}
+
+public sealed record LawEvaluationContextV1(
+    OpaqueId128 JurisdictionRef,
+    ulong Step,
+    IReadOnlyDictionary<StableToken, StableToken> TokenFacts,
+    IReadOnlyDictionary<StableToken, long> NumericFacts,
+    IReadOnlySet<StableToken> SubjectStatuses,
+    IReadOnlySet<StableToken> Relations,
+    IReadOnlySet<StableToken> SpatialScopes)
+{
+    public void Validate()
+    {
+        if (JurisdictionRef.IsZero)
+            throw new InvalidDataException("governance.jurisdiction-id-zero");
+        ArgumentNullException.ThrowIfNull(TokenFacts);
+        ArgumentNullException.ThrowIfNull(NumericFacts);
+        ArgumentNullException.ThrowIfNull(SubjectStatuses);
+        ArgumentNullException.ThrowIfNull(Relations);
+        ArgumentNullException.ThrowIfNull(SpatialScopes);
+    }
+}
+
 public sealed record LawPredicateNodeV1(
     LawPredicateNodeKindV1 Kind,
     IReadOnlyList<LawPredicateNodeV1> Children,
@@ -46,13 +85,8 @@ public sealed record LawPredicateNodeV1(
                 RequireNoLeafPayload();
                 break;
             case LawPredicateNodeKindV1.FactEquals:
-            case LawPredicateNodeKindV1.SubjectHasStatus:
-            case LawPredicateNodeKindV1.RelationExists:
-            case LawPredicateNodeKindV1.SpatialWithin:
                 RequireLeaf();
-                if (Key is null || TokenValue is null)
-                    throw new InvalidDataException("governance.law-ast-leaf-payload-invalid");
-                if (Minimum is not null || Maximum is not null || FromStep is not null || UntilStep is not null)
+                if (Key is null || TokenValue is null || Minimum is not null || Maximum is not null || FromStep is not null || UntilStep is not null)
                     throw new InvalidDataException("governance.law-ast-leaf-payload-invalid");
                 break;
             case LawPredicateNodeKindV1.FactRange:
@@ -60,6 +94,13 @@ public sealed record LawPredicateNodeV1(
                 if (Key is null || Minimum is null || Maximum is null || Minimum > Maximum ||
                     TokenValue is not null || FromStep is not null || UntilStep is not null)
                     throw new InvalidDataException("governance.law-ast-range-invalid");
+                break;
+            case LawPredicateNodeKindV1.SubjectHasStatus:
+            case LawPredicateNodeKindV1.RelationExists:
+            case LawPredicateNodeKindV1.SpatialWithin:
+                RequireLeaf();
+                if (TokenValue is null || Key is not null || Minimum is not null || Maximum is not null || FromStep is not null || UntilStep is not null)
+                    throw new InvalidDataException("governance.law-ast-leaf-payload-invalid");
                 break;
             case LawPredicateNodeKindV1.TimeStepRange:
                 RequireLeaf();
@@ -70,6 +111,30 @@ public sealed record LawPredicateNodeV1(
             default:
                 throw new InvalidDataException("governance.law-ast-node-unregistered");
         }
+    }
+
+    public bool Evaluate(LawEvaluationContextV1 context)
+    {
+        Validate();
+        ArgumentNullException.ThrowIfNull(context);
+        context.Validate();
+        return Kind switch
+        {
+            LawPredicateNodeKindV1.And => Children.All(child => child.Evaluate(context)),
+            LawPredicateNodeKindV1.Or => Children.Any(child => child.Evaluate(context)),
+            LawPredicateNodeKindV1.Not => !Children[0].Evaluate(context),
+            LawPredicateNodeKindV1.FactEquals =>
+                context.TokenFacts.TryGetValue(Key!.Value, out var actualToken) && actualToken == TokenValue!.Value,
+            LawPredicateNodeKindV1.FactRange =>
+                context.NumericFacts.TryGetValue(Key!.Value, out var actualNumber) &&
+                actualNumber >= Minimum!.Value && actualNumber <= Maximum!.Value,
+            LawPredicateNodeKindV1.SubjectHasStatus => context.SubjectStatuses.Contains(TokenValue!.Value),
+            LawPredicateNodeKindV1.RelationExists => context.Relations.Contains(TokenValue!.Value),
+            LawPredicateNodeKindV1.SpatialWithin => context.SpatialScopes.Contains(TokenValue!.Value),
+            LawPredicateNodeKindV1.TimeStepRange =>
+                context.Step >= FromStep!.Value && context.Step <= UntilStep!.Value,
+            _ => throw new InvalidDataException("governance.law-ast-node-unregistered"),
+        };
     }
 
     private void RequireLeaf()
@@ -110,6 +175,7 @@ public sealed record LegalRuleV1(
     OpaqueId128 RuleId,
     OpaqueId128 JurisdictionRef,
     int Priority,
+    uint Specificity,
     ulong EffectiveFromStep,
     ulong? EffectiveUntilStep,
     LawPredicateNodeV1 Predicate,
@@ -127,22 +193,15 @@ public sealed record LegalRuleV1(
         Effect.Validate();
     }
 
-    public bool IsApplicableTo(OpaqueId128 jurisdictionRef, ulong step)
+    public bool IsApplicableTo(LawEvaluationContextV1 context)
     {
         Validate();
-        return jurisdictionRef == JurisdictionRef &&
-               step >= EffectiveFromStep &&
-               (EffectiveUntilStep is null || step <= EffectiveUntilStep.Value);
-    }
-}
-
-public sealed record ApplicableLegalRuleV1(LegalRuleV1 Rule, int Specificity)
-{
-    public void Validate()
-    {
-        ArgumentNullException.ThrowIfNull(Rule);
-        Rule.Validate();
-        if (Specificity < 0) throw new InvalidDataException("governance.law-specificity-negative");
+        ArgumentNullException.ThrowIfNull(context);
+        context.Validate();
+        return context.JurisdictionRef == JurisdictionRef &&
+               context.Step >= EffectiveFromStep &&
+               (EffectiveUntilStep is null || context.Step <= EffectiveUntilStep.Value) &&
+               Predicate.Evaluate(context);
     }
 }
 
@@ -161,57 +220,57 @@ public sealed record LegalResolutionResultV1(
 public static class DeterministicLegalRuleResolverV1
 {
     public static LegalResolutionResultV1 Resolve(
-        OpaqueId128 jurisdictionRef,
-        ulong step,
-        IEnumerable<ApplicableLegalRuleV1> candidates)
+        LawEvaluationContextV1 context,
+        IEnumerable<LegalRuleV1> candidates)
     {
-        if (jurisdictionRef.IsZero) throw new InvalidDataException("governance.jurisdiction-id-zero");
+        ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(candidates);
+        context.Validate();
 
-        var applicable = candidates
-            .Select(candidate =>
-            {
-                ArgumentNullException.ThrowIfNull(candidate);
-                candidate.Validate();
-                return candidate;
-            })
-            .Where(candidate => candidate.Rule.IsApplicableTo(jurisdictionRef, step))
-            .OrderBy(static candidate => candidate.Rule.Priority)
-            .ThenByDescending(static candidate => candidate.Specificity)
-            .ThenBy(static candidate => candidate.Rule.RuleId)
+        var materialized = candidates.Select(rule =>
+        {
+            ArgumentNullException.ThrowIfNull(rule);
+            rule.Validate();
+            return rule;
+        }).ToArray();
+        if (materialized.Select(static rule => rule.RuleId).Distinct().Count() != materialized.Length)
+            throw new InvalidDataException("governance.law-rule-id-duplicate");
+
+        var applicable = materialized
+            .Where(rule => rule.IsApplicableTo(context))
+            .OrderBy(static rule => rule.Priority)
+            .ThenByDescending(static rule => rule.Specificity)
+            .ThenBy(static rule => rule.RuleId)
             .ToArray();
 
-        if (applicable.Select(static candidate => candidate.Rule.RuleId).Distinct().Count() != applicable.Length)
-            throw new InvalidDataException("governance.law-rule-id-duplicate");
         if (applicable.Length == 0)
             return new LegalResolutionResultV1(
                 LegalResolutionStatusV1.NoApplicableRule,
                 null,
                 Array.Empty<OpaqueId128>());
 
-        var leadingPriority = applicable[0].Rule.Priority;
-        var leadingSpecificity = applicable[0].Specificity;
+        var leader = applicable[0];
         var leading = applicable
-            .TakeWhile(candidate => candidate.Rule.Priority == leadingPriority && candidate.Specificity == leadingSpecificity)
+            .TakeWhile(rule => rule.Priority == leader.Priority && rule.Specificity == leader.Specificity)
             .ToArray();
-        var terminal = leading.Where(static candidate => candidate.Rule.Effect.IsTerminalClassification).ToArray();
+        var terminal = leading.Where(static rule => rule.Effect.IsTerminalClassification).ToArray();
         if (HasTerminalConflict(terminal))
             return new LegalResolutionResultV1(
                 LegalResolutionStatusV1.Conflict,
                 null,
-                Array.AsReadOnly(applicable.Select(static candidate => candidate.Rule.RuleId).ToArray()));
+                Array.AsReadOnly(terminal.Select(static rule => rule.RuleId).Order().ToArray()));
 
         return new LegalResolutionResultV1(
             LegalResolutionStatusV1.Resolved,
-            applicable[0].Rule.Effect,
-            Array.AsReadOnly(applicable.Select(static candidate => candidate.Rule.RuleId).ToArray()));
+            leader.Effect,
+            Array.AsReadOnly(applicable.Select(static rule => rule.RuleId).ToArray()));
     }
 
-    private static bool HasTerminalConflict(IReadOnlyList<ApplicableLegalRuleV1> terminal)
+    private static bool HasTerminalConflict(IReadOnlyList<LegalRuleV1> terminal)
     {
         if (terminal.Count < 2) return false;
-        var first = terminal[0].Rule.Effect;
-        return terminal.Skip(1).Any(candidate => candidate.Rule.Effect != first);
+        var first = terminal[0].Effect;
+        return terminal.Skip(1).Any(rule => rule.Effect != first);
     }
 }
 
@@ -230,6 +289,8 @@ public sealed record EnforcementOrderV1(
         if (EffectiveUntilStep is not null && EffectiveUntilStep.Value < EffectiveFromStep)
             throw new InvalidDataException("governance.enforcement-period-invalid");
     }
+
+    public bool RequiresPhysicalExecution => true;
 }
 
 public sealed record BorderPermissionV1(
