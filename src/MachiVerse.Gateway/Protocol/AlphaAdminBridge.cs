@@ -93,8 +93,8 @@ public sealed class AlphaAdminBridge(
                 Status = (SessionWireStatusV1)1,
             };
             sessionState.EffectivePermissions.Add("admin.audit.read");
-            sessionState.EffectivePermissions.Add("admin.config.read");
             sessionState.EffectivePermissions.Add("admin.config.change");
+            sessionState.EffectivePermissions.Add("admin.config.read");
             sessionState.EffectivePermissions.Add("admin.health.read");
             await SendAsync(socket, Notification(
                 "auth.session.changed",
