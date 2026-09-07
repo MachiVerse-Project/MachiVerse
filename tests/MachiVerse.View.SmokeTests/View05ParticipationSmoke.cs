@@ -236,7 +236,7 @@ internal static class View05ParticipationSmoke
             MessageId = Id(70),
             CorrelationId = Id(71),
             SenderInstanceId = Id(72),
-            BasisStep = basisStep,
+            WorldContext = new WorldContextWireV1 { BasisStep = basisStep },
             PayloadSchemaId = "protocol.participation-binding-view.v1",
             PayloadSchemaVersion = new SchemaVersionWireV1 { Major = 1, Minor = 0 },
             PayloadCompression = (CompressionKindV1)1,
