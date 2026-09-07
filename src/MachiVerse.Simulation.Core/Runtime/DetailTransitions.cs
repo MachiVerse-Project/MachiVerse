@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
@@ -8,6 +9,15 @@ public enum DetailTransitionDirectionV1 : byte
 {
     Promotion = 1,
     Demotion = 2,
+}
+
+public enum DetailTransitionTriggerSourceV1 : byte
+{
+    ScheduledOperation = 1,
+    DomainEvent = 2,
+    MutationIntent = 3,
+    Transaction = 4,
+    ConfigPolicy = 5,
 }
 
 public static class DetailTransitionGuardV1
@@ -115,11 +125,13 @@ public sealed class DetailTransitionCandidateV1
         DetailLevelV1 targetLevel,
         ulong requiredEffectiveStep,
         int semanticPriority,
+        DetailTransitionTriggerSourceV1 triggerSource,
         OpaqueId128 triggerId,
         ulong triggerObservedStep,
         uint estimatedRecordCount)
     {
         if (detailRegionId.IsZero) throw new ArgumentException("DetailRegionId ZERO is invalid.", nameof(detailRegionId));
+        if (!Enum.IsDefined(triggerSource)) throw new ArgumentOutOfRangeException(nameof(triggerSource));
         if (triggerId.IsZero) throw new ArgumentException("TriggerId ZERO is invalid.", nameof(triggerId));
         if (!Enum.IsDefined(currentLevel) || !Enum.IsDefined(targetLevel))
             throw new ArgumentOutOfRangeException(nameof(targetLevel));
@@ -136,6 +148,7 @@ public sealed class DetailTransitionCandidateV1
         TargetLevel = targetLevel;
         RequiredEffectiveStep = requiredEffectiveStep;
         SemanticPriority = semanticPriority;
+        TriggerSource = triggerSource;
         TriggerId = triggerId;
         TriggerObservedStep = triggerObservedStep;
         EstimatedRecordCount = estimatedRecordCount;
@@ -150,6 +163,7 @@ public sealed class DetailTransitionCandidateV1
     public DetailLevelV1 TargetLevel { get; }
     public ulong RequiredEffectiveStep { get; }
     public int SemanticPriority { get; }
+    public DetailTransitionTriggerSourceV1 TriggerSource { get; }
     public OpaqueId128 TriggerId { get; }
     public ulong TriggerObservedStep { get; }
     public uint EstimatedRecordCount { get; }
@@ -189,12 +203,24 @@ public sealed class DetailDirectoryV1
     public DetailDirectoryV1 Apply(
         IEnumerable<DetailTransitionCandidateV1> selected,
         IEnumerable<DetailTransitionCandidateV1> deferred,
-        ulong transitionStep)
+        ulong transitionStep,
+        DetailConservationValidationV1 conservationValidation)
     {
         ArgumentNullException.ThrowIfNull(selected);
         ArgumentNullException.ThrowIfNull(deferred);
+        ArgumentNullException.ThrowIfNull(conservationValidation);
+
+        var orderedSelected = DetailTransitionCanonicalOrderV1.Order(selected).ToArray();
+        var expectedTransitionDigest = DetailConservationInvariantV1.ComputeTransitionSetDigest(orderedSelected);
+        if (!CryptographicOperations.FixedTimeEquals(
+                expectedTransitionDigest,
+                conservationValidation.TransitionSetDigest))
+            throw new InvalidDataException("detail.conservation-transition-mismatch");
+        if (!conservationValidation.Decision.CanCommit)
+            throw new InvalidDataException("detail.conservation-blocked");
+
         var nextRegions = new SortedDictionary<OpaqueId128, DetailRegionStateV1>(_regions);
-        foreach (var candidate in DetailTransitionCanonicalOrderV1.Order(selected))
+        foreach (var candidate in orderedSelected)
         {
             if (!nextRegions.TryGetValue(candidate.DetailRegionId, out var region))
                 throw new InvalidDataException("detail.transition-region-missing");
@@ -270,6 +296,8 @@ public static class DetailTransitionPlannerV1
         var notYetEligible = new List<DetailTransitionCandidateV1>();
         foreach (var candidate in canonical)
         {
+            if (!IsAuthoritativeTriggerSource(candidate.TriggerSource))
+                throw new InvalidDataException("detail.transition-trigger-source-non-authoritative");
             var region = directory.GetRegion(candidate.DetailRegionId);
             if (region.GetLevel(candidate.DomainToken) != candidate.CurrentLevel)
                 throw new InvalidDataException("detail.transition-stale-current-level");
@@ -306,6 +334,13 @@ public static class DetailTransitionPlannerV1
             Array.AsReadOnly(DetailTransitionCanonicalOrderV1.Order(deferred).ToArray()),
             Array.AsReadOnly(DetailTransitionCanonicalOrderV1.Order(notYetEligible).ToArray()));
     }
+
+    private static bool IsAuthoritativeTriggerSource(DetailTransitionTriggerSourceV1 triggerSource)
+        => triggerSource is DetailTransitionTriggerSourceV1.ScheduledOperation
+            or DetailTransitionTriggerSourceV1.DomainEvent
+            or DetailTransitionTriggerSourceV1.MutationIntent
+            or DetailTransitionTriggerSourceV1.Transaction
+            or DetailTransitionTriggerSourceV1.ConfigPolicy;
 
     private static bool IsEligible(
         DetailTransitionCandidateV1 candidate,
