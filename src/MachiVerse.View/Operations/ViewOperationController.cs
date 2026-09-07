@@ -124,14 +124,6 @@ public sealed class ViewOperationController
         return entry.Request.Clone();
     }
 
-    public OperationStatusQueryV1 CreateStatusQuery(ByteString operationId)
-    {
-        var entry = RequireEntry(operationId);
-        if (entry.State is ViewOperationLifecycleState.Terminal or ViewOperationLifecycleState.Rejected or ViewOperationLifecycleState.Failed)
-            throw new InvalidOperationException("Terminal Operation does not require status convergence.");
-        return new OperationStatusQueryV1 { OperationId = operationId };
-    }
-
     public bool TryApplyResult(WireEnvelopeV1 envelope)
     {
         ArgumentNullException.ThrowIfNull(envelope);
