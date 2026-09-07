@@ -103,7 +103,7 @@ internal static class Sim08StateRuntimeSmoke
             [validLoser, invalidEarlier, validWinner]);
         var reverse = PhysicalItemTransferResolverV1.Resolve(
             basis,
-            [validWinner, invalidEarlier, validLoser].Reverse());
+            new[] { validWinner, invalidEarlier, validLoser }.Reverse());
 
         Require(forward.Decisions.Count == 1 &&
                 forward.Decisions[0].WinningIntentId == validWinner.OrderKey.IntentId &&
