@@ -22,6 +22,7 @@ if (alphaCoreOptions is not null)
     builder.Services.AddSingleton<ResyncCoordinator>();
     builder.Services.AddSingleton(new MasterAuthorityTracker(alphaCoreOptions.GatewayLogicalId));
     builder.Services.AddSingleton<AlphaViewBridge>();
+    builder.Services.AddSingleton<AlphaAdminBridge>();
     builder.Services.AddHostedService<AlphaCoreConnectionWorker>();
 }
 
@@ -43,6 +44,12 @@ if (alphaCoreOptions is not null)
     app.Map("/ws/v1/view", async context =>
     {
         var bridge = context.RequestServices.GetRequiredService<AlphaViewBridge>();
+        await bridge.HandleAsync(context);
+    });
+
+    app.Map("/ws/v1/admin", async context =>
+    {
+        var bridge = context.RequestServices.GetRequiredService<AlphaAdminBridge>();
         await bridge.HandleAsync(context);
     });
 }
