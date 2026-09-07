@@ -276,4 +276,5 @@ var terminal = custody.ApplyCoreStatus(new OperationStatusResultV1
 if (terminal.State != GatewayCustodyState.Terminal || terminal.TerminalResult?.Code != "ok")
     throw new InvalidOperationException("Terminal Core status must preserve terminal result and stop mutation delivery.");
 
-Console.WriteLine("GW-01/GW-02/GW-03 smoke tests passed.");
+await Gw04AuthSmoke.RunAsync(config);
+Console.WriteLine("GW-01/GW-02/GW-03/GW-04 smoke tests passed.");
