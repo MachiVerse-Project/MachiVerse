@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Google.Protobuf;
 using Grpc.Core;
-using MachiVerse.Protocol.Canonical;
 using MachiVerse.Protocol.V1;
 using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
@@ -369,11 +368,11 @@ internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperat
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        ParticipationBindingIdentityV1.ValidateStandardOperation(operation);
+        var payload = CoreParticipationBindingIdentityV1.ValidateStandardOperation(operation);
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            return await SubmitBindingLockedAsync(operation, cancellationToken);
+            return await SubmitBindingLockedAsync(operation, payload, cancellationToken);
         }
         finally
         {
@@ -383,6 +382,7 @@ internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperat
 
     private async Task<OperationDurableObservationV1> SubmitBindingLockedAsync(
         StandardOperationV1 operation,
+        ParticipationBindingRequestV1 payload,
         CancellationToken cancellationToken)
     {
         var operationId = OpaqueId128.FromBytes(operation.OperationId.Span);
@@ -395,7 +395,12 @@ internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperat
             throw new InvalidDataException("world.basis-stale");
         if (operation.Admission.SchedulingPolicyGeneration != _config.Generation)
             throw new InvalidDataException("operation.scheduling-policy-generation-mismatch");
-        if ((int)_worldAuthority.GetBinding().Status == AlphaParticipationBindingStateV1.ActiveStatus)
+
+        var currentBinding = _worldAuthority.GetBinding();
+        AlphaParticipationBindingStateV1.Validate(currentBinding, requireActive: false);
+        if (payload.ExpectedBindingGeneration != currentBinding.BindingGeneration)
+            throw new InvalidDataException("participation.binding-generation-stale");
+        if ((int)currentBinding.Status == AlphaParticipationBindingStateV1.ActiveStatus)
             throw new InvalidDataException("participation.binding-already-active");
 
         if (existing is null)
@@ -477,7 +482,7 @@ internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperat
         if (head.FinalizedStep != scheduledStep)
             throw new InvalidDataException("persistence.operation-effective-step-passed");
 
-        var binding = CreateActiveBinding(operationId, scheduledStep);
+        var binding = CreateActiveBinding(operationId, scheduledStep, payload);
         await CommitTransitionAsync(
             head,
             [new TerminalOperationCommit(
@@ -568,7 +573,10 @@ internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperat
             semanticPriority: 0,
             intentId: operationId);
 
-    private ParticipationBindingViewV1 CreateActiveBinding(OpaqueId128 operationId, ulong effectiveStep)
+    private ParticipationBindingViewV1 CreateActiveBinding(
+        OpaqueId128 operationId,
+        ulong effectiveStep,
+        ParticipationBindingRequestV1 payload)
     {
         var residentId = DerivedIdentity.DeriveEntityId(
             _options.WorldId,
@@ -589,6 +597,8 @@ internal sealed class AlphaDurableOperationIngressV1 : ICoreGatewayDurableOperat
             Status = (ParticipationBindingWireStatusV1)AlphaParticipationBindingStateV1.ActiveStatus,
             BindingId = ByteString.CopyFrom(bindingId.ToBytes()),
             ResidentId = ByteString.CopyFrom(residentId.ToBytes()),
+            DiverRef = payload.DiverRef.Clone(),
+            BindingGeneration = checked(payload.ExpectedBindingGeneration + 1),
             EffectiveFromStep = effectiveStep,
             AbsencePolicyProfile = "alpha.default",
         };
@@ -601,7 +611,11 @@ internal static class AlphaParticipationBindingStateV1
     internal const int ActiveStatus = 2;
 
     internal static ParticipationBindingViewV1 None()
-        => new() { Status = (ParticipationBindingWireStatusV1)NoneStatus };
+        => new()
+        {
+            Status = (ParticipationBindingWireStatusV1)NoneStatus,
+            BindingGeneration = 0,
+        };
 
     internal static void Validate(ParticipationBindingViewV1 binding, bool requireActive)
     {
@@ -611,15 +625,25 @@ internal static class AlphaParticipationBindingStateV1
             throw new InvalidDataException("alpha.binding-status-invalid");
         if (requireActive && status != ActiveStatus)
             throw new InvalidDataException("alpha.binding-not-active");
-        if (status == ActiveStatus)
+
+        if (status == NoneStatus)
         {
-            if (!binding.HasBindingId || binding.BindingId.Length != 16 || binding.BindingId.Span.IndexOfAnyExcept((byte)0) < 0)
-                throw new InvalidDataException("alpha.binding-id-invalid");
-            if (!binding.HasResidentId || binding.ResidentId.Length != 16 || binding.ResidentId.Span.IndexOfAnyExcept((byte)0) < 0)
-                throw new InvalidDataException("alpha.binding-resident-id-invalid");
-            if (!binding.HasEffectiveFromStep)
-                throw new InvalidDataException("alpha.binding-effective-step-missing");
+            if (binding.BindingGeneration != 0 || binding.HasBindingId || binding.HasResidentId ||
+                binding.HasDiverRef || binding.HasEffectiveFromStep)
+                throw new InvalidDataException("alpha.binding-none-shape-invalid");
+            return;
         }
+
+        if (!binding.HasBindingId || binding.BindingId.Length != 16 || binding.BindingId.Span.IndexOfAnyExcept((byte)0) < 0)
+            throw new InvalidDataException("alpha.binding-id-invalid");
+        if (!binding.HasResidentId || binding.ResidentId.Length != 16 || binding.ResidentId.Span.IndexOfAnyExcept((byte)0) < 0)
+            throw new InvalidDataException("alpha.binding-resident-id-invalid");
+        if (!binding.HasDiverRef || binding.DiverRef.Length != 16 || binding.DiverRef.Span.IndexOfAnyExcept((byte)0) < 0)
+            throw new InvalidDataException("alpha.binding-diver-ref-invalid");
+        if (!binding.HasEffectiveFromStep)
+            throw new InvalidDataException("alpha.binding-effective-step-missing");
+        if (binding.BindingGeneration == 0)
+            throw new InvalidDataException("alpha.binding-generation-invalid");
     }
 
     internal static byte[] ComputeStateDigest(ParticipationBindingViewV1 binding, ulong basisStep)
@@ -627,14 +651,19 @@ internal static class AlphaParticipationBindingStateV1
         Validate(binding, requireActive: false);
         return HashSuite.DomainHash("mv.alpha.participation-state.v1", writer =>
         {
-            writer.WriteMapStart(5);
+            writer.WriteMapStart(8);
             writer.WriteUnsigned(0); writer.WriteUnsigned((ulong)(int)binding.Status);
             writer.WriteUnsigned(1); WriteOptionalBytes(writer, binding.HasBindingId, binding.BindingId);
             writer.WriteUnsigned(2); WriteOptionalBytes(writer, binding.HasResidentId, binding.ResidentId);
-            writer.WriteUnsigned(3);
+            writer.WriteUnsigned(3); WriteOptionalBytes(writer, binding.HasDiverRef, binding.DiverRef);
+            writer.WriteUnsigned(4); writer.WriteUnsigned(binding.BindingGeneration);
+            writer.WriteUnsigned(5);
             writer.WriteArrayStart(binding.HasEffectiveFromStep ? 1UL : 0UL);
             if (binding.HasEffectiveFromStep) writer.WriteUnsigned(binding.EffectiveFromStep);
-            writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
+            writer.WriteUnsigned(6);
+            writer.WriteArrayStart(binding.HasAbsencePolicyProfile ? 1UL : 0UL);
+            if (binding.HasAbsencePolicyProfile) writer.WriteAsciiText(binding.AbsencePolicyProfile);
+            writer.WriteUnsigned(7); writer.WriteUnsigned(basisStep);
         });
     }
 
