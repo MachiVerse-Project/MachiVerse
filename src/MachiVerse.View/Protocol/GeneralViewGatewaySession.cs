@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using Google.Protobuf;
-using MachiVerse.Protocol.Canonical;
 using MachiVerse.Protocol.V1;
 using MachiVerse.View.Configuration;
 using MachiVerse.View.Operations;
@@ -90,7 +89,8 @@ public sealed class GeneralViewGatewaySession(
             var session = sessions.Snapshot;
             if (!string.Equals(session.SessionId, SessionIdHex, StringComparison.Ordinal) ||
                 session.SessionGeneration != login.SessionGeneration ||
-                session.State != ViewSessionAccessState.Active)
+                session.State != ViewSessionAccessState.Active ||
+                string.IsNullOrEmpty(session.DiverRef))
                 throw new InvalidDataException("auth.session-stale");
 
             gateway.MarkSyncing();
@@ -116,6 +116,7 @@ public sealed class GeneralViewGatewaySession(
             var bindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
             if (!binding.TryApply(bindingEnvelope))
                 throw new InvalidDataException("participation.binding-state-not-applied");
+            ValidateBindingActorForSession(session, binding.Snapshot);
 
             operations.SetAccessState(ViewMutationAccessState.Ready);
             gateway.MarkReady();
@@ -143,40 +144,51 @@ public sealed class GeneralViewGatewaySession(
         {
             if (!_started || ConfirmedBasisStep is null || SchedulingPolicyGeneration is null)
                 throw new InvalidOperationException("General View must be Ready before requesting a Diver binding.");
-            if (!sessions.Snapshot.HasPermission(ViewPermissionTokens.OperationDiver) ||
-                !sessions.Snapshot.HasPermission(ViewPermissionTokens.ParticipationBind))
+            var session = sessions.Snapshot;
+            if (!session.HasPermission(ViewPermissionTokens.OperationDiver) ||
+                !session.HasPermission(ViewPermissionTokens.ParticipationBind))
                 throw new InvalidOperationException("Current General View session lacks Diver binding permissions.");
+            if (string.IsNullOrEmpty(session.DiverRef))
+                throw new InvalidOperationException("Current General View session has no confirmed Diver identity.");
             if (binding.Snapshot.Freshness != ParticipationProjectionFreshness.Confirmed ||
                 binding.Snapshot.State != ParticipationBindingState.None)
                 throw new InvalidOperationException("Alpha binding create requires confirmed NONE binding state.");
 
+            var expectedBindingGeneration = binding.Snapshot.BindingGeneration;
             var operationId = RandomId128();
             var admission = new OperationSchedulingAdmissionWireV1
             {
                 AdmissionBasisStep = ConfirmedBasisStep.Value,
                 SchedulingPolicyGeneration = SchedulingPolicyGeneration.Value,
             };
-            var payload = new ParticipationBindingRequestV1 { PreferenceProfile = "alpha.default" };
-            var digestBytes = ParticipationBindingIdentityV1.ComputeImmutablePayloadDigest(admission, payload);
+            var payload = new ParticipationBindingRequestV1
+            {
+                PreferenceProfile = "alpha.default",
+                DiverRef = ByteString.CopyFrom(Convert.FromHexString(session.DiverRef)),
+                ExpectedBindingGeneration = expectedBindingGeneration,
+            };
+            var digestBytes = ViewParticipationBindingIdentityV1.ComputeImmutablePayloadDigest(admission, payload);
             var digest = ByteString.CopyFrom(digestBytes);
             payload.OperationId = operationId;
             payload.ImmutablePayloadDigest = digest;
 
             var draft = new ViewOperationDraft(
-                ParticipationBindingIdentityV1.OperationKind,
+                ViewParticipationBindingIdentityV1.OperationKind,
                 admission.AdmissionBasisStep,
                 admission.SchedulingPolicyGeneration,
                 RequestedNotBeforeStep: null,
                 RequestedDeadlineStep: null,
                 CandidateStep: null,
-                ParticipationBindingIdentityV1.PayloadSchemaId,
-                ParticipationBindingIdentityV1.PayloadSchemaMajor,
-                ParticipationBindingIdentityV1.PayloadSchemaMinor,
+                ViewParticipationBindingIdentityV1.PayloadSchemaId,
+                ViewParticipationBindingIdentityV1.PayloadSchemaMajor,
+                ViewParticipationBindingIdentityV1.PayloadSchemaMinor,
                 payload.ToByteString(),
                 SemanticTarget: "participation.binding",
                 PredictedPayload: ByteString.Empty);
             _ = operations.Prepare(draft, operationId, digest);
             var request = operations.TakeForSubmission(operationId);
+            _ = ViewParticipationBindingIdentityV1.ValidateStandardOperation(request);
+
             var worldId = ParseWorldId(config.WorldIdHex);
             var operationContext = new OperationContextWireV1
             {
@@ -206,17 +218,29 @@ public sealed class GeneralViewGatewaySession(
             var bindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
             if (!binding.TryApply(bindingEnvelope))
                 throw new InvalidDataException("participation.binding-state-not-applied");
+            ValidateBindingActorForSession(session, binding.Snapshot);
+            if (binding.Snapshot.State != ParticipationBindingState.Active ||
+                binding.Snapshot.BindingGeneration != checked(expectedBindingGeneration + 1))
+                throw new InvalidDataException("participation.binding-confirmation-generation-mismatch");
+
             Changed?.Invoke();
             return operations.Operations.Single(item => string.Equals(item.OperationId, Convert.ToHexStringLower(operationId.Span), StringComparison.Ordinal));
-        }
-        catch
-        {
-            throw;
         }
         finally
         {
             _operationGate.Release();
         }
+    }
+
+    private static void ValidateBindingActorForSession(
+        ViewSessionProjection session,
+        ParticipationBindingProjection confirmedBinding)
+    {
+        if (confirmedBinding.State != ParticipationBindingState.Active)
+            return;
+        if (string.IsNullOrEmpty(session.DiverRef) ||
+            !string.Equals(confirmedBinding.DiverRef, session.DiverRef, StringComparison.Ordinal))
+            throw new InvalidDataException("participation.binding-actor-mismatch");
     }
 
     private async Task<ConfirmedWorldSnapshot> ReceivePublicationAsync(
