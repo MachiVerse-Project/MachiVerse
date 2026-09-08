@@ -263,11 +263,12 @@ internal static class CoreSnapshotOwnerMaterialSmoke
 
         public static CoreSnapshotOwnerAuthorityV1 Compute(string schemaId, ReadOnlySpan<byte> material)
         {
+            var frozen = material.ToArray();
             var digest = HashSuite.DomainHash("mv.test-core-snapshot-owner.v1", writer =>
             {
                 writer.WriteMapStart(2);
                 writer.WriteUnsigned(0); writer.WriteAsciiText(schemaId);
-                writer.WriteUnsigned(1); writer.WriteBytes(material);
+                writer.WriteUnsigned(1); writer.WriteBytes(frozen);
             });
             return new CoreSnapshotOwnerAuthorityV1(new SchemaRefV1(schemaId), digest);
         }
