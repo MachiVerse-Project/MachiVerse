@@ -8,7 +8,9 @@ public sealed record RunningSnapshotCutV1(
     WorldStateV1 FrozenState,
     OpaqueId128 SnapshotId,
     HistoryAnchor HistoryAnchor,
-    byte[] StateContinuityToken)
+    byte[] StateContinuityToken,
+    IReadOnlyList<DurableOperationStateV1> DurableOperations,
+    IReadOnlyList<SnapshotScheduledOperationStateV1> ScheduledOperations)
 {
     public ulong SnapshotStep => FrozenState.Header.Step;
 }
@@ -16,8 +18,8 @@ public sealed record RunningSnapshotCutV1(
 /// <summary>
 /// Owns the operational trigger/freeze/commit boundary for a running snapshot.
 /// The caller invokes TryFreezeIfDueAsync while holding its short Step-boundary consistency barrier.
-/// The returned WorldState is immutable and may be drained after the barrier is released while later
-/// Steps continue. Physical serialization remains schema-owned by the supplied drain implementation.
+/// The returned WorldState and RecoveryState cut may be drained after the barrier is released while
+/// later Steps continue. Physical serialization remains schema-owned by the supplied drain implementation.
 /// </summary>
 public sealed class RunningSnapshotCoordinatorV1
 {
@@ -60,25 +62,26 @@ public sealed class RunningSnapshotCoordinatorV1
         if (!IsDue(finalizedState.Header.Step, newestStep))
             return null;
 
-        var recovery = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
+        var recovery = await store.ReadSnapshotRecoveryCutAsync(cancellationToken).ConfigureAwait(false);
         if (recovery.FinalizedStep != finalizedState.Header.Step)
             throw new InvalidDataException("snapshot-running.state-not-finalized-head");
         if (recovery.ConfigGeneration != finalizedState.Header.ConfigGeneration ||
             !CryptographicOperations.FixedTimeEquals(recovery.ConfigDigest, finalizedState.Diagnostic.ConfigDigest))
             throw new InvalidDataException("snapshot-running.config-authority-mismatch");
 
-        var anchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
         var snapshotId = DeriveSnapshotId(
             finalizedState.Header.WorldId,
             finalizedState.Header.Step,
-            anchor.Sequence,
-            anchor.Digest,
-            recovery.ContinuityToken);
+            recovery.HistoryAnchor.Sequence,
+            recovery.HistoryAnchor.Digest,
+            recovery.StateContinuityToken);
         var cut = new RunningSnapshotCutV1(
             finalizedState,
             snapshotId,
-            anchor,
-            recovery.ContinuityToken.ToArray());
+            recovery.HistoryAnchor,
+            recovery.StateContinuityToken.ToArray(),
+            recovery.DurableOperations,
+            recovery.ScheduledOperations);
 
         lock (_sync)
         {
