@@ -42,9 +42,7 @@ public sealed class NullCoreStructuredLogSinkV1 : ICoreStructuredLogSinkV1
     }
 
     public void Emit(CoreStructuredLogEventV1 logEvent)
-    {
-        ArgumentNullException.ThrowIfNull(logEvent);
-    }
+        => ArgumentNullException.ThrowIfNull(logEvent);
 }
 
 public static class CoreLogRedactorV1
@@ -76,13 +74,9 @@ public static class CoreLogRedactorV1
         var sanitized = new SortedDictionary<string, string?>(StringComparer.Ordinal);
         foreach (var pair in attributes)
         {
-            if (string.IsNullOrWhiteSpace(pair.Key))
-                continue;
-
+            if (string.IsNullOrWhiteSpace(pair.Key)) continue;
             var key = pair.Key.Trim();
-            sanitized[key] = IsSecretKey(key)
-                ? RedactedValue
-                : SanitizeValue(pair.Value);
+            sanitized[key] = IsSecretKey(key) ? RedactedValue : SanitizeValue(pair.Value);
         }
         return sanitized;
     }
@@ -91,7 +85,7 @@ public static class CoreLogRedactorV1
     {
         ArgumentNullException.ThrowIfNull(key);
         var normalized = key.Replace('-', '_').Replace('.', '_').ToLowerInvariant();
-        return SecretKeyFragments.Any(normalized.Contains);
+        return SecretKeyFragments.Any(fragment => normalized.Contains(fragment, StringComparison.Ordinal));
     }
 
     private static string? SanitizeValue(string? value)
@@ -200,10 +194,10 @@ public sealed class CoreTelemetryV1 : IDisposable
     }
 
     public void RecordStepDuration(TimeSpan duration, string? phase = null)
-        => Record(
-            "machiverse.core.step.duration",
-            phase is null ? [] : [Tag("phase", phase)],
-            () => phase is null ? _stepDuration.Record(duration.TotalMilliseconds) : _stepDuration.Record(duration.TotalMilliseconds, Tag("phase", phase)));
+    {
+        KeyValuePair<string, object?>[] tags = phase is null ? [] : [Tag("phase", phase)];
+        Record("machiverse.core.step.duration", tags, () => _stepDuration.Record(duration.TotalMilliseconds, tags));
+    }
 
     public void RecordStepLag(TimeSpan lag)
         => Record("machiverse.core.step.lag", [], () => _stepLag.Record(lag.TotalMilliseconds));
@@ -468,7 +462,9 @@ internal sealed class CoreMetricCardinalityGuardV1
             ? "_"
             : string.Join('|', tags.OrderBy(static tag => tag.Key, StringComparer.Ordinal)
                 .Select(static tag => tag.Key + "=" + Convert.ToString(tag.Value, System.Globalization.CultureInfo.InvariantCulture)));
-        var series = _seriesByMetric.GetOrAdd(metricName, static _ => new ConcurrentDictionary<string, byte>(StringComparer.Ordinal));
+        var series = _seriesByMetric.GetOrAdd(
+            metricName,
+            static _ => new ConcurrentDictionary<string, byte>(StringComparer.Ordinal));
         if (series.ContainsKey(key)) return true;
         if (series.Count >= definition.MaxExpectedSeries) return false;
         if (Volatile.Read(ref _globalSeriesCount) >= CoreMetricRegistryV1.StandardActiveSeriesTarget) return false;
