@@ -2,28 +2,29 @@
 @implements IDisposable
 @inject IManagementModuleBoundary ManagementStore
 @inject OperationalCommandCatalog CommandCatalog
+@inject MachiVerse.Administration.View.Protocol.AdminGatewaySession GatewaySession
 
-<PageTitle>Management - MachiVerse Administration</PageTitle>
+<PageTitle>Config管理 - MachiVerse 管理ビュー</PageTitle>
 
 <main class="shell">
-    <h1>Config / Operational Command Management</h1>
-    <p>Gateway protocol projections only. Target Config files and component internals are never accessed directly.</p>
+    <h1>Config / 運用コマンド管理</h1>
+    <p>Gateway Protocolからの投影だけを扱います。対象Configファイルやコンポーネント内部へ直接アクセスすることはありません。</p>
 
     <section>
-        <h2>Channel status</h2>
+        <h2>チャネル状態</h2>
         <dl>
             <dt>Config</dt>
             <dd>@FormatChannel(_snapshot.ConfigChannel)</dd>
-            <dt>Operational commands</dt>
+            <dt>運用コマンド</dt>
             <dd>@FormatChannel(_snapshot.CommandChannel)</dd>
         </dl>
     </section>
 
     <section>
-        <h2>Config projections</h2>
+        <h2>Config投影</h2>
         @if (_snapshot.ConfigTargets.Count == 0)
         {
-            <p>No Config projection has been received.</p>
+            <p>Config投影はまだ受信していません。</p>
         }
         else
         {
@@ -32,47 +33,47 @@
                 <article>
                     <h3>@config.TargetKey</h3>
                     <dl>
-                        <dt>ConfigGeneration</dt><dd>@config.ConfigGeneration</dd>
-                        <dt>ConfigDigest</dt><dd><code>@(config.ConfigDigest ?? "not provided")</code></dd>
-                        <dt>Result</dt><dd>@config.Result.Status / @config.Result.Code</dd>
+                        <dt>Config世代</dt><dd>@config.ConfigGeneration</dd>
+                        <dt>Configダイジェスト</dt><dd><code>@(config.ConfigDigest ?? "未提供")</code></dd>
+                        <dt>結果</dt><dd>@FormatState(config.Result.Status) / @config.Result.Code</dd>
                     </dl>
 
                     <table>
-                        <thead><tr><th>Key</th><th>Effective value</th><th>Impact</th><th>Mutability</th></tr></thead>
+                        <thead><tr><th>キー</th><th>有効値</th><th>影響</th><th>変更可否</th></tr></thead>
                         <tbody>
                         @foreach (var entry in config.Entries)
                         {
                             <tr>
                                 <td><code>@entry.Key</code></td>
-                                <td><code>@(entry.Redacted ? "[redacted]" : entry.EffectiveValueJson ?? "[not provided]")</code></td>
-                                <td>@entry.Impact</td>
-                                <td>@entry.Mutability</td>
+                                <td><code>@(entry.Redacted ? "[非表示]" : entry.EffectiveValueJson ?? "[未提供]")</code></td>
+                                <td>@FormatImpact(entry.Impact)</td>
+                                <td>@FormatMutability(entry.Mutability)</td>
                             </tr>
                         }
                         </tbody>
                     </table>
-                    <button @onclick="() => BeginDraft(config)">Start local draft at generation @config.ConfigGeneration</button>
+                    <button @onclick="() => BeginDraft(config)" disabled="@(!config.Entries.Any(static entry => string.Equals(entry.Mutability, "runtime-safe-alpha", StringComparison.Ordinal)))">世代 @config.ConfigGeneration からローカル下書きを開始</button>
                 </article>
             }
         }
     </section>
 
     <section>
-        <h2>Local Config draft editor</h2>
+        <h2>ローカルConfig下書きエディター</h2>
         @if (_draftEditor.Target is null)
         {
-            <p>Select a Config projection above to begin a local draft.</p>
+            <p>上のConfig投影を選択するとローカル下書きを開始できます。</p>
         }
         else
         {
             <p>
-                Target: <code>@_draftEditor.Target.TargetKey</code>,
-                expected base ConfigGeneration: <strong>@_draftEditor.Target.ConfigGeneration</strong>.
+                対象: <code>@_draftEditor.Target.TargetKey</code>、
+                期待する基底Config世代: <strong>@_draftEditor.Target.ConfigGeneration</strong>
             </p>
-            <p>Local validation is presentation assistance only. Gateway authorization and owner-component validation remain authoritative.</p>
+            <p>ローカル検証は入力補助だけです。Gateway認可、世代確認、監査、owner validationが最終的な正本です。</p>
 
             <label>
-                Config key
+                Configキー
                 <select @bind="_draftKey">
                     @foreach (var entry in EditableEntries)
                     {
@@ -81,42 +82,43 @@
                 </select>
             </label>
             <label>
-                Wire value type
+                Wire値型
                 <select @bind="_draftKind">
                     @foreach (var kind in Enum.GetValues<ConfigDraftValueKind>())
                     {
-                        <option value="@kind">@kind</option>
+                        <option value="@kind">@FormatDraftKind(kind)</option>
                     }
                 </select>
             </label>
             <label>
-                New value
+                新しい値
                 <input @bind="_draftValue" />
             </label>
-            <button @onclick="AddDraftEdit" disabled="@(EditableEntries.Count == 0)">Add / replace edit</button>
-            <button @onclick="ValidateDraft" disabled="@(_draftEditor.Edits.Count == 0)">Validate local draft shape</button>
-            <button @onclick="DiscardDraft">Discard local draft</button>
+            <button @onclick="AddDraftEdit" disabled="@(EditableEntries.Count == 0)">編集を追加 / 置換</button>
+            <button @onclick="ValidateDraft" disabled="@(_draftEditor.Edits.Count == 0)">ローカル下書きを検証</button>
+            <button @onclick="SubmitDraftAsync" disabled="@(_draftEditor.Edits.Count == 0 || !GatewaySession.Started || _submitting)">@(_submitting ? "Config変更を送信中…" : "Config変更を送信")</button>
+            <button @onclick="DiscardDraft">ローカル下書きを破棄</button>
 
             @if (!string.IsNullOrEmpty(_draftMessage))
             {
-                <p>@_draftMessage</p>
+                <p id="config-draft-message">@_draftMessage</p>
             }
 
             @if (_draftEditor.Edits.Count == 0)
             {
-                <p>No local edits.</p>
+                <p>ローカル編集はありません。</p>
             }
             else
             {
                 <table>
-                    <thead><tr><th>Key</th><th>Typed value</th><th>Action</th></tr></thead>
+                    <thead><tr><th>キー</th><th>型付き値</th><th>操作</th></tr></thead>
                     <tbody>
                     @foreach (var edit in _draftEditor.Edits)
                     {
                         <tr>
                             <td><code>@edit.Key</code></td>
                             <td><code>@FormatConfigValue(edit.Value)</code></td>
-                            <td><button @onclick="() => RemoveDraftEdit(edit.Key)">Remove</button></td>
+                            <td><button @onclick="() => RemoveDraftEdit(edit.Key)">削除</button></td>
                         </tr>
                     }
                     </tbody>
@@ -124,30 +126,30 @@
             }
 
             <p>
-                Submit is intentionally not synthesized in the browser until a canonical request identity source provides a stable OperationId and Hash256 immutable payload digest.
-                Returning an applied value to an earlier setting is a new change request against the current generation, not generic Undo.
+                送信成功後は確認済みConfig投影を再取得しますが、このローカル下書きが持つ元の基底世代は保持します。
+                古い下書きを再送すると新しいOperationになり、期待世代が古い場合は拒否されます。
             </p>
         }
     </section>
 
     <section>
-        <h2>Tracked mutations</h2>
+        <h2>追跡中の変更</h2>
         @if (_snapshot.Mutations.Count == 0)
         {
-            <p>No Config change or state-changing operational command has been prepared.</p>
+            <p>Config変更または状態変更を伴う運用コマンドはまだ準備されていません。</p>
         }
         else
         {
             <table>
-                <thead><tr><th>Kind</th><th>Request</th><th>OperationId</th><th>State</th><th>Result</th><th>Generation</th><th>Effective step</th></tr></thead>
+                <thead><tr><th>種別</th><th>要求</th><th>OperationId</th><th>状態</th><th>結果</th><th>世代</th><th>有効Step</th></tr></thead>
                 <tbody>
                 @foreach (var mutation in _snapshot.Mutations)
                 {
                     <tr>
-                        <td>@mutation.Kind</td>
+                        <td>@FormatState(mutation.Kind)</td>
                         <td>@mutation.RequestKind</td>
                         <td><code>@mutation.OperationId</code></td>
-                        <td>@mutation.State</td>
+                        <td>@FormatState(mutation.State)</td>
                         <td>@(mutation.ResultCode ?? "-")</td>
                         <td>@FormatGeneration(mutation)</td>
                         <td>@(mutation.EffectiveStep?.ToString() ?? "-")</td>
@@ -159,15 +161,15 @@
     </section>
 
     <section>
-        <h2>Operational command catalog</h2>
+        <h2>運用コマンドカタログ</h2>
         @if (CommandCatalog.Descriptors.Count == 0)
         {
-            <p>No Standard Protocol v1 command kinds are currently registered. Arbitrary command names, shell commands, scripts, and internal method calls remain disabled.</p>
+            <p>現在登録済みのStandard Protocol v1コマンド種別はありません。任意コマンド名、shell command、script、内部method callは無効のままです。</p>
         }
         else
         {
             <table>
-                <thead><tr><th>Command</th><th>Payload schema</th><th>Permission</th><th>Impact</th><th>State-changing</th></tr></thead>
+                <thead><tr><th>コマンド</th><th>Payload schema</th><th>必要権限</th><th>影響</th><th>状態変更</th></tr></thead>
                 <tbody>
                 @foreach (var descriptor in CommandCatalog.Descriptors)
                 {
@@ -175,8 +177,8 @@
                         <td><code>@descriptor.CommandKind</code></td>
                         <td><code>@descriptor.PayloadSchemaId @descriptor.PayloadSchemaMajor.@descriptor.PayloadSchemaMinor</code></td>
                         <td><code>@descriptor.RequiredPermission</code></td>
-                        <td>@descriptor.ImpactClassification</td>
-                        <td>@descriptor.StateChanging</td>
+                        <td>@FormatImpact(descriptor.ImpactClassification)</td>
+                        <td>@(descriptor.StateChanging ? "あり" : "なし")</td>
                     </tr>
                 }
                 </tbody>
@@ -189,12 +191,15 @@
     private ManagementSnapshot _snapshot = default!;
     private readonly ConfigDraftEditor _draftEditor = new();
     private string _draftKey = string.Empty;
-    private ConfigDraftValueKind _draftKind = ConfigDraftValueKind.String;
+    private ConfigDraftValueKind _draftKind = ConfigDraftValueKind.Uint;
     private string _draftValue = string.Empty;
     private string? _draftMessage;
+    private bool _submitting;
 
     private IReadOnlyList<ConfigEntryProjection> EditableEntries
-        => _draftEditor.Target?.Entries.Where(static entry => !entry.Sensitive).ToArray()
+        => _draftEditor.Target?.Entries
+            .Where(static entry => !entry.Sensitive && string.Equals(entry.Mutability, "runtime-safe-alpha", StringComparison.Ordinal))
+            .ToArray()
             ?? Array.Empty<ConfigEntryProjection>();
 
     protected override void OnInitialized()
@@ -213,6 +218,7 @@
     {
         _draftEditor.Begin(config);
         _draftKey = EditableEntries.FirstOrDefault()?.Key ?? string.Empty;
+        _draftKind = ConfigDraftValueKind.Uint;
         _draftValue = string.Empty;
         _draftMessage = null;
     }
@@ -222,7 +228,7 @@
         try
         {
             _draftEditor.SetEdit(_draftKey, _draftKind, _draftValue);
-            _draftMessage = $"Local edit prepared for {_draftKey}.";
+            _draftMessage = $"{_draftKey} のローカル編集を準備しました。";
         }
         catch (Exception ex) when (ex is FormatException or InvalidOperationException or KeyNotFoundException)
         {
@@ -233,7 +239,7 @@
     private void RemoveDraftEdit(string key)
     {
         _draftEditor.RemoveEdit(key);
-        _draftMessage = $"Removed local edit for {key}.";
+        _draftMessage = $"{key} のローカル編集を削除しました。";
     }
 
     private void ValidateDraft()
@@ -241,11 +247,31 @@
         try
         {
             var draft = _draftEditor.BuildDraft(ManagementStore);
-            _draftMessage = $"Local draft shape valid: {draft.Edits.Count} edit(s), expected base generation {draft.BaseConfigGeneration}.";
+            _draftMessage = $"ローカル下書きは有効です: 編集 {draft.Edits.Count} 件 / 期待基底世代 {draft.BaseConfigGeneration}";
         }
         catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
         {
             _draftMessage = ex.Message;
+        }
+    }
+
+    private async Task SubmitDraftAsync()
+    {
+        if (_submitting) return;
+        _submitting = true;
+        try
+        {
+            var draft = _draftEditor.BuildDraft(ManagementStore);
+            var result = await GatewaySession.SubmitConfigChangeAsync(draft);
+            _draftMessage = $"Config変更結果: {result.Result?.Code ?? "result.missing"} / 変更後世代 {result.ResultingGeneration}";
+        }
+        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or IOException)
+        {
+            _draftMessage = ex.Message;
+        }
+        finally
+        {
+            _submitting = false;
         }
     }
 
@@ -254,20 +280,71 @@
         _draftEditor.DiscardLocalDraft();
         _draftKey = string.Empty;
         _draftValue = string.Empty;
-        _draftMessage = "Local draft discarded. No server state or audit history was changed.";
+        _draftMessage = "ローカル下書きを破棄しました。サーバー状態と監査履歴は変更されていません。";
     }
 
     private static string FormatConfigValue(MachiVerse.Protocol.V1.ConfigValueWireV1 value)
         => Google.Protobuf.JsonFormatter.Default.Format(value);
 
+    private static string FormatDraftKind(ConfigDraftValueKind kind)
+        => kind.ToString() switch
+        {
+            "Uint" => "符号なし整数",
+            "Int" => "符号付き整数",
+            "Bool" => "真偽値",
+            "String" => "文字列",
+            var text => text,
+        };
+
     private static string FormatChannel(ManagementChannelState channel)
-        => channel.ReasonCode is null ? channel.State.ToString() : $"{channel.State} ({channel.ReasonCode})";
+    {
+        var state = FormatState(channel.State);
+        return channel.ReasonCode is null ? state : $"{state} ({channel.ReasonCode})";
+    }
+
+    private static string FormatState(object? value)
+        => value?.ToString() switch
+        {
+            "Available" => "利用可能",
+            "Unavailable" => "利用不可",
+            "Unauthorized" => "権限なし",
+            "Redacted" => "秘匿済み",
+            "Success" or "ResultStatusSuccess" => "成功",
+            "NoChange" or "ResultStatusNoChange" => "変更なし",
+            "Prepared" => "準備済み",
+            "Submitted" => "送信済み",
+            "Terminal" or "Completed" => "完了",
+            "DeliveryUnknown" => "配送結果不明",
+            "Rejected" or "ResultStatusRejected" => "拒否",
+            "Failed" or "ResultStatusFailed" => "失敗",
+            null => "-",
+            var text => text,
+        };
+
+    private static string FormatImpact(string? value)
+        => value switch
+        {
+            "low" or "Low" => "低",
+            "medium" or "Medium" => "中",
+            "high" or "High" => "高",
+            null or "" => "-",
+            _ => value,
+        };
+
+    private static string FormatMutability(string? value)
+        => value switch
+        {
+            "runtime-safe-alpha" => "Alpha実行中に変更可能",
+            "operational-read-only-alpha" => "Alpha読み取り専用",
+            null or "" => "-",
+            _ => value,
+        };
 
     private static string FormatGeneration(TrackedManagementMutation mutation)
     {
         var before = mutation.ExpectedBaseGeneration?.ToString() ?? "-";
         var after = mutation.ResultingGeneration?.ToString() ?? "-";
-        return $"{before} -> {after}";
+        return $"{before} → {after}";
     }
 
     public void Dispose() => ManagementStore.Changed -= OnManagementChanged;

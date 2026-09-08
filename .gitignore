@@ -36,6 +36,9 @@ coverage.*
 artifacts/
 .nuget/
 
+# MachiVerse local Alpha runtime data
+.machiverse-alpha/
+
 # OS files
 .DS_Store
 Thumbs.db

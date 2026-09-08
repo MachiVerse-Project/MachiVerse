@@ -9,4 +9,6 @@ public sealed record AdminViewConfig(
     int PresentationTimeoutMs,
     int ConfirmationUxTimeoutSeconds,
     int ReconnectInitialMs,
-    int ReconnectMaxMs);
+    int ReconnectMaxMs,
+    Uri GatewayEndpoint,
+    bool AllowInsecureLoopbackAlpha);

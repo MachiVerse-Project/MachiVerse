@@ -1,26 +1,101 @@
 @page "/"
+@implements IDisposable
 @inject AdminViewConfig Config
 @inject AdminGatewayProtocolClient Gateway
+@inject AdminGatewaySession GatewaySession
+@inject AdminSessionProjectionStore SessionStore
+@inject MonitoringProjectionStore Monitoring
+@inject ManagementProjectionStore Management
 
-<PageTitle>MachiVerse Administration</PageTitle>
+<PageTitle>MachiVerse 管理ビュー</PageTitle>
 
 <main class="shell">
-    <h1>MachiVerse Administration View</h1>
-    <p>Gateway-only system-operator surface.</p>
+    <h1>MachiVerse 管理ビュー</h1>
+    <p>Gateway経由でのみ操作するシステム管理者向け画面です。</p>
     <dl>
-        <dt>Security domain</dt>
-        <dd>@AdminSecurityDomain.DomainId</dd>
-        <dt>Lifecycle</dt>
-        <dd>@Gateway.State</dd>
-        <dt>Dashboard refresh</dt>
+        <dt>セキュリティドメイン</dt>
+        <dd data-e2e="security-domain" data-e2e-value="@AdminSecurityDomain.DomainId">@AdminSecurityDomain.DomainId</dd>
+        <dt>ライフサイクル</dt>
+        <dd data-e2e="lifecycle" data-e2e-value="@Gateway.State">@FormatState(Gateway.State)</dd>
+        <dt>Gateway</dt>
+        <dd>@Config.GatewayEndpoint</dd>
+        <dt>管理セッション</dt>
+        <dd data-e2e="admin-session" data-e2e-value="@SessionStore.Snapshot.State">@FormatState(SessionStore.Snapshot.State)</dd>
+        <dt>ヘルス投影</dt>
+        <dd data-e2e="health-projection" data-e2e-value="@(GatewaySession.HealthLoaded ? "Loaded" : "Pending")">@(GatewaySession.HealthLoaded ? "読込済み" : "待機中")</dd>
+        <dt>Config投影</dt>
+        <dd data-e2e="config-projection" data-e2e-value="@(GatewaySession.ConfigLoaded ? "Loaded" : "Pending")">@(GatewaySession.ConfigLoaded ? "読込済み" : "待機中")</dd>
+        @if (GatewaySession.ConfigGeneration is { } generation)
+        {
+            <dt>Config世代</dt>
+            <dd data-e2e="config-generation" data-e2e-value="@generation">@generation</dd>
+        }
+        <dt>ヘルス対象数</dt>
+        <dd data-e2e="health-targets" data-e2e-value="@Monitoring.Snapshot.Health.Count">@Monitoring.Snapshot.Health.Count</dd>
+        <dt>Config対象数</dt>
+        <dd data-e2e="config-targets" data-e2e-value="@Management.Snapshot.ConfigTargets.Count">@Management.Snapshot.ConfigTargets.Count</dd>
+        <dt>ダッシュボード更新間隔</dt>
         <dd>@Config.DashboardRefreshMs ms</dd>
+        @if (GatewaySession.LastError is { } error)
+        {
+            <dt>Gatewayエラー</dt>
+            <dd data-e2e="gateway-error">@error</dd>
+        }
     </dl>
 
     <nav>
-        <a href="monitoring">Open health / metrics / log / audit</a>
+        <a href="monitoring" data-e2e="open-monitoring">ヘルス / メトリクス / ログ / 監査を開く</a>
         <br />
-        <a href="management">Open Config / operational command management</a>
+        <a href="management" data-e2e="open-management">Config / 運用コマンド管理を開く</a>
         <br />
-        <a href="operations">Open high-impact / simulation Admin Operations</a>
+        <a href="operations" data-e2e="open-operations">高影響 / シミュレーション管理操作を開く</a>
     </nav>
 </main>
+
+@code {
+    protected override void OnInitialized()
+    {
+        GatewaySession.Changed += OnSessionChanged;
+        Gateway.StateChanged += OnGatewayStateChanged;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await GatewaySession.StartAsync();
+        }
+        catch
+        {
+            // The session owns the bounded diagnostic and fail-closed lifecycle state.
+        }
+    }
+
+    private static string FormatState(object? value)
+        => value?.ToString() switch
+        {
+            "Ready" => "準備完了",
+            "Active" => "有効",
+            "Connecting" => "接続中",
+            "Authenticating" => "認証中",
+            "Syncing" => "同期中",
+            "Degraded" => "制限状態",
+            "Revoked" => "失効済み",
+            "Expired" => "期限切れ",
+            "Faulted" or "Failed" => "失敗",
+            null => "-",
+            var text => text,
+        };
+
+    private void OnSessionChanged()
+        => _ = InvokeAsync(StateHasChanged);
+
+    private void OnGatewayStateChanged(AdminViewLifecycleState state)
+        => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        GatewaySession.Changed -= OnSessionChanged;
+        Gateway.StateChanged -= OnGatewayStateChanged;
+    }
+}

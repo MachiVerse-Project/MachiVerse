@@ -1,293 +1,287 @@
 # Admin View設計
 
-Status: Phase 4 implementation baseline aligned
-
 ## 1. 目的
 
-Admin ViewはMachiVerse各componentを運用・診断・設定するsystem operator向けUIです。
+Admin ViewはMachiVerse各componentを運用・診断・設定するためのoperator向けUIです。
 
-General ViewのAdministratorを含む利用者roleとは別auth/authz domainであり、General View権限をAdmin View permissionへ自動昇格しません。
+General Viewの利用者roleとは別系統であり、General View Administrator権限をAdmin View permissionとして扱いません。
 
-実装baselineはPhase 4詳細設計を正本とします。
+Admin Viewは各componentの公開可能なlog、health/status、metrics、Config、operational command、simulation Admin Operation等を扱います。
 
-- `docs/design/phase2-admin-view-internal-design.md`
-- `docs/design/phase4-auth-session-protocol.md`
-- `docs/design/phase4-protocol-payload-catalog.md`
-- `docs/design/phase4-implementation-work-breakdown.md`
-- `docs/design/phase4-test-acceptance.md`
-- `docs/protocols/gateway-admin-view.md`
-- `docs/protocols/schema/`
-- `docs/roadmap/administration-view.md`
+## 2. Auth / permission domain
 
-## 2. Runtime / external boundary
+- General ViewとAdmin Viewのauth/authz domainを明確に分離する。
+- General View Administratorを理由にAdmin View accessを自動付与しない。
+- Admin View userはGatewayを通じてloginする。
+- Q241に従い、login requestはconnected GatewayからMaster Gatewayへproxyされ、Masterでloginを確定する。
+- privilege change/revokeは接続中にも反映可能とし、old privilegeでnew Admin Operationを継続させない。
+- auth outage時もpermission checkをbypassしない。
 
-Standard Admin View runtimeはstandalone Blazor WebAssembly / `net10.0`です。
+Credential、token、IdP、session technologyは未確定です。
 
-Gateway boundary:
+## 3. 主な責務
 
-```text
-Admin View
-  -> TLS binary WebSocket /ws/v1/admin
-  -> Protocol Buffers / mv.gateway-admin-view
-  -> Gateway
-  -> authoritative owner/component
-```
+- component health/status表示
+- structured log参照
+- metrics / diagnostic state表示
+- Config current value・classification・validation stateの表示
+- permitted Config change request UI
+- operational command UI
+- simulation Admin Operation UI
+- high-impact operation confirmation
+- audit trailの参照
+- protocol / Capability mismatchの診断表示
+- Gateway resync / Master generation等のarchitecture-specific status表示
+- save / replay / recovery status表示
+- 将来のaddon managementの運用入口候補
 
-Admin Viewは次へ直接依存しません。
+## 4. 責務外
 
-- Simulation Core connection
-- target component internal object/API
-- target component Config file
-- target component database/filesystem
-- production DLL/shared internal DTO
+- General View利用者向け参加機能
+- Diver / Spectator / Moderator / General View Administrator roleの提供
+- authoritative World State管理
+- simulation rule implementation
+- Core internal mutable stateへのdirect access
+- other component Config fileのdirect edit
+- component internal code/APIへのdirect dependency
+- UIだけで完結するauthorization
+- generic Undoによるhistory消去
+- addon implementationそのものをAdmin View内部で実行・改変すること
 
-External management入口とtarget routingのownerはGatewayです。target unavailable時にdirect internal accessへfallbackしません。
+## 5. Component health / metrics
 
-## 3. Auth / session / permission domain
+Admin Viewは一般的なhealth metricに加え、MachiVerse固有の状態を確認可能にします。
 
-Browser authentication profileはPhase 4 auth/session contractに従います。
+少なくとも次を対象にできます。
 
-- OpenID Connect Core 1.0
-- OAuth 2.0 Authorization Code Grant
-- PKCE `S256`
-- Gateway BFF
-- browser JavaScriptへaccess token/refresh tokenを露出しない
-- opaque Gateway session cookie
-- WebSocket attach時のOrigin/session/auth-domain/session-generation検証
-
-Admin View standard permission registry:
-
-```text
-admin.health.read
-admin.metrics.read
-admin.log.read
-admin.config.read
-admin.config.write.operational
-admin.config.write.presentation
-admin.config.write.simulation
-admin.command.execute.low-impact
-admin.command.execute.high-impact
-admin.operation.submit
-admin.audit.read
-admin.session.read
-admin.security.revoke-session
-```
-
-- General View Administratorから上記permissionを自動付与しない。
-- permission change/revokeごとにsession generationを更新する。
-- old session generationでnew protected requestをadmitしない。
-- UI button visibilityはauthorization authorityではなく、Gatewayがrequestを再認可する。
-- auth/authorization outage時にpermission checkをbypassしない。
-
-## 4. Internal responsibility model
-
-Phase 2で確定した主module:
-
-- `AdminLifecycle`
-- `GatewayProtocolBoundary`
-- `AdminSessionState`
-- `TargetCatalog`
-- `HealthDashboardModel`
-- `LogQueryController`
-- `ConfigManagementController`
-- `CommandController`
-- `SimulationAdminOperationController`
-- `HighImpactConfirmation`
-- `AuditViewModel`
-- `AddonManagementProjection`
-- `PresentationState`
-- `AdminConfigCoordinator`
-- `Observability`
-
-各controllerはprotocol projectionへ依存し、component internal implementationへ依存しません。
-
-## 5. Health / metrics
-
-Admin Viewは`component.health.query` / `component.health.result`とPhase 4 observability contractに基づき、Gatewayから公開されたhealth/status/metricsを表示します。
-
-主なpresentation対象:
-
-- component/target identity and reachability
-- health/readiness
-- Core current Simulation Step / lag
-- Master Gateway identity / MasterGeneration
-- Gateway resync state
+- CPU / memory / connection等
+- Simulation Core current Simulation Step
+- standard 30Hz targetに対するlag
+- Master Gateway identity / generation
+- resyncing Gateway
+- Gateway publication buffer state
+- Operation retry増加
+- relevant dedup/idempotency diagnostic
 - protocol / Capability mismatch
-- ConfigGeneration / validation state
-- retry/dedup diagnostic
-- save/recovery state
-- CPU / memory / connection等のoperational metrics
+- Config validation error
+- save / recovery state
 
-異なるbasisのmetricを同一authoritative snapshotとして誤表示しません。health state自体をWorld Stateと同一視しません。
+Exact metric name、sampling interval、alert thresholdは詳細設計で決定し、調整可能な数値はcomponent Configへ置きます。
 
 ## 6. Structured log
 
-`component.log.query` / `component.log.page`を使用します。
+各componentはstructured logを基本とします。
 
-Phase 4 payload contractではtarget、time range、event kind、CorrelationId、OperationId、basis Step、page/cursorを扱います。表示側はStructuredLogRecordのseverity、BatchId、SimulationStep等を相関できます。
+Admin Viewでは必要に応じ次のcontextを使って検索・関連付けられる方向とします。
 
-- diagnostic logとsecurity/management auditを同一authority/retentionとして扱わない。
-- credential/token/secretをUI側で復元しない。
-- high-volume log/metricsでsession revokeやmutation resultをstarveしない。
-- bounded result window/paginationを使用する。
+- component / instance
+- Simulation Step / World Time
+- Operation ID
+- Batch ID
+- Master generation
+- session/user audit context
 
-## 7. Config read / change
+Log retention、capacity、rotationはcomponentごとの外部Configで設定し、audit logとhigh-volume diagnostic logを同じ保持条件へ固定しません。
 
-### 7.1 Read
+Storage/collector/search technologyは未確定です。
 
-Admin Viewはtarget Config fileを直接開かず、`config.read` / `config.read.result`によるprojectionを表示します。
+## 7. Config参照・変更
 
-保持するread modelには少なくとも次を含めます。
+### 7.1 Ownership
 
-- target
-- ConfigGeneration
-- ConfigDigest reference
-- field values permitted for disclosure
-- impact/mutability classification
-- validation state
+各componentが自身のConfig fileを所有します。
 
-sensitive valueはPhase 4 Config公開policyに従いdefault非公開です。
+Admin Viewはother component Config fileをdirect read/writeするのではなく、管理protocolを通じて公開値とchange requestを扱います。
 
-### 7.2 Change
+### 7.2 Classification
 
-`config.change` / `config.change.result`を使用します。
+Admin Viewは必要に応じ、Config itemが次のどのclassificationかを表示できる方向とします。
 
-- stable OperationId / immutable payload digest
-- expected base ConfigGeneration
-- normalized change set
-- owner-side type/range/cross-constraint validation
-- atomic change-set semantics
-- simulation-affecting場合のauthoritative effective Step
-- resulting ConfigGeneration / digest
+- simulation-affecting / display-or-ops-only
+- runtime mutable
+- restart required
+- world regeneration required
+- other explicit safe boundary required
 
-stale ConfigGenerationをsilent overwriteしません。invalid setをpartial apply前提で扱いません。
+### 7.3 Change semantics
 
-Generic Undoは提供しません。元の値へ戻す場合もcurrent generationをbaseにしたnew change requestとします。
+- GatewayがAdmin permission、request format、target、allowed conditionを検証する。
+- Target componentが自身のtype/range/cross-constraintを検証する。
+- invalid change setをpartial applyしない。
+- simulation-affecting runtime changeはexplicit Simulation Stepへatomicに適用しhistoryへ記録する。
+- startup Configに不整合があればcomponent/worldを起動しない。
+- generic Undoは設けない。元の値へ戻す場合もnew Admin Operation/change requestとして実行する。
+
+### 7.4 Old Config compatibility
+
+Old Configにnew fieldが不足する場合、owner componentはdefaultを適用し、そのfieldをConfig fileへ追加するQ214要件に従います。
+
+Admin View自身がそのfile migrationを直接実行するとは限りません。
 
 ## 8. Operational command
 
-`operational.command`はregistered/defined commandだけをrequestします。
+Admin Viewはdefined operational commandをtarget componentへrequestできます。
 
-`CommandController`は少なくとも次のmetadataを扱います。
+Commandごとに少なくとも次を明確にする必要があります。
 
-```text
-command type
-target kind
-parameter schema reference
-required permission
-impact classification
-idempotency requirement
-confirmation classification
-```
+- target
+- permission
+- parameter
+- simulation-affecting classification
+- safe execution boundary
+- idempotency / retry
+- timeout
+- result / error semantics
 
-state-changing commandはOperationId / immutable payload digestを持ちます。MessageId / CorrelationIdをdedup identityに使用しません。
-
-Exact command catalogはPhase 4でwire schemaとして固定せず、`ADMIN-03`とGateway実装のcross-reviewで確定します。arbitrary internal method、shell、scriptをgeneric commandとして実行できる設計にしません。
+Concrete command listは詳細設計で決定します。
 
 ## 9. Simulation Admin Operation
 
-Worldへ影響するAdmin OperationはAdmin View→Gateway→Simulation Core pathを使用します。
+Simulationへ影響するAdmin OperationはAdmin View→Gateway→Simulation Coreの経路を使用します。
 
-Gateway:
+Q235/Q275に従い責務を分離します。
 
-- Admin authentication/authorization
+### Gateway
+
+- Admin authn/authz
 - operation format
 - target
 - Admin operationとしてのallowed condition
-- protocol validation
+- protocol-level validation
 
-Simulation Core:
+### Simulation Core
 
-- UI roleを解釈しない
-- World State invariant / reference consistencyを維持する
-- deterministic scheduling/state-transition contractを維持する
+- UI上のAdmin roleを解釈しない。
+- 全Operation共通のWorld State invariant/state-transition consistencyを維持する。
+- Gateway-approved Admin Operationでもcommon invariantを破壊するstate transitionを無条件適用しない。
 
-Admin由来という理由だけでsimulation-affecting Operationを無条件最優先にしません。candidate Stepをauthoritative effective Stepとして表示せず、Core確定resultを待ちます。
+Simulation-affecting Admin Operationは、単にAdmin由来という理由でunconditional highest priorityにしません。Simulation-non-affecting operationに限りAdmin highest priorityを許容します。
 
-## 10. High-impact confirmation
+Login以外のAdmin Core OperationをMaster Gateway pathへ統一するかは未確定です。
 
-World destruction、mass state change、time control、大規模simulation-affecting Config change等のhigh-impact actionは追加確認とaudit対象です。
+## 10. High-impact operation
 
-Phase 4で確定している安全条件:
+World destruction、大量変更、time control、大規模Config change等のhigh-impact Admin Operationは追加確認・audit対象とします。
 
-- high-impact command authorizationには`admin.command.execute.high-impact`等の対応permissionを使用する。
-- simulation Admin Operationは`admin.operation.submit`をGatewayで認可する。
-- confirmation state/tokenをOperationIdまたはauthorization credentialの代替にしない。
-- confirmation後もsubmit時にGateway authorizationを通す。
-- confirmation expiry後は再確認を要求する。
-- ACK / acceptedをterminal effect successと表示しない。
+- actor
+- target
+- requested content
+- Operation ID
+- applicable Simulation Step
+- result
+- reject reason
 
-Exact confirmation UX/evidence representationはStandard Protocol v1へ新しいmessage familyを追加せず、`ADMIN-04`実装時に既存Protocol/BFF/session契約と整合させて確定します。wire変更が必要になった場合は実装より先にdesign amendmentを行います。
+等を追跡可能にします。
+
+Exact high-impact category、confirmation count、multi-person approval、UI flowは詳細設計で決定します。
 
 ## 11. Audit / no generic Undo
 
-Admin View local historyをauthoritative audit storeとしません。
+Admin Operationは少なくとも次をaudit可能にします。
 
-Audit presentationは少なくとも次を相関します。
-
-- actor reference
-- OperationId / request identity
-- CorrelationId
-- target
-- operation type
-- requested content summary
+- actor
 - request time
-- effective SimulationStep/boundary
-- ConfigGeneration
-- result status/code
+- Operation ID / request ID
+- operation type
+- target
+- request content
+- application Simulation Step / effective boundary
+- result
 - reject reason
+- related Config change
 
-Gateway側authorization/routing factとtarget component execution factを相関表示します。local cache削除でserver-side audit factを消しません。
+Generic Undoは設けません。
 
-## 12. Pause / reconnect / failure
+Past Operationをhistoryから消して戻すのではなく、以前のvalue/stateへ近づけるためのnew Operationを実行し、そのnew Operationもauditします。
 
-- Pause中にsimulation-affecting Operationをstopped Stepへ曖昧applyしない。
-- reconnect retryでstable request/OperationIdを別identityへ変更しない。
-- Gateway disconnect時のdelivery-unknown stateはstatus convergenceで解決する。
-- session revoke後はnew protected mutationを停止する。
-- Config stale generationではprojection refreshを要求しsilent overwriteしない。
-- protocol mismatch時は`INCOMPATIBLE`としてnormal managementを停止する。
+Savepoint recovery / replayは別のrecovery conceptです。
 
-## 13. Addon boundary
+## 12. Pauseとの関係
 
-Addon compatibility/status presentationは将来拡張のUI boundaryとして維持します。
+- Pause中もAdmin requestの受信・auth・queue保持を可能にする。
+- simulation-affecting OperationはPause中のstopped Simulation Stepへ曖昧applyしない。
+- Resume後のexplicit valid Stepへdeterministicにassignmentする。
+- simulation-non-affecting operational actionはPause中でも実行可能なcategoryを持てる。
 
-現在のPhase 4 production work package `ADMIN-01..ADMIN-04` にはAddon install/update/disable/removeのstandard implementationは含まれていません。
+## 13. Addon managementの位置付け
 
-Phase 2で確定している範囲:
+MachiVerseはofficial addonとthird-party addonを許容します。
 
-- installed/known Addon compatibility metadata表示
-- version/Capability/dependency mismatch表示
-- target startup safety state表示
-- official/third-party trust classificationを表示可能なboundary
+Addonはcomponent単位で設定可能です。
 
-未確定のAddon install機能をgeneric file upload/internal code loading APIとして先行実装しません。詳細は`addon-boundary-safety.md`に従います。
+Admin Viewをaddon install/update/disable/removeの運用入口にすることは望ましい方向ですが、**Admin Viewからのaddon installation機能そのものはまだ確定済みstandard requirementではありません。**
 
-## 14. Protocol / Capability error display
+将来その機能を持たせる場合も、Admin Viewがtarget component内部へ無制限direct accessする構造にはしません。
 
-Admin Viewはstable result/error codeに基づき少なくとも次を診断できるようにします。
+## 14. Addon protocol boundary
 
-- protocol version mismatch
+- Standard protocolへaddon functional payload、addon command、generic extension data areaを載せない。
+- Addon install/identity/version/required/provided Capability等のconnection safety/compatibility meta informationはstandard protocolで交換可能。
+- Addon-specific cross-component functional communicationはprotocol framework addon等とadditional protocol側へ分離する。
+
+Concrete addon API/package/runtime loading方式は未確定です。
+
+## 15. Addon compatibility / startup safety
+
+- addon target component/protocol version、required/provided Capability、dependency addon等を検証可能にする。
+- addon configurationに不整合があれば重大度に関係なくtarget componentを起動しない。
+- saved worldが依存するaddon/version/Capabilityに不整合がある場合も、explicit migrationが完全成功しない限りworldを起動しない。
+- addon updateはexplicit operationとし、apply前にcompatibility/Capability/Config impactを確認する。
+- simulation-affecting addon updateはsafe Simulation Step/restart boundary等でapplyする。
+- addon disable/remove前にdependencyとpersistent world/save impactを確認する。
+
+## 16. Official addon trust
+
+Official addonはstore-style distribution routeを持つ方向とし、少なくともhash verificationまたは同等のintegrity verificationを行います。
+
+- Hash aloneはpublisher identity proofではない。
+- exact hash algorithm、signature、metadata、verification granularity、failure handlingは未確定。
+- Official addonとして提供する保証範囲はthird-party addonと区別する。
+
+## 17. Third-party addon trust
+
+Third-party addonはoperator/user自身の責任で導入する方針です。
+
+- Official addonと同等の保証を自動的に与えない。
+- UI上でofficial / third-partyのtrust differenceを明確に区別する方向とする。
+- Third-party addonであってもMachiVerse standard component/protocol boundaryを黙って破壊してよいわけではない。
+
+Sandbox、permission model、signature requirement等の具体security mechanismは未確定です。
+
+## 18. Protocol / Capability error display
+
+Admin Viewではoperatorが少なくとも次を診断可能にする方向です。
+
+- Major protocol mismatch
 - required Capability missing
-- auth/session stale/revoke
-- authorization reject
-- Config stale/invalid
-- target unavailable/resyncing
-- Operation pending/terminal failure
+- addon compatibility mismatch
+- Config invalid
+- Master generation/problem
+- Gateway resync
+- save/recovery incompatibility
 
-Machine behaviorをdiagnostic textの文字列比較へ依存させません。
+Exact error code/UIは詳細設計で決定します。
 
-## 15. Implementation roadmap
+## 19. Component reachability
 
-Current standard implementation work:
+Admin Viewとのexternal management boundaryはGatewayが所有します。
 
-| Work ID | Scope |
-|---|---|
-| `ADMIN-01` | Admin View scaffold / Gateway protocol client |
-| `ADMIN-02` | Health / metrics / log / audit UI |
-| `ADMIN-03` | Config / operational command management |
-| `ADMIN-04` | High-impact / simulation Admin Operation |
+ただしCore以外のcomponentへのすべてのmanagement requestをGatewayがproxyするか、component-specific management protocolを別途設けるかは未確定です。
 
-Implementation order/dependencyは`docs/roadmap/administration-view.md`と`phase4-implementation-work-breakdown.md`を正本とします。
+どの方式でもcomponent code independenceとprotocol-only communicationを維持します。
 
-Phase番号ベースで同内容を再設計せず、Phase 4からimplementation workへ移行します。
+## 20. 詳細設計へ残す事項
+
+- Admin auth/token/session technology
+- exact permission matrix
+- metrics/log schema and collector
+- Config management message schema
+- operational command list
+- high-impact confirmation flow
+- audit storage/retention
+- component management reachability architecture
+- addon install/update UIをstandardに含めるかの最終決定
+- addon package/signature/hash詳細
+- official store metadata/distribution
+- third-party trust/security mechanism
+- protocol/Capability error UI
