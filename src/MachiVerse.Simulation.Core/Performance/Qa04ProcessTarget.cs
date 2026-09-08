@@ -73,8 +73,10 @@ public static class Qa04ProcessTargetV1
         int workerCount,
         CancellationToken cancellationToken)
     {
-        var probe = new ProcessConcurrencyProbe(workerCount);
-        var runtimes = StandardDomainExecutionPlanV1.Create().Entries
+        var plan = StandardDomainExecutionPlanV1.Create();
+        var expectedConcurrency = Math.Min(workerCount, plan.Entries.Count);
+        var probe = new ProcessConcurrencyProbe(expectedConcurrency);
+        var runtimes = plan.Entries
             .Select(entry => (IDomainRuntimeV1)new ProbeDomainRuntime(entry.DomainToken, probe))
             .ToArray();
         var target = new Qa04DomainExecutionTargetV1(workerCount, runtimes);
@@ -88,7 +90,7 @@ public static class Qa04ProcessTargetV1
             WorkerCount = receipt.WorkerCount,
             DomainCount = receipt.DomainOutputs.Count,
             MaxObservedConcurrency = probe.MaxConcurrency,
-            WorkerCountAppliedToDomainExecutor = probe.MaxConcurrency == workerCount,
+            WorkerCountAppliedToDomainExecutor = receipt.WorkerCount == workerCount && probe.MaxConcurrency == expectedConcurrency,
             ReferenceWorldMaterialized = false,
             ReleaseEvidenceCapable = false,
             BlockingFailureCodes = ["qa04.target.reference-world-not-materialized"],
