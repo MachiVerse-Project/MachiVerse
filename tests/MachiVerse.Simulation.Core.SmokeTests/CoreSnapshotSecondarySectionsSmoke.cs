@@ -121,8 +121,11 @@ internal static class CoreSnapshotSecondarySectionsSmoke
             "Stale config snapshot Step must be rejected.");
 
         var unknownConfigPayload = configSection.Fragments[0].FragmentPayload.Concat(new byte[] { 0x30, 0x00 }).ToArray();
+        var unknownConfigFragments = configSection.Fragments
+            .Select((fragment, index) => index == 0 ? fragment with { FragmentPayload = unknownConfigPayload } : fragment)
+            .ToArray();
         RequireRejected(
-            () => CoreConfigStateSnapshotWireCodecV1.Decode(unknownConfigPayload),
+            () => CoreSnapshotSecondarySemanticVerifierV1.Config(step).Verify(unknownConfigFragments),
             "snapshot-core.config.unknown-field",
             "Unknown authoritative config field must be rejected.");
 
