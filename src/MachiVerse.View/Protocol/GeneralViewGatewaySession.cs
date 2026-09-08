@@ -186,7 +186,7 @@ public sealed class GeneralViewGatewaySession(
                 ViewParticipationBindingIdentityV1.PayloadSchemaMinor,
                 payload.ToByteString(),
                 SemanticTarget: "participation.binding",
-                PredictedPayload: ByteString.Empty);
+                PredictedPayload: ByteString.CopyFromUtf8("local.presentation.participation-binding-requested.v1"));
             _ = operations.Prepare(draft, operationId, digest);
             var request = operations.TakeForSubmission(operationId);
             _ = ViewParticipationBindingIdentityV1.ValidateStandardOperation(request);
