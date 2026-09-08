@@ -30,6 +30,7 @@ public sealed record ViewSessionProjection(
     string? SessionId,
     string EffectiveRoleSet,
     ulong SessionGeneration,
+    string? DiverRef,
     IReadOnlyList<string> EffectivePermissions,
     string? ReasonCode)
 {
@@ -58,6 +59,7 @@ public sealed class ViewSessionProjectionStore
         SessionId: null,
         EffectiveRoleSet: string.Empty,
         SessionGeneration: 0,
+        DiverRef: null,
         EffectivePermissions: Array.Empty<string>(),
         ReasonCode: "auth.session-unknown");
 
@@ -111,6 +113,13 @@ public sealed class ViewSessionProjectionStore
             previous = permission;
         }
 
+        var requiresDiverRef = permissions.BinarySearchOrdinal(ViewPermissionTokens.OperationDiver)
+            || permissions.BinarySearchOrdinal(ViewPermissionTokens.ParticipationBind);
+        if (wire.HasDiverRef)
+            ValidateId128(wire.DiverRef, nameof(wire.DiverRef));
+        if (requiresDiverRef && !wire.HasDiverRef)
+            throw new InvalidDataException("Diver-authorized General View session requires diver_ref.");
+
         var state = (int)wire.Status switch
         {
             1 => ViewSessionAccessState.Active,
@@ -125,6 +134,7 @@ public sealed class ViewSessionProjectionStore
             Hex(wire.SessionId),
             wire.EffectiveRoleSet,
             wire.SessionGeneration,
+            wire.HasDiverRef ? Hex(wire.DiverRef) : null,
             permissions,
             state switch
             {
@@ -139,14 +149,18 @@ public sealed class ViewSessionProjectionStore
 
     private static void ValidateStableToken(string value, string field)
     {
-        if (string.IsNullOrEmpty(value))
-            throw new InvalidDataException($"{field} must be non-empty.");
-        foreach (var ch in value)
+        if (string.IsNullOrEmpty(value) || value.Length > 64 || !IsLowerAlphaNumeric(value[0]))
+            throw new InvalidDataException($"{field} must use StableToken grammar.");
+        for (var i = 1; i < value.Length; i++)
         {
-            if (ch > 0x7f || char.IsControl(ch) || char.IsWhiteSpace(ch))
-                throw new InvalidDataException($"{field} must use canonical ASCII token text.");
+            var ch = value[i];
+            if (!IsLowerAlphaNumeric(ch) && ch is not ('.' or '_' or '/' or '-'))
+                throw new InvalidDataException($"{field} must use StableToken grammar.");
         }
     }
+
+    private static bool IsLowerAlphaNumeric(char value)
+        => value is >= 'a' and <= 'z' or >= '0' and <= '9';
 
     private static void ValidateId128(ByteString value, string field)
     {
