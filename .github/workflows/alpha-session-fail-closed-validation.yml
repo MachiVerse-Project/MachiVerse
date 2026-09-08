@@ -119,6 +119,7 @@ jobs:
 
           set +e
           node <<'JS'
+          const {execFileSync}=require('node:child_process');
           const pages = await (await fetch('http://127.0.0.1:9424/json/list')).json();
           const page = pages.find(x => x.type === 'page' && x.url.includes('127.0.0.1:5750')) ?? pages.find(x => x.type === 'page');
           if (!page?.webSocketDebuggerUrl || typeof WebSocket === 'undefined') process.exit(2);
@@ -146,15 +147,30 @@ jobs:
             let text=await waitText('Diver Participation');
             if(valueAfter(text,'Session state')!=='Active' || valueAfter(text,'Session generation')!=='1') throw new Error('Fresh session is not Active generation 1.\n'+text);
             if(valueAfter(text,'Status')!=='None' || valueAfter(text,'Binding generation')!=='0') throw new Error('Fresh world unexpectedly contains a binding.\n'+text);
+
+            execFileSync('dotnet',[
+              'run','--project','tests/MachiVerse.Alpha.ProtocolProbe/MachiVerse.Alpha.ProtocolProbe.csproj',
+              '--configuration','Release','--no-build','--','concurrent-view'
+            ],{stdio:'inherit'});
+
+            const rejectedOrigin=await fetch(`http://127.0.0.1:5520/alpha/control/view-session/${terminal}`,{
+              method:'POST',headers:{Origin:'https://example.invalid'}
+            });
+            if(rejectedOrigin.status!==403) throw new Error('Browser-origin Alpha control request was not rejected; status='+rejectedOrigin.status);
+
             const response=await fetch(`http://127.0.0.1:5520/alpha/control/view-session/${terminal}`,{method:'POST'});
             if(!response.ok) throw new Error('Could not schedule terminal session '+terminal+': '+await response.text());
             await clickText('Request Alpha binding');
-            text=await waitText(expectedReason);
+            text=await waitText(`Binding Operation ${expectedReason}`);
             if(valueAfter(text,'Session state')!==expectedState) throw new Error('Terminal session state did not reach View.\n'+text);
             if(valueAfter(text,'Session generation')!=='2') throw new Error('Terminal session generation is not 2.\n'+text);
             if(valueAfter(text,'Binding request UX')!=='unavailable') throw new Error('Terminal session still exposes binding mutation UX.\n'+text);
             if(valueAfter(text,'Status')!=='None' || valueAfter(text,'Binding generation')!=='0' || valueAfter(text,'Projection basis Step')!=='0') throw new Error('Terminal session invented or accepted a world binding mutation.\n'+text);
             await assertCoreBasisZero();
+
+            await clickLinkText('Back to world view');
+            text=await waitText('Lifecycle\nDegraded');
+            if(valueAfter(text,'Confirmed basis')!=='0') throw new Error('Terminal session changed confirmed world basis.\n'+text);
           };
 
           await runCase('revoked','Revoked','auth.session-revoked');
