@@ -43,6 +43,11 @@ public static class Qa04ProcessTargetV1
                     request.RecordCount,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "detail-substate-two-step-probe" => await Qa04DetailSubstateAuthorityBridgeV1.RunTwoStepAsync(
+                    request.WorkerCount,
+                    request.RecordCount,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 _ => throw new InvalidDataException("qa04.target.command-unsupported"),
             };
 
@@ -75,6 +80,7 @@ public static class Qa04ProcessTargetV1
             InitialResidentLifecycle = Qa04ReferenceWorldMaterializerV1.InitialResidentLifecycle.Value,
             AuthoritativeStepStructuralBridgeAvailable = true,
             CoreSubstateTwoStepBridgeAvailable = true,
+            DetailSubstateTwoStepBridgeAvailable = true,
             ReferenceWorldMaterialized = false,
             AuthoritativeStepLoopAvailable = false,
             ReleaseEvidenceCapable = false,
@@ -246,6 +252,7 @@ public sealed class Qa04ProcessInspectionV1
     public string InitialResidentLifecycle { get; set; } = "";
     public bool AuthoritativeStepStructuralBridgeAvailable { get; set; }
     public bool CoreSubstateTwoStepBridgeAvailable { get; set; }
+    public bool DetailSubstateTwoStepBridgeAvailable { get; set; }
     public bool ReferenceWorldMaterialized { get; set; }
     public bool AuthoritativeStepLoopAvailable { get; set; }
     public bool ReleaseEvidenceCapable { get; set; }
