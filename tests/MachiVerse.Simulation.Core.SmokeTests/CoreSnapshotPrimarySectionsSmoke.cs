@@ -20,7 +20,10 @@ internal static class CoreSnapshotPrimarySectionsSmoke
         {
             new ScheduledOperationRefV1(opA, 31, orderA),
             new ScheduledOperationRefV1(opB, 31, orderB),
-        };
+        }
+        .OrderBy(static item => item.OrderKey)
+        .ThenBy(static item => item.OperationId)
+        .ToArray();
         var payloadA = SHA256.HashData("operation-a"u8);
         var payloadB = SHA256.HashData("operation-b"u8);
         var durable = new[]
