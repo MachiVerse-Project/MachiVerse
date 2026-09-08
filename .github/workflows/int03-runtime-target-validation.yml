@@ -40,9 +40,9 @@ jobs:
         run: |
           set -euo pipefail
           core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
-          printf '%s\n' '{"schemaVersion":"1.0","command":"inspect","workerCount":0}' \
+          printf '%s\n' '{"schemaVersion":"1.0","command":"inspect","workerCount":0,"recordCount":0}' \
             | "$core" qa04-target > "$RUNNER_TEMP/core-inspect.json"
-          printf '%s\n' '{"schemaVersion":"1.0","command":"worker-probe","workerCount":16}' \
+          printf '%s\n' '{"schemaVersion":"1.0","command":"worker-probe","workerCount":16,"recordCount":0}' \
             | "$core" qa04-target > "$RUNNER_TEMP/core-worker.json"
           python3 - "$RUNNER_TEMP/core-inspect.json" "$RUNNER_TEMP/core-worker.json" <<'PY'
           import json, sys
@@ -54,6 +54,9 @@ jobs:
           assert inspect['canonicalWorkerCounts'] == [1, 4, 8, 16], inspect
           assert inspect['standardDomainCount'] == 8, inspect
           assert inspect['standardPartitionCount'] == 97, inspect
+          assert inspect['residentIdentityMaterializationAvailable'] is True, inspect
+          assert inspect['canonicalResidentCount'] == 1000000, inspect
+          assert inspect['initialResidentLifecycle'] == 'alive', inspect
           assert inspect['referenceWorldMaterialized'] is False, inspect
           assert inspect['releaseEvidenceCapable'] is False, inspect
           assert worker['workerCount'] == 16, worker
@@ -61,6 +64,37 @@ jobs:
           assert worker['maxObservedConcurrency'] == 8, worker
           assert worker['workerCountAppliedToDomainExecutor'] is True, worker
           assert worker['releaseEvidenceCapable'] is False, worker
+          PY
+      - name: Materialize canonical 1,000,000 Resident identity records
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          printf '%s\n' '{"schemaVersion":"1.0","command":"resident-materialize-probe","workerCount":0,"recordCount":1000000}' \
+            | "$core" qa04-target > "$RUNNER_TEMP/core-resident-materialization.json"
+          python3 - "$RUNNER_TEMP/core-resident-materialization.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['profileId'] == 'perf.reference.v1', result
+          assert result['partitionId'] == 'resident.identity_lifecycle', result
+          assert result['requestedRecordCount'] == 1000000, result
+          assert result['materializedRecordCount'] == 1000000, result
+          assert result['canonicalResidentCount'] == 1000000, result
+          assert result['d0Count'] == 100000, result
+          assert result['d1Count'] == 300000, result
+          assert result['d2Count'] == 400000, result
+          assert result['d3Count'] == 200000, result
+          assert result['initialLifecycle'] == 'alive', result
+          assert result['birthStepSpecified'] is False, result
+          assert result['lineageGeneration'] == 1, result
+          assert result['profileToken'] == 'perf.reference.v1', result
+          assert len(result['partitionDigest']) == 64 and set(result['partitionDigest']) != {'0'}, result
+          assert len(result['stateDigest']) == 64 and set(result['stateDigest']) != {'0'}, result
+          assert result['canonicalResidentPopulationComplete'] is True, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
           PY
       - name: Prove external adapter reaches Core and fails closed
         shell: bash
