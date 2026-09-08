@@ -118,12 +118,13 @@ internal static class Sim15ObservabilitySmoke
 
         using var telemetry = new CoreTelemetryV1();
         using var scope = telemetry.StartSpan(CoreSpanRegistryV1.StepTransition, parent);
-        Require(started is not null, "observability.trace.w3c-propagation did not start a sampled Core span.");
-        Require(started.IdFormat == ActivityIdFormat.W3C,
+        var child = started ?? throw new InvalidOperationException(
+            "observability.trace.w3c-propagation did not start a sampled Core span.");
+        Require(child.IdFormat == ActivityIdFormat.W3C,
             "observability.trace.w3c-propagation child span is not W3C format.");
-        Require(started.TraceId == parent.TraceId,
+        Require(child.TraceId == parent.TraceId,
             "observability.trace.w3c-propagation child span did not preserve TraceId.");
-        Require(started.ParentSpanId == parent.SpanId,
+        Require(child.ParentSpanId == parent.SpanId,
             "observability.trace.w3c-propagation child span did not preserve parent SpanId.");
     }
 
