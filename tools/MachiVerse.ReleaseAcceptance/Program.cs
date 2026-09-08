@@ -8,6 +8,7 @@ internal static class Program
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true,
     };
 
@@ -44,7 +45,7 @@ internal static class Program
         Console.WriteLine("INT-03 ReleaseAcceptanceRecordV1 contract verification PASS");
         Console.WriteLine($"Manifest SHA-256: {Sha256Hex(manifestBytes)}");
         Console.WriteLine($"Required suites: {manifest.RequiredSuiteIds.Length}");
-        Console.WriteLine($"Required performance profiles: {string.Join(",", manifest.RequiredPerformanceProfiles.Order(StringComparer.Ordinal))}");
+        Console.WriteLine($"Required performance profiles: {string.Join(",", manifest.RequiredPerformanceProfiles.OrderBy(static x => x, StringComparer.Ordinal))}");
         Console.WriteLine($"Minimum soak duration: {manifest.Soak.MinimumDurationSeconds} seconds");
         Console.WriteLine("Short CI is contract validation only; it is not performance.soak.24h evidence.");
         return 0;
@@ -71,16 +72,16 @@ internal static class Program
         {
             SchemaVersion = manifest.SchemaVersion,
             BuildVersion = "replace-with-build-version",
-            SourceCommit = new string('0', 40),
-            SchemaRegistryDigest = new string('0', 64),
-            AlgorithmRegistryDigest = new string('0', 64),
-            ConfigSchemaDigest = new string('0', 64),
+            SourceCommit = new string('1', 40),
+            SchemaRegistryDigest = new string('a', 64),
+            AlgorithmRegistryDigest = new string('b', 64),
+            ConfigSchemaDigest = new string('c', 64),
             TestSuiteVersion = manifest.TestSuiteVersion,
             PassedTestIds = [],
             SuiteEvidence = [],
             PerformanceReports = [],
             Soak = null,
-            DeterminismDigestSummary = new string('0', 64),
+            DeterminismDigestSummary = new string('d', 64),
             KnownWaivers = [],
             ObservedFailureCodes = [],
         };
@@ -93,7 +94,7 @@ internal static class Program
 
     private static Evaluation Evaluate(AcceptanceManifest manifest, ReleaseEvidence evidence)
     {
-        ValidateEvidenceShape(manifest, evidence);
+        ValidateEvidenceShape(evidence);
         var incomplete = new SortedSet<string>(StringComparer.Ordinal);
         var failures = new SortedSet<string>(StringComparer.Ordinal);
 
@@ -182,12 +183,12 @@ internal static class Program
             AlgorithmRegistryDigest = evidence.AlgorithmRegistryDigest,
             ConfigSchemaDigest = evidence.ConfigSchemaDigest,
             TestSuiteVersion = evidence.TestSuiteVersion,
-            PassedTestIds = evidence.PassedTestIds.Order(StringComparer.Ordinal).ToArray(),
+            PassedTestIds = evidence.PassedTestIds.OrderBy(static x => x, StringComparer.Ordinal).ToArray(),
             PerformanceReportRefs = evidence.PerformanceReports
                 .Select(static x => x.ReportRef)
                 .Where(static x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.Ordinal)
-                .Order(StringComparer.Ordinal)
+                .OrderBy(static x => x, StringComparer.Ordinal)
                 .ToArray(),
             DeterminismDigestSummary = evidence.DeterminismDigestSummary,
             KnownWaivers = evidence.KnownWaivers.OrderBy(static x => x.Code, StringComparer.Ordinal).ToArray(),
@@ -319,7 +320,7 @@ internal static class Program
             throw new InvalidDataException("ReleaseAcceptanceRecordV1 field contract drifted from P4-08.");
     }
 
-    private static void ValidateEvidenceShape(AcceptanceManifest manifest, ReleaseEvidence evidence)
+    private static void ValidateEvidenceShape(ReleaseEvidence evidence)
     {
         if (string.IsNullOrWhiteSpace(evidence.BuildVersion) || evidence.BuildVersion.Length > 128)
             throw new InvalidDataException("buildVersion must be non-empty and <=128 characters.");
@@ -328,7 +329,7 @@ internal static class Program
         RequireLowerHex(evidence.AlgorithmRegistryDigest, 64, "algorithmRegistryDigest", allowAllZero: false);
         RequireLowerHex(evidence.ConfigSchemaDigest, 64, "configSchemaDigest", allowAllZero: false);
         RequireLowerHex(evidence.DeterminismDigestSummary, 64, "determinismDigestSummary", allowAllZero: false);
-        RequireUniqueNonEmpty(evidence.PassedTestIds, "passedTestIds");
+        RequireUniqueNonEmpty(evidence.PassedTestIds, "passedTestIds", allowEmpty: true);
         RequireUniqueNonEmpty(evidence.ObservedFailureCodes, "observedFailureCodes", allowEmpty: true);
 
         foreach (var suite in evidence.SuiteEvidence)
