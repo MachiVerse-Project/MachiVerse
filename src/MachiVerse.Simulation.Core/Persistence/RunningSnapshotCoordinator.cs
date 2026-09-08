@@ -14,6 +14,13 @@ public sealed record RunningSnapshotCutV1(
     IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations)
 {
     public ulong SnapshotStep => FrozenState.Header.Step;
+
+    /// <summary>
+    /// Present only when the strict owner-material freeze overload was used. The material remains
+    /// runtime/schema-owner data; exact Core snapshot wire serialization is intentionally deferred
+    /// until the P4-04 Core section payload amendment is authoritative.
+    /// </summary>
+    public CoreSnapshotOwnerMaterialCutV1? CoreOwnerMaterial { get; init; }
 }
 
 /// <summary>
@@ -44,10 +51,33 @@ public sealed class RunningSnapshotCoordinatorV1
            finalizedStep % _intervalSteps == 0 &&
            (newestCommittedSnapshotStep is null || newestCommittedSnapshotStep.Value < finalizedStep);
 
-    public async Task<RunningSnapshotCutV1?> TryFreezeIfDueAsync(
+    public Task<RunningSnapshotCutV1?> TryFreezeIfDueAsync(
         WorldStateV1 finalizedState,
         SqlitePersistenceStore store,
         CancellationToken cancellationToken = default)
+        => TryFreezeInternalAsync(finalizedState, store, supplementalOwnerMaterial: null, cancellationToken);
+
+    /// <summary>
+    /// Strict running-snapshot freeze for the six Core recovery owners. Scheduler/Operation material
+    /// is read from the same SQLite recovery transaction as the snapshot head; detail/domain-registry/
+    /// Config material is supplied by its owning runtime and must independently recompute the frozen
+    /// authoritative digest. Missing/stale/digest-only substitutes fail closed before the cut is exposed.
+    /// </summary>
+    public Task<RunningSnapshotCutV1?> TryFreezeWithCoreOwnerMaterialIfDueAsync(
+        WorldStateV1 finalizedState,
+        SqlitePersistenceStore store,
+        IEnumerable<IFrozenCoreSnapshotOwnerMaterialV1> supplementalOwnerMaterial,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(supplementalOwnerMaterial);
+        return TryFreezeInternalAsync(finalizedState, store, supplementalOwnerMaterial, cancellationToken);
+    }
+
+    private async Task<RunningSnapshotCutV1?> TryFreezeInternalAsync(
+        WorldStateV1 finalizedState,
+        SqlitePersistenceStore store,
+        IEnumerable<IFrozenCoreSnapshotOwnerMaterialV1>? supplementalOwnerMaterial,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(finalizedState);
         ArgumentNullException.ThrowIfNull(store);
@@ -83,6 +113,16 @@ public sealed class RunningSnapshotCoordinatorV1
         if (!SubstateEquals(finalizedState.SchedulerState, schedulerAuthority))
             throw new InvalidDataException("snapshot-running.scheduler-authority-mismatch");
 
+        CoreSnapshotOwnerMaterialCutV1? coreOwnerMaterial = null;
+        if (supplementalOwnerMaterial is not null)
+        {
+            coreOwnerMaterial = CoreSnapshotOwnerMaterialCutV1.Create(
+                finalizedState,
+                recovery.DurableOperations,
+                recovery.ScheduledOperations,
+                supplementalOwnerMaterial);
+        }
+
         var snapshotId = DeriveSnapshotId(
             finalizedState.Header.WorldId,
             finalizedState.Header.Step,
@@ -95,7 +135,10 @@ public sealed class RunningSnapshotCoordinatorV1
             recovery.HistoryAnchor,
             recovery.StateContinuityToken.ToArray(),
             recovery.DurableOperations,
-            recovery.ScheduledOperations);
+            recovery.ScheduledOperations)
+        {
+            CoreOwnerMaterial = coreOwnerMaterial,
+        };
 
         lock (_sync)
         {
