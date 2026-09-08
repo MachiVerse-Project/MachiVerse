@@ -123,6 +123,8 @@ public sealed class RunningSnapshotCoordinatorV1
             if (currentAnchor.Sequence == ulong.MaxValue)
                 throw new OverflowException("HistorySequence cannot wrap.");
 
+            var logicalDigest = snapshotDigest.ToArray();
+            var physicalDigest = physicalManifestDigest.ToArray();
             var relativeDirectory = Path.GetRelativePath(world.GenerationDirectory, physical.FinalDirectory)
                 .Replace('\\', '/');
             var snapshot = new SnapshotCommitMaterial(
@@ -130,13 +132,13 @@ public sealed class RunningSnapshotCoordinatorV1
                 cut.SnapshotStep,
                 cut.HistoryAnchor,
                 cut.StateContinuityToken.ToArray(),
-                snapshotDigest.ToArray(),
-                physicalManifestDigest.ToArray(),
+                logicalDigest,
+                physicalDigest,
                 relativeDirectory);
 
             var payloadBytes = cut.SnapshotId.ToBytes()
-                .Concat(snapshotDigest.ToArray())
-                .Concat(physicalManifestDigest.ToArray())
+                .Concat(logicalDigest)
+                .Concat(physicalDigest)
                 .ToArray();
             var history = HistoryRecordMaterial.Create(
                 cut.FrozenState.Header.WorldId,
@@ -155,8 +157,8 @@ public sealed class RunningSnapshotCoordinatorV1
                     writer.WriteUnsigned(2); writer.WriteUnsigned(cut.HistoryAnchor.Sequence);
                     writer.WriteUnsigned(3); writer.WriteBytes(cut.HistoryAnchor.Digest);
                     writer.WriteUnsigned(4); writer.WriteBytes(cut.StateContinuityToken);
-                    writer.WriteUnsigned(5); writer.WriteBytes(snapshotDigest.Span);
-                    writer.WriteUnsigned(6); writer.WriteBytes(physicalManifestDigest.Span);
+                    writer.WriteUnsigned(5); writer.WriteBytes(logicalDigest);
+                    writer.WriteUnsigned(6); writer.WriteBytes(physicalDigest);
                 });
 
             return await SnapshotCommitCoordinator.CommitAsync(
@@ -200,6 +202,8 @@ public sealed class RunningSnapshotCoordinatorV1
         if (historyAnchorDigest.Length != 32) throw new ArgumentException("History anchor digest must be 32 bytes.", nameof(historyAnchorDigest));
         if (stateContinuityToken.Length != 32) throw new ArgumentException("State continuity token must be 32 bytes.", nameof(stateContinuityToken));
 
+        var anchorDigest = historyAnchorDigest.ToArray();
+        var continuityToken = stateContinuityToken.ToArray();
         for (ulong nonce = 0; ; nonce++)
         {
             var digest = HashSuite.DomainHash("mv.snapshot-id.v1", writer =>
@@ -208,8 +212,8 @@ public sealed class RunningSnapshotCoordinatorV1
                 writer.WriteUnsigned(0); writer.WriteBytes(worldId.ToBytes());
                 writer.WriteUnsigned(1); writer.WriteUnsigned(snapshotStep);
                 writer.WriteUnsigned(2); writer.WriteUnsigned(historyAnchorSequence);
-                writer.WriteUnsigned(3); writer.WriteBytes(historyAnchorDigest);
-                writer.WriteUnsigned(4); writer.WriteBytes(stateContinuityToken);
+                writer.WriteUnsigned(3); writer.WriteBytes(anchorDigest);
+                writer.WriteUnsigned(4); writer.WriteBytes(continuityToken);
                 if (nonce != 0)
                 {
                     writer.WriteUnsigned(5); writer.WriteUnsigned(nonce);
