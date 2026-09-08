@@ -3,6 +3,13 @@ using System.Security.Cryptography;
 using Google.Protobuf;
 using MachiVerse.Protocol.V1;
 
+if (args.Length == 1 && string.Equals(args[0], "concurrent-view", StringComparison.Ordinal))
+{
+    await ProbeConcurrentViewRejectedAsync();
+    Console.WriteLine("Alpha Gateway concurrent View session probe passed.");
+    return;
+}
+
 await ProbeWrongDomainAsync(new Uri("ws://127.0.0.1:5520/ws/v1/view"), "mv.gateway-view", (AuthDomainWireV1)2);
 await ProbeWrongDomainAsync(new Uri("ws://127.0.0.1:5520/ws/v1/admin"), "mv.gateway-admin-view", (AuthDomainWireV1)1);
 Console.WriteLine("Alpha Gateway wrong-domain probes passed.");
@@ -11,7 +18,35 @@ static async Task ProbeWrongDomainAsync(Uri endpoint, string protocolId, AuthDom
 {
     using var socket = new ClientWebSocket();
     await socket.ConnectAsync(endpoint, CancellationToken.None);
+    await NegotiateAsync(socket, protocolId);
+    await SendAsync(socket, Envelope(
+        protocolId,
+        "auth.login",
+        "protocol.auth-login-request",
+        new AuthLoginBeginV1 { AuthDomain = wrongDomain },
+        major: 1,
+        negotiationGeneration: 1));
+    await RequireProtocolCloseAsync(socket, protocolId, "auth.unauthorized");
+}
 
+static async Task ProbeConcurrentViewRejectedAsync()
+{
+    const string protocolId = "mv.gateway-view";
+    using var socket = new ClientWebSocket();
+    await socket.ConnectAsync(new Uri("ws://127.0.0.1:5520/ws/v1/view"), CancellationToken.None);
+    await NegotiateAsync(socket, protocolId);
+    await SendAsync(socket, Envelope(
+        protocolId,
+        "auth.login",
+        "protocol.auth-login-request",
+        new AuthLoginBeginV1 { AuthDomain = (AuthDomainWireV1)1 },
+        major: 1,
+        negotiationGeneration: 1));
+    await RequireProtocolCloseAsync(socket, protocolId, "auth.concurrent-alpha-view-session");
+}
+
+static async Task NegotiateAsync(ClientWebSocket socket, string protocolId)
+{
     var hello = new ProtocolHelloV1 { ProtocolId = protocolId };
     hello.SupportedVersions.Add(new SupportedVersionRangeV1 { Major = 1, MinMinor = 0, MaxMinor = 0 });
     hello.ProvidedCapabilities.Add("protocol.protobuf.v1");
@@ -30,23 +65,18 @@ static async Task ProbeWrongDomainAsync(Uri endpoint, string protocolId, AuthDom
     var accept = ProtocolAcceptV1.Parser.ParseFrom(acceptEnvelope.Payload);
     if (accept.NegotiatedVersion is null || accept.NegotiatedVersion.Major != 1 || accept.NegotiationGeneration != 1)
         throw new InvalidOperationException($"{protocolId}: negotiation did not establish v1 generation 1.");
+}
 
-    await SendAsync(socket, Envelope(
-        protocolId,
-        "auth.login",
-        "protocol.auth-login-request",
-        new AuthLoginBeginV1 { AuthDomain = wrongDomain },
-        major: 1,
-        negotiationGeneration: 1));
-
+static async Task RequireProtocolCloseAsync(ClientWebSocket socket, string protocolId, string expectedReason)
+{
     var buffer = new byte[4096];
     var result = await socket.ReceiveAsync(buffer, CancellationToken.None);
     if (result.MessageType != WebSocketMessageType.Close)
-        throw new InvalidOperationException($"{protocolId}: wrong-domain login was not closed fail-closed.");
+        throw new InvalidOperationException($"{protocolId}: request was not closed fail-closed.");
     if (result.CloseStatus != WebSocketCloseStatus.ProtocolError)
-        throw new InvalidOperationException($"{protocolId}: wrong-domain close status was {result.CloseStatus}, expected ProtocolError.");
-    if (result.CloseStatusDescription is null || !result.CloseStatusDescription.Contains("auth.unauthorized", StringComparison.Ordinal))
-        throw new InvalidOperationException($"{protocolId}: wrong-domain close reason did not preserve auth.unauthorized.");
+        throw new InvalidOperationException($"{protocolId}: close status was {result.CloseStatus}, expected ProtocolError.");
+    if (result.CloseStatusDescription is null || !result.CloseStatusDescription.Contains(expectedReason, StringComparison.Ordinal))
+        throw new InvalidOperationException($"{protocolId}: close reason did not preserve {expectedReason}.");
 }
 
 static WireEnvelopeV1 Envelope(
