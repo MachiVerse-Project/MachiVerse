@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
+using System.Text;
 using Google.Protobuf;
 using MachiVerse.Gateway.State;
 using MachiVerse.Protocol.V1;
@@ -71,6 +72,7 @@ public sealed class AlphaViewBridge(
                 throw new InvalidDataException("auth.unauthorized: Alpha View bridge accepts GENERAL_VIEW only.");
 
             var sessionId = RandomId128();
+            var diverRef = DeriveAlphaDiverRef(_coreOptions.GatewayLogicalId);
             await SendAsync(socket, NormalResponse(
                 loginEnvelope,
                 "auth.login.result",
@@ -89,6 +91,7 @@ public sealed class AlphaViewBridge(
                 EffectiveRoleSet = "general-view.alpha",
                 SessionGeneration = 1,
                 Status = (SessionWireStatusV1)1,
+                DiverRef = diverRef,
             };
             sessionState.EffectivePermissions.Add("view.operation.diver");
             sessionState.EffectivePermissions.Add("view.participation.bind");
@@ -124,7 +127,7 @@ public sealed class AlphaViewBridge(
                     {
                         if (activeSubscriptionId is null)
                             throw new InvalidDataException("protocol.missing-required: world.subscribe is required before binding operations.");
-                        await HandleBindingRequestAsync(socket, activeSubscriptionId, request, context.RequestAborted);
+                        await HandleBindingRequestAsync(socket, activeSubscriptionId, diverRef, request, context.RequestAborted);
                         break;
                     }
                     default:
@@ -151,6 +154,7 @@ public sealed class AlphaViewBridge(
     private async Task HandleBindingRequestAsync(
         WebSocket socket,
         ByteString subscriptionId,
+        ByteString authenticatedDiverRef,
         WireEnvelopeV1 request,
         CancellationToken cancellationToken)
     {
@@ -165,12 +169,38 @@ public sealed class AlphaViewBridge(
             !request.OperationContext.HasOperationPayloadDigest ||
             !request.OperationContext.OperationPayloadDigest.Equals(operation.ImmutablePayloadDigest))
             throw new InvalidDataException("protocol.payload-schema-mismatch: operation context does not match binding request.");
-        if (!string.Equals(operation.OperationKind, "participation.binding.create", StringComparison.Ordinal))
-            throw new InvalidDataException("auth.unauthorized: Alpha View bridge permits only participation.binding.create.");
+        if (!string.Equals(operation.OperationKind, "participation.binding.create", StringComparison.Ordinal) ||
+            !string.Equals(operation.OperationPayloadSchemaId, "operation.participation.binding.create", StringComparison.Ordinal) ||
+            operation.OperationPayloadSchemaVersion is null ||
+            operation.OperationPayloadSchemaVersion.Major != 1 ||
+            operation.OperationPayloadSchemaVersion.Minor != 0)
+            throw new InvalidDataException("auth.unauthorized: Alpha View bridge permits only participation.binding.create v1.0.");
+
+        ParticipationBindingRequestV1 bindingRequest;
+        try
+        {
+            bindingRequest = ParticipationBindingRequestV1.Parser.ParseFrom(operation.OperationPayload);
+        }
+        catch (InvalidProtocolBufferException ex)
+        {
+            throw new InvalidDataException("request.invalid: malformed Participation binding payload.", ex);
+        }
+        RequireId128(bindingRequest.DiverRef, "diver_ref");
+        if (!bindingRequest.OperationId.Equals(operation.OperationId) ||
+            !bindingRequest.ImmutablePayloadDigest.Equals(operation.ImmutablePayloadDigest))
+            throw new InvalidDataException("protocol.operation-payload-mismatch");
+        if (!bindingRequest.DiverRef.Equals(authenticatedDiverRef))
+            throw new InvalidDataException("auth.unauthorized: binding diver_ref does not match authenticated session identity.");
 
         var before = _confirmedCache.Current ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
         if (request.WorldContext.BasisStep != before.BasisStep)
             throw new InvalidDataException("world.basis-stale");
+        var confirmedBinding = ReadConfirmedBinding(before);
+        if (bindingRequest.ExpectedBindingGeneration != confirmedBinding.BindingGeneration)
+            throw new InvalidDataException("request.stale: binding generation changed.");
+        if ((int)confirmedBinding.Status == 2)
+            throw new InvalidDataException("request.conflict: Diver already has an active binding.");
+
         var result = await _operations.SubmitAsync(operation, cancellationToken);
         var entry = result.Entries.SingleOrDefault(item => item.OperationId.Equals(operation.OperationId))
             ?? throw new InvalidDataException("protocol.operation-result-missing");
@@ -199,8 +229,19 @@ public sealed class AlphaViewBridge(
             return;
 
         var advanced = await WaitForConfirmedAdvanceAsync(before.BasisStep, cancellationToken);
+        var resultingBinding = ReadConfirmedBinding(advanced);
+        if (!resultingBinding.HasDiverRef || !resultingBinding.DiverRef.Equals(authenticatedDiverRef) ||
+            resultingBinding.BindingGeneration != checked(bindingRequest.ExpectedBindingGeneration + 1))
+            throw new InvalidDataException("component.binding-projection-actor-generation-mismatch");
         await SendConfirmedFullAsync(socket, subscriptionId, request, cancellationToken, advanced);
         await SendBindingStateAsync(socket, request, cancellationToken, advanced);
+    }
+
+    private static ParticipationBindingViewV1 ReadConfirmedBinding(ConfirmedStateSnapshot snapshot)
+    {
+        var record = snapshot.Records.Values.SingleOrDefault(item => string.Equals(item.SchemaId, BindingSchemaId, StringComparison.Ordinal))
+            ?? throw new InvalidDataException("component.binding-projection-unavailable");
+        return ParticipationBindingViewV1.Parser.ParseFrom(record.Payload);
     }
 
     private async Task<ConfirmedStateSnapshot> WaitForConfirmedAdvanceAsync(ulong previousBasisStep, CancellationToken cancellationToken)
@@ -223,9 +264,7 @@ public sealed class AlphaViewBridge(
     {
         var snapshot = suppliedSnapshot ?? _confirmedCache.Current
             ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
-        var record = snapshot.Records.Values.SingleOrDefault(item => string.Equals(item.SchemaId, BindingSchemaId, StringComparison.Ordinal))
-            ?? throw new InvalidDataException("component.binding-projection-unavailable");
-        var binding = ParticipationBindingViewV1.Parser.ParseFrom(record.Payload);
+        var binding = ReadConfirmedBinding(snapshot);
         var world = CurrentWorldContext(snapshot.BasisStep);
         await SendAsync(socket, NormalResponse(
             request,
@@ -465,6 +504,19 @@ public sealed class AlphaViewBridge(
     {
         if (value.Length != 16 || value.Span.IndexOfAnyExcept((byte)0) < 0)
             throw new InvalidDataException($"protocol.invalid-id:{field}");
+    }
+
+    private static ByteString DeriveAlphaDiverRef(ByteString gatewayLogicalId)
+    {
+        RequireId128(gatewayLogicalId, "gateway_logical_id");
+        var label = Encoding.ASCII.GetBytes("machiverse.alpha.diver-ref.v1");
+        var preimage = new byte[gatewayLogicalId.Length + label.Length];
+        gatewayLogicalId.Span.CopyTo(preimage);
+        label.CopyTo(preimage, gatewayLogicalId.Length);
+        var digest = SHA256.HashData(preimage);
+        var bytes = digest.AsSpan(0, 16).ToArray();
+        if (bytes.AsSpan().IndexOfAnyExcept((byte)0) < 0) bytes[^1] = 1;
+        return ByteString.CopyFrom(bytes);
     }
 
     private static ByteString RandomId128()
