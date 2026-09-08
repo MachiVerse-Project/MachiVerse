@@ -263,7 +263,7 @@ public static class DurableOperationSubstateV1
                 writer.WriteUnsigned(7);
                 if (state.TerminalStatus is { } status)
                 {
-                    writer.WriteArrayStart(1); writer.WriteSigned(status);
+                    writer.WriteArrayStart(1); writer.WriteInt64(status);
                 }
                 else writer.WriteArrayStart(0);
                 writer.WriteUnsigned(8);
