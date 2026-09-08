@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using Google.Protobuf;
 using MachiVerse.Protocol.V1;
 using MachiVerse.View.Operations;
@@ -195,14 +194,6 @@ public sealed class DiverParticipationController : IDisposable
             encoded.PredictedPayload);
 
         var tracked = _operations.Prepare(operationDraft, operationId, digest);
-        var prepared = _operations.TakeForSubmission(operationId);
-        _ = ViewParticipationBindingIdentityV1.ValidateStandardOperation(prepared);
-        // Put it back into a retryable, not-yet-confirmed delivery state without changing identity.
-        _operations.MarkDeliveryUnknown(operationId);
-        var retry = _operations.RetryDelivery(operationId);
-        if (!retry.Equals(prepared))
-            throw new InvalidDataException("participation.binding-prepared-identity-drift");
-
         Draft = Draft with
         {
             PendingOperationId = tracked.OperationId,
