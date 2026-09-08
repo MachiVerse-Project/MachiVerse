@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -56,8 +57,8 @@ public static class CoreSnapshotOwnerSectionRegistryV1
 
 /// <summary>
 /// Immutable logical owner cut captured at the same Step boundary as RunningSnapshotCutV1.
-/// It deliberately carries typed/runtime owner material only; persistence serialization waits for
-/// the exact P4-04 Core section wire amendment rather than inventing bytes from canonical digests.
+/// The cut owns deep copies of mutable scheduler/Operation material so background snapshot drain
+/// cannot observe caller mutation after the Step consistency barrier is released.
 /// </summary>
 public sealed class CoreSnapshotOwnerMaterialCutV1
 {
@@ -70,8 +71,8 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
         IReadOnlyDictionary<string, IFrozenCoreSnapshotOwnerMaterialV1> supplemental)
     {
         Header = CloneHeader(header);
-        DurableOperations = Array.AsReadOnly(durableOperations.ToArray());
-        ScheduledOperations = Array.AsReadOnly(scheduledOperations.ToArray());
+        DurableOperations = Array.AsReadOnly(durableOperations.Select(CloneDurableOperation).ToArray());
+        ScheduledOperations = Array.AsReadOnly(scheduledOperations.Select(CloneScheduledOperation).ToArray());
         _supplemental = supplemental;
     }
 
@@ -191,4 +192,24 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
             header.MasterGeneration,
             header.RateGeneration,
             header.PreviousStateDigest);
+
+    private static DurableOperationStateV1 CloneDurableOperation(DurableOperationStateV1 state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state with
+        {
+            OperationPayloadDigest = state.OperationPayloadDigest.ToArray(),
+            RichResultPayload = state.RichResultPayload?.ToArray(),
+        };
+    }
+
+    private static ScheduledOperationRefV1 CloneScheduledOperation(ScheduledOperationRefV1 scheduled)
+    {
+        ArgumentNullException.ThrowIfNull(scheduled);
+        scheduled.Validate();
+        return new ScheduledOperationRefV1(
+            scheduled.OperationId,
+            scheduled.EffectiveStep,
+            SameStepOrderKey.FromDatabaseBytes(scheduled.OrderKey.ToDatabaseBytes()));
+    }
 }
