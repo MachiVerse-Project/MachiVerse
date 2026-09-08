@@ -86,11 +86,8 @@ public sealed class StepPartitionStateMaterialV1
 
 /// <summary>
 /// A deterministic State(S+1) prepared from State(S) and a commit-eligible StepCandidate. It is
-/// deliberately non-publishable: durability has not yet established authority.
-///
-/// This initial surface carries the four core substates and master/rate generations forward
-/// unchanged. A future candidate type must explicitly bind changes to those substates before this
-/// surface is widened; they are never silently accepted as unbound Step output here.
+/// deliberately non-publishable: durability has not yet established authority. Partition and core
+/// substate replacements are accepted only when the StepCandidate contains a matching binding.
 /// </summary>
 public sealed class PreparedStepWorldStateV1
 {
@@ -140,7 +137,8 @@ public static class StepStateApplicationV1
     public static PreparedStepWorldStateV1 Prepare(
         WorldStateV1 basisState,
         StepCandidateV1 candidate,
-        IEnumerable<StepPartitionStateMaterialV1> partitionMaterials)
+        IEnumerable<StepPartitionStateMaterialV1> partitionMaterials,
+        IEnumerable<StepCoreSubstateStateMaterialV1>? coreSubstateMaterials = null)
     {
         ArgumentNullException.ThrowIfNull(basisState);
         ArgumentNullException.ThrowIfNull(candidate);
@@ -181,11 +179,40 @@ public static class StepStateApplicationV1
                 candidate.TargetStep);
         }
 
+        var coreMaterials = (coreSubstateMaterials ?? Array.Empty<StepCoreSubstateStateMaterialV1>())
+            .Select(material => material ?? throw new ArgumentNullException(nameof(coreSubstateMaterials)))
+            .ToArray();
+        if (coreMaterials.Select(static material => material.Kind).Distinct().Count() != coreMaterials.Length)
+            throw new InvalidDataException("step-state.duplicate-core-substate-material");
+        var coreCandidates = candidate.CoreSubstateCandidates.ToDictionary(static item => item.Kind);
+        var coreByKind = coreMaterials.ToDictionary(static item => item.Kind);
+        if (!coreCandidates.Keys.ToHashSet().SetEquals(coreByKind.Keys))
+            throw new InvalidDataException("step-state.core-substate-material-coverage-mismatch");
+        foreach (var pair in coreCandidates)
+            coreByKind[pair.Key].ValidateFor(pair.Value);
+
         var nextPartitions = basisState.Partitions.CanonicalEntries
             .Select(partition => materialByPartition.TryGetValue(partition.Header.PartitionId, out var material)
                 ? new PartitionStateRefV1(material.ResultingHeader)
                 : partition)
             .ToArray();
+
+        var nextScheduler = ResultingSubstate(
+            StepCoreSubstateKindV1.Scheduler,
+            basisState.SchedulerState,
+            coreByKind);
+        var nextOperation = ResultingSubstate(
+            StepCoreSubstateKindV1.Operation,
+            basisState.OperationState,
+            coreByKind);
+        var nextDetail = ResultingSubstate(
+            StepCoreSubstateKindV1.Detail,
+            basisState.DetailState,
+            coreByKind);
+        var nextDomainRegistry = ResultingSubstate(
+            StepCoreSubstateKindV1.DomainRegistry,
+            basisState.DomainRegistryState,
+            coreByKind);
 
         var nextHeader = new WorldStateHeaderV1(
             basisState.Header.WorldId,
@@ -198,10 +225,10 @@ public static class StepStateApplicationV1
         var nextState = new WorldStateV1(
             nextHeader,
             new OrderedPartitionDirectoryV1(nextPartitions),
-            basisState.SchedulerState,
-            basisState.OperationState,
-            basisState.DetailState,
-            basisState.DomainRegistryState,
+            nextScheduler,
+            nextOperation,
+            nextDetail,
+            nextDomainRegistry,
             candidate.ConfigDigest);
 
         if (nextState.Header.PreviousStateDigest is null ||
@@ -243,4 +270,12 @@ public static class StepStateApplicationV1
 
         return new AuthoritativeStepWorldStateV1(prepared, receipt);
     }
+
+    private static WorldSubstateRefV1 ResultingSubstate(
+        StepCoreSubstateKindV1 kind,
+        WorldSubstateRefV1 basis,
+        IReadOnlyDictionary<StepCoreSubstateKindV1, StepCoreSubstateStateMaterialV1> materials)
+        => materials.TryGetValue(kind, out var material)
+            ? material.ResultingState
+            : basis;
 }
