@@ -6,6 +6,7 @@
 @inject ParticipationPreferenceCatalog PreferenceCatalog
 @inject AbsencePolicyProfileCatalog AbsenceCatalog
 @inject GeneralViewGatewaySession GatewaySession
+@inject PublicationConsumer Publications
 
 <PageTitle>Participation</PageTitle>
 
@@ -38,6 +39,18 @@
         {
             <p>@_actionMessage</p>
         }
+    </section>
+
+    <section>
+        <h2>Confirmed publication</h2>
+        <dl>
+            <dt>Publication lifecycle</dt><dd>@Publications.LifecycleState</dd>
+            <dt>Last accepted publication</dt><dd>@(Publications.LastAcceptedPublicationKind ?? "-")</dd>
+            <dt>Base continuity token</dt><dd><code>@(Publications.LastAcceptedBaseContinuityTokenHex ?? "-")</code></dd>
+            <dt>Continuity token</dt><dd><code>@(Publications.LastAcceptedContinuityTokenHex ?? "-")</code></dd>
+            <dt>Resync reason</dt><dd>@(Publications.ResyncReason ?? "-")</dd>
+        </dl>
+        <p>DELTA is accepted only when its base token exactly matches the installed confirmed snapshot. A continuity mismatch moves the View to Resyncing instead of installing the candidate state.</p>
     </section>
 
     <section>

@@ -18,6 +18,9 @@ public sealed class PublicationConsumer(ConfirmedWorldStore store)
 
     public ViewLifecycleState LifecycleState { get; private set; } = ViewLifecycleState.Syncing;
     public string? ResyncReason { get; private set; }
+    public string? LastAcceptedPublicationKind { get; private set; }
+    public string? LastAcceptedBaseContinuityTokenHex { get; private set; }
+    public string? LastAcceptedContinuityTokenHex { get; private set; }
 
     public ConfirmedWorldSnapshot Consume(
         StatePublicationV1 publication,
@@ -28,6 +31,17 @@ public sealed class PublicationConsumer(ConfirmedWorldStore store)
         {
             var snapshot = BuildCandidate(publication, basisStep, chunks);
             store.Install(snapshot);
+            var kind = (int)publication.Kind;
+            LastAcceptedPublicationKind = kind switch
+            {
+                PublicationFull => "FULL",
+                PublicationDelta => "DELTA",
+                _ => throw new InvalidDataException("protocol.invalid-publication-kind")
+            };
+            LastAcceptedBaseContinuityTokenHex = publication.HasBaseStateContinuityToken
+                ? Convert.ToHexStringLower(publication.BaseStateContinuityToken.Span)
+                : null;
+            LastAcceptedContinuityTokenHex = Convert.ToHexStringLower(publication.StateContinuityToken.Span);
             LifecycleState = ViewLifecycleState.Ready;
             ResyncReason = null;
             return snapshot;
