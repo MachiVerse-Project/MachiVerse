@@ -61,6 +61,7 @@ jobs:
           )
           ports=(5521 5522 5523 5524)
           pids=(0 0 0 0)
+          slow_pid=0
 
           MACHIVERSE_ALPHA_LOCAL=1 \
           MACHIVERSE_ALPHA_MULTI_GATEWAY=1 \
@@ -76,8 +77,8 @@ jobs:
             for pid in "${pids[@]}"; do
               if [[ "$pid" != 0 ]]; then kill "$pid" 2>/dev/null || true; fi
             done
-            kill "${slow_pid:-0}" 2>/dev/null || true
-            kill "$core_pid" 2>/dev/null || true
+            if [[ "$slow_pid" != 0 ]]; then kill "$slow_pid" 2>/dev/null || true; fi
+            if [[ "$core_pid" != 0 ]]; then kill "$core_pid" 2>/dev/null || true; fi
           }
           trap cleanup EXIT
 
