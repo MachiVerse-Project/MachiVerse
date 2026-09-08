@@ -25,11 +25,12 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.400
-      - name: Build Core Gateway and General View
+      - name: Build Core Gateway General View and protocol probe
         run: |
           dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
           dotnet build src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release
           dotnet build src/MachiVerse.View/MachiVerse.View.csproj --configuration Release
+          dotnet build tests/MachiVerse.Alpha.ProtocolProbe/MachiVerse.Alpha.ProtocolProbe.csproj --configuration Release
       - name: Exercise terminal session transitions
         shell: bash
         run: |
@@ -92,6 +93,8 @@ jobs:
             if ! kill -0 "$gateway_pid" 2>/dev/null; then cat "$gateway_log"; cat "$core_log"; exit 1; fi
             sleep 1
           done
+
+          dotnet run --project tests/MachiVerse.Alpha.ProtocolProbe/MachiVerse.Alpha.ProtocolProbe.csproj --configuration Release --no-build
 
           ASPNETCORE_URLS=http://127.0.0.1:5750 \
           dotnet run --project src/MachiVerse.View/MachiVerse.View.csproj --configuration Release --no-build --no-launch-profile >"$view_log" 2>&1 &
