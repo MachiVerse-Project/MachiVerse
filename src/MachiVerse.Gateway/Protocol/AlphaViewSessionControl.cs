@@ -10,20 +10,22 @@ public enum AlphaViewSessionTerminalKind
 /// <summary>
 /// Local-Alpha-only test/control-plane seam used by INT-01 to cause a canonical
 /// auth.session.changed terminal transition. It never authorizes requests and is not
-/// part of the Standard Protocol surface. Alpha accepts exactly one active General View
-/// session while this seam is enabled so a scheduled transition cannot target another tab.
+/// part of the Standard Protocol surface. By default Alpha accepts exactly one active
+/// General View session so a scheduled transition cannot target another tab. INT-02 may
+/// explicitly enable concurrent sessions for churn/slow-consumer integration coverage;
+/// terminal scheduling remains fail-closed unless exactly one session is active.
 /// </summary>
-public sealed class AlphaViewSessionControl
+public sealed class AlphaViewSessionControl(bool allowConcurrentSessions = false)
 {
     private readonly object _gate = new();
-    private string? _activeSessionIdHex;
-    private AlphaViewSessionTerminalKind _pendingTerminal;
+    private readonly HashSet<string> _activeSessionIds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AlphaViewSessionTerminalKind> _pendingTerminalBySession = new(StringComparer.Ordinal);
 
     public bool HasActiveSession
     {
         get
         {
-            lock (_gate) return _activeSessionIdHex is not null;
+            lock (_gate) return _activeSessionIds.Count != 0;
         }
     }
 
@@ -32,10 +34,11 @@ public sealed class AlphaViewSessionControl
         ValidateSessionIdHex(sessionIdHex);
         lock (_gate)
         {
-            if (_activeSessionIdHex is not null)
+            if (!allowConcurrentSessions && _activeSessionIds.Count != 0)
                 return false;
-            _activeSessionIdHex = sessionIdHex;
-            _pendingTerminal = AlphaViewSessionTerminalKind.None;
+            if (!_activeSessionIds.Add(sessionIdHex))
+                return false;
+            _pendingTerminalBySession.Remove(sessionIdHex);
             return true;
         }
     }
@@ -45,10 +48,8 @@ public sealed class AlphaViewSessionControl
         ValidateSessionIdHex(sessionIdHex);
         lock (_gate)
         {
-            if (!string.Equals(_activeSessionIdHex, sessionIdHex, StringComparison.Ordinal))
-                return;
-            _activeSessionIdHex = null;
-            _pendingTerminal = AlphaViewSessionTerminalKind.None;
+            _activeSessionIds.Remove(sessionIdHex);
+            _pendingTerminalBySession.Remove(sessionIdHex);
         }
     }
 
@@ -65,9 +66,10 @@ public sealed class AlphaViewSessionControl
 
         lock (_gate)
         {
-            if (_activeSessionIdHex is null)
+            if (_activeSessionIds.Count != 1)
                 return false;
-            _pendingTerminal = kind;
+            var activeSessionId = _activeSessionIds.Single();
+            _pendingTerminalBySession[activeSessionId] = kind;
             return true;
         }
     }
@@ -77,10 +79,9 @@ public sealed class AlphaViewSessionControl
         ValidateSessionIdHex(sessionIdHex);
         lock (_gate)
         {
-            if (!string.Equals(_activeSessionIdHex, sessionIdHex, StringComparison.Ordinal))
+            if (!_activeSessionIds.Contains(sessionIdHex) ||
+                !_pendingTerminalBySession.Remove(sessionIdHex, out var pending))
                 return AlphaViewSessionTerminalKind.None;
-            var pending = _pendingTerminal;
-            _pendingTerminal = AlphaViewSessionTerminalKind.None;
             return pending;
         }
     }
