@@ -149,47 +149,56 @@ public sealed class CoreMasterAuthorityCoordinatorV1
         CancellationToken cancellationToken = default)
     {
         if (gatewayLogicalId.IsZero) throw new ArgumentException("Gateway logical id cannot be ZERO.", nameof(gatewayLogicalId));
-        var gateway = _sessions.RequireRegistered(gatewayLogicalId);
-        if ((int)gateway.Readiness is not (ReadinessResyncing or ReadinessReady))
-            throw new CoreGatewayProtocolException("component.unavailable", "Gateway is not eligible for Master assignment.");
 
         await _mutationGate.WaitAsync(cancellationToken);
         try
         {
+            var gateway = _sessions.RequireRegistered(gatewayLogicalId);
+            if (!IsAssignmentEligible(gateway))
+                throw new CoreGatewayProtocolException("component.unavailable", "Gateway is not eligible for Master assignment.");
+            return await AssignMasterUnderGateAsync(gatewayLogicalId, reasonCode, cancellationToken);
+        }
+        finally
+        {
+            _mutationGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Reconciles the Core-owned Master authority with the currently registered Gateway set.
+    /// Automatic election only chooses READY gateways and uses the registry's canonical logical-id order.
+    /// RESYNCING remains eligible for an explicit recovery assignment through AssignMasterAsync, but cannot
+    /// win an automatic election before it has a confirmed synchronized projection.
+    /// </summary>
+    public async Task<CoreMasterAuthoritySnapshotV1> ReconcileAsync(
+        StableToken reasonCode,
+        CancellationToken cancellationToken = default)
+    {
+        await _mutationGate.WaitAsync(cancellationToken);
+        try
+        {
             var current = Current;
-            if (current.CurrentMasterGatewayId == gatewayLogicalId) return current;
-            if (current.MasterGeneration == ulong.MaxValue) throw new OverflowException("MasterGeneration cannot wrap.");
+            var sessions = _sessions.Snapshot();
+            if (current.CurrentMasterGatewayId is { } currentMaster)
+            {
+                var stillEligible = sessions.Any(gateway =>
+                    gateway.GatewayLogicalId == currentMaster && IsAutomaticElectionEligible(gateway));
+                if (stillEligible) return current;
+            }
 
-            var nextGeneration = current.MasterGeneration + 1;
-            var head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
-            if (head.MasterGeneration != current.MasterGeneration)
-                throw new CoreGatewayProtocolException("master.stale-generation", "Persisted MasterGeneration changed concurrently.");
-            var anchor = await _store.ReadHistoryAnchorAsync(cancellationToken);
-            if (anchor.Sequence == ulong.MaxValue) throw new OverflowException("HistorySequence cannot wrap.");
+            var candidate = sessions
+                .Where(IsAutomaticElectionEligible)
+                .OrderBy(static gateway => gateway.GatewayLogicalId)
+                .FirstOrDefault();
+            if (candidate is null)
+            {
+                if (current.CurrentMasterGatewayId is null) return current;
+                var unavailable = current with { CurrentMasterGatewayId = null };
+                Volatile.Write(ref _current, unavailable);
+                return unavailable;
+            }
 
-            var physicalPayload = EncodeMasterGenerationChanged(current.MasterGeneration, nextGeneration, reasonCode);
-            var previousGeneration = current.MasterGeneration;
-            var history = HistoryRecordMaterial.Create(
-                head.WorldId,
-                anchor.Sequence + 1,
-                anchor.Digest,
-                "master.generation.changed.v1",
-                "persistence.master-generation-changed",
-                1,
-                0,
-                physicalPayload,
-                writer =>
-                {
-                    writer.WriteMapStart(3);
-                    writer.WriteUnsigned(0); writer.WriteUnsigned(previousGeneration);
-                    writer.WriteUnsigned(1); writer.WriteUnsigned(nextGeneration);
-                    writer.WriteUnsigned(2); writer.WriteAsciiText(reasonCode.Value);
-                });
-
-            await _store.PersistMasterGenerationChangeAsync(previousGeneration, nextGeneration, history, cancellationToken);
-            var next = new CoreMasterAuthoritySnapshotV1(nextGeneration, gatewayLogicalId);
-            Volatile.Write(ref _current, next);
-            return next;
+            return await AssignMasterUnderGateAsync(candidate.GatewayLogicalId, reasonCode, cancellationToken);
         }
         finally
         {
@@ -236,6 +245,53 @@ public sealed class CoreMasterAuthorityCoordinatorV1
             wire.CurrentMasterGatewayId = ByteString.CopyFrom(masterId.ToBytes());
         return wire;
     }
+
+    private async Task<CoreMasterAuthoritySnapshotV1> AssignMasterUnderGateAsync(
+        OpaqueId128 gatewayLogicalId,
+        StableToken reasonCode,
+        CancellationToken cancellationToken)
+    {
+        var current = Current;
+        if (current.CurrentMasterGatewayId == gatewayLogicalId) return current;
+        if (current.MasterGeneration == ulong.MaxValue) throw new OverflowException("MasterGeneration cannot wrap.");
+
+        var nextGeneration = current.MasterGeneration + 1;
+        var head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
+        if (head.MasterGeneration != current.MasterGeneration)
+            throw new CoreGatewayProtocolException("master.stale-generation", "Persisted MasterGeneration changed concurrently.");
+        var anchor = await _store.ReadHistoryAnchorAsync(cancellationToken);
+        if (anchor.Sequence == ulong.MaxValue) throw new OverflowException("HistorySequence cannot wrap.");
+
+        var physicalPayload = EncodeMasterGenerationChanged(current.MasterGeneration, nextGeneration, reasonCode);
+        var previousGeneration = current.MasterGeneration;
+        var history = HistoryRecordMaterial.Create(
+            head.WorldId,
+            anchor.Sequence + 1,
+            anchor.Digest,
+            "master.generation.changed.v1",
+            "persistence.master-generation-changed",
+            1,
+            0,
+            physicalPayload,
+            writer =>
+            {
+                writer.WriteMapStart(3);
+                writer.WriteUnsigned(0); writer.WriteUnsigned(previousGeneration);
+                writer.WriteUnsigned(1); writer.WriteUnsigned(nextGeneration);
+                writer.WriteUnsigned(2); writer.WriteAsciiText(reasonCode.Value);
+            });
+
+        await _store.PersistMasterGenerationChangeAsync(previousGeneration, nextGeneration, history, cancellationToken);
+        var next = new CoreMasterAuthoritySnapshotV1(nextGeneration, gatewayLogicalId);
+        Volatile.Write(ref _current, next);
+        return next;
+    }
+
+    private static bool IsAssignmentEligible(RegisteredGatewayV1 gateway)
+        => (int)gateway.Readiness is ReadinessResyncing or ReadinessReady;
+
+    private static bool IsAutomaticElectionEligible(RegisteredGatewayV1 gateway)
+        => (int)gateway.Readiness == ReadinessReady;
 
     private static byte[] EncodeMasterGenerationChanged(ulong previous, ulong next, StableToken reasonCode)
     {
