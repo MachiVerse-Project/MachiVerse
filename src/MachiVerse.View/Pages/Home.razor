@@ -7,50 +7,50 @@
 @inject SceneProjectionAdapterRegistry SceneAdapters
 @inject ThreeRendererInterop Renderer
 
-<PageTitle>MachiVerse</PageTitle>
+<PageTitle>MachiVerse 一般ビュー</PageTitle>
 
 <main class="shell">
-    <h1>MachiVerse General View</h1>
-    <p>Confirmed-state presentation / Three.js renderer foundation.</p>
-    <p><a href="/participation">Open Diver Participation</a></p>
+    <h1>MachiVerse 一般ビュー</h1>
+    <p>確認済み状態の表示 / Three.js レンダラー基盤。</p>
+    <p><a href="/participation" data-e2e="open-participation">Diver参加画面を開く</a></p>
     <dl>
-        <dt>Lifecycle</dt>
-        <dd>@Gateway.State</dd>
+        <dt>ライフサイクル</dt>
+        <dd data-e2e="lifecycle" data-e2e-value="@Gateway.State">@FormatState(Gateway.State)</dd>
         <dt>Gateway</dt>
         <dd>@Config.GatewayEndpoint</dd>
         @if (GatewaySession.ConfirmedBasisStep is { } confirmedBasis)
         {
-            <dt>Confirmed basis</dt>
-            <dd>@confirmedBasis</dd>
+            <dt>確認済み基準Step</dt>
+            <dd data-e2e="confirmed-basis" data-e2e-value="@confirmedBasis">@confirmedBasis</dd>
         }
-        <dt>Target FPS</dt>
+        <dt>目標FPS</dt>
         <dd>@Config.TargetFps</dd>
-        <dt>Renderer</dt>
-        <dd>@(_rendererStatus?.Initialized == true ? $"Three.js r{_rendererStatus.ThreeRevision} / {_rendererStatus.BackendMode}" : "initializing")</dd>
+        <dt>レンダラー</dt>
+        <dd>@(_rendererStatus?.Initialized == true ? $"Three.js r{_rendererStatus.ThreeRevision} / {FormatBackend(_rendererStatus.BackendMode)}" : "初期化中")</dd>
         @if (_rendererStatus is { } status)
         {
-            <dt>Renderer state</dt>
-            <dd>@status.RendererState</dd>
-            <dt>Scene objects</dt>
-            <dd>@status.SceneObjectCount</dd>
+            <dt>レンダラー状態</dt>
+            <dd data-e2e="renderer-state" data-e2e-value="@status.RendererState">@FormatState(status.RendererState)</dd>
+            <dt>シーンオブジェクト数</dt>
+            <dd data-e2e="scene-object-count" data-e2e-value="@status.SceneObjectCount">@status.SceneObjectCount</dd>
         }
         @if (_rendererStatus?.BasisStep is { } basisStep)
         {
-            <dt>Rendered confirmed basis</dt>
-            <dd>@basisStep</dd>
+            <dt>描画済み確認基準Step</dt>
+            <dd data-e2e="rendered-basis" data-e2e-value="@basisStep">@basisStep</dd>
         }
         @if (GatewaySession.LastError is { } gatewayError)
         {
-            <dt>Gateway error</dt>
-            <dd>@gatewayError</dd>
+            <dt>Gatewayエラー</dt>
+            <dd data-e2e="gateway-error">@gatewayError</dd>
         }
         @if (_rendererError is not null)
         {
-            <dt>Renderer error</dt>
-            <dd>@_rendererError</dd>
+            <dt>レンダラーエラー</dt>
+            <dd data-e2e="renderer-error">@_rendererError</dd>
         }
     </dl>
-    <canvas id="machiverse-scene" aria-label="MachiVerse world presentation surface"></canvas>
+    <canvas id="machiverse-scene" aria-label="MachiVerse 世界表示領域"></canvas>
 </main>
 
 @code {
@@ -117,7 +117,6 @@
             }
             else
             {
-                // SYNCING/RESYNCING/world-change must not keep an old confirmed-looking scene.
                 await Renderer.ClearSceneProjectionAsync();
             }
 
@@ -131,6 +130,31 @@
 
         StateHasChanged();
     }
+
+    private static string FormatBackend(string? value)
+        => value switch
+        {
+            "webgpu-preferred" => "WebGPU優先",
+            "webgpu" => "WebGPU",
+            "webgl2" => "WebGL 2",
+            null or "" => "-",
+            _ => value,
+        };
+
+    private static string FormatState(object? value)
+        => value?.ToString() switch
+        {
+            "Ready" or "ready" => "準備完了",
+            "Connecting" => "接続中",
+            "Authenticating" => "認証中",
+            "Syncing" => "同期中",
+            "Resyncing" => "再同期中",
+            "Degraded" => "制限状態",
+            "Faulted" or "Failed" or "failed" => "失敗",
+            "Initializing" or "initializing" => "初期化中",
+            null => "-",
+            var text => text,
+        };
 
     public async ValueTask DisposeAsync()
     {

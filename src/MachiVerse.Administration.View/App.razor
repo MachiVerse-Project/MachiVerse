@@ -2,13 +2,13 @@
     <header class="topbar">
         <a class="brand" href="/">
             <img src="brand/icon.png" alt="MachiVerse" />
-            <span class="brand-copy">MachiVerse<small>Administration · Alpha 1.0</small></span>
+            <span class="brand-copy">MachiVerse<small>管理ビュー · Alpha 1.0</small></span>
         </a>
-        <nav class="topnav" aria-label="Administration navigation">
-            <a href="/">Overview</a>
-            <a href="/monitoring">Monitoring</a>
-            <a href="/management">Config</a>
-            <a href="/operations">Operations</a>
+        <nav class="topnav" aria-label="管理ビュー ナビゲーション">
+            <a href="/">概要</a>
+            <a href="/monitoring">監視</a>
+            <a href="/management">Config管理</a>
+            <a href="/operations">管理操作</a>
         </nav>
     </header>
 
@@ -17,8 +17,8 @@
             <RouteView RouteData="@routeData" />
         </Found>
         <NotFound>
-            <PageTitle>Not found</PageTitle>
-            <main class="shell"><h1>Page not found</h1><p><a href="/">Return to overview</a></p></main>
+            <PageTitle>ページが見つかりません</PageTitle>
+            <main class="shell"><h1>ページが見つかりません</h1><p><a href="/">概要へ戻る</a></p></main>
         </NotFound>
     </Router>
 </div>

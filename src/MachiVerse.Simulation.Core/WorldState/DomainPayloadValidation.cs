@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using MachiVerse.Simulation.Core.Determinism;
 
 namespace MachiVerse.Simulation.Core.WorldState;
@@ -452,9 +453,11 @@ public sealed class StandardDomainPayloadValidatorV1
         }
     }
 
+    [DoesNotReturn]
     private static void ThrowType(string partitionId, string field, DomainPayloadFieldKindV1 kind)
         => throw new InvalidDataException($"domain.payload.scalar-type:{partitionId}:{field}:{kind}");
 
+    [DoesNotReturn]
     private static void ThrowRange(string partitionId, string field)
         => throw new InvalidDataException($"domain.payload.scalar-range:{partitionId}:{field}");
 }
