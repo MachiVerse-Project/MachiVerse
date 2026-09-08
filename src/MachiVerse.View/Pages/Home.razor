@@ -26,7 +26,7 @@
         <dt>目標FPS</dt>
         <dd>@Config.TargetFps</dd>
         <dt>レンダラー</dt>
-        <dd>@(_rendererStatus?.Initialized == true ? $"Three.js r{_rendererStatus.ThreeRevision} / {_rendererStatus.BackendMode}" : "初期化中")</dd>
+        <dd>@(_rendererStatus?.Initialized == true ? $"Three.js r{_rendererStatus.ThreeRevision} / {FormatBackend(_rendererStatus.BackendMode)}" : "初期化中")</dd>
         @if (_rendererStatus is { } status)
         {
             <dt>レンダラー状態</dt>
@@ -130,6 +130,16 @@
 
         StateHasChanged();
     }
+
+    private static string FormatBackend(string? value)
+        => value switch
+        {
+            "webgpu-preferred" => "WebGPU優先",
+            "webgpu" => "WebGPU",
+            "webgl2" => "WebGL 2",
+            null or "" => "-",
+            _ => value,
+        };
 
     private static string FormatState(object? value)
         => value?.ToString() switch
