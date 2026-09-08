@@ -152,8 +152,8 @@ internal static class CoreSnapshotPrimarySectionsSmoke
 
         var unsortedScheduledCut = CoreSnapshotOwnerMaterialCutV1.Create(
             state,
-            durable,
-            scheduled.Reverse().ToArray(),
+            cut.DurableOperations,
+            cut.ScheduledOperations.Reverse().ToArray(),
             supplemental);
         RequireRejected(
             () => CoreSnapshotPrimarySectionProviderV1.CreateScheduler(unsortedScheduledCut),
@@ -162,8 +162,8 @@ internal static class CoreSnapshotPrimarySectionsSmoke
 
         var unsortedDurableCut = CoreSnapshotOwnerMaterialCutV1.Create(
             state,
-            durable.Reverse().ToArray(),
-            scheduled,
+            cut.DurableOperations.Reverse().ToArray(),
+            cut.ScheduledOperations,
             supplemental);
         RequireRejected(
             () => CoreSnapshotPrimarySectionProviderV1.CreateOperation(unsortedDurableCut),
