@@ -83,19 +83,39 @@ internal static class Qa04RuntimeTargetSmoke
                 "QA-04 structural Step bridge execution receipt mismatch.");
             Require(probe.PartitionCandidateCount == 1,
                 "QA-04 structural Step bridge must carry the Resident partition candidate through StepCandidate.");
-            Require(!probe.CandidatePublishableBeforeCommit && probe.DurableReceiptPublishable,
+            Require(!probe.CandidatePublishableBeforeCommit &&
+                    !probe.PreparedStatePublishableBeforeCommit &&
+                    probe.DurableReceiptPublishable &&
+                    probe.ResultingWorldStatePublishable,
                 "QA-04 structural Step authority boundary drifted.");
             Require(probe.SchedulerReopenedAfterCommit && probe.RealSqliteCommitObserved,
                 "QA-04 structural Step bridge did not cross the SQLite COMMIT boundary.");
-            Require(probe.CandidateDiagnosticDigest.Length == 64 && probe.CandidateDiagnosticDigest.Any(c => c != '0') &&
-                    probe.ResultingContinuityToken.Length == 64 && probe.ResultingContinuityToken.Any(c => c != '0'),
+            Require(probe.ResultingResidentPartitionRevision == 2 && probe.ResultingResidentPartitionBasisStep == 1,
+                "QA-04 structural State(S+1) did not apply the Resident partition candidate revision at target Step.");
+            Require(string.Equals(probe.BasisStateDigest, probe.PreviousStateDigest, StringComparison.Ordinal),
+                "QA-04 State(S+1) previous-state pointer must equal the exact State(S) diagnostic digest.");
+            Require(!string.Equals(probe.BasisStateDigest, probe.ResultingStateDigest, StringComparison.Ordinal),
+                "QA-04 State(S+1) diagnostic digest must differ from State(S).");
+            Require(new[]
+                    {
+                        probe.CandidateDiagnosticDigest,
+                        probe.BasisStateDigest,
+                        probe.PreviousStateDigest,
+                        probe.ResultingStateDigest,
+                        probe.ResultingContinuityToken,
+                    }
+                    .All(digest => digest.Length == 64 && digest.Any(c => c != '0')),
                 "QA-04 structural Step digests must be non-zero SHA-256 values.");
             Require(!probe.ReferenceWorldMaterialized && !probe.AuthoritativeStepLoopAvailable && !probe.ReleaseEvidenceCapable,
                 "QA-04 reduced structural Step must remain unable to impersonate release execution.");
             Require(probe.BlockingFailureCodes.Contains(
+                    "qa04.target.core-substate-mutation-application-not-assembled",
+                    StringComparer.Ordinal),
+                "QA-04 structural Step must expose the remaining core-substate mutation boundary.");
+            Require(!probe.BlockingFailureCodes.Contains(
                     "qa04.target.resulting-world-state-materialization-not-assembled",
                     StringComparer.Ordinal),
-                "QA-04 structural Step must expose the remaining State(S+1) materialization boundary.");
+                "QA-04 structural Step must no longer report State(S+1) materialization as missing.");
         }
         finally
         {
