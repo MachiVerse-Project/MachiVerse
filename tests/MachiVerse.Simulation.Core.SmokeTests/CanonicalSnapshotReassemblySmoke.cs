@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using MachiVerse.Simulation.Core.Determinism;
@@ -7,10 +6,7 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class CanonicalSnapshotReassemblySmoke
 {
-    [ModuleInitializer]
-    internal static void Initialize() => RunAsync().GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         var root = Path.Combine(Path.GetTempPath(), "machiverse-snapshot-reassembly-" + Guid.NewGuid().ToString("N"));
         try
