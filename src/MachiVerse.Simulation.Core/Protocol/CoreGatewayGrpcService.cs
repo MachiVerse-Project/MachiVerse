@@ -114,6 +114,7 @@ public sealed class CoreGatewayGrpcServiceV1 : MachiVerseInternalProtocolV1.Mach
                             var register = ParsePayload(envelope, GatewayRegisterV1.Parser);
                             var registered = _sessions.Register(authenticatedGatewayId, register);
                             registeredComponentInstanceId = registered.ComponentInstanceId;
+                            await _master.ReconcileAsync(new StableToken("master.gateway-register"), cancellationToken);
                             await WritePostRegistrationStateAsync(envelope, responseStream, negotiationGeneration, authenticatedGatewayId, cancellationToken);
                             break;
                         }
@@ -122,6 +123,8 @@ public sealed class CoreGatewayGrpcServiceV1 : MachiVerseInternalProtocolV1.Mach
                             RequireRegistration(registeredComponentInstanceId);
                             var heartbeat = ParsePayload(envelope, GatewayHeartbeatV1.Parser);
                             _sessions.Heartbeat(authenticatedGatewayId, heartbeat);
+                            await _master.ReconcileAsync(new StableToken("master.gateway-heartbeat"), cancellationToken);
+                            await WriteMasterStateAsync(envelope, responseStream, negotiationGeneration, authenticatedGatewayId, cancellationToken);
                             break;
                         }
                         case "operation.batch.submit":
@@ -214,7 +217,10 @@ public sealed class CoreGatewayGrpcServiceV1 : MachiVerseInternalProtocolV1.Mach
         finally
         {
             if (registeredComponentInstanceId is { } componentId)
+            {
                 _sessions.Disconnect(authenticatedGatewayId, componentId);
+                await _master.ReconcileAsync(new StableToken("master.gateway-disconnect"), CancellationToken.None);
+            }
         }
     }
 
@@ -225,28 +231,49 @@ public sealed class CoreGatewayGrpcServiceV1 : MachiVerseInternalProtocolV1.Mach
         OpaqueId128 gatewayLogicalId,
         CancellationToken cancellationToken)
     {
+        await WriteMasterStateAsync(request, responseStream, negotiationGeneration, gatewayLogicalId, cancellationToken);
+
         var head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
-        var worldContext = new WorldContextWireV1
-        {
-            WorldId = ByteString.CopyFrom(head.WorldId.ToBytes()),
-            BasisStep = head.FinalizedStep,
-            MasterGeneration = _master.Current.MasterGeneration,
-            ConfigGeneration = head.ConfigGeneration,
-        };
+        var policy = _worldAuthority.GetCurrentSchedulingPolicy();
+        if (policy.OwnerConfigGeneration != head.ConfigGeneration)
+            throw new CoreGatewayProtocolException("world.invalid-state", "Scheduling policy generation does not match durable Config head.");
+        await responseStream.WriteAsync(
+            _envelopes.NormalResponse(
+                request,
+                "world.scheduling-policy",
+                CoreGatewayOperationProtocolV1.ToWireSchedulingPolicy(policy),
+                negotiationGeneration,
+                MasterWorldContext(head)),
+            cancellationToken);
+    }
+
+    private async Task WriteMasterStateAsync(
+        WireEnvelopeV1 request,
+        IServerStreamWriter<WireEnvelopeV1> responseStream,
+        uint negotiationGeneration,
+        OpaqueId128 gatewayLogicalId,
+        CancellationToken cancellationToken)
+    {
+        var head = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
+        if (head.MasterGeneration != _master.Current.MasterGeneration)
+            throw new CoreGatewayProtocolException("master.stale-generation", "In-memory MasterGeneration does not match durable head.");
+        var worldContext = MasterWorldContext(head);
         await responseStream.WriteAsync(
             _envelopes.NormalResponse(request, "gateway.role-state", _master.ToRoleState(gatewayLogicalId), negotiationGeneration, worldContext),
             cancellationToken);
         await responseStream.WriteAsync(
             _envelopes.NormalResponse(request, "master.generation.changed", _master.ToWireState(), negotiationGeneration, worldContext),
             cancellationToken);
-
-        var policy = _worldAuthority.GetCurrentSchedulingPolicy();
-        if (policy.OwnerConfigGeneration != head.ConfigGeneration)
-            throw new CoreGatewayProtocolException("world.invalid-state", "Scheduling policy generation does not match durable Config head.");
-        await responseStream.WriteAsync(
-            _envelopes.NormalResponse(request, "world.scheduling-policy", CoreGatewayOperationProtocolV1.ToWireSchedulingPolicy(policy), negotiationGeneration, worldContext),
-            cancellationToken);
     }
+
+    private WorldContextWireV1 MasterWorldContext(CoreProtocolPersistenceHeadV1 head)
+        => new()
+        {
+            WorldId = ByteString.CopyFrom(head.WorldId.ToBytes()),
+            BasisStep = head.FinalizedStep,
+            MasterGeneration = _master.Current.MasterGeneration,
+            ConfigGeneration = head.ConfigGeneration,
+        };
 
     private async Task<CoreProtocolPersistenceHeadV1> RequireEnvelopeWorldAsync(
         WireEnvelopeV1 envelope,
