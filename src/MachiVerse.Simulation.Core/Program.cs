@@ -14,10 +14,11 @@ IAuthenticatedGatewayIdentityResolverV1 identityResolver = runtime.IdentityResol
 if (multiGatewayAlpha)
 {
     // AlphaSingleGatewayRuntime seeds the INT-01 singleton identity so old local flows remain unchanged.
-    // INT-02 explicitly removes that synthetic session and switches to per-connection loopback metadata.
+    // INT-02 explicitly removes that synthetic session and accepts a claimed logical identity only at
+    // gateway.register inside this opt-in loopback/CI mode.
     runtime.Sessions.Disconnect(options.GatewayLogicalId, options.GatewayComponentInstanceId);
     await runtime.Master.ReconcileAsync(new StableToken("master.alpha-multi-gateway-startup"));
-    identityResolver = new AlphaLocalMetadataGatewayIdentityResolverV1();
+    identityResolver = new AlphaLocalRegisterGatewayIdentityResolverV1();
 }
 
 var builder = WebApplication.CreateBuilder(args);
