@@ -21,40 +21,40 @@
     <section>
         <h2>セッション / ローカル利用可否</h2>
         <dl>
-            <dt>セッション状態</dt><dd>@FormatState(Session.Snapshot.State)</dd>
-            <dt>ロール</dt><dd>@(string.IsNullOrEmpty(Session.Snapshot.EffectiveRoleSet) ? "-" : Session.Snapshot.EffectiveRoleSet)</dd>
-            <dt>セッション世代</dt><dd>@Session.Snapshot.SessionGeneration</dd>
-            <dt>セッションDiver参照</dt><dd><code>@(Session.Snapshot.DiverRef ?? "-")</code></dd>
-            <dt>参加UI状態</dt><dd>@FormatState(ParticipationController.State)</dd>
-            <dt>バインド要求</dt><dd>@(ParticipationController.CanRequestBinding ? "利用可能" : "利用不可")</dd>
-            <dt>不在ポリシー編集</dt><dd>@(ParticipationController.CanEditAbsencePolicy ? "利用可能" : "利用不可")</dd>
-            <dt>Diver操作</dt><dd>@(ParticipationController.CanSubmitControl ? "利用可能" : "利用不可")</dd>
+            <dt>セッション状態</dt><dd data-e2e="session-state" data-e2e-value="@Session.Snapshot.State">@FormatState(Session.Snapshot.State)</dd>
+            <dt>ロール</dt><dd data-e2e="session-role" data-e2e-value="@Session.Snapshot.EffectiveRoleSet">@(string.IsNullOrEmpty(Session.Snapshot.EffectiveRoleSet) ? "-" : Session.Snapshot.EffectiveRoleSet)</dd>
+            <dt>セッション世代</dt><dd data-e2e="session-generation" data-e2e-value="@Session.Snapshot.SessionGeneration">@Session.Snapshot.SessionGeneration</dd>
+            <dt>セッションDiver参照</dt><dd data-e2e="session-diver-ref" data-e2e-value="@(Session.Snapshot.DiverRef ?? "-")"><code>@(Session.Snapshot.DiverRef ?? "-")</code></dd>
+            <dt>参加UI状態</dt><dd data-e2e="participation-state" data-e2e-value="@ParticipationController.State">@FormatState(ParticipationController.State)</dd>
+            <dt>バインド要求</dt><dd data-e2e="binding-request-ux" data-e2e-value="@(ParticipationController.CanRequestBinding ? "eligible" : "unavailable")">@(ParticipationController.CanRequestBinding ? "利用可能" : "利用不可")</dd>
+            <dt>不在ポリシー編集</dt><dd data-e2e="absence-policy-ux" data-e2e-value="@(ParticipationController.CanEditAbsencePolicy ? "eligible" : "unavailable")">@(ParticipationController.CanEditAbsencePolicy ? "利用可能" : "利用不可")</dd>
+            <dt>Diver操作</dt><dd data-e2e="diver-control-ux" data-e2e-value="@(ParticipationController.CanSubmitControl ? "eligible" : "unavailable")">@(ParticipationController.CanSubmitControl ? "利用可能" : "利用不可")</dd>
         </dl>
         <p>ここでの判定はUI上の補助です。保護された要求では常にGateway側の認可が必須です。</p>
         @if (Binding.Snapshot.State == ParticipationBindingState.None)
         {
-            <button @onclick="RequestAlphaBindingAsync" disabled="@(!ParticipationController.CanRequestBinding || _submitting)">
+            <button data-e2e="request-alpha-binding" @onclick="RequestAlphaBindingAsync" disabled="@(!ParticipationController.CanRequestBinding || _submitting)">
                 @(_submitting ? "Alphaバインドを要求中…" : "Alphaバインドを要求")
             </button>
         }
         @if (!string.IsNullOrWhiteSpace(_actionMessage))
         {
-            <p>@_actionMessage</p>
+            <p data-e2e="binding-action-message">@_actionMessage</p>
         }
     </section>
 
     <section>
         <h2>確認済みパブリケーション</h2>
         <dl>
-            <dt>パブリケーション状態</dt><dd>@FormatState(Publications.LifecycleState)</dd>
-            <dt>最後に受理したパブリケーション</dt><dd>@FormatPublication(Publications.LastAcceptedPublicationKind)</dd>
-            <dt>基底continuity token</dt><dd><code>@(Publications.LastAcceptedBaseContinuityTokenHex ?? "-")</code></dd>
-            <dt>continuity token</dt><dd><code>@(Publications.LastAcceptedContinuityTokenHex ?? "-")</code></dd>
-            <dt>最後に拒否したパブリケーション</dt><dd>@FormatPublication(Publications.LastRejectedPublicationKind)</dd>
-            <dt>continuity不一致回数</dt><dd>@Publications.ContinuityMismatchCount</dd>
-            <dt>自動再同期回数</dt><dd>@GatewaySession.AutomaticResyncCount</dd>
-            <dt>最後の自動再同期理由</dt><dd>@(GatewaySession.LastAutomaticResyncReason ?? "-")</dd>
-            <dt>再同期理由</dt><dd>@(Publications.ResyncReason ?? "-")</dd>
+            <dt>パブリケーション状態</dt><dd data-e2e="publication-lifecycle" data-e2e-value="@Publications.LifecycleState">@FormatState(Publications.LifecycleState)</dd>
+            <dt>最後に受理したパブリケーション</dt><dd data-e2e="last-accepted-publication" data-e2e-value="@(Publications.LastAcceptedPublicationKind ?? "-")">@FormatPublication(Publications.LastAcceptedPublicationKind)</dd>
+            <dt>基底continuity token</dt><dd data-e2e="base-continuity-token" data-e2e-value="@(Publications.LastAcceptedBaseContinuityTokenHex ?? "-")"><code>@(Publications.LastAcceptedBaseContinuityTokenHex ?? "-")</code></dd>
+            <dt>continuity token</dt><dd data-e2e="continuity-token" data-e2e-value="@(Publications.LastAcceptedContinuityTokenHex ?? "-")"><code>@(Publications.LastAcceptedContinuityTokenHex ?? "-")</code></dd>
+            <dt>最後に拒否したパブリケーション</dt><dd data-e2e="last-rejected-publication" data-e2e-value="@(Publications.LastRejectedPublicationKind ?? "-")">@FormatPublication(Publications.LastRejectedPublicationKind)</dd>
+            <dt>continuity不一致回数</dt><dd data-e2e="continuity-mismatch-count" data-e2e-value="@Publications.ContinuityMismatchCount">@Publications.ContinuityMismatchCount</dd>
+            <dt>自動再同期回数</dt><dd data-e2e="automatic-resync-count" data-e2e-value="@GatewaySession.AutomaticResyncCount">@GatewaySession.AutomaticResyncCount</dd>
+            <dt>最後の自動再同期理由</dt><dd data-e2e="last-automatic-resync-reason" data-e2e-value="@(GatewaySession.LastAutomaticResyncReason ?? "-")">@(GatewaySession.LastAutomaticResyncReason ?? "-")</dd>
+            <dt>再同期理由</dt><dd data-e2e="resync-reason" data-e2e-value="@(Publications.ResyncReason ?? "-")">@(Publications.ResyncReason ?? "-")</dd>
         </dl>
         <p>差分（DELTA）は、基底tokenが現在の確認済みsnapshotと完全一致する場合だけ受理されます。不一致時は表示権限を破棄し、参加状態を再取得必須にして、強制FULL受理後にだけ復旧します。</p>
     </section>
@@ -62,14 +62,14 @@
     <section>
         <h2>予測 / reconciliation</h2>
         <dl>
-            <dt>有効な予測数</dt><dd>@Predictions.Entries.Count</dd>
-            <dt>補正回数</dt><dd>@Reconciliation.CorrectionCount</dd>
-            <dt>最後の補正Operation</dt><dd><code>@(Reconciliation.LastTrace?.OperationId ?? "-")</code></dd>
-            <dt>最後の補正理由</dt><dd>@(Reconciliation.LastTrace?.ReasonCode ?? "-")</dd>
-            <dt>予測元の確認済み基準Step</dt><dd>@(Reconciliation.LastTrace?.SourceConfirmedBasisStep.ToString() ?? "-")</dd>
-            <dt>予測元continuity token</dt><dd><code>@(Reconciliation.LastTrace?.SourceConfirmedTokenHex ?? "-")</code></dd>
-            <dt>確認済み反映待ちStep</dt><dd>@(Reconciliation.LastTrace?.AwaitingConfirmedThroughStep?.ToString() ?? "-")</dd>
-            <dt>reconciliation済み確認基準Step</dt><dd>@(Reconciliation.LastTrace?.ConfirmedBasisStep?.ToString() ?? "-")</dd>
+            <dt>有効な予測数</dt><dd data-e2e="active-prediction-count" data-e2e-value="@Predictions.Entries.Count">@Predictions.Entries.Count</dd>
+            <dt>補正回数</dt><dd data-e2e="correction-count" data-e2e-value="@Reconciliation.CorrectionCount">@Reconciliation.CorrectionCount</dd>
+            <dt>最後の補正Operation</dt><dd data-e2e="last-correction-operation" data-e2e-value="@(Reconciliation.LastTrace?.OperationId ?? "-")"><code>@(Reconciliation.LastTrace?.OperationId ?? "-")</code></dd>
+            <dt>最後の補正理由</dt><dd data-e2e="last-correction-reason" data-e2e-value="@(Reconciliation.LastTrace?.ReasonCode ?? "-")">@(Reconciliation.LastTrace?.ReasonCode ?? "-")</dd>
+            <dt>予測元の確認済み基準Step</dt><dd data-e2e="prediction-source-basis" data-e2e-value="@(Reconciliation.LastTrace?.SourceConfirmedBasisStep.ToString() ?? "-")">@(Reconciliation.LastTrace?.SourceConfirmedBasisStep.ToString() ?? "-")</dd>
+            <dt>予測元continuity token</dt><dd data-e2e="prediction-source-token" data-e2e-value="@(Reconciliation.LastTrace?.SourceConfirmedTokenHex ?? "-")"><code>@(Reconciliation.LastTrace?.SourceConfirmedTokenHex ?? "-")</code></dd>
+            <dt>確認済み反映待ちStep</dt><dd data-e2e="awaiting-confirmed-through-step" data-e2e-value="@(Reconciliation.LastTrace?.AwaitingConfirmedThroughStep?.ToString() ?? "-")">@(Reconciliation.LastTrace?.AwaitingConfirmedThroughStep?.ToString() ?? "-")</dd>
+            <dt>reconciliation済み確認基準Step</dt><dd data-e2e="reconciled-confirmed-basis" data-e2e-value="@(Reconciliation.LastTrace?.ConfirmedBasisStep?.ToString() ?? "-")">@(Reconciliation.LastTrace?.ConfirmedBasisStep?.ToString() ?? "-")</dd>
         </dl>
         <p>予測は表示専用です。元のbasis/tokenは出所情報としてだけ保持され、新しいauthoritative world basisやcontinuity tokenにはなりません。</p>
     </section>
@@ -77,16 +77,16 @@
     <section>
         <h2>確認済みバインド</h2>
         <dl>
-            <dt>鮮度</dt><dd>@FormatState(Binding.Snapshot.Freshness)</dd>
-            <dt>状態</dt><dd>@FormatState(Binding.Snapshot.State)</dd>
-            <dt>Binding ID</dt><dd><code>@(Binding.Snapshot.BindingId ?? "-")</code></dd>
-            <dt>Resident ID</dt><dd><code>@(Binding.Snapshot.ResidentId ?? "-")</code></dd>
-            <dt>確認済みDiver参照</dt><dd><code>@(Binding.Snapshot.DiverRef ?? "-")</code></dd>
-            <dt>バインド世代</dt><dd>@Binding.Snapshot.BindingGeneration</dd>
-            <dt>有効開始Step</dt><dd>@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")</dd>
-            <dt>投影基準Step</dt><dd>@(Binding.Snapshot.BasisStep?.ToString() ?? "-")</dd>
-            <dt>確認済み不在ポリシー</dt><dd>@(Binding.Snapshot.AbsencePolicyProfile ?? "-")</dd>
-            <dt>理由コード</dt><dd>@(Binding.Snapshot.ReasonCode ?? "-")</dd>
+            <dt>鮮度</dt><dd data-e2e="binding-freshness" data-e2e-value="@Binding.Snapshot.Freshness">@FormatState(Binding.Snapshot.Freshness)</dd>
+            <dt>状態</dt><dd data-e2e="binding-state" data-e2e-value="@Binding.Snapshot.State">@FormatState(Binding.Snapshot.State)</dd>
+            <dt>Binding ID</dt><dd data-e2e="binding-id" data-e2e-value="@(Binding.Snapshot.BindingId ?? "-")"><code>@(Binding.Snapshot.BindingId ?? "-")</code></dd>
+            <dt>Resident ID</dt><dd data-e2e="resident-id" data-e2e-value="@(Binding.Snapshot.ResidentId ?? "-")"><code>@(Binding.Snapshot.ResidentId ?? "-")</code></dd>
+            <dt>確認済みDiver参照</dt><dd data-e2e="confirmed-diver-ref" data-e2e-value="@(Binding.Snapshot.DiverRef ?? "-")"><code>@(Binding.Snapshot.DiverRef ?? "-")</code></dd>
+            <dt>バインド世代</dt><dd data-e2e="binding-generation" data-e2e-value="@Binding.Snapshot.BindingGeneration">@Binding.Snapshot.BindingGeneration</dd>
+            <dt>有効開始Step</dt><dd data-e2e="effective-from-step" data-e2e-value="@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")">@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")</dd>
+            <dt>投影基準Step</dt><dd data-e2e="projection-basis-step" data-e2e-value="@(Binding.Snapshot.BasisStep?.ToString() ?? "-")">@(Binding.Snapshot.BasisStep?.ToString() ?? "-")</dd>
+            <dt>確認済み不在ポリシー</dt><dd data-e2e="confirmed-absence-policy" data-e2e-value="@(Binding.Snapshot.AbsencePolicyProfile ?? "-")">@(Binding.Snapshot.AbsencePolicyProfile ?? "-")</dd>
+            <dt>理由コード</dt><dd data-e2e="binding-reason" data-e2e-value="@(Binding.Snapshot.ReasonCode ?? "-")">@(Binding.Snapshot.ReasonCode ?? "-")</dd>
         </dl>
 
         @if (Binding.Snapshot.State == ParticipationBindingState.ResidentDeceased)
@@ -149,7 +149,7 @@
         <p>ローカル編集は、authoritative Operation結果と確認済みbinding/policy投影が到着するまで世界に反映済みとは表示しません。</p>
     </section>
 
-    <p><a href="/">世界ビューへ戻る</a></p>
+    <p><a href="/" data-e2e="back-to-world">世界ビューへ戻る</a></p>
 </main>
 
 @code {
