@@ -29,7 +29,7 @@ builder.Services.AddSingleton(new ParticipationPreferenceCatalog([
     new ParticipationPreferenceProfile("alpha.default", Array.Empty<string>()),
 ]));
 builder.Services.AddSingleton(new AbsencePolicyProfileCatalog(["alpha.default"]));
-builder.Services.AddSingleton<IParticipationOperationPayloadAdapter, UnavailableParticipationOperationPayloadAdapter>();
+builder.Services.AddScoped<IParticipationOperationPayloadAdapter, CanonicalParticipationOperationPayloadAdapter>();
 builder.Services.AddScoped(_ => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<GatewayProtocolClient>();
 builder.Services.AddScoped<ConfirmedWorldStore>();
