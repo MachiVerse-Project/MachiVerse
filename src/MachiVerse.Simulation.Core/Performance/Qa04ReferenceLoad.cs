@@ -59,8 +59,8 @@ public static class Qa04ReferenceLoadV1
     public static readonly WorldSeed256 WorldSeed = new(Convert.FromHexString(WorldSeedHex));
     public static readonly OpaqueId128 WorldId = DeriveBenchmarkWorldId();
 
-    public static readonly IReadOnlyList<Qa04ReferenceClassV1> RecordClasses = Array.AsReadOnly(
-    [
+    public static readonly IReadOnlyList<Qa04ReferenceClassV1> RecordClasses = Array.AsReadOnly(new[]
+    {
         new Qa04ReferenceClassV1(new StableToken("resident.persistent-identity"), 1_000_000),
         new Qa04ReferenceClassV1(new StableToken("physical.d0-presence"), 500_000),
         new Qa04ReferenceClassV1(new StableToken("environment.d0-cell-cohort"), 1_000_000),
@@ -69,10 +69,10 @@ public static class Qa04ReferenceLoadV1
         new Qa04ReferenceClassV1(new StableToken("infrastructure.active-record"), 500_000),
         new Qa04ReferenceClassV1(new StableToken("spatial.hot-terrain-brick"), 500_000),
         new Qa04ReferenceClassV1(new StableToken("transaction.active-cross-domain"), 10_000),
-    ]);
+    });
 
-    public static readonly IReadOnlyList<Qa04ActivityClassV1> ResidentActivityMix = Array.AsReadOnly(
-    [
+    public static readonly IReadOnlyList<Qa04ActivityClassV1> ResidentActivityMix = Array.AsReadOnly(new[]
+    {
         new Qa04ActivityClassV1(new StableToken("idle-routine"), 35),
         new Qa04ActivityClassV1(new StableToken("local-movement"), 25),
         new Qa04ActivityClassV1(new StableToken("social-communication"), 10),
@@ -81,17 +81,17 @@ public static class Qa04ReferenceLoadV1
         new Qa04ActivityClassV1(new StableToken("infrastructure-service-use"), 5),
         new Qa04ActivityClassV1(new StableToken("health-medical"), 3),
         new Qa04ActivityClassV1(new StableToken("governance-security-interaction"), 2),
-    ]);
+    });
 
-    public static readonly IReadOnlyList<Qa04OperationFamilyV1> OperationFamilies = Array.AsReadOnly(
-    [
+    public static readonly IReadOnlyList<Qa04OperationFamilyV1> OperationFamilies = Array.AsReadOnly(new[]
+    {
         new Qa04OperationFamilyV1(new StableToken("participation-control-resident-action"), 350),
         new Qa04OperationFamilyV1(new StableToken("physical-item-movement-work"), 200),
         new Qa04OperationFamilyV1(new StableToken("society-market-payment-contract"), 200),
         new Qa04OperationFamilyV1(new StableToken("infrastructure-service-delivery"), 150),
         new Qa04OperationFamilyV1(new StableToken("governance-security"), 50),
         new Qa04OperationFamilyV1(new StableToken("environment-spatial-admin-synthetic"), 50),
-    ]);
+    });
 
     public static void ValidateCanonicalContract()
     {
@@ -99,28 +99,28 @@ public static class Qa04ReferenceLoadV1
             throw new InvalidDataException("qa04.reference.duplicate-record-class");
         if (RecordClasses.Single(x => x.ClassToken.Value == "resident.persistent-identity").Count != 1_000_000)
             throw new InvalidDataException("qa04.reference.resident-count-drift");
-        if (ResidentActivityMix.Sum(static x => x.Percent) != 100)
+        if (ResidentActivityMix.Sum(static x => (int)x.Percent) != 100)
             throw new InvalidDataException("qa04.reference.activity-mix-total");
-        if (OperationFamilies.Sum(static x => x.SharePermille) != 1_000)
+        if (OperationFamilies.Sum(static x => (int)x.SharePermille) != 1_000)
             throw new InvalidDataException("qa04.reference.operation-family-total");
-        if (ResidentDetailCount(DetailLevelV1.D0) != 100_000 ||
-            ResidentDetailCount(DetailLevelV1.D1) != 300_000 ||
-            ResidentDetailCount(DetailLevelV1.D2) != 400_000 ||
-            ResidentDetailCount(DetailLevelV1.D3) != 200_000)
+        if (ResidentDetailCount(DetailLevelV1.D0Entity) != 100_000 ||
+            ResidentDetailCount(DetailLevelV1.D1LocalAggregate) != 300_000 ||
+            ResidentDetailCount(DetailLevelV1.D2RegionalAggregate) != 400_000 ||
+            ResidentDetailCount(DetailLevelV1.D3BoundarySummary) != 200_000)
             throw new InvalidDataException("qa04.reference.resident-detail-count-drift");
 
         var steadyCounts = OperationFamilies.Sum(family =>
-            checked(SteadyOperationsPerStep * family.SharePermille / 1_000));
-        if (steadyCounts != SteadyOperationsPerStep)
+            checked((long)(SteadyOperationsPerStep * family.SharePermille / 1_000)));
+        if ((ulong)steadyCounts != SteadyOperationsPerStep)
             throw new InvalidDataException("qa04.reference.operation-family-rounding");
     }
 
     public static ulong ResidentDetailCount(DetailLevelV1 level) => level switch
     {
-        DetailLevelV1.D0 => 100_000,
-        DetailLevelV1.D1 => 300_000,
-        DetailLevelV1.D2 => 400_000,
-        DetailLevelV1.D3 => 200_000,
+        DetailLevelV1.D0Entity => 100_000,
+        DetailLevelV1.D1LocalAggregate => 300_000,
+        DetailLevelV1.D2RegionalAggregate => 400_000,
+        DetailLevelV1.D3BoundarySummary => 200_000,
         _ => throw new ArgumentOutOfRangeException(nameof(level)),
     };
 
@@ -129,10 +129,10 @@ public static class Qa04ReferenceLoadV1
         RequireOrdinal(residentOrdinal, 1_000_000, "resident");
         return residentOrdinal switch
         {
-            < 100_000 => DetailLevelV1.D0,
-            < 400_000 => DetailLevelV1.D1,
-            < 800_000 => DetailLevelV1.D2,
-            _ => DetailLevelV1.D3,
+            < 100_000 => DetailLevelV1.D0Entity,
+            < 400_000 => DetailLevelV1.D1LocalAggregate,
+            < 800_000 => DetailLevelV1.D2RegionalAggregate,
+            _ => DetailLevelV1.D3BoundarySummary,
         };
     }
 
@@ -152,9 +152,9 @@ public static class Qa04ReferenceLoadV1
         var detail = classToken.Value switch
         {
             "resident.persistent-identity" => ResidentDetailLevel(ordinal),
-            "physical.d0-presence" or "environment.d0-cell-cohort" or "spatial.hot-terrain-brick" => DetailLevelV1.D0,
-            "environment.d1-aggregate" => DetailLevelV1.D1,
-            _ => DetailLevelV1.D2,
+            "physical.d0-presence" or "environment.d0-cell-cohort" or "spatial.hot-terrain-brick" => DetailLevelV1.D0Entity,
+            "environment.d1-aggregate" => DetailLevelV1.D1LocalAggregate,
+            _ => DetailLevelV1.D2RegionalAggregate,
         };
         var baseTile = RegionalTileIndex(id);
         var dense = IsDenseD0(detail, ordinal) ? DenseRegionIndex(id) : null;
@@ -269,7 +269,7 @@ public static class Qa04ReferenceLoadV1
     }
 
     private static bool IsDenseD0(DetailLevelV1 detail, ulong ordinal)
-        => detail == DetailLevelV1.D0 && ordinal % 4 == 0;
+        => detail == DetailLevelV1.D0Entity && ordinal % 4 == 0;
 
     private static byte DenseRegionIndex(OpaqueId128 id)
     {
