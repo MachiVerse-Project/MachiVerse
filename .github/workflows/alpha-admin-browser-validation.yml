@@ -1,0 +1,219 @@
+name: Alpha Administration View browser validation
+
+on:
+  pull_request:
+    branches:
+      - integration/1.0-alpha
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-admin-browser-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  administration-view-browser:
+    name: Administration View browser reaches read-only Ready
+    if: github.head_ref != 'ci/int-01-admin-browser-smoke' && github.head_ref != 'ci/int-01-admin-browser-polling'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Core Gateway and Administration View
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release
+          dotnet build src/MachiVerse.Administration.View/MachiVerse.Administration.View.csproj --configuration Release
+      - name: Launch Alpha stack and verify Admin browser Ready state
+        shell: bash
+        run: |
+          set -euo pipefail
+          core_log="$RUNNER_TEMP/alpha-admin-core.log"
+          gateway_log="$RUNNER_TEMP/alpha-admin-gateway.log"
+          admin_log="$RUNNER_TEMP/alpha-admin-view.log"
+          browser_log="$RUNNER_TEMP/alpha-admin-browser.log"
+
+          MACHIVERSE_ALPHA_LOCAL=1 \
+          MACHIVERSE_WORLD_ROOT="$RUNNER_TEMP/machiverse-alpha-admin-world" \
+          Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:5511 \
+          Kestrel__Endpoints__Grpc__Protocols=Http2 \
+          Kestrel__Endpoints__Health__Url=http://127.0.0.1:5510 \
+          Kestrel__Endpoints__Health__Protocols=Http1 \
+          dotnet run --project src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --no-build >"$core_log" 2>&1 &
+          core_pid=$!
+
+          cleanup() {
+            kill "${browser_pid:-0}" 2>/dev/null || true
+            kill "${admin_pid:-0}" 2>/dev/null || true
+            kill "${gateway_pid:-0}" 2>/dev/null || true
+            kill "$core_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          core_ready=0
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5510/healthz >/dev/null; then core_ready=1; break; fi
+            if ! kill -0 "$core_pid" 2>/dev/null; then cat "$core_log"; exit 1; fi
+            sleep 1
+          done
+          if [ "$core_ready" -ne 1 ]; then cat "$core_log"; exit 1; fi
+
+          MACHIVERSE_ALPHA_LOCAL=1 \
+          MACHIVERSE_CORE_ENDPOINT=http://127.0.0.1:5511 \
+          ASPNETCORE_URLS=http://127.0.0.1:5520 \
+          dotnet run --project src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release --no-build >"$gateway_log" 2>&1 &
+          gateway_pid=$!
+
+          gateway_ready=0
+          for _ in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:5520/healthz >"$RUNNER_TEMP/admin-gateway-health.json"; then
+              if python3 - "$RUNNER_TEMP/admin-gateway-health.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as handle:
+              data = json.load(handle)
+          core = data.get('core') or {}
+          assert data.get('status') == 'ready', data
+          assert core.get('negotiated') is True, data
+          assert core.get('syncState') == 'Synced', data
+          assert core.get('localMaster') is True, data
+          PY
+              then gateway_ready=1; break; fi
+            fi
+            if ! kill -0 "$gateway_pid" 2>/dev/null; then cat "$gateway_log"; cat "$core_log"; exit 1; fi
+            sleep 1
+          done
+          if [ "$gateway_ready" -ne 1 ]; then cat "$gateway_log"; cat "$core_log"; exit 1; fi
+
+          ASPNETCORE_URLS=http://127.0.0.1:5560 \
+          dotnet run --project src/MachiVerse.Administration.View/MachiVerse.Administration.View.csproj --configuration Release --no-build --no-launch-profile >"$admin_log" 2>&1 &
+          admin_pid=$!
+
+          admin_ready=0
+          for _ in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:5560/ >/dev/null; then admin_ready=1; break; fi
+            if ! kill -0 "$admin_pid" 2>/dev/null; then cat "$admin_log"; exit 1; fi
+            sleep 1
+          done
+          if [ "$admin_ready" -ne 1 ]; then cat "$admin_log"; exit 1; fi
+
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [ -z "$browser" ]; then
+            echo "No Chromium-compatible browser found on runner."
+            exit 1
+          fi
+
+          "$browser" \
+            --headless=new \
+            --no-sandbox \
+            --disable-gpu \
+            --disable-dev-shm-usage \
+            --remote-debugging-address=127.0.0.1 \
+            --remote-debugging-port=9222 \
+            --user-data-dir="$RUNNER_TEMP/alpha-admin-chrome-profile" \
+            http://127.0.0.1:5560/ >"$RUNNER_TEMP/alpha-admin-browser.stdout" 2>"$browser_log" &
+          browser_pid=$!
+
+          devtools_ready=0
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9222/json/list >"$RUNNER_TEMP/admin-devtools-pages.json"; then devtools_ready=1; break; fi
+            if ! kill -0 "$browser_pid" 2>/dev/null; then cat "$browser_log"; exit 1; fi
+            sleep 1
+          done
+          if [ "$devtools_ready" -ne 1 ]; then cat "$browser_log"; exit 1; fi
+
+          set +e
+          node <<'JS'
+          const pages = await (await fetch('http://127.0.0.1:9222/json/list')).json();
+          const page = pages.find(item => item.type === 'page' && item.url.includes('127.0.0.1:5560')) ?? pages.find(item => item.type === 'page');
+          if (!page?.webSocketDebuggerUrl) {
+            console.error('No Chrome DevTools page WebSocket found.', pages);
+            process.exit(2);
+          }
+          if (typeof WebSocket === 'undefined') {
+            console.error('Runner Node.js does not provide global WebSocket.');
+            process.exit(3);
+          }
+
+          const socket = new WebSocket(page.webSocketDebuggerUrl);
+          const pending = new Map();
+          let nextId = 1;
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('DevTools WebSocket open timeout')), 5000);
+            socket.onopen = () => { clearTimeout(timer); resolve(); };
+            socket.onerror = event => { clearTimeout(timer); reject(new Error(`DevTools WebSocket error: ${event.message ?? 'unknown'}`)); };
+          });
+          socket.onmessage = event => {
+            const message = JSON.parse(event.data);
+            if (!message.id) return;
+            const waiter = pending.get(message.id);
+            if (!waiter) return;
+            pending.delete(message.id);
+            if (message.error) waiter.reject(new Error(JSON.stringify(message.error)));
+            else waiter.resolve(message.result);
+          };
+
+          function send(method, params = {}) {
+            const id = nextId++;
+            return new Promise((resolve, reject) => {
+              const timer = setTimeout(() => {
+                pending.delete(id);
+                reject(new Error(`CDP timeout for ${method}`));
+              }, 5000);
+              pending.set(id, {
+                resolve: value => { clearTimeout(timer); resolve(value); },
+                reject: error => { clearTimeout(timer); reject(error); }
+              });
+              socket.send(JSON.stringify({ id, method, params }));
+            });
+          }
+
+          await send('Runtime.enable');
+          let lastText = '';
+          for (let attempt = 0; attempt < 80; attempt++) {
+            const result = await send('Runtime.evaluate', {
+              expression: 'document.body ? document.body.innerText : ""',
+              returnByValue: true
+            });
+            lastText = result?.result?.value ?? '';
+            if (lastText.includes('Gateway error')) {
+              console.error('Administration View surfaced Gateway error:\n' + lastText);
+              socket.close();
+              process.exit(4);
+            }
+            const ready =
+              lastText.includes('Lifecycle\nReady') &&
+              lastText.includes('Admin session\nActive') &&
+              lastText.includes('Health projection\nLoaded') &&
+              lastText.includes('Config projection\nLoaded') &&
+              lastText.includes('Config generation\n1') &&
+              lastText.includes('Health targets\n1') &&
+              lastText.includes('Config targets\n1');
+            if (ready) {
+              console.log(lastText);
+              socket.close();
+              process.exit(0);
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          console.error('Administration View did not reach Ready. Last DOM text:\n' + lastText);
+          socket.close();
+          process.exit(5);
+          JS
+          browser_status=$?
+          set -e
+
+          if [ "$browser_status" -ne 0 ]; then
+            echo "--- Gateway log ---"
+            cat "$gateway_log"
+            echo "--- Administration View log ---"
+            cat "$admin_log"
+            echo "--- Browser log ---"
+            cat "$browser_log"
+            exit "$browser_status"
+          fi
