@@ -98,6 +98,7 @@ jobs:
             local port="${ports[$index]}"
             local log="$RUNNER_TEMP/int02-gateway-$index.log"
             MACHIVERSE_ALPHA_LOCAL=1 \
+            MACHIVERSE_ALPHA_MULTI_VIEW=1 \
             MACHIVERSE_CORE_ENDPOINT=http://127.0.0.1:5511 \
             MACHIVERSE_GATEWAY_LOGICAL_ID="${ids[$index]}" \
             MACHIVERSE_GATEWAY_COMPONENT_INSTANCE_ID="$component" \
@@ -241,16 +242,30 @@ jobs:
           sleep 1
 
           probe_pids=()
+          probe_logs=()
           for round in 1 2 3; do
             for port in "${ports[@]}"; do
+              log="$RUNNER_TEMP/int02-view-$round-$port.log"
               dotnet run --project tools/MachiVerse.Int01ViewProbe --configuration Release --no-build -- \
                 "http://127.0.0.1:$port" "ws://127.0.0.1:$port/ws/v1/view" \
-                >"$RUNNER_TEMP/int02-view-$round-$port.log" 2>&1 &
+                >"$log" 2>&1 &
               probe_pids+=("$!")
+              probe_logs+=("$log")
             done
           done
-          for pid in "${probe_pids[@]}"; do wait "$pid"; done
-          wait "$slow_pid"
+          for index in "${!probe_pids[@]}"; do
+            if ! wait "${probe_pids[$index]}"; then
+              cat "${probe_logs[$index]}"
+              cat "$RUNNER_TEMP/int02-slow-view.log" || true
+              for gateway_index in 0 1 2 3; do cat "$RUNNER_TEMP/int02-gateway-$gateway_index.log" || true; done
+              cat "$core_log" || true
+              exit 1
+            fi
+          done
+          if ! wait "$slow_pid"; then
+            cat "$RUNNER_TEMP/int02-slow-view.log"
+            exit 1
+          fi
           slow_pid=0
 
           check_cluster 4 "$actual_failover_generation"
