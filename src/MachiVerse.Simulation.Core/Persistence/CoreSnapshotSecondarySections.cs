@@ -350,6 +350,8 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
         }
         if ((seen & 0b1111) != 0b1111 || regionId is null || regionId.Length != 16 || scopeId is null || scopeId.Length != 16)
             throw new InvalidDataException("snapshot-core.detail.region-shape");
+        if (regionId.All(static value => value == 0) || scopeId.All(static value => value == 0))
+            throw new InvalidDataException("snapshot-core.detail.region-zero-identity");
         RequireAsciiAscending(levels.Select(static value => value.Key.Value), "snapshot-core.detail.level-order");
         RequireAsciiAscending(guards.Select(static value => value.Value), "snapshot-core.detail.guard-order");
         return new DetailRegionStateV1(
@@ -430,6 +432,8 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
         if (seen != 0x3ff || regionId is null || regionId.Length != 16 || triggerId is null || triggerId.Length != 16 ||
             domain is null || current is < 1 or > 4 || target is < 1 or > 4 || source is < 1 or > 5 || estimated == 0)
             throw new InvalidDataException("snapshot-core.detail.transition-shape");
+        if (regionId.All(static value => value == 0) || triggerId.All(static value => value == 0))
+            throw new InvalidDataException("snapshot-core.detail.transition-zero-identity");
         var request = new DetailTransitionRequestV1(
             OpaqueId128.FromBytes(regionId),
             new StableToken(domain),
@@ -618,6 +622,8 @@ public static class CoreSnapshotSecondarySectionProviderV1
             throw new InvalidDataException("snapshot-core.config.production-owner-required");
         if (owner.BasisStep != cut.BasisStep)
             throw new InvalidDataException("snapshot-core.config.step-mismatch");
+        if (owner.Config.Generation != cut.Header.ConfigGeneration)
+            throw new InvalidDataException("snapshot-core.config.generation-mismatch");
 
         var fields = owner.Config.Fields.OrderBy(static pair => pair.Key, StringComparer.Ordinal).ToArray();
         CoreConfigStateSnapshotWireCodecV1.ValidateCanonical(fields);
@@ -713,16 +719,17 @@ public static class CoreSnapshotSecondarySemanticVerifierV1
             new SchemaRefV1("core.detail-state"),
             fragments => VerifyDetail(snapshotStep, fragments));
 
-    public static SnapshotSectionSemanticVerifierV1 Config(ulong snapshotStep)
+    public static SnapshotSectionSemanticVerifierV1 Config(ulong snapshotStep, ulong expectedConfigGeneration)
         => new(
             CoreSnapshotOwnerSectionRegistryV1.ConfigState,
             new SchemaRefV1("config.simulation-core"),
-            fragments => VerifyConfig(snapshotStep, fragments));
+            fragments => VerifyConfig(snapshotStep, expectedConfigGeneration, fragments));
 
     private static SnapshotSectionSemanticVerificationV1 VerifyDetail(
         ulong snapshotStep,
         IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments)
     {
+        ValidateOuter(fragments, CoreSnapshotOwnerSectionRegistryV1.DetailDirectory);
         var allItems = new List<object>();
         var total = 0UL;
         foreach (var fragment in fragments)
@@ -742,8 +749,12 @@ public static class CoreSnapshotSecondarySemanticVerifierV1
 
     private static SnapshotSectionSemanticVerificationV1 VerifyConfig(
         ulong snapshotStep,
+        ulong expectedConfigGeneration,
         IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments)
     {
+        if (expectedConfigGeneration == 0)
+            throw new InvalidDataException("snapshot-core.config.generation-zero");
+        ValidateOuter(fragments, CoreSnapshotOwnerSectionRegistryV1.ConfigState);
         ulong? generation = null;
         var fields = new List<KeyValuePair<string, object>>();
         var total = 0UL;
@@ -751,6 +762,7 @@ public static class CoreSnapshotSecondarySemanticVerifierV1
         {
             var decoded = CoreConfigStateSnapshotWireCodecV1.Decode(fragment.FragmentPayload);
             if (decoded.BasisStep != snapshotStep) throw new InvalidDataException("snapshot-core.config.step-mismatch");
+            if (decoded.Generation != expectedConfigGeneration) throw new InvalidDataException("snapshot-core.config.generation-mismatch");
             if (generation is null) generation = decoded.Generation;
             else if (generation.Value != decoded.Generation) throw new InvalidDataException("snapshot-core.config.metadata-mismatch");
             if ((ulong)decoded.Fields.Count != fragment.ItemCount) throw new InvalidDataException("snapshot-core.config.fragment-item-count");
@@ -764,5 +776,27 @@ public static class CoreSnapshotSecondarySemanticVerifierV1
             generation ?? throw new InvalidDataException("snapshot-core.config.fragment-missing"),
             map);
         return new SnapshotSectionSemanticVerificationV1(total, config.Digest);
+    }
+
+    private static void ValidateOuter(
+        IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments,
+        string sectionId)
+    {
+        ArgumentNullException.ThrowIfNull(fragments);
+        if (fragments.Count == 0 || fragments.Count > uint.MaxValue)
+            throw new InvalidDataException("snapshot-core.fragment-count");
+        for (var i = 0; i < fragments.Count; i++)
+        {
+            var fragment = fragments[i] ?? throw new InvalidDataException("snapshot-core.fragment-null");
+            if (!string.Equals(fragment.SectionId, sectionId, StringComparison.Ordinal) ||
+                fragment.FragmentIndex != (uint)i ||
+                fragment.FragmentCount != (uint)fragments.Count)
+                throw new InvalidDataException("snapshot-core.fragment-shape");
+            if (fragment.FirstRecordId is not null || fragment.LastRecordId is not null)
+                throw new InvalidDataException("snapshot-core.fragment-record-range-forbidden");
+            if (fragment.FragmentPayload is null ||
+                fragment.FragmentPayload.Length > CanonicalSnapshotSectionValidationV1.HardMaxUncompressedBytes)
+                throw new InvalidDataException("snapshot-core.fragment-payload");
+        }
     }
 }
