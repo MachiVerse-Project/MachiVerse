@@ -31,6 +31,8 @@ public sealed class GeneralViewGatewaySession(
     public string? SubscriptionIdHex { get; private set; }
     public ulong? ConfirmedBasisStep { get; private set; }
     public ulong? SchedulingPolicyGeneration { get; private set; }
+    public uint AutomaticResyncCount { get; private set; }
+    public string? LastAutomaticResyncReason { get; private set; }
     public bool Started => _started;
 
     public event Action? Changed;
@@ -213,12 +215,12 @@ public sealed class GeneralViewGatewaySession(
 
             var subscriptionId = ByteString.CopyFrom(Convert.FromHexString(SubscriptionIdHex
                 ?? throw new InvalidOperationException("SubscriptionId is unavailable.")));
-            var confirmed = await ReceivePublicationAsync(worldId, subscriptionId, cancellationToken);
+            var confirmed = await ReceiveConfirmedUpdateWithAutomaticResyncAsync(
+                worldId,
+                subscriptionId,
+                session,
+                cancellationToken);
             ConfirmedBasisStep = confirmed.BasisStep;
-            var bindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
-            if (!binding.TryApply(bindingEnvelope))
-                throw new InvalidDataException("participation.binding-state-not-applied");
-            ValidateBindingActorForSession(session, binding.Snapshot);
             if (binding.Snapshot.State != ParticipationBindingState.Active ||
                 binding.Snapshot.BindingGeneration != checked(expectedBindingGeneration + 1))
                 throw new InvalidDataException("participation.binding-confirmation-generation-mismatch");
@@ -230,6 +232,71 @@ public sealed class GeneralViewGatewaySession(
         {
             _operationGate.Release();
         }
+    }
+
+    private async Task<ConfirmedWorldSnapshot> ReceiveConfirmedUpdateWithAutomaticResyncAsync(
+        ByteString worldId,
+        ByteString subscriptionId,
+        ViewSessionProjection session,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var confirmed = await ReceivePublicationAsync(worldId, subscriptionId, cancellationToken);
+            var bindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
+            ApplyConfirmedBinding(bindingEnvelope, session);
+            return confirmed;
+        }
+        catch (ContinuityMismatchException ex)
+        {
+            // The Gateway has already emitted the publication-associated binding projection after
+            // the rejected DELTA. Drain and validate its context, but never install it because its
+            // publication basis was not accepted.
+            var discardedBindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
+            ValidateDiscardedBindingEnvelope(discardedBindingEnvelope, worldId);
+
+            publications.BeginResync(ex.Message);
+            binding.MarkRefreshRequired("protocol.continuity-mismatch");
+            operations.SetAccessState(ViewMutationAccessState.Resyncing, ex.Message);
+            gateway.MarkSyncing();
+            AutomaticResyncCount = checked(AutomaticResyncCount + 1);
+            LastAutomaticResyncReason = ex.Message;
+            Changed?.Invoke();
+
+            var resync = publications.CreateResyncRequest(worldId, forceFull: true);
+            await gateway.SendAsync(NormalEnvelope(
+                "world.state.resync-request",
+                "protocol.state-resync-request.v1",
+                resync), cancellationToken);
+
+            var recovered = await ReceivePublicationAsync(worldId, subscriptionId, cancellationToken);
+            if (!string.Equals(publications.LastAcceptedPublicationKind, "FULL", StringComparison.Ordinal))
+                throw new InvalidDataException("protocol.resync-required-full-publication");
+            var bindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
+            ApplyConfirmedBinding(bindingEnvelope, session);
+
+            ConfirmedBasisStep = recovered.BasisStep;
+            operations.SetAccessState(ViewMutationAccessState.Ready);
+            gateway.MarkReady();
+            Changed?.Invoke();
+            return recovered;
+        }
+    }
+
+    private void ApplyConfirmedBinding(WireEnvelopeV1 bindingEnvelope, ViewSessionProjection session)
+    {
+        if (!binding.TryApply(bindingEnvelope))
+            throw new InvalidDataException("participation.binding-state-not-applied");
+        ValidateBindingActorForSession(session, binding.Snapshot);
+    }
+
+    private static void ValidateDiscardedBindingEnvelope(WireEnvelopeV1 envelope, ByteString worldId)
+    {
+        if (!string.Equals(envelope.MessageType, "participation.binding.state", StringComparison.Ordinal) ||
+            envelope.WorldContext is null || !envelope.WorldContext.HasBasisStep ||
+            !envelope.WorldContext.WorldId.Equals(worldId))
+            throw new InvalidDataException("protocol.publication-context-mismatch");
+        _ = ParticipationBindingViewV1.Parser.ParseFrom(envelope.Payload);
     }
 
     private static void ValidateBindingActorForSession(
