@@ -34,7 +34,7 @@
                 @foreach (var target in _snapshot.Targets)
                 {
                     <tr>
-                        <td>@target.ComponentKind</td>
+                        <td>@FormatComponentKind(target.ComponentKind)</td>
                         <td><code>@(target.LogicalInstanceId ?? "既定の論理インスタンス")</code></td>
                         <td>@FormatState(target.HealthState)</td>
                         <td>@target.LastObservedAtUnixMillis</td>
@@ -50,7 +50,7 @@
         @foreach (var component in _snapshot.Health)
         {
             <article>
-                <h3>@component.Target.StableKey</h3>
+                <h3>@FormatTargetKey(component.Target.StableKey)</h3>
                 @if (component.Metrics.Count == 0)
                 {
                     <p>現在の投影にメトリクスはありません。</p>
@@ -160,17 +160,37 @@
         return channel.ReasonCode is null ? state : $"{state} ({channel.ReasonCode})";
     }
 
+    private static string FormatComponentKind(object? value)
+        => value?.ToString() switch
+        {
+            "ComponentKindGateway" or "Gateway" => "Gateway",
+            "ComponentKindSimulationCore" or "SimulationCore" => "シミュレーションCore",
+            "ComponentKindGeneralView" or "GeneralView" => "一般ビュー",
+            "ComponentKindAdministrationView" or "AdministrationView" => "管理ビュー",
+            null => "-",
+            var text => text,
+        };
+
+    private static string FormatTargetKey(string value)
+        => value.StartsWith("ComponentKindGateway:", StringComparison.Ordinal)
+            ? "Gateway:" + value["ComponentKindGateway:".Length..]
+            : value.StartsWith("ComponentKindSimulationCore:", StringComparison.Ordinal)
+                ? "シミュレーションCore:" + value["ComponentKindSimulationCore:".Length..]
+                : value;
+
     private static string FormatState(object? value)
         => value?.ToString() switch
         {
             "Available" => "利用可能",
             "Unavailable" => "利用不可",
-            "Healthy" => "正常",
+            "Healthy" or "HealthStateHealthy" => "正常",
+            "Degraded" or "HealthStateDegraded" => "制限状態",
+            "Unhealthy" or "HealthStateUnhealthy" => "異常",
             "Ready" => "準備完了",
-            "Info" => "情報",
-            "Warning" => "警告",
-            "Error" => "エラー",
-            "Critical" => "重大",
+            "Info" or "HealthConditionSeverityInfo" => "情報",
+            "Warning" or "HealthConditionSeverityWarning" => "警告",
+            "Error" or "HealthConditionSeverityError" => "エラー",
+            "Critical" or "HealthConditionSeverityCritical" => "重大",
             null => "-",
             var text => text,
         };
