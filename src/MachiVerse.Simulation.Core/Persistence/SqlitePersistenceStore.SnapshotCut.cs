@@ -1,12 +1,8 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Runtime;
 using Microsoft.Data.Sqlite;
 
 namespace MachiVerse.Simulation.Core.Persistence;
-
-public sealed record SnapshotScheduledOperationStateV1(
-    ulong EffectiveStep,
-    byte[] OrderKey,
-    OpaqueId128 OperationId);
 
 public sealed record SnapshotRecoveryStateCutV1(
     ulong FinalizedStep,
@@ -15,7 +11,7 @@ public sealed record SnapshotRecoveryStateCutV1(
     byte[] ConfigDigest,
     HistoryAnchor HistoryAnchor,
     IReadOnlyList<DurableOperationStateV1> DurableOperations,
-    IReadOnlyList<SnapshotScheduledOperationStateV1> ScheduledOperations);
+    IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations);
 
 public sealed partial class SqlitePersistenceStore
 {
@@ -95,7 +91,7 @@ ORDER BY operation_id ASC;
         return Array.AsReadOnly(result.ToArray());
     }
 
-    private async Task<IReadOnlyList<SnapshotScheduledOperationStateV1>> ReadSnapshotScheduledOperationsAsync(
+    private async Task<IReadOnlyList<ScheduledOperationRefV1>> ReadSnapshotScheduledOperationsAsync(
         SqliteTransaction transaction,
         CancellationToken cancellationToken)
     {
@@ -106,17 +102,18 @@ SELECT effective_step, order_key, operation_id
 FROM scheduled_operation
 ORDER BY effective_step ASC, order_key ASC, operation_id ASC;
 """;
-        var result = new List<SnapshotScheduledOperationStateV1>();
+        var result = new List<ScheduledOperationRefV1>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var orderKey = (byte[])reader[1];
-            if (orderKey.Length != SameStepOrderKey.DatabaseKeyLength)
+            var orderBytes = (byte[])reader[1];
+            if (orderBytes.Length != SameStepOrderKey.DatabaseKeyLength)
                 throw new InvalidDataException("snapshot-cut.scheduled-order-key-length");
-            result.Add(new SnapshotScheduledOperationStateV1(
+            var operationId = OpaqueId128.FromBytes((byte[])reader[2]);
+            result.Add(new ScheduledOperationRefV1(
+                operationId,
                 U64Be.Decode((byte[])reader[0]),
-                orderKey.ToArray(),
-                OpaqueId128.FromBytes((byte[])reader[2])));
+                SameStepOrderKey.FromDatabaseBytes(orderBytes)));
         }
         return Array.AsReadOnly(result.ToArray());
     }
