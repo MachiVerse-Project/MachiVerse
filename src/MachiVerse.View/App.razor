@@ -1,11 +1,25 @@
-<Router AppAssembly="@typeof(App).Assembly">
-    <Found Context="routeData">
-        <RouteView RouteData="@routeData" />
-    </Found>
-    <NotFound>
-        <PageTitle>Not found</PageTitle>
-        <main class="shell">
-            <h1>Page not found</h1>
-        </main>
-    </NotFound>
-</Router>
+<div class="app-frame">
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="brand/icon.png" alt="MachiVerse" />
+            <span class="brand-copy">MachiVerse<small>General View · Alpha 1.0</small></span>
+        </a>
+        <nav class="topnav" aria-label="General View navigation">
+            <a href="/">World</a>
+            <a href="/participation">Participation</a>
+        </nav>
+    </header>
+
+    <Router AppAssembly="@typeof(App).Assembly">
+        <Found Context="routeData">
+            <RouteView RouteData="@routeData" />
+        </Found>
+        <NotFound>
+            <PageTitle>Not found</PageTitle>
+            <main class="shell">
+                <h1>Page not found</h1>
+                <p><a href="/">Return to world view</a></p>
+            </main>
+        </NotFound>
+    </Router>
+</div>
