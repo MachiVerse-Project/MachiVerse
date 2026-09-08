@@ -14,41 +14,41 @@
     <p>Gateway経由でのみ操作するシステム管理者向け画面です。</p>
     <dl>
         <dt>セキュリティドメイン</dt>
-        <dd>@AdminSecurityDomain.DomainId</dd>
+        <dd data-e2e="security-domain" data-e2e-value="@AdminSecurityDomain.DomainId">@AdminSecurityDomain.DomainId</dd>
         <dt>ライフサイクル</dt>
-        <dd>@FormatState(Gateway.State)</dd>
+        <dd data-e2e="lifecycle" data-e2e-value="@Gateway.State">@FormatState(Gateway.State)</dd>
         <dt>Gateway</dt>
         <dd>@Config.GatewayEndpoint</dd>
         <dt>管理セッション</dt>
-        <dd>@FormatState(SessionStore.Snapshot.State)</dd>
+        <dd data-e2e="admin-session" data-e2e-value="@SessionStore.Snapshot.State">@FormatState(SessionStore.Snapshot.State)</dd>
         <dt>ヘルス投影</dt>
-        <dd>@(GatewaySession.HealthLoaded ? "読込済み" : "待機中")</dd>
+        <dd data-e2e="health-projection" data-e2e-value="@(GatewaySession.HealthLoaded ? "Loaded" : "Pending")">@(GatewaySession.HealthLoaded ? "読込済み" : "待機中")</dd>
         <dt>Config投影</dt>
-        <dd>@(GatewaySession.ConfigLoaded ? "読込済み" : "待機中")</dd>
+        <dd data-e2e="config-projection" data-e2e-value="@(GatewaySession.ConfigLoaded ? "Loaded" : "Pending")">@(GatewaySession.ConfigLoaded ? "読込済み" : "待機中")</dd>
         @if (GatewaySession.ConfigGeneration is { } generation)
         {
             <dt>Config世代</dt>
-            <dd>@generation</dd>
+            <dd data-e2e="config-generation" data-e2e-value="@generation">@generation</dd>
         }
         <dt>ヘルス対象数</dt>
-        <dd>@Monitoring.Snapshot.Health.Count</dd>
+        <dd data-e2e="health-targets" data-e2e-value="@Monitoring.Snapshot.Health.Count">@Monitoring.Snapshot.Health.Count</dd>
         <dt>Config対象数</dt>
-        <dd>@Management.Snapshot.ConfigTargets.Count</dd>
+        <dd data-e2e="config-targets" data-e2e-value="@Management.Snapshot.ConfigTargets.Count">@Management.Snapshot.ConfigTargets.Count</dd>
         <dt>ダッシュボード更新間隔</dt>
         <dd>@Config.DashboardRefreshMs ms</dd>
         @if (GatewaySession.LastError is { } error)
         {
             <dt>Gatewayエラー</dt>
-            <dd>@error</dd>
+            <dd data-e2e="gateway-error">@error</dd>
         }
     </dl>
 
     <nav>
-        <a href="monitoring">ヘルス / メトリクス / ログ / 監査を開く</a>
+        <a href="monitoring" data-e2e="open-monitoring">ヘルス / メトリクス / ログ / 監査を開く</a>
         <br />
-        <a href="management">Config / 運用コマンド管理を開く</a>
+        <a href="management" data-e2e="open-management">Config / 運用コマンド管理を開く</a>
         <br />
-        <a href="operations">高影響 / シミュレーション管理操作を開く</a>
+        <a href="operations" data-e2e="open-operations">高影響 / シミュレーション管理操作を開く</a>
     </nav>
 </main>
 
