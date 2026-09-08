@@ -1,0 +1,80 @@
+name: Publish MachiVerse Alpha 1.0
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  publish-alpha-1-0:
+    if: github.repository == 'MachiVerse-Project/MachiVerse'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v1.0.0-alpha.1
+      RELEASE_TARGET: 85ecfc3bce258082bd5ed8e71411389f28fb242d
+    steps:
+      - name: Publish immutable Alpha 1.0 tag and prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              --method POST \
+              -f "ref=refs/tags/${RELEASE_TAG}" \
+              -f "sha=${RELEASE_TARGET}" >/dev/null
+          fi
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists."
+            exit 0
+          fi
+
+          cat > release-notes.md <<'EOF'
+          ## MachiVerse Alpha 1.0
+
+          MachiVerse初の実行可能なAlphaリリースです。
+
+          ### 含まれるもの
+          - Simulation Core / Gateway / General View / Administration View の4コンポーネント実接続
+          - Windows `start-alpha.bat` によるローカル起動
+          - General View / Administration View のブランドUI・日本語表示
+          - Diver binding Operation
+          - confirmed FULL / DELTA publication
+          - prediction reconciliation
+          - Admin Config変更・generation・audit
+          - persistence / restart / recovery / resync
+          - session / continuity fail-closed
+          - Alpha 1.0 integration runbook
+
+          ### 動作環境
+          - .NET SDK 10.0.400相当
+          - WindowsでのローカルAlpha起動を確認
+
+          ### 起動
+          ```bat
+          start-alpha.bat
+          ```
+
+          ### 既知のAlpha制約
+          - Production OIDC/TLSは後続
+          - 4 Gateway failoverはINT-02
+          - performance / soak acceptanceはQA-04 / INT-03
+          - SIM-15 telemetryは後続
+          - 本格的なworld content / 3D assetは後続
+
+          ### リリース基準
+          - Tag: `v1.0.0-alpha.1`
+          - Commit: `85ecfc3bce258082bd5ed8e71411389f28fb242d`
+          EOF
+
+          gh release create "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "MachiVerse Alpha 1.0" \
+            --prerelease \
+            --notes-file release-notes.md
