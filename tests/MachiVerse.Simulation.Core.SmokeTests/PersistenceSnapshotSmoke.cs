@@ -89,6 +89,7 @@ internal static class PersistenceSnapshotSmoke
 
         CoreSnapshotSectionWireContractSmoke.Run();
         CoreSnapshotPrimarySectionsSmoke.Run();
+        CoreSnapshotSecondarySectionsSmoke.Run();
         await RunningSnapshotCoordinatorSmoke.RunAsync();
         await CanonicalSnapshotReassemblySmoke.RunAsync();
         await RunningCanonicalSnapshotCommitSmoke.RunAsync();
