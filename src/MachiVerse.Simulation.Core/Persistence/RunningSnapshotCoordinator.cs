@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
@@ -10,7 +11,7 @@ public sealed record RunningSnapshotCutV1(
     HistoryAnchor HistoryAnchor,
     byte[] StateContinuityToken,
     IReadOnlyList<DurableOperationStateV1> DurableOperations,
-    IReadOnlyList<SnapshotScheduledOperationStateV1> ScheduledOperations)
+    IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations)
 {
     public ulong SnapshotStep => FrozenState.Header.Step;
 }
@@ -68,6 +69,19 @@ public sealed class RunningSnapshotCoordinatorV1
         if (recovery.ConfigGeneration != finalizedState.Header.ConfigGeneration ||
             !CryptographicOperations.FixedTimeEquals(recovery.ConfigDigest, finalizedState.Diagnostic.ConfigDigest))
             throw new InvalidDataException("snapshot-running.config-authority-mismatch");
+
+        var operationAuthority = DurableOperationSubstateV1.Canonicalize(recovery.DurableOperations);
+        if (!SubstateEquals(finalizedState.OperationState, operationAuthority))
+            throw new InvalidDataException("snapshot-running.operation-authority-mismatch");
+        var schedulerProjection = new OperationSchedulerStateV1(
+            nextSchedulableStep: finalizedState.Header.Step,
+            freezeStep: null,
+            scheduled: recovery.ScheduledOperations);
+        var schedulerAuthority = OperationSchedulerSubstateV1.Canonicalize(
+            schedulerProjection,
+            finalizedState.Header.Step);
+        if (!SubstateEquals(finalizedState.SchedulerState, schedulerAuthority))
+            throw new InvalidDataException("snapshot-running.scheduler-authority-mismatch");
 
         var snapshotId = DeriveSnapshotId(
             finalizedState.Header.WorldId,
@@ -227,6 +241,10 @@ public sealed class RunningSnapshotCoordinatorV1
             if (nonce == ulong.MaxValue) throw new InvalidDataException("snapshot-running.snapshot-id-derivation-exhausted");
         }
     }
+
+    private static bool SubstateEquals(WorldSubstateRefV1 left, WorldSubstateRefV1 right)
+        => left.Schema == right.Schema &&
+           CryptographicOperations.FixedTimeEquals(left.CanonicalDigest, right.CanonicalDigest);
 
     private static void RequireDigest(ReadOnlyMemory<byte> value, string field)
     {
