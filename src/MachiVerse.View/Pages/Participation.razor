@@ -21,6 +21,7 @@
             <dt>Session state</dt><dd>@Session.Snapshot.State</dd>
             <dt>Role</dt><dd>@(string.IsNullOrEmpty(Session.Snapshot.EffectiveRoleSet) ? "-" : Session.Snapshot.EffectiveRoleSet)</dd>
             <dt>Session generation</dt><dd>@Session.Snapshot.SessionGeneration</dd>
+            <dt>Session Diver ref</dt><dd><code>@(Session.Snapshot.DiverRef ?? "-")</code></dd>
             <dt>Participation UX state</dt><dd>@ParticipationController.State</dd>
             <dt>Binding request UX</dt><dd>@(ParticipationController.CanRequestBinding ? "eligible" : "unavailable")</dd>
             <dt>Absence policy UX</dt><dd>@(ParticipationController.CanEditAbsencePolicy ? "eligible" : "unavailable")</dd>
@@ -46,6 +47,8 @@
             <dt>Status</dt><dd>@Binding.Snapshot.State</dd>
             <dt>Binding ID</dt><dd><code>@(Binding.Snapshot.BindingId ?? "-")</code></dd>
             <dt>Resident ID</dt><dd><code>@(Binding.Snapshot.ResidentId ?? "-")</code></dd>
+            <dt>Confirmed Diver ref</dt><dd><code>@(Binding.Snapshot.DiverRef ?? "-")</code></dd>
+            <dt>Binding generation</dt><dd>@Binding.Snapshot.BindingGeneration</dd>
             <dt>Effective from Step</dt><dd>@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")</dd>
             <dt>Projection basis Step</dt><dd>@(Binding.Snapshot.BasisStep?.ToString() ?? "-")</dd>
             <dt>Confirmed absence policy</dt><dd>@(Binding.Snapshot.AbsencePolicyProfile ?? "-")</dd>
