@@ -12,16 +12,16 @@
 <main class="shell">
     <h1>MachiVerse 一般ビュー</h1>
     <p>確認済み状態の表示 / Three.js レンダラー基盤。</p>
-    <p><a href="/participation">Diver参加画面を開く</a></p>
+    <p><a href="/participation" data-e2e="open-participation">Diver参加画面を開く</a></p>
     <dl>
         <dt>ライフサイクル</dt>
-        <dd>@FormatState(Gateway.State)</dd>
+        <dd data-e2e="lifecycle" data-e2e-value="@Gateway.State">@FormatState(Gateway.State)</dd>
         <dt>Gateway</dt>
         <dd>@Config.GatewayEndpoint</dd>
         @if (GatewaySession.ConfirmedBasisStep is { } confirmedBasis)
         {
             <dt>確認済み基準Step</dt>
-            <dd>@confirmedBasis</dd>
+            <dd data-e2e="confirmed-basis" data-e2e-value="@confirmedBasis">@confirmedBasis</dd>
         }
         <dt>目標FPS</dt>
         <dd>@Config.TargetFps</dd>
@@ -30,24 +30,24 @@
         @if (_rendererStatus is { } status)
         {
             <dt>レンダラー状態</dt>
-            <dd>@FormatState(status.RendererState)</dd>
+            <dd data-e2e="renderer-state" data-e2e-value="@status.RendererState">@FormatState(status.RendererState)</dd>
             <dt>シーンオブジェクト数</dt>
-            <dd>@status.SceneObjectCount</dd>
+            <dd data-e2e="scene-object-count" data-e2e-value="@status.SceneObjectCount">@status.SceneObjectCount</dd>
         }
         @if (_rendererStatus?.BasisStep is { } basisStep)
         {
             <dt>描画済み確認基準Step</dt>
-            <dd>@basisStep</dd>
+            <dd data-e2e="rendered-basis" data-e2e-value="@basisStep">@basisStep</dd>
         }
         @if (GatewaySession.LastError is { } gatewayError)
         {
             <dt>Gatewayエラー</dt>
-            <dd>@gatewayError</dd>
+            <dd data-e2e="gateway-error">@gatewayError</dd>
         }
         @if (_rendererError is not null)
         {
             <dt>レンダラーエラー</dt>
-            <dd>@_rendererError</dd>
+            <dd data-e2e="renderer-error">@_rendererError</dd>
         }
     </dl>
     <canvas id="machiverse-scene" aria-label="MachiVerse 世界表示領域"></canvas>
