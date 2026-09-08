@@ -157,7 +157,7 @@ public static class Qa04ReferenceLoadV1
             _ => DetailLevelV1.D2RegionalAggregate,
         };
         var baseTile = RegionalTileIndex(id);
-        var dense = IsDenseD0(detail, ordinal) ? DenseRegionIndex(id) : null;
+        byte? dense = IsDenseD0(detail, ordinal) ? DenseRegionIndex(id) : null;
         var tile = dense is { } denseIndex ? DenseRegionTile(denseIndex, id) : baseTile;
         return new Qa04ReferenceRecordV1(classToken, ordinal, id, detail, tile, dense);
     }
