@@ -8,6 +8,8 @@ internal static class Qa04RuntimeTargetSmoke
 {
     internal static async Task RunAsync()
     {
+        VerifyResidentMaterialization();
+
         Require(Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.SequenceEqual(new[] { 1, 4, 8, 16 }),
             "QA-04 runtime target worker-count set drifted.");
 
@@ -63,6 +65,66 @@ internal static class Qa04RuntimeTargetSmoke
             wrongWorldRejected = true;
         }
         Require(wrongWorldRejected, "QA-04 runtime target must reject a non-reference WorldId.");
+    }
+
+    private static void VerifyResidentMaterialization()
+    {
+        Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
+        Require(Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount == 1_000_000,
+            "QA-04 canonical Resident materialization count drifted.");
+        Require(Qa04ReferenceWorldMaterializerV1.InitialResidentLifecycle.Value == "alive" &&
+                Qa04ReferenceWorldMaterializerV1.ResidentProfileToken.Value == "perf.reference.v1" &&
+                Qa04ReferenceWorldMaterializerV1.InitialResidentLineageGeneration == 1,
+            "QA-04 Resident genesis payload contract drifted.");
+
+        var first = Qa04ReferenceWorldMaterializerV1.CreateResidentRecord(0);
+        Require(first.RecordId == Qa04ReferenceLoadV1.Record(new StableToken("resident.persistent-identity"), 0).RecordId,
+            "QA-04 Resident materializer must preserve the canonical derived RecordId.");
+        Require(first.Payload.ResidentId == first.RecordId &&
+                first.Payload.Lifecycle.Value == "alive" &&
+                first.Payload.BirthStep is null && first.Payload.DeathStep is null &&
+                first.Payload.ParentRefs.Count == 0 &&
+                first.Payload.LineageGeneration == 1 &&
+                first.Payload.ProfileToken.Value == "perf.reference.v1",
+            "QA-04 Resident genesis payload mismatch.");
+
+        Require(Qa04ReferenceWorldMaterializerV1.CreateResidentRecord(99_999).DetailLevel == DetailLevelV1.D0Entity,
+            "QA-04 materialized Resident D0 upper boundary drifted.");
+        Require(Qa04ReferenceWorldMaterializerV1.CreateResidentRecord(100_000).DetailLevel == DetailLevelV1.D1LocalAggregate,
+            "QA-04 materialized Resident D1 lower boundary drifted.");
+        Require(Qa04ReferenceWorldMaterializerV1.CreateResidentRecord(400_000).DetailLevel == DetailLevelV1.D2RegionalAggregate,
+            "QA-04 materialized Resident D2 lower boundary drifted.");
+        Require(Qa04ReferenceWorldMaterializerV1.CreateResidentRecord(800_000).DetailLevel == DetailLevelV1.D3BoundarySummary,
+            "QA-04 materialized Resident D3 lower boundary drifted.");
+
+        var materializedA = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(128);
+        var materializedB = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(128);
+        Require(materializedA.MaterializedRecordCount == 128 &&
+                materializedA.Partition.ItemCount == 128 &&
+                materializedA.Partition.RecordsCanonical.Count() == 128 &&
+                materializedA.PartitionHeader.ItemCount == 128 &&
+                materializedA.WorldState.Partitions.Get("resident.identity_lifecycle").Header.ItemCount == 128,
+            "QA-04 Resident materialization must derive item counts from real records.");
+        Require(materializedA.D0Count == 128 && materializedA.D1Count == 0 &&
+                materializedA.D2Count == 0 && materializedA.D3Count == 0,
+            "QA-04 partial Resident detail-count receipt mismatch.");
+        Require(!materializedA.CanonicalResidentPopulationComplete,
+            "QA-04 reduced structural materialization must not impersonate the full Resident population.");
+        Require(materializedA.PartitionHeader.CanonicalDigest.SequenceEqual(materializedB.PartitionHeader.CanonicalDigest) &&
+                materializedA.WorldState.Diagnostic.StateDigest.SequenceEqual(materializedB.WorldState.Diagnostic.StateDigest),
+            "QA-04 Resident materialization digest must be deterministic.");
+
+        var invalidCountRejected = false;
+        try
+        {
+            _ = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(0);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            invalidCountRejected = true;
+        }
+        Require(invalidCountRejected,
+            "QA-04 Resident materializer must reject an empty population request.");
     }
 
     private static IReadOnlyCollection<IDomainRuntimeV1> CreateProbeRuntimes(ConcurrencyProbe probe)
