@@ -113,7 +113,7 @@ internal static class Program
             persistence_commit_p99_ms = 1_000_000_000.0,
             snapshot_summary = new { cow_barrier_p95_ms = 1_000_000_000.0, measured = false },
             publication_summary = new { measured = false },
-            final_state_digest = new string('0', 64),
+            final_state_digest = new string('f', 64),
             accepted_operation_loss = 0,
             hidden_solver_iteration_reduction = false,
             failure_codes = failures,
