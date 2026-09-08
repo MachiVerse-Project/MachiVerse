@@ -97,6 +97,7 @@ internal static class SnapshotManifestSmoke
             throw new InvalidOperationException("Physical chunk mapping must cover logical sections without gaps.");
 
         CanonicalSnapshotSectionSmoke.Run();
+        SnapshotChunkPayloadSmoke.Run();
     }
 
     private static byte[] Hash(byte value) => Enumerable.Repeat(value, 32).ToArray();
