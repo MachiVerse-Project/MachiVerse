@@ -1,0 +1,23 @@
+{
+  "registryVersion": "1.0",
+  "testCaseIds": [
+    "schema.stable-token.valid",
+    "schema.stable-token.invalid",
+    "schema.protobuf.protocol-version-v1",
+    "determinism.hash.sha256.empty",
+    "determinism.hash.sha256.abc",
+    "determinism.dcbor.vector",
+    "determinism.domain-hash.vector",
+    "determinism.entity-id.vector"
+  ],
+  "status": {
+    "schema.stable-token.valid": "implemented",
+    "schema.stable-token.invalid": "implemented",
+    "schema.protobuf.protocol-version-v1": "implemented",
+    "determinism.hash.sha256.empty": "implemented",
+    "determinism.hash.sha256.abc": "implemented",
+    "determinism.dcbor.vector": "implemented",
+    "determinism.domain-hash.vector": "implemented",
+    "determinism.entity-id.vector": "implemented"
+  }
+}

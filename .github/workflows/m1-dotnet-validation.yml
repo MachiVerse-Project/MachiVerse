@@ -32,8 +32,54 @@ jobs:
       - name: Verify contract fixtures
         run: dotnet run --project tools/MachiVerse.ContractFixtures -- verify
 
+  qa-determinism-harness:
+    name: QA-02 determinism/replay harness
+    if: github.base_ref == 'develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Verify determinism matrix and comparator
+        run: dotnet run --project tools/MachiVerse.DeterminismHarness -- verify
+      - name: Materialize determinism matrix
+        run: |
+          output="$RUNNER_TEMP/qa02-matrix"
+          dotnet run --project tools/MachiVerse.DeterminismHarness -- materialize "$output"
+          test -s "$output/run-matrix.json"
+          test -s "$output/matrix-summary.json"
+          test -s "$output/target-adapter-contract.json"
+          test -s "$output/semantic-trace-contract.json"
+          test -s "$output/acceptance-test-case-coverage.json"
+
+  qa-adversarial-harness:
+    name: QA-03 adversarial harness
+    if: github.base_ref == 'develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Verify adversarial corpus
+        run: dotnet run --project tools/MachiVerse.AdversarialHarness -- verify
+      - name: Materialize adversarial corpus
+        run: |
+          output="$RUNNER_TEMP/qa03-corpus"
+          dotnet run --project tools/MachiVerse.AdversarialHarness -- materialize "$output"
+          test -s "$output/crash-matrix.json"
+          test -s "$output/mutation-cases.json"
+          test -s "$output/security-negative-corpus.json"
+          test -s "$output/target-adapter-contract.json"
+          test -s "$output/corpus-summary.json"
+
   simulation-core:
-    name: SIM-01 Core build and smoke
+    name: Simulation Core build and smoke
     if: github.base_ref == 'simulation'
     runs-on: ubuntu-latest
     steps:
@@ -49,7 +95,7 @@ jobs:
         run: dotnet run --project tests/MachiVerse.Simulation.Core.SmokeTests --configuration Release
 
   gateway:
-    name: GW-01 Gateway build and smoke
+    name: Gateway build and smoke
     if: github.base_ref == 'gateway'
     runs-on: ubuntu-latest
     steps:
@@ -65,7 +111,7 @@ jobs:
         run: dotnet run --project tests/MachiVerse.Gateway.SmokeTests --configuration Release
 
   general-view:
-    name: VIEW-01 General View build
+    name: General View build and smoke
     if: github.base_ref == 'view'
     runs-on: ubuntu-latest
     steps:
@@ -77,9 +123,12 @@ jobs:
           dotnet-version: 10.0.400
       - name: Build General View
         run: dotnet build src/MachiVerse.View/MachiVerse.View.csproj --configuration Release
+      - name: Run General View smoke tests
+        if: ${{ hashFiles('tests/MachiVerse.View.SmokeTests/MachiVerse.View.SmokeTests.csproj') != '' }}
+        run: dotnet run --project tests/MachiVerse.View.SmokeTests --configuration Release
 
   administration-view:
-    name: ADMIN-01 Administration View build
+    name: Administration View build and smoke
     if: github.base_ref == 'administration-view'
     runs-on: ubuntu-latest
     steps:
@@ -91,3 +140,70 @@ jobs:
           dotnet-version: 10.0.400
       - name: Build Administration View
         run: dotnet build src/MachiVerse.Administration.View/MachiVerse.Administration.View.csproj --configuration Release
+      - name: Run Administration View smoke tests
+        if: ${{ hashFiles('tests/MachiVerse.Administration.View.SmokeTests/MachiVerse.Administration.View.SmokeTests.csproj') != '' }}
+        run: dotnet run --project tests/MachiVerse.Administration.View.SmokeTests --configuration Release
+
+  alpha-simulation-core:
+    name: Alpha / Simulation Core build and smoke
+    if: github.base_ref == 'develop' && github.head_ref == 'integration/1.0-alpha'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Alpha integration head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Simulation Core
+        run: dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+      - name: Run Simulation Core smoke tests
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.SmokeTests --configuration Release
+
+  alpha-gateway:
+    name: Alpha / Gateway build and smoke
+    if: github.base_ref == 'develop' && github.head_ref == 'integration/1.0-alpha'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Alpha integration head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Gateway
+        run: dotnet build src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release
+      - name: Run Gateway smoke tests
+        run: dotnet run --project tests/MachiVerse.Gateway.SmokeTests --configuration Release
+
+  alpha-general-view:
+    name: Alpha / General View build and smoke
+    if: github.base_ref == 'develop' && github.head_ref == 'integration/1.0-alpha'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Alpha integration head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build General View
+        run: dotnet build src/MachiVerse.View/MachiVerse.View.csproj --configuration Release
+      - name: Run General View smoke tests
+        run: dotnet run --project tests/MachiVerse.View.SmokeTests --configuration Release
+
+  alpha-administration-view:
+    name: Alpha / Administration View build and smoke
+    if: github.base_ref == 'develop' && github.head_ref == 'integration/1.0-alpha'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Alpha integration head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Administration View
+        run: dotnet build src/MachiVerse.Administration.View/MachiVerse.Administration.View.csproj --configuration Release
+      - name: Run Administration View smoke tests
+        run: dotnet run --project tests/MachiVerse.Administration.View.SmokeTests --configuration Release

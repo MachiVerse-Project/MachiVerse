@@ -1,0 +1,39 @@
+{
+  "dcbor": [
+    {
+      "name": "unsigned-0",
+      "kind": "unsigned",
+      "unsignedValue": 0,
+      "expectedHex": "00"
+    },
+    {
+      "name": "unsigned-24",
+      "kind": "unsigned",
+      "unsignedValue": 24,
+      "expectedHex": "1818"
+    },
+    {
+      "name": "map-0-to-1",
+      "kind": "map-u-u",
+      "mapKey": 0,
+      "mapValue": 1,
+      "expectedHex": "a10001"
+    }
+  ],
+  "domainHash": [
+    {
+      "name": "entity-label-simple-map",
+      "label": "mv.entity.v1",
+      "dcborHex": "a10001",
+      "expectedHashHex": "57ebe6d0376c8f30292610f405bbb31c854b4c874fe1710179738b4384d485f0"
+    }
+  ],
+  "derivedId": [
+    {
+      "name": "entity-context-example",
+      "label": "mv.entity.v1",
+      "dcborHex": "a700500000000000000000000000000000000101182a026c73696d2e7265736964656e74035000000000000000000000000000000002046e7265736964656e742e626972746805000600",
+      "expectedTrunc128Hex": "55ddfab8a1c2d277a8ed3fd6f9f690b8"
+    }
+  ]
+}

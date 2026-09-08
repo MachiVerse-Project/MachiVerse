@@ -30,5 +30,9 @@ max-mebibytes = 128
 reconnect-initial-ms = 250
 reconnect-max-ms = 10000
 
+[gateway]
+endpoint = "ws://127.0.0.1:5520/ws/v1/admin"
+allow-insecure-loopback-alpha = true
+
 [observability]
 client-log-level = "warn"

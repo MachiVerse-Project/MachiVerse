@@ -21,6 +21,7 @@ public static class AdminViewConfigLoader
         var request = Table(model, "request");
         var confirmation = Table(model, "confirmation");
         var network = Table(model, "network");
+        var gateway = Table(model, "gateway");
 
         var reconnectInitial = PositiveInt(network, "reconnect-initial-ms");
         var reconnectMax = PositiveInt(network, "reconnect-max-ms");
@@ -36,7 +37,9 @@ public static class AdminViewConfigLoader
             PositiveInt(request, "presentation-timeout-ms"),
             PositiveInt(confirmation, "ux-timeout-seconds"),
             reconnectInitial,
-            reconnectMax);
+            reconnectMax,
+            AbsoluteUri(gateway, "endpoint"),
+            Bool(gateway, "allow-insecure-loopback-alpha"));
     }
 
     private static TomlTable Table(TomlTable parent, string key)
@@ -56,4 +59,17 @@ public static class AdminViewConfigLoader
             throw new InvalidDataException($"Config field {key} must be a positive int32.");
         return (int)number;
     }
+
+    private static Uri AbsoluteUri(TomlTable table, string key)
+    {
+        if (!table.TryGetValue(key, out var value) || value is not string text ||
+            !Uri.TryCreate(text, UriKind.Absolute, out var uri))
+            throw new InvalidDataException($"Config field {key} must be an absolute URI.");
+        return uri;
+    }
+
+    private static bool Bool(TomlTable table, string key)
+        => table.TryGetValue(key, out var value) && value is bool boolean
+            ? boolean
+            : throw new InvalidDataException($"Config field {key} must be boolean.");
 }

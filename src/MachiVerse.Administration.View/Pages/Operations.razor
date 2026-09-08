@@ -5,50 +5,50 @@
 @inject SimulationAdminOperationController AdminOperations
 @inject AdminOperationCatalog OperationCatalog
 
-<PageTitle>High-impact operations</PageTitle>
+<PageTitle>高影響操作</PageTitle>
 
 <main class="shell">
-    <h1>High-impact / simulation Admin Operations</h1>
+    <h1>高影響 / シミュレーション管理操作</h1>
     <p>
-        Confirmation is a local fail-closed safety gate bound to the immutable request identity.
-        It is not an authorization credential and does not replace Gateway authorization.
+        確認操作はimmutable request identityに結び付いたローカルのfail-closed安全ゲートです。
+        認可資格ではなく、Gateway認可の代替にもなりません。
     </p>
 
     <section>
-        <h2>Admin session</h2>
+        <h2>管理セッション</h2>
         <dl>
-            <dt>State</dt>
-            <dd>@Session.Snapshot.State</dd>
-            <dt>Session generation</dt>
+            <dt>状態</dt>
+            <dd>@FormatState(Session.Snapshot.State)</dd>
+            <dt>セッション世代</dt>
             <dd>@Session.Snapshot.SessionGeneration</dd>
-            <dt>Operation permission</dt>
-            <dd>@(Session.Snapshot.HasPermission(AdminPermissionTokens.OperationSubmit) ? "available" : "unavailable")</dd>
-            <dt>Reason</dt>
+            <dt>Operation権限</dt>
+            <dd>@(Session.Snapshot.HasPermission(AdminPermissionTokens.OperationSubmit) ? "利用可能" : "利用不可")</dd>
+            <dt>理由コード</dt>
             <dd>@(Session.Snapshot.ReasonCode ?? "-")</dd>
         </dl>
     </section>
 
     <section>
-        <h2>Confirmation</h2>
+        <h2>確認</h2>
         <dl>
-            <dt>State</dt>
-            <dd>@Confirmation.Snapshot.State</dd>
-            <dt>Request fingerprint</dt>
+            <dt>状態</dt>
+            <dd>@FormatState(Confirmation.Snapshot.State)</dd>
+            <dt>要求フィンガープリント</dt>
             <dd>@(Confirmation.Snapshot.Fingerprint?.ToString() ?? "-")</dd>
-            <dt>Expires</dt>
+            <dt>有効期限</dt>
             <dd>@(Confirmation.Snapshot.ExpiresAt?.ToString("O") ?? "-")</dd>
-            <dt>Reason</dt>
+            <dt>理由コード</dt>
             <dd>@(Confirmation.Snapshot.ReasonCode ?? "-")</dd>
         </dl>
     </section>
 
     <section>
-        <h2>Registered simulation Admin Operations</h2>
+        <h2>登録済みシミュレーション管理Operation</h2>
         @if (OperationCatalog.Descriptors.Count == 0)
         {
             <p>
-                No canonical Admin operation descriptors are registered in this build.
-                Undefined world mutations are denied rather than invented in the browser.
+                このbuildにはcanonicalな管理Operation descriptorが登録されていません。
+                未定義のworld mutationはブラウザ側で生成せず拒否します。
             </p>
         }
         else
@@ -56,17 +56,17 @@
             <ul>
                 @foreach (var descriptor in OperationCatalog.Descriptors)
                 {
-                    <li>@descriptor.OperationKind — @(descriptor.HighImpact ? "high-impact" : "standard")</li>
+                    <li>@descriptor.OperationKind — @(descriptor.HighImpact ? "高影響" : "標準")</li>
                 }
             </ul>
         }
     </section>
 
     <section>
-        <h2>Tracked operations</h2>
+        <h2>追跡中のOperation</h2>
         @if (AdminOperations.Operations.Count == 0)
         {
-            <p>No Admin Operations have been prepared.</p>
+            <p>準備済みの管理Operationはありません。</p>
         }
         else
         {
@@ -74,12 +74,12 @@
                 <thead>
                     <tr>
                         <th>OperationId</th>
-                        <th>Kind</th>
-                        <th>State</th>
-                        <th>Candidate Step</th>
-                        <th>Effective Step</th>
-                        <th>Result</th>
-                        <th>Action</th>
+                        <th>種別</th>
+                        <th>状態</th>
+                        <th>候補Step</th>
+                        <th>有効Step</th>
+                        <th>結果</th>
+                        <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -88,7 +88,7 @@
                         <tr>
                             <td><code>@operation.OperationId</code></td>
                             <td>@operation.OperationKind</td>
-                            <td>@operation.State</td>
+                            <td>@FormatState(operation.State)</td>
                             <td>@(operation.CandidateStep?.ToString() ?? "-")</td>
                             <td>@(operation.EffectiveStep?.ToString() ?? "-")</td>
                             <td>@(operation.TerminalResult?.Code ?? operation.LastReasonCode ?? "-")</td>
@@ -96,14 +96,14 @@
                                 @if (NeedsConfirmationStart(operation))
                                 {
                                     <button @onclick="() => BeginConfirmation(operation.OperationId)">
-                                        @(Confirmation.Snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid ? "Reconfirm" : "Begin confirmation")
+                                        @(Confirmation.Snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid ? "再確認" : "確認を開始")
                                     </button>
                                 }
                                 else if (operation.State == AdminOperationLifecycleState.AwaitingConfirmation
                                     && Confirmation.Snapshot.Fingerprint?.OperationId == operation.OperationId
                                     && Confirmation.Snapshot.State == HighImpactConfirmationState.Confirming)
                                 {
-                                    <button @onclick="() => ConfirmOperation(operation.OperationId)">Confirm</button>
+                                    <button @onclick="() => ConfirmOperation(operation.OperationId)">確認する</button>
                                 }
                                 else
                                 {
@@ -117,7 +117,7 @@
         }
     </section>
 
-    <p><a href="/">Back</a></p>
+    <p><a href="/">戻る</a></p>
 </main>
 
 @code {
@@ -153,6 +153,32 @@
         _ = AdminOperations.Confirm(ParseId(operationId));
         StateHasChanged();
     }
+
+    private static string FormatState(object? value)
+        => value?.ToString() switch
+        {
+            "Active" => "有効",
+            "Available" => "利用可能",
+            "Unavailable" => "利用不可",
+            "NotRequired" => "不要",
+            "Required" => "確認が必要",
+            "Confirming" => "確認中",
+            "Confirmed" => "確認済み",
+            "ExpiredOrInvalid" => "期限切れ / 無効",
+            "Prepared" => "準備済み",
+            "AwaitingConfirmation" => "確認待ち",
+            "ReadyForSubmit" => "送信可能",
+            "Submitted" => "送信済み",
+            "Accepted" => "受理済み",
+            "Scheduled" => "予定済み",
+            "DeliveryUnknown" => "配送結果不明",
+            "Terminal" => "完了",
+            "Rejected" => "拒否",
+            "Unauthorized" => "権限なし",
+            "Faulted" or "Failed" => "失敗",
+            null => "-",
+            var text => text,
+        };
 
     private void SessionChanged(AdminSessionProjection session)
         => _ = InvokeAsync(StateHasChanged);

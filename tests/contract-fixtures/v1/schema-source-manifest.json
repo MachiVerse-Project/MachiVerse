@@ -1,0 +1,8 @@
+{
+  "requiredFiles": [
+    "docs/protocols/schema/common.proto",
+    "docs/protocols/schema/auth.proto",
+    "docs/protocols/schema/payloads.proto",
+    "docs/protocols/schema/message-registry-v1.md"
+  ]
+}

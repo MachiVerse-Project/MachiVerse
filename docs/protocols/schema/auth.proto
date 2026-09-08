@@ -46,6 +46,7 @@ message AuthSessionStateV1 {
   repeated string effective_permissions = 4;
   uint64 session_generation = 5;
   SessionWireStatusV1 status = 6;
+  optional bytes diver_ref = 7;
 }
 
 message AuthLoginBeginV1 {

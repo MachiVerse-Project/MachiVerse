@@ -1,157 +1,62 @@
 # アドオン境界・互換性・運用安全設計
 
-Status: Architecture baseline / future extension boundary
+## 確定方針
 
-本書はQ255〜Q259で確定したAddon boundaryを維持し、Phase 4 production implementation scopeとの関係を明確化します。
+第255〜259問について、Q255はカスタム案、Q256=C、Q257=Cを強化、Q258=C、Q259=Cを採用する。
 
-## 1. Component-scoped Addon
+## Q255 コンポーネント単位のアドオンと標準プロトコル境界
 
-- Addonはcomponent単位で設定可能とする。
-- Simulation Core、Gateway、General View、Admin Viewは、それぞれ自身の責務範囲でAddonを導入できる設計とする。
-- Addon導入によってcomponent間にdirect code dependency、shared internal type dependencyを作らない。
+- アドオンはコンポーネント単位で設定可能とする。
+- Simulation Core、Gateway、General View、Admin Viewなど、それぞれのコンポーネントが自分の責務の範囲でアドオンを導入できる設計とする。
+- 標準コンポーネント間プロトコルには、アドオン機能を実現するための汎用データ領域、任意拡張ペイロード、アドオン専用コマンド等を載せない。
+- 標準プロトコルは標準機能の契約として維持し、アドオン都合で標準プロトコルの意味や責務を拡張しない。
+- ただし、アドオンのインストール状況、識別情報、互換性確認に必要な情報、Capability Negotiationに必要な情報など、標準コンポーネント間の接続安全性・運用管理に必要なメタ情報は標準プロトコルで交換できる。
+- アドオンがコンポーネント境界を越えて追加情報を交換したい場合、標準プロトコルそのものへ追加機能を持ち込むのではなく、別途「プロトコル拡張のための前提フレームワークとなるアドオン」等を利用し、そのアドオン同士が理解できる追加プロトコルを成立させる方向とする。
+- この前提フレームワークアドオンや追加プロトコルの具体的なAPI、通信方式、パッケージ形式、拡張点は現時点では確定しない。
+- アドオン導入によって、標準コンポーネント間に直接コード依存や共有内部型依存を発生させてはならない。
 
-## 2. Standard Protocol boundary
+## Q256 アドオン互換性判定
 
-Standard component protocolには次を載せません。
+- 各アドオンは、必要な対象コンポーネント／プロトコルバージョン、必要Capability、提供Capability、必要な他アドオン情報を検証可能にする。
+- 接続時のCapability Negotiationでは、標準機能だけでなく、接続安全性の判断に必要なアドオン情報も交換対象とする。
+- 必要Capability、必要アドオン、必要バージョン等が不足または非互換であれば、そのアドオンを有効化しない。
+- 具体的なアドオン識別子、依存表現、Version Range構文等は現時点では固定しない。
 
-- Addon functional payload
-- Addon-specific generic command
-- arbitrary extension data area
-- Addon都合で意味が変化するstandard message
+## Q257 アドオン導入失敗時の起動拒否
 
-一方、接続安全性・互換性判断のために必要なAddon metadataは将来Standard Protocolで交換可能です。
+- アドオン構成、依存関係、Config、Capability、対象コンポーネントとの互換性に不整合がある場合、そのコンポーネントは起動しない。
+- この起動拒否は「重大な不整合」に限定しない。検出されたアドオン関連の不整合を抱えたまま縮退起動することを標準挙動にしない。
+- 途中までアドオンを適用した不完全状態で起動しない。
+- 起動前検証は可能な限り一括して行い、不整合理由を運用者が診断可能な形で提示できるようにする。
+- 自動的にアドオンを無効化して継続起動する挙動は、明示的に別方針として定義されない限り標準挙動としない。
 
-例:
+## Q258 アドオン更新
 
-- installed/known Addon identity
-- version
-- required/provided Capability
-- dependency
-- compatibility status
+- アドオン更新は明示的な操作として行う。
+- 更新適用前に、対象コンポーネント／プロトコルとの互換性、必要Capability、依存アドオン、Config影響等を検証する。
+- シミュレーションへ影響する変更は、World Time、固定ステップ境界、再起動境界など、整合性を保てる安全な適用点で反映する。
+- ライブ更新可能範囲、再起動必須条件、移行方式は現時点では固定しない。
 
-Addon固有のcross-component functional communicationが必要な場合は、Standard Protocolそのものをgeneric extension channelにせず、別framework Addon/additional protocolとして明示的に成立させます。
+## Q259 アドオン無効化・削除
 
-## 3. Compatibility
+- アドオンの無効化・削除前に依存関係を確認する。
+- アドオンが世界状態、保存データ、Config、他アドオン等へ永続的な影響を持つ場合、単純削除で整合性を壊してはならない。
+- 無効化・削除に際して、移行の要否、再起動の要否、保存データ互換性、依存アドオンへの影響を判定する。
+- 世界状態に由来データが残るアドオンについて、それをどのように保持・変換・破棄できるかの具体方式は、当該アドオン契約または将来のアドオンフレームワーク仕様で定義する。
 
-各Addonは少なくとも次を検証可能な設計とします。
+## 標準プロトコルとの関係
 
-- target component
-- target/protocol version compatibility
-- required Capability
-- provided Capability
-- dependency Addon/version
-- Addon Config consistency
+- 標準プロトコルは標準機能だけを表現する。
+- 標準プロトコルに存在してよいアドオン関連情報は、インストール状況、識別、互換性、Capabilityなど、接続・運用・安全性判断のためのメタ情報に限定する。
+- 実際のアドオン固有機能データは、標準プロトコルへ任意拡張として流し込まない。
+- アドオン固有機能をコンポーネント間で通信する必要がある場合は、別のアドオン／前提フレームワークと、その上の追加プロトコルによって実現する方向とする。
 
-具体的なAddon identifier lexical rule、version-range grammar、manifest/package formatは現時点のStandard implementation baselineでは固定しません。
+## 今後決定が必要な事項
 
-## 4. Startup safety
-
-- Addon構成、dependency、Config、Capability、target compatibilityに不整合がある場合、target componentはstandard startupしない。
-- 不整合を「重大なものだけ」に限定しない。
-- incomplete/partial Addon apply stateで起動しない。
-- 検出した不整合をoperatorが診断可能にする。
-- 自動的にAddonをdisableしてsilent degraded startupすることをstandard挙動にしない。
-- saved worldが依存するAddon/version/Capabilityに不整合がある場合、explicit migrationが完全成功しない限りworld startupを拒否する。
-
-## 5. Update
-
-Addon updateはexplicit operationとします。
-
-apply前に少なくとも次を検証します。
-
-- target/protocol compatibility
-- required/provided Capability
-- dependency
-- Config impact
-- persistent-data/save impact
-
-Simulationへ影響する変更はsafe Simulation Step、restart boundary等の整合性を保てるapply pointを使用します。
-
-Live update可能範囲、restart必須条件、migration方式は将来のAddon framework/package contractで固定します。
-
-## 6. Disable / remove
-
-Addon disable/remove前にdependencyとpersistent impactを確認します。
-
-- dependent Addonへの影響
-- Configへの影響
-- save/world persistent dataへの影響
-- migration requirement
-- restart requirement
-
-World Stateやsave dataにAddon由来dataが残る場合、それをsilent deletionして整合性を壊しません。
-
-具体的なretain/convert/delete方式は対象Addon contractまたは将来Addon framework仕様で定義します。
-
-## 7. Official / third-party trust boundary
-
-MachiVerseはofficial Addonとthird-party Addonを区別する方針です。
-
-- third-party Addonへofficialと同等の保証を自動付与しない。
-- UIでofficial/third-party trust differenceを表示可能にする。
-- integrity verificationだけでpublisher identityが証明されたとみなさない。
-- third-partyであってもstandard component/protocol boundaryを黙って破壊してよいわけではない。
-
-Official store/distribution route、signature algorithm、hash algorithm、trust-root model、package metadata、failure policyのexact contractは現行Phase 4 production implementationでは未固定です。
-
-これらを実装する場合はdesign amendmentとして先に正本を更新します。
-
-## 8. Administration Viewとの関係
-
-Phase 2内部設計では`AddonManagementProjection`を将来拡張boundaryとして持ちます。
-
-現時点で確定しているpresentation boundary:
-
-- installed/known Addon compatibility metadata表示
-- version/Capability/dependency mismatch表示
-- target component startup safety state表示
-- official/third-party trust classificationを表示可能なUI境界
-
-ただし、Phase 4 implementation work breakdownの`ADMIN-01..ADMIN-04`にはAddon install/update/disable/removeのstandard implementation packageはありません。
-
-したがってcurrent production implementationでは次を行いません。
-
-- generic arbitrary file upload APIの先行実装
-- Admin Viewからtarget filesystemへのdirect package copy
-- undefined runtime code-loading API
--未登録Addon management Standard Protocol messageの独自追加
-
-Addon management implementationを追加する場合は、roadmap work packageとProtocol/package/security contractをdesign amendmentで先に確定します。
-
-## 9. Current implementation scopeとの関係
-
-`ADMIN-01..ADMIN-04`は次を実装対象とします。
-
-- Admin View scaffold / Gateway protocol client
-- health/metrics/log/audit UI
-- Config / operational command management
-- high-impact / simulation Admin Operation
-
-Addon managementはcurrent standard completion gateではありません。
-
-Gateway/View/Core側についても、Addon frameworkを未確定のgeneric extension mechanismとして実装しません。
-
-## 10. 未確定だがcurrent implementation blockerではない事項
-
-- component単位のAddon配置/enable方式
-- Addon identifier/version-range exact format
-- dependency declaration format
-- Addon framework responsibility/API
-- additional protocol establishment/transport
-- package/archive format
-- official store metadata/distribution
-- official/third-party signature/hash/trust-root details
-- Admin View install/update/disable/remove UX/API
-- persistent-data migration contract
-
-これらは現在の`ADMIN-01..ADMIN-04`を開始するためのblockerではありません。
-
-## 11. Forbidden
-
-- Addon都合でStandard Protocolの意味をsilent変更すること
-- Standard Protocolへのgeneric Addon functional payload/command
-- component間direct code/internal type dependency
-- Addon inconsistencyを抱えたsilent degraded startup
-- incomplete Addon apply stateでstartupすること
-- Admin Viewからtarget internal API/filesystemへdirect fallbackすること
--未確定Addon install APIをcurrent standard implementationとして先行実装すること
+- コンポーネント単位のアドオン配置・有効化方式
+- アドオン識別子・バージョン表現
+- アドオン依存関係の宣言形式
+- アドオン前提フレームワークの責務と境界
+- 追加プロトコルの確立・接続方法
+- 公式アドオンとサードパーティアドオンの配布・署名・ハッシュ検証詳細
+- Admin Viewからのインストール／更新／無効化／削除の具体運用
