@@ -12,7 +12,6 @@ public sealed class CoreSnapshotOwnerAuthorityV1
 {
     public CoreSnapshotOwnerAuthorityV1(SchemaRefV1 schema, ReadOnlySpan<byte> canonicalDigest)
     {
-        ArgumentNullException.ThrowIfNull(schema);
         if (canonicalDigest.Length != 32)
             throw new ArgumentException("Core snapshot owner authority digest must be 32 bytes.", nameof(canonicalDigest));
         Schema = schema;
