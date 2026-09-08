@@ -10,31 +10,31 @@
 @inject PredictionStore Predictions
 @inject ReconciliationCoordinator Reconciliation
 
-<PageTitle>Participation</PageTitle>
+<PageTitle>Diver参加</PageTitle>
 
 <main class="shell">
-    <h1>Diver Participation</h1>
+    <h1>Diver参加</h1>
     <p>
-        Binding and absence-policy values below are server-confirmed projections. Local preference edits are presentation drafts only and never become binding authority by themselves.
+        以下のバインド状態と不在ポリシーは、サーバーで確認済みの投影です。ローカルの設定変更は表示上の下書きであり、それ自体が権限や世界状態になることはありません。
     </p>
 
     <section>
-        <h2>Session / local eligibility</h2>
+        <h2>セッション / ローカル利用可否</h2>
         <dl>
-            <dt>Session state</dt><dd>@Session.Snapshot.State</dd>
-            <dt>Role</dt><dd>@(string.IsNullOrEmpty(Session.Snapshot.EffectiveRoleSet) ? "-" : Session.Snapshot.EffectiveRoleSet)</dd>
-            <dt>Session generation</dt><dd>@Session.Snapshot.SessionGeneration</dd>
-            <dt>Session Diver ref</dt><dd><code>@(Session.Snapshot.DiverRef ?? "-")</code></dd>
-            <dt>Participation UX state</dt><dd>@ParticipationController.State</dd>
-            <dt>Binding request UX</dt><dd>@(ParticipationController.CanRequestBinding ? "eligible" : "unavailable")</dd>
-            <dt>Absence policy UX</dt><dd>@(ParticipationController.CanEditAbsencePolicy ? "eligible" : "unavailable")</dd>
-            <dt>Diver control UX</dt><dd>@(ParticipationController.CanSubmitControl ? "eligible" : "unavailable")</dd>
+            <dt>セッション状態</dt><dd>@FormatState(Session.Snapshot.State)</dd>
+            <dt>ロール</dt><dd>@(string.IsNullOrEmpty(Session.Snapshot.EffectiveRoleSet) ? "-" : Session.Snapshot.EffectiveRoleSet)</dd>
+            <dt>セッション世代</dt><dd>@Session.Snapshot.SessionGeneration</dd>
+            <dt>セッションDiver参照</dt><dd><code>@(Session.Snapshot.DiverRef ?? "-")</code></dd>
+            <dt>参加UI状態</dt><dd>@FormatState(ParticipationController.State)</dd>
+            <dt>バインド要求</dt><dd>@(ParticipationController.CanRequestBinding ? "利用可能" : "利用不可")</dd>
+            <dt>不在ポリシー編集</dt><dd>@(ParticipationController.CanEditAbsencePolicy ? "利用可能" : "利用不可")</dd>
+            <dt>Diver操作</dt><dd>@(ParticipationController.CanSubmitControl ? "利用可能" : "利用不可")</dd>
         </dl>
-        <p>These checks improve UX only. Gateway authorization remains mandatory for every protected request.</p>
+        <p>ここでの判定はUI上の補助です。保護された要求では常にGateway側の認可が必須です。</p>
         @if (Binding.Snapshot.State == ParticipationBindingState.None)
         {
             <button @onclick="RequestAlphaBindingAsync" disabled="@(!ParticipationController.CanRequestBinding || _submitting)">
-                @(_submitting ? "Requesting Alpha binding..." : "Request Alpha binding")
+                @(_submitting ? "Alphaバインドを要求中…" : "Alphaバインドを要求")
             </button>
         }
         @if (!string.IsNullOrWhiteSpace(_actionMessage))
@@ -44,66 +44,66 @@
     </section>
 
     <section>
-        <h2>Confirmed publication</h2>
+        <h2>確認済みパブリケーション</h2>
         <dl>
-            <dt>Publication lifecycle</dt><dd>@Publications.LifecycleState</dd>
-            <dt>Last accepted publication</dt><dd>@(Publications.LastAcceptedPublicationKind ?? "-")</dd>
-            <dt>Base continuity token</dt><dd><code>@(Publications.LastAcceptedBaseContinuityTokenHex ?? "-")</code></dd>
-            <dt>Continuity token</dt><dd><code>@(Publications.LastAcceptedContinuityTokenHex ?? "-")</code></dd>
-            <dt>Last rejected publication</dt><dd>@(Publications.LastRejectedPublicationKind ?? "-")</dd>
-            <dt>Continuity mismatch count</dt><dd>@Publications.ContinuityMismatchCount</dd>
-            <dt>Automatic resync count</dt><dd>@GatewaySession.AutomaticResyncCount</dd>
-            <dt>Last automatic resync reason</dt><dd>@(GatewaySession.LastAutomaticResyncReason ?? "-")</dd>
-            <dt>Resync reason</dt><dd>@(Publications.ResyncReason ?? "-")</dd>
+            <dt>パブリケーション状態</dt><dd>@FormatState(Publications.LifecycleState)</dd>
+            <dt>最後に受理したパブリケーション</dt><dd>@FormatPublication(Publications.LastAcceptedPublicationKind)</dd>
+            <dt>基底continuity token</dt><dd><code>@(Publications.LastAcceptedBaseContinuityTokenHex ?? "-")</code></dd>
+            <dt>continuity token</dt><dd><code>@(Publications.LastAcceptedContinuityTokenHex ?? "-")</code></dd>
+            <dt>最後に拒否したパブリケーション</dt><dd>@FormatPublication(Publications.LastRejectedPublicationKind)</dd>
+            <dt>continuity不一致回数</dt><dd>@Publications.ContinuityMismatchCount</dd>
+            <dt>自動再同期回数</dt><dd>@GatewaySession.AutomaticResyncCount</dd>
+            <dt>最後の自動再同期理由</dt><dd>@(GatewaySession.LastAutomaticResyncReason ?? "-")</dd>
+            <dt>再同期理由</dt><dd>@(Publications.ResyncReason ?? "-")</dd>
         </dl>
-        <p>DELTA is accepted only when its base token exactly matches the installed confirmed snapshot. A continuity mismatch clears current display authority, marks participation state refresh-required, and recovers only after a force-FULL publication is accepted.</p>
+        <p>差分（DELTA）は、基底tokenが現在の確認済みsnapshotと完全一致する場合だけ受理されます。不一致時は表示権限を破棄し、参加状態を再取得必須にして、強制FULL受理後にだけ復旧します。</p>
     </section>
 
     <section>
-        <h2>Prediction / reconciliation</h2>
+        <h2>予測 / reconciliation</h2>
         <dl>
-            <dt>Active prediction count</dt><dd>@Predictions.Entries.Count</dd>
-            <dt>Correction count</dt><dd>@Reconciliation.CorrectionCount</dd>
-            <dt>Last correction operation</dt><dd><code>@(Reconciliation.LastTrace?.OperationId ?? "-")</code></dd>
-            <dt>Last correction reason</dt><dd>@(Reconciliation.LastTrace?.ReasonCode ?? "-")</dd>
-            <dt>Prediction source basis Step</dt><dd>@(Reconciliation.LastTrace?.SourceConfirmedBasisStep.ToString() ?? "-")</dd>
-            <dt>Prediction source continuity token</dt><dd><code>@(Reconciliation.LastTrace?.SourceConfirmedTokenHex ?? "-")</code></dd>
-            <dt>Awaiting confirmed through Step</dt><dd>@(Reconciliation.LastTrace?.AwaitingConfirmedThroughStep?.ToString() ?? "-")</dd>
-            <dt>Reconciled confirmed basis Step</dt><dd>@(Reconciliation.LastTrace?.ConfirmedBasisStep?.ToString() ?? "-")</dd>
+            <dt>有効な予測数</dt><dd>@Predictions.Entries.Count</dd>
+            <dt>補正回数</dt><dd>@Reconciliation.CorrectionCount</dd>
+            <dt>最後の補正Operation</dt><dd><code>@(Reconciliation.LastTrace?.OperationId ?? "-")</code></dd>
+            <dt>最後の補正理由</dt><dd>@(Reconciliation.LastTrace?.ReasonCode ?? "-")</dd>
+            <dt>予測元の確認済み基準Step</dt><dd>@(Reconciliation.LastTrace?.SourceConfirmedBasisStep.ToString() ?? "-")</dd>
+            <dt>予測元continuity token</dt><dd><code>@(Reconciliation.LastTrace?.SourceConfirmedTokenHex ?? "-")</code></dd>
+            <dt>確認済み反映待ちStep</dt><dd>@(Reconciliation.LastTrace?.AwaitingConfirmedThroughStep?.ToString() ?? "-")</dd>
+            <dt>reconciliation済み確認基準Step</dt><dd>@(Reconciliation.LastTrace?.ConfirmedBasisStep?.ToString() ?? "-")</dd>
         </dl>
-        <p>Prediction is presentation-only. Source basis/token are retained only as provenance and never become a new authoritative world basis or continuity token.</p>
+        <p>予測は表示専用です。元のbasis/tokenは出所情報としてだけ保持され、新しいauthoritative world basisやcontinuity tokenにはなりません。</p>
     </section>
 
     <section>
-        <h2>Confirmed binding</h2>
+        <h2>確認済みバインド</h2>
         <dl>
-            <dt>Freshness</dt><dd>@Binding.Snapshot.Freshness</dd>
-            <dt>Status</dt><dd>@Binding.Snapshot.State</dd>
+            <dt>鮮度</dt><dd>@FormatState(Binding.Snapshot.Freshness)</dd>
+            <dt>状態</dt><dd>@FormatState(Binding.Snapshot.State)</dd>
             <dt>Binding ID</dt><dd><code>@(Binding.Snapshot.BindingId ?? "-")</code></dd>
             <dt>Resident ID</dt><dd><code>@(Binding.Snapshot.ResidentId ?? "-")</code></dd>
-            <dt>Confirmed Diver ref</dt><dd><code>@(Binding.Snapshot.DiverRef ?? "-")</code></dd>
-            <dt>Binding generation</dt><dd>@Binding.Snapshot.BindingGeneration</dd>
-            <dt>Effective from Step</dt><dd>@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")</dd>
-            <dt>Projection basis Step</dt><dd>@(Binding.Snapshot.BasisStep?.ToString() ?? "-")</dd>
-            <dt>Confirmed absence policy</dt><dd>@(Binding.Snapshot.AbsencePolicyProfile ?? "-")</dd>
-            <dt>Reason</dt><dd>@(Binding.Snapshot.ReasonCode ?? "-")</dd>
+            <dt>確認済みDiver参照</dt><dd><code>@(Binding.Snapshot.DiverRef ?? "-")</code></dd>
+            <dt>バインド世代</dt><dd>@Binding.Snapshot.BindingGeneration</dd>
+            <dt>有効開始Step</dt><dd>@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")</dd>
+            <dt>投影基準Step</dt><dd>@(Binding.Snapshot.BasisStep?.ToString() ?? "-")</dd>
+            <dt>確認済み不在ポリシー</dt><dd>@(Binding.Snapshot.AbsencePolicyProfile ?? "-")</dd>
+            <dt>理由コード</dt><dd>@(Binding.Snapshot.ReasonCode ?? "-")</dd>
         </dl>
 
         @if (Binding.Snapshot.State == ParticipationBindingState.ResidentDeceased)
         {
-            <p>The previously bound resident is deceased. Old control is not continued; return to the normal participation flow.</p>
+            <p>以前バインドされていたResidentは死亡しています。旧操作権限は継続せず、通常の参加フローへ戻ります。</p>
         }
         @if (Binding.Snapshot.Freshness == ParticipationProjectionFreshness.RefreshRequired)
         {
-            <p>Reconnect refresh is required. The old projection is retained for context but is not current control authority.</p>
+            <p>再接続後の再取得が必要です。旧投影は参照用に保持されますが、現在の操作権限としては扱いません。</p>
         }
     </section>
 
     <section>
-        <h2>Local join preference draft</h2>
+        <h2>参加設定のローカル下書き</h2>
         @if (PreferenceCatalog.Profiles.Count == 0)
         {
-            <p>No server/owner-installed preference profiles are registered in this build. Arbitrary resident takeover or invented preference categories are not exposed.</p>
+            <p>このbuildにはサーバー/ownerが導入した参加設定profileがありません。任意のResident乗っ取りや未定義カテゴリはブラウザ側で生成しません。</p>
         }
         else
         {
@@ -121,16 +121,16 @@
             </ul>
         }
         <dl>
-            <dt>Draft profile</dt><dd>@(ParticipationController.Draft.JoinPreference.ProfileId ?? "-")</dd>
-            <dt>Draft preference tokens</dt><dd>@(ParticipationController.Draft.JoinPreference.PreferenceTokens.Count == 0 ? "-" : string.Join(", ", ParticipationController.Draft.JoinPreference.PreferenceTokens))</dd>
+            <dt>下書きprofile</dt><dd>@(ParticipationController.Draft.JoinPreference.ProfileId ?? "-")</dd>
+            <dt>下書き設定token</dt><dd>@(ParticipationController.Draft.JoinPreference.PreferenceTokens.Count == 0 ? "-" : string.Join(", ", ParticipationController.Draft.JoinPreference.PreferenceTokens))</dd>
         </dl>
     </section>
 
     <section>
-        <h2>Local absence-policy draft</h2>
+        <h2>不在ポリシーのローカル下書き</h2>
         @if (AbsenceCatalog.Profiles.Count == 0)
         {
-            <p>No owner-installed absence policy profiles are registered in this build. Policy categories are not invented by the browser.</p>
+            <p>このbuildにはownerが導入した不在ポリシーprofileがありません。ポリシーカテゴリをブラウザ側で勝手に生成しません。</p>
         }
         else
         {
@@ -142,14 +142,14 @@
             </ul>
         }
         <dl>
-            <dt>Draft profile</dt><dd>@(ParticipationController.Draft.AbsencePolicy.ProfileId ?? "-")</dd>
-            <dt>Pending OperationId</dt><dd><code>@(ParticipationController.Draft.PendingOperationId ?? "-")</code></dd>
-            <dt>Local reason</dt><dd>@(ParticipationController.Draft.LastLocalReasonCode ?? "-")</dd>
+            <dt>下書きprofile</dt><dd>@(ParticipationController.Draft.AbsencePolicy.ProfileId ?? "-")</dd>
+            <dt>保留中OperationId</dt><dd><code>@(ParticipationController.Draft.PendingOperationId ?? "-")</code></dd>
+            <dt>ローカル理由コード</dt><dd>@(ParticipationController.Draft.LastLocalReasonCode ?? "-")</dd>
         </dl>
-        <p>Local edits are not shown as world-effective until authoritative Operation result and confirmed binding/policy projection arrive.</p>
+        <p>ローカル編集は、authoritative Operation結果と確認済みbinding/policy投影が到着するまで世界に反映済みとは表示しません。</p>
     </section>
 
-    <p><a href="/">Back to world view</a></p>
+    <p><a href="/">世界ビューへ戻る</a></p>
 </main>
 
 @code {
@@ -177,7 +177,7 @@
         try
         {
             var result = await GatewaySession.RequestAlphaBindingAsync();
-            _actionMessage = $"Binding Operation {result.LastReasonCode ?? result.State.ToString()}; confirmed basis {GatewaySession.ConfirmedBasisStep?.ToString() ?? "-"}.";
+            _actionMessage = $"バインドOperation結果: {result.LastReasonCode ?? result.State.ToString()} / 確認済み基準Step: {GatewaySession.ConfirmedBasisStep?.ToString() ?? "-"}";
         }
         catch (Exception ex)
         {
@@ -188,6 +188,37 @@
             _submitting = false;
         }
     }
+
+    private static string FormatPublication(string? value)
+        => value switch
+        {
+            "FULL" => "全量（FULL）",
+            "DELTA" => "差分（DELTA）",
+            null or "" => "-",
+            _ => value,
+        };
+
+    private static string FormatState(object? value)
+        => value?.ToString() switch
+        {
+            "Ready" => "準備完了",
+            "Active" => "有効",
+            "None" => "未参加",
+            "Confirmed" => "確認済み",
+            "RefreshRequired" => "再取得が必要",
+            "ResidentDeceased" => "対象Resident死亡",
+            "Connecting" => "接続中",
+            "Authenticating" => "認証中",
+            "Syncing" => "同期中",
+            "Resyncing" => "再同期中",
+            "AwaitingConfirmed" => "確認済み反映待ち",
+            "Unavailable" => "利用不可",
+            "Revoked" => "失効済み",
+            "Expired" => "期限切れ",
+            "Failed" => "失敗",
+            null => "-",
+            var text => text,
+        };
 
     private void OnSessionChanged(ViewSessionProjection snapshot) => _ = InvokeAsync(StateHasChanged);
     private void OnBindingChanged(ParticipationBindingProjection snapshot) => _ = InvokeAsync(StateHasChanged);
