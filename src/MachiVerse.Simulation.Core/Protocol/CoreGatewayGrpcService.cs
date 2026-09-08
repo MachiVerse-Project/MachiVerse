@@ -112,6 +112,8 @@ public sealed class CoreGatewayGrpcServiceV1 : MachiVerseInternalProtocolV1.Mach
                         case "gateway.register":
                         {
                             var register = ParsePayload(envelope, GatewayRegisterV1.Parser);
+                            if (_identityResolver is IRegisterScopedGatewayIdentityResolverV1 scopedIdentity)
+                                authenticatedGatewayId = scopedIdentity.ResolveRegisteredGatewayLogicalId(context, register);
                             var registered = _sessions.Register(authenticatedGatewayId, register);
                             registeredComponentInstanceId = registered.ComponentInstanceId;
                             await _master.ReconcileAsync(new StableToken("master.gateway-register"), cancellationToken);
