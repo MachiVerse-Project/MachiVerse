@@ -68,8 +68,16 @@ if (alphaCoreOptions is not null)
     {
         if (context.Connection.RemoteIpAddress is null || !IPAddress.IsLoopback(context.Connection.RemoteIpAddress))
             return Results.StatusCode(StatusCodes.Status403Forbidden);
+        // This endpoint is a CLI/test-harness-only local Alpha seam. Browser-originated requests
+        // are rejected even when the browser itself is running on loopback.
+        if (context.Request.Headers.ContainsKey("Origin"))
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
         if (!control.TrySchedule(terminal, out var kind))
+        {
+            if (!control.HasActiveSession)
+                return Results.Conflict(new { code = "auth.no-active-alpha-view-session" });
             return Results.BadRequest(new { code = "request.invalid", terminal });
+        }
         return Results.Ok(new { scheduled = kind.ToString().ToLowerInvariant() });
     });
 }
