@@ -249,9 +249,6 @@ public sealed class GeneralViewGatewaySession(
         }
         catch (ContinuityMismatchException ex)
         {
-            // The Gateway has already emitted the publication-associated binding projection after
-            // the rejected DELTA. Drain and validate its context, but never install it because its
-            // publication basis was not accepted.
             var discardedBindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
             ValidateDiscardedBindingEnvelope(discardedBindingEnvelope, worldId);
 
@@ -358,12 +355,43 @@ public sealed class GeneralViewGatewaySession(
 
     private async Task<WireEnvelopeV1> RequireNormalAsync(string type, CancellationToken cancellationToken)
     {
-        var envelope = await gateway.ReceiveAsync(cancellationToken);
-        if (envelope.NegotiationGeneration != _negotiationGeneration)
-            throw new InvalidDataException("protocol.negotiation-stale");
-        if (!string.Equals(envelope.MessageType, type, StringComparison.Ordinal))
+        while (true)
+        {
+            var envelope = await gateway.ReceiveAsync(cancellationToken);
+            if (envelope.NegotiationGeneration != _negotiationGeneration)
+                throw new InvalidDataException("protocol.negotiation-stale");
+            if (string.Equals(envelope.MessageType, type, StringComparison.Ordinal))
+                return envelope;
+
+            if (string.Equals(envelope.MessageType, "auth.session.changed", StringComparison.Ordinal))
+            {
+                if (!sessions.TryApply(envelope))
+                    throw new InvalidDataException("auth.session-state-not-applied");
+                var session = sessions.Snapshot;
+                if (session.State is ViewSessionAccessState.Revoked or ViewSessionAccessState.Expired)
+                {
+                    operations.SetAccessState(ViewMutationAccessState.SessionRevoked, session.ReasonCode);
+                    gateway.MarkDegraded();
+                    LastError = session.ReasonCode;
+                    Changed?.Invoke();
+                    if (string.Equals(type, "operation.result", StringComparison.Ordinal))
+                        continue;
+                    throw new InvalidOperationException(session.ReasonCode ?? "auth.session-terminal");
+                }
+                if (session.State == ViewSessionAccessState.ReauthenticationRequired)
+                {
+                    operations.SetAccessState(ViewMutationAccessState.Blocked, session.ReasonCode);
+                    gateway.MarkDegraded();
+                    LastError = session.ReasonCode;
+                    Changed?.Invoke();
+                    throw new InvalidOperationException(session.ReasonCode ?? "auth.reauthentication-required");
+                }
+                Changed?.Invoke();
+                continue;
+            }
+
             throw new InvalidDataException($"protocol.unexpected-gateway-message:{envelope.MessageType}");
-        return envelope;
+        }
     }
 
     private WireEnvelopeV1 BootstrapEnvelope(string type, string schema, IMessage payload)

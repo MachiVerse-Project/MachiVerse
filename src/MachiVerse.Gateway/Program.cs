@@ -1,3 +1,4 @@
+using System.Net;
 using MachiVerse.Gateway.Audit;
 using MachiVerse.Gateway.Configuration;
 using MachiVerse.Gateway.Protocol;
@@ -29,6 +30,7 @@ if (alphaCoreOptions is not null)
     builder.Services.AddSingleton<ConfirmedProjectionCache>();
     builder.Services.AddSingleton<ResyncCoordinator>();
     builder.Services.AddSingleton<AlphaCoreOperationRouter>();
+    builder.Services.AddSingleton<AlphaViewSessionControl>();
     builder.Services.AddSingleton(new MasterAuthorityTracker(alphaCoreOptions.GatewayLogicalId));
     builder.Services.AddSingleton<AlphaViewBridge>();
     builder.Services.AddSingleton<AlphaAdminBridge>();
@@ -60,6 +62,23 @@ if (alphaCoreOptions is not null)
     {
         var bridge = context.RequestServices.GetRequiredService<AlphaAdminBridge>();
         await bridge.HandleAsync(context);
+    });
+
+    app.MapPost("/alpha/control/view-session/{terminal}", (HttpContext context, string terminal, AlphaViewSessionControl control) =>
+    {
+        if (context.Connection.RemoteIpAddress is null || !IPAddress.IsLoopback(context.Connection.RemoteIpAddress))
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        // This endpoint is a CLI/test-harness-only local Alpha seam. Browser-originated requests
+        // are rejected even when the browser itself is running on loopback.
+        if (context.Request.Headers.ContainsKey("Origin"))
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        if (!control.TrySchedule(terminal, out var kind))
+        {
+            if (!control.HasActiveSession)
+                return Results.Conflict(new { code = "auth.no-active-alpha-view-session" });
+            return Results.BadRequest(new { code = "request.invalid", terminal });
+        }
+        return Results.Ok(new { scheduled = kind.ToString().ToLowerInvariant() });
     });
 }
 

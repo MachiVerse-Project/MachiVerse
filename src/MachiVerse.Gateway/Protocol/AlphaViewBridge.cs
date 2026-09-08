@@ -18,7 +18,8 @@ public sealed class AlphaViewBridge(
     AlphaCoreLinkState coreLinkState,
     SchedulingPolicyProjection scheduling,
     ConfirmedProjectionCache confirmedCache,
-    AlphaCoreOperationRouter operations)
+    AlphaCoreOperationRouter operations,
+    AlphaViewSessionControl sessionControl)
 {
     private const string ProtocolId = "mv.gateway-view";
     private const string ProjectionProfile = "standard";
@@ -34,6 +35,7 @@ public sealed class AlphaViewBridge(
     private readonly SchedulingPolicyProjection _scheduling = scheduling ?? throw new ArgumentNullException(nameof(scheduling));
     private readonly ConfirmedProjectionCache _confirmedCache = confirmedCache ?? throw new ArgumentNullException(nameof(confirmedCache));
     private readonly AlphaCoreOperationRouter _operations = operations ?? throw new ArgumentNullException(nameof(operations));
+    private readonly AlphaViewSessionControl _sessionControl = sessionControl ?? throw new ArgumentNullException(nameof(sessionControl));
 
     public async Task HandleAsync(HttpContext context)
     {
@@ -57,6 +59,7 @@ public sealed class AlphaViewBridge(
             return;
         }
 
+        string? registeredSessionIdHex = null;
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         try
         {
@@ -78,7 +81,12 @@ public sealed class AlphaViewBridge(
                 throw new InvalidDataException("auth.unauthorized: Alpha View bridge accepts GENERAL_VIEW only.");
 
             var sessionId = RandomId128();
+            registeredSessionIdHex = Convert.ToHexStringLower(sessionId.Span);
+            if (!_sessionControl.TryRegister(registeredSessionIdHex))
+                throw new InvalidDataException("auth.concurrent-alpha-view-session");
+
             var diverRef = DeriveAlphaDiverRef(_coreOptions.GatewayLogicalId);
+            ulong sessionGeneration = 1;
             await SendAsync(socket, NormalResponse(
                 loginEnvelope,
                 "auth.login.result",
@@ -87,7 +95,7 @@ public sealed class AlphaViewBridge(
                 {
                     Result = Success("auth.login.local-alpha"),
                     SessionId = sessionId,
-                    SessionGeneration = 1,
+                    SessionGeneration = sessionGeneration,
                 }), context.RequestAborted);
 
             var sessionState = new AuthSessionStateV1
@@ -95,7 +103,7 @@ public sealed class AlphaViewBridge(
                 SessionId = sessionId,
                 AuthDomain = (AuthDomainWireV1)1,
                 EffectiveRoleSet = "general-view.alpha",
-                SessionGeneration = 1,
+                SessionGeneration = sessionGeneration,
                 Status = (SessionWireStatusV1)1,
                 DiverRef = diverRef,
             };
@@ -111,6 +119,26 @@ public sealed class AlphaViewBridge(
             while (socket.State == WebSocketState.Open && !context.RequestAborted.IsCancellationRequested)
             {
                 var request = await ReceiveNormalAsync(socket, context.RequestAborted);
+                var scheduledTerminal = _sessionControl.ConsumePending(registeredSessionIdHex);
+                if (scheduledTerminal != AlphaViewSessionTerminalKind.None)
+                {
+                    sessionGeneration = checked(sessionGeneration + 1);
+                    var terminalState = CreateTerminalSessionState(sessionId, sessionGeneration, scheduledTerminal);
+                    await SendAsync(socket, Notification(
+                        "auth.session.changed",
+                        "protocol.auth-session-state.v1",
+                        terminalState), context.RequestAborted);
+                    await SendTerminalOperationRejectionAsync(socket, request, scheduledTerminal, context.RequestAborted);
+                    if (socket.State == WebSocketState.Open)
+                    {
+                        await socket.CloseOutputAsync(
+                            WebSocketCloseStatus.NormalClosure,
+                            TerminalReasonCode(scheduledTerminal),
+                            context.RequestAborted);
+                    }
+                    break;
+                }
+
                 switch (request.MessageType)
                 {
                     case "world.subscribe":
@@ -170,7 +198,91 @@ public sealed class AlphaViewBridge(
                 await socket.CloseAsync(WebSocketCloseStatus.ProtocolError, description, CancellationToken.None);
             }
         }
+        finally
+        {
+            if (registeredSessionIdHex is not null)
+                _sessionControl.Unregister(registeredSessionIdHex);
+        }
     }
+
+    private static AuthSessionStateV1 CreateTerminalSessionState(
+        ByteString sessionId,
+        ulong sessionGeneration,
+        AlphaViewSessionTerminalKind terminalKind)
+    {
+        if (terminalKind is not (AlphaViewSessionTerminalKind.Revoked or AlphaViewSessionTerminalKind.Expired))
+            throw new InvalidDataException("auth.invalid-alpha-session-terminal");
+        return new AuthSessionStateV1
+        {
+            SessionId = sessionId,
+            AuthDomain = (AuthDomainWireV1)1,
+            EffectiveRoleSet = "general-view.alpha",
+            SessionGeneration = sessionGeneration,
+            Status = (SessionWireStatusV1)(int)terminalKind,
+        };
+    }
+
+    private async Task SendTerminalOperationRejectionAsync(
+        WebSocket socket,
+        WireEnvelopeV1 request,
+        AlphaViewSessionTerminalKind terminalKind,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(request.MessageType, "participation.binding.request", StringComparison.Ordinal))
+            return;
+
+        StandardOperationV1 operation;
+        try
+        {
+            operation = StandardOperationV1.Parser.ParseFrom(request.Payload);
+        }
+        catch (InvalidProtocolBufferException ex)
+        {
+            throw new InvalidDataException("request.invalid: malformed StandardOperationV1 while rejecting terminal session.", ex);
+        }
+        RequireId128(operation.OperationId, "operation_id");
+        if (operation.ImmutablePayloadDigest.Length != 32)
+            throw new InvalidDataException("protocol.invalid-hash:immutable_payload_digest");
+        if (request.OperationContext is null || !request.OperationContext.HasOperationId ||
+            !request.OperationContext.OperationId.Equals(operation.OperationId) ||
+            !request.OperationContext.HasOperationPayloadDigest ||
+            !request.OperationContext.OperationPayloadDigest.Equals(operation.ImmutablePayloadDigest))
+            throw new InvalidDataException("protocol.payload-schema-mismatch: operation context does not match terminal rejection request.");
+
+        var reasonCode = TerminalReasonCode(terminalKind);
+        var status = new OperationStatusResultV1
+        {
+            OperationId = operation.OperationId,
+            State = (OperationLifecycleWireStateV1)4,
+            OperationPayloadDigest = operation.ImmutablePayloadDigest,
+            RichResultDetailsAvailable = false,
+            TerminalResult = new ResultV1
+            {
+                Status = (ResultStatusV1)6,
+                Code = reasonCode,
+                RetryAdvice = (RetryAdviceV1)(terminalKind == AlphaViewSessionTerminalKind.Expired ? 3 : 1),
+            },
+        };
+        var operationContext = new OperationContextWireV1
+        {
+            OperationId = operation.OperationId,
+            OperationPayloadDigest = operation.ImmutablePayloadDigest,
+        };
+        await SendAsync(socket, NormalResponse(
+            request,
+            "operation.result",
+            "protocol.operation-status-result.v1",
+            status,
+            operation: operationContext), cancellationToken);
+    }
+
+    private static string TerminalReasonCode(AlphaViewSessionTerminalKind terminalKind)
+        => terminalKind switch
+        {
+            AlphaViewSessionTerminalKind.Revoked => "auth.session-revoked",
+            AlphaViewSessionTerminalKind.Expired => "auth.session-expired",
+            _ => throw new InvalidDataException("auth.invalid-alpha-session-terminal"),
+        };
 
     private async Task<ConfirmedStateSnapshot?> HandleBindingRequestAsync(
         WebSocket socket,

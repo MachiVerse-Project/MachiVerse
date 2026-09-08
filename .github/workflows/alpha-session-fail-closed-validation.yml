@@ -1,0 +1,189 @@
+name: Alpha session fail-closed validation
+
+on:
+  pull_request:
+    branches:
+      - integration/1.0-alpha
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-session-fail-closed-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  terminal-session:
+    name: General View rejects revoked and expired protected requests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Core Gateway General View and protocol probe
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release
+          dotnet build src/MachiVerse.View/MachiVerse.View.csproj --configuration Release
+          dotnet build tests/MachiVerse.Alpha.ProtocolProbe/MachiVerse.Alpha.ProtocolProbe.csproj --configuration Release
+      - name: Exercise terminal session transitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          world_root="$RUNNER_TEMP/machiverse-alpha-session-world"
+          core_log="$RUNNER_TEMP/alpha-session-core.log"
+          gateway_log="$RUNNER_TEMP/alpha-session-gateway.log"
+          view_log="$RUNNER_TEMP/alpha-session-view.log"
+          browser_log="$RUNNER_TEMP/alpha-session-browser.log"
+
+          stop_process() {
+            pid="${1:-0}"
+            if [ "$pid" -le 1 ] || ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 20); do
+              if ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+              sleep 0.25
+            done
+            kill -9 "$pid" 2>/dev/null || true
+          }
+          cleanup() {
+            stop_process "${browser_pid:-0}"
+            stop_process "${view_pid:-0}"
+            stop_process "${gateway_pid:-0}"
+            stop_process "${core_pid:-0}"
+          }
+          trap cleanup EXIT
+
+          MACHIVERSE_ALPHA_LOCAL=1 \
+          MACHIVERSE_WORLD_ROOT="$world_root" \
+          Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:5711 \
+          Kestrel__Endpoints__Grpc__Protocols=Http2 \
+          Kestrel__Endpoints__Health__Url=http://127.0.0.1:5710 \
+          Kestrel__Endpoints__Health__Protocols=Http1 \
+          dotnet run --project src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --no-build >"$core_log" 2>&1 &
+          core_pid=$!
+          for _ in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:5710/healthz >/dev/null; then break; fi
+            if ! kill -0 "$core_pid" 2>/dev/null; then cat "$core_log"; exit 1; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:5710/healthz >/dev/null
+
+          MACHIVERSE_ALPHA_LOCAL=1 \
+          MACHIVERSE_CORE_ENDPOINT=http://127.0.0.1:5711 \
+          ASPNETCORE_URLS=http://127.0.0.1:5520 \
+          dotnet run --project src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release --no-build >"$gateway_log" 2>&1 &
+          gateway_pid=$!
+          for _ in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5520/healthz >"$RUNNER_TEMP/session-gateway-health.json"; then
+              if python3 - "$RUNNER_TEMP/session-gateway-health.json" <<'PY'
+          import json, sys
+          data=json.load(open(sys.argv[1], encoding='utf-8'))
+          core=data.get('core') or {}
+          assert data.get('status') == 'ready', data
+          assert core.get('basisStep') == 0, data
+          PY
+              then break; fi
+            fi
+            if ! kill -0 "$gateway_pid" 2>/dev/null; then cat "$gateway_log"; cat "$core_log"; exit 1; fi
+            sleep 1
+          done
+
+          dotnet run --project tests/MachiVerse.Alpha.ProtocolProbe/MachiVerse.Alpha.ProtocolProbe.csproj --configuration Release --no-build
+
+          ASPNETCORE_URLS=http://127.0.0.1:5750 \
+          dotnet run --project src/MachiVerse.View/MachiVerse.View.csproj --configuration Release --no-build --no-launch-profile >"$view_log" 2>&1 &
+          view_pid=$!
+          for _ in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:5750/ >/dev/null; then break; fi
+            if ! kill -0 "$view_pid" 2>/dev/null; then cat "$view_log"; exit 1; fi
+            sleep 1
+          done
+
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [ -z "$browser" ]; then echo "No Chromium-compatible browser found."; exit 1; fi
+          "$browser" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --remote-debugging-address=127.0.0.1 --remote-debugging-port=9424 \
+            --user-data-dir="$RUNNER_TEMP/alpha-session-chrome" \
+            http://127.0.0.1:5750/ >"$RUNNER_TEMP/alpha-session-browser.stdout" 2>"$browser_log" &
+          browser_pid=$!
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9424/json/list >/dev/null; then break; fi
+            sleep 1
+          done
+
+          set +e
+          node <<'JS'
+          const {execFileSync}=await import('node:child_process');
+          const pages = await (await fetch('http://127.0.0.1:9424/json/list')).json();
+          const page = pages.find(x => x.type === 'page' && x.url.includes('127.0.0.1:5750')) ?? pages.find(x => x.type === 'page');
+          if (!page?.webSocketDebuggerUrl || typeof WebSocket === 'undefined') process.exit(2);
+          const ws = new WebSocket(page.webSocketDebuggerUrl);
+          await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(new Error('CDP open timeout')),5000);ws.onopen=()=>{clearTimeout(t);resolve();};ws.onerror=reject;});
+          let id=1; const pending=new Map();
+          ws.onmessage=e=>{const m=JSON.parse(e.data);if(!m.id)return;const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.error?p.reject(new Error(JSON.stringify(m.error))):p.resolve(m.result);};
+          const send=(method,params={})=>new Promise((resolve,reject)=>{const n=id++;const t=setTimeout(()=>{pending.delete(n);reject(new Error('CDP timeout '+method));},7000);pending.set(n,{resolve:v=>{clearTimeout(t);resolve(v);},reject:e=>{clearTimeout(t);reject(e);}});ws.send(JSON.stringify({id:n,method,params}));});
+          const evalJs=async expression => (await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true}))?.result?.value;
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const waitText=async (needle, attempts=160)=>{let text='';for(let i=0;i<attempts;i++){text=await evalJs('document.body?.innerText ?? ""');if(text.includes(needle))return text;await sleep(250);}throw new Error('Missing text '+needle+'; last DOM:\n'+text);};
+          const valueAfter=(text,label)=>{const lines=text.split('\n').map(x=>x.trim()).filter(Boolean);const i=lines.indexOf(label);return i>=0?lines[i+1]:undefined;};
+          const clickText=async text=>{const ok=await evalJs(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!b)return false;b.click();return true;})()`);if(!ok)throw new Error('Button not found: '+text);};
+          const clickLinkText=async text=>{const ok=await evalJs(`(()=>{const a=[...document.querySelectorAll('a')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!a)return false;a.click();return true;})()`);if(!ok)throw new Error('Link not found: '+text);};
+          const assertCoreBasisZero=async()=>{const data=await (await fetch('http://127.0.0.1:5520/healthz')).json();if(data?.core?.basisStep!==0)throw new Error('Terminal session request reached Core; basis='+data?.core?.basisStep);};
+
+          await send('Runtime.enable');
+          await send('Page.enable');
+
+          const runCase=async (terminal, expectedState, expectedReason) => {
+            await send('Page.navigate',{url:'http://127.0.0.1:5750/'});
+            await waitText('Lifecycle\nReady');
+            await waitText('Confirmed basis\n0');
+            await clickLinkText('Open Diver Participation');
+            let text=await waitText('Diver Participation');
+            if(valueAfter(text,'Session state')!=='Active' || valueAfter(text,'Session generation')!=='1') throw new Error('Fresh session is not Active generation 1.\n'+text);
+            if(valueAfter(text,'Status')!=='None' || valueAfter(text,'Binding generation')!=='0') throw new Error('Fresh world unexpectedly contains a binding.\n'+text);
+
+            execFileSync('dotnet',[
+              'run','--project','tests/MachiVerse.Alpha.ProtocolProbe/MachiVerse.Alpha.ProtocolProbe.csproj',
+              '--configuration','Release','--no-build','--','concurrent-view'
+            ],{stdio:'inherit'});
+
+            const rejectedOrigin=await fetch(`http://127.0.0.1:5520/alpha/control/view-session/${terminal}`,{
+              method:'POST',headers:{Origin:'https://example.invalid'}
+            });
+            if(rejectedOrigin.status!==403) throw new Error('Browser-origin Alpha control request was not rejected; status='+rejectedOrigin.status);
+
+            const response=await fetch(`http://127.0.0.1:5520/alpha/control/view-session/${terminal}`,{method:'POST'});
+            if(!response.ok) throw new Error('Could not schedule terminal session '+terminal+': '+await response.text());
+            await clickText('Request Alpha binding');
+            text=await waitText(`Binding Operation ${expectedReason}`);
+            if(valueAfter(text,'Session state')!==expectedState) throw new Error('Terminal session state did not reach View.\n'+text);
+            if(valueAfter(text,'Session generation')!=='2') throw new Error('Terminal session generation is not 2.\n'+text);
+            if(valueAfter(text,'Binding request UX')!=='unavailable') throw new Error('Terminal session still exposes binding mutation UX.\n'+text);
+            if(valueAfter(text,'Status')!=='None' || valueAfter(text,'Binding generation')!=='0' || valueAfter(text,'Projection basis Step')!=='0') throw new Error('Terminal session invented or accepted a world binding mutation.\n'+text);
+            await assertCoreBasisZero();
+
+            await clickLinkText('Back to world view');
+            text=await waitText('Lifecycle\nDegraded');
+            if(valueAfter(text,'Confirmed basis')!=='0') throw new Error('Terminal session changed confirmed world basis.\n'+text);
+          };
+
+          await runCase('revoked','Revoked','auth.session-revoked');
+          await runCase('expired','Expired','auth.session-expired');
+          console.log('Revoked and expired Alpha View session cases passed.');
+          ws.close();
+          JS
+          browser_status=$?
+          set -e
+          if [ "$browser_status" -ne 0 ]; then
+            echo "--- Core log ---"; cat "$core_log"
+            echo "--- Gateway log ---"; cat "$gateway_log"
+            echo "--- View log ---"; cat "$view_log"
+            echo "--- Browser log ---"; cat "$browser_log"
+            exit "$browser_status"
+          fi
