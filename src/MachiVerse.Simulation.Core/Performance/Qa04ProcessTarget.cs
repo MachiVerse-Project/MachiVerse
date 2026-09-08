@@ -32,6 +32,7 @@ public static class Qa04ProcessTargetV1
             {
                 "inspect" => Inspect(),
                 "worker-probe" => await ProbeWorkerAsync(request.WorkerCount, cancellationToken).ConfigureAwait(false),
+                "resident-materialize-probe" => MaterializeResident(request.RecordCount),
                 _ => throw new InvalidDataException("qa04.target.command-unsupported"),
             };
 
@@ -49,6 +50,7 @@ public static class Qa04ProcessTargetV1
     {
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
         return new Qa04ProcessInspectionV1
         {
             SchemaVersion = "1.0",
@@ -58,12 +60,47 @@ public static class Qa04ProcessTargetV1
             CanonicalWorkerCounts = Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.ToArray(),
             StandardDomainCount = StandardDomainExecutionPlanV1.Create().Entries.Count,
             StandardPartitionCount = StandardDomainPartitionRegistry.StandardPartitionCount,
+            ResidentIdentityMaterializationAvailable = true,
+            CanonicalResidentCount = Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount,
+            InitialResidentLifecycle = Qa04ReferenceWorldMaterializerV1.InitialResidentLifecycle.Value,
             ReferenceWorldMaterialized = false,
             AuthoritativeStepLoopAvailable = false,
             ReleaseEvidenceCapable = false,
             BlockingFailureCodes =
             [
                 "qa04.target.reference-world-not-materialized",
+                "qa04.target.authoritative-step-loop-not-assembled",
+            ],
+        };
+    }
+
+    private static Qa04ProcessResidentMaterializationV1 MaterializeResident(ulong recordCount)
+    {
+        var result = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(recordCount);
+        return new Qa04ProcessResidentMaterializationV1
+        {
+            SchemaVersion = "1.0",
+            ProfileId = Qa04ReferenceLoadV1.BenchmarkProfileId,
+            PartitionId = result.PartitionHeader.PartitionId.Value,
+            RequestedRecordCount = recordCount,
+            MaterializedRecordCount = result.MaterializedRecordCount,
+            CanonicalResidentCount = Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount,
+            D0Count = result.D0Count,
+            D1Count = result.D1Count,
+            D2Count = result.D2Count,
+            D3Count = result.D3Count,
+            InitialLifecycle = Qa04ReferenceWorldMaterializerV1.InitialResidentLifecycle.Value,
+            BirthStepSpecified = false,
+            LineageGeneration = Qa04ReferenceWorldMaterializerV1.InitialResidentLineageGeneration,
+            ProfileToken = Qa04ReferenceWorldMaterializerV1.ResidentProfileToken.Value,
+            PartitionDigest = Convert.ToHexString(result.PartitionHeader.CanonicalDigest).ToLowerInvariant(),
+            StateDigest = Convert.ToHexString(result.WorldState.Diagnostic.StateDigest).ToLowerInvariant(),
+            CanonicalResidentPopulationComplete = result.CanonicalResidentPopulationComplete,
+            ReferenceWorldMaterialized = false,
+            ReleaseEvidenceCapable = false,
+            BlockingFailureCodes =
+            [
+                "qa04.target.reference-world-other-partitions-not-materialized",
                 "qa04.target.authoritative-step-loop-not-assembled",
             ],
         };
@@ -179,6 +216,7 @@ public sealed class Qa04ProcessRequestV1
     public string SchemaVersion { get; set; } = "";
     public string Command { get; set; } = "";
     public int WorkerCount { get; set; }
+    public ulong RecordCount { get; set; }
 }
 
 public sealed class Qa04ProcessInspectionV1
@@ -190,6 +228,9 @@ public sealed class Qa04ProcessInspectionV1
     public int[] CanonicalWorkerCounts { get; set; } = [];
     public int StandardDomainCount { get; set; }
     public int StandardPartitionCount { get; set; }
+    public bool ResidentIdentityMaterializationAvailable { get; set; }
+    public ulong CanonicalResidentCount { get; set; }
+    public string InitialResidentLifecycle { get; set; } = "";
     public bool ReferenceWorldMaterialized { get; set; }
     public bool AuthoritativeStepLoopAvailable { get; set; }
     public bool ReleaseEvidenceCapable { get; set; }
@@ -204,6 +245,30 @@ public sealed class Qa04ProcessWorkerProbeV1
     public int DomainCount { get; set; }
     public int MaxObservedConcurrency { get; set; }
     public bool WorkerCountAppliedToDomainExecutor { get; set; }
+    public bool ReferenceWorldMaterialized { get; set; }
+    public bool ReleaseEvidenceCapable { get; set; }
+    public string[] BlockingFailureCodes { get; set; } = [];
+}
+
+public sealed class Qa04ProcessResidentMaterializationV1
+{
+    public string SchemaVersion { get; set; } = "";
+    public string ProfileId { get; set; } = "";
+    public string PartitionId { get; set; } = "";
+    public ulong RequestedRecordCount { get; set; }
+    public ulong MaterializedRecordCount { get; set; }
+    public ulong CanonicalResidentCount { get; set; }
+    public ulong D0Count { get; set; }
+    public ulong D1Count { get; set; }
+    public ulong D2Count { get; set; }
+    public ulong D3Count { get; set; }
+    public string InitialLifecycle { get; set; } = "";
+    public bool BirthStepSpecified { get; set; }
+    public uint LineageGeneration { get; set; }
+    public string ProfileToken { get; set; } = "";
+    public string PartitionDigest { get; set; } = "";
+    public string StateDigest { get; set; } = "";
+    public bool CanonicalResidentPopulationComplete { get; set; }
     public bool ReferenceWorldMaterialized { get; set; }
     public bool ReleaseEvidenceCapable { get; set; }
     public string[] BlockingFailureCodes { get; set; } = [];
