@@ -371,13 +371,17 @@ public sealed class GeneralViewGatewaySession(
                 if (session.State is ViewSessionAccessState.Revoked or ViewSessionAccessState.Expired)
                 {
                     operations.SetAccessState(ViewMutationAccessState.SessionRevoked, session.ReasonCode);
+                    gateway.MarkDegraded();
                     LastError = session.ReasonCode;
                     Changed?.Invoke();
+                    if (string.Equals(type, "operation.result", StringComparison.Ordinal))
+                        continue;
                     throw new InvalidOperationException(session.ReasonCode ?? "auth.session-terminal");
                 }
                 if (session.State == ViewSessionAccessState.ReauthenticationRequired)
                 {
                     operations.SetAccessState(ViewMutationAccessState.Blocked, session.ReasonCode);
+                    gateway.MarkDegraded();
                     LastError = session.ReasonCode;
                     Changed?.Invoke();
                     throw new InvalidOperationException(session.ReasonCode ?? "auth.reauthentication-required");
