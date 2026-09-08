@@ -1,0 +1,314 @@
+name: Alpha combined restart validation
+
+on:
+  pull_request:
+    branches:
+      - integration/1.0-alpha
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-combined-restart-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  combined-restart:
+    name: Operation Config and publication survive one Alpha restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build four Alpha components
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release
+          dotnet build src/MachiVerse.View/MachiVerse.View.csproj --configuration Release
+          dotnet build src/MachiVerse.Administration.View/MachiVerse.Administration.View.csproj --configuration Release
+      - name: Exercise combined Operation Config publication restart
+        shell: bash
+        run: |
+          set -euo pipefail
+          world_root="$RUNNER_TEMP/machiverse-alpha-combined-world"
+          gateway_root="$RUNNER_TEMP/machiverse-alpha-combined-gateway"
+          core_log="$RUNNER_TEMP/alpha-combined-core.log"
+          gateway_log="$RUNNER_TEMP/alpha-combined-gateway.log"
+          view_log="$RUNNER_TEMP/alpha-combined-view.log"
+          admin_log="$RUNNER_TEMP/alpha-combined-admin.log"
+          view_browser_log="$RUNNER_TEMP/alpha-combined-view-browser.log"
+          admin_browser_log="$RUNNER_TEMP/alpha-combined-admin-browser.log"
+          pre_restart="$RUNNER_TEMP/alpha-combined-pre-restart.json"
+
+          stop_process() {
+            pid="${1:-0}"
+            if [ "$pid" -le 1 ] || ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 20); do
+              if ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+              sleep 0.25
+            done
+            kill -9 "$pid" 2>/dev/null || true
+          }
+
+          start_core() {
+            MACHIVERSE_ALPHA_LOCAL=1 \
+            MACHIVERSE_WORLD_ROOT="$world_root" \
+            Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:5911 \
+            Kestrel__Endpoints__Grpc__Protocols=Http2 \
+            Kestrel__Endpoints__Health__Url=http://127.0.0.1:5910 \
+            Kestrel__Endpoints__Health__Protocols=Http1 \
+            dotnet run --project src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --no-build >>"$core_log" 2>&1 &
+            core_pid=$!
+          }
+
+          wait_core() {
+            for _ in $(seq 1 45); do
+              if curl --fail --silent http://127.0.0.1:5910/healthz >/dev/null; then return 0; fi
+              if ! kill -0 "$core_pid" 2>/dev/null; then cat "$core_log"; return 1; fi
+              sleep 1
+            done
+            cat "$core_log"
+            return 1
+          }
+
+          start_gateway() {
+            MACHIVERSE_ALPHA_LOCAL=1 \
+            MACHIVERSE_CORE_ENDPOINT=http://127.0.0.1:5911 \
+            MACHIVERSE_GATEWAY_DATA_ROOT="$gateway_root" \
+            ASPNETCORE_URLS=http://127.0.0.1:5520 \
+            dotnet run --project src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release --no-build >>"$gateway_log" 2>&1 &
+            gateway_pid=$!
+          }
+
+          wait_gateway_basis() {
+            expected="$1"
+            for _ in $(seq 1 60); do
+              if curl --fail --silent http://127.0.0.1:5520/healthz >"$RUNNER_TEMP/combined-gateway-health.json"; then
+                if python3 - "$RUNNER_TEMP/combined-gateway-health.json" "$expected" <<'PY'
+          import json, sys
+          data=json.load(open(sys.argv[1], encoding='utf-8'))
+          expected=int(sys.argv[2])
+          core=data.get('core') or {}
+          assert data.get('status') == 'ready', data
+          assert core.get('negotiated') is True, data
+          assert core.get('syncState') == 'Synced', data
+          assert core.get('basisStep') == expected, data
+          PY
+                then return 0; fi
+              fi
+              if ! kill -0 "$gateway_pid" 2>/dev/null; then cat "$gateway_log"; cat "$core_log"; return 1; fi
+              sleep 1
+            done
+            cat "$gateway_log"
+            cat "$core_log"
+            return 1
+          }
+
+          cleanup() {
+            stop_process "${view_browser_pid:-0}"
+            stop_process "${admin_browser_pid:-0}"
+            stop_process "${view_pid:-0}"
+            stop_process "${admin_pid:-0}"
+            stop_process "${gateway_pid:-0}"
+            stop_process "${core_pid:-0}"
+          }
+          trap cleanup EXIT
+
+          start_core
+          wait_core
+          start_gateway
+          wait_gateway_basis 0
+
+          ASPNETCORE_URLS=http://127.0.0.1:5750 \
+          dotnet run --project src/MachiVerse.View/MachiVerse.View.csproj --configuration Release --no-build --no-launch-profile >"$view_log" 2>&1 &
+          view_pid=$!
+          ASPNETCORE_URLS=http://127.0.0.1:5660 \
+          dotnet run --project src/MachiVerse.Administration.View/MachiVerse.Administration.View.csproj --configuration Release --no-build --no-launch-profile >"$admin_log" 2>&1 &
+          admin_pid=$!
+
+          for _ in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:5750/ >/dev/null && curl --fail --silent http://127.0.0.1:5660/ >/dev/null; then break; fi
+            if ! kill -0 "$view_pid" 2>/dev/null; then cat "$view_log"; exit 1; fi
+            if ! kill -0 "$admin_pid" 2>/dev/null; then cat "$admin_log"; exit 1; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:5750/ >/dev/null
+          curl --fail --silent http://127.0.0.1:5660/ >/dev/null
+
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [ -z "$browser" ]; then echo "No Chromium-compatible browser found."; exit 1; fi
+
+          "$browser" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --remote-debugging-address=127.0.0.1 --remote-debugging-port=9430 \
+            --user-data-dir="$RUNNER_TEMP/alpha-combined-view-chrome" \
+            http://127.0.0.1:5750/ >"$RUNNER_TEMP/alpha-combined-view-browser.stdout" 2>"$view_browser_log" &
+          view_browser_pid=$!
+          "$browser" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --remote-debugging-address=127.0.0.1 --remote-debugging-port=9431 \
+            --user-data-dir="$RUNNER_TEMP/alpha-combined-admin-chrome" \
+            http://127.0.0.1:5660/ >"$RUNNER_TEMP/alpha-combined-admin-browser.stdout" 2>"$admin_browser_log" &
+          admin_browser_pid=$!
+
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9430/json/list >/dev/null && curl --fail --silent http://127.0.0.1:9431/json/list >/dev/null; then break; fi
+            sleep 1
+          done
+
+          set +e
+          PRE_RESTART="$pre_restart" node <<'JS'
+          const fs=await import('node:fs');
+          const prePath=process.env.PRE_RESTART;
+
+          async function cdp(port, urlPart) {
+            const pages=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+            const page=pages.find(x=>x.type==='page'&&x.url.includes(urlPart))??pages.find(x=>x.type==='page');
+            if(!page?.webSocketDebuggerUrl) throw new Error('No CDP page for '+urlPart);
+            const ws=new WebSocket(page.webSocketDebuggerUrl);
+            await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(new Error('CDP open timeout')),5000);ws.onopen=()=>{clearTimeout(t);resolve();};ws.onerror=reject;});
+            let id=1; const pending=new Map();
+            ws.onmessage=e=>{const m=JSON.parse(e.data);if(!m.id)return;const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.error?p.reject(new Error(JSON.stringify(m.error))):p.resolve(m.result);};
+            const send=(method,params={})=>new Promise((resolve,reject)=>{const n=id++;const t=setTimeout(()=>{pending.delete(n);reject(new Error('CDP timeout '+method));},7000);pending.set(n,{resolve:v=>{clearTimeout(t);resolve(v);},reject:e=>{clearTimeout(t);reject(e);}});ws.send(JSON.stringify({id:n,method,params}));});
+            await send('Runtime.enable'); await send('Page.enable');
+            const evalJs=async expression=>(await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true}))?.result?.value;
+            const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+            const text=()=>evalJs('document.body?.innerText ?? ""');
+            const waitText=async(needle,attempts=180)=>{let v='';for(let i=0;i<attempts;i++){v=await text();if(v.includes(needle))return v;await sleep(250);}throw new Error('Missing '+needle+'; DOM:\n'+v);};
+            const valueAfter=(v,label)=>{const lines=v.split('\n').map(x=>x.trim()).filter(Boolean);const i=lines.indexOf(label);return i>=0?lines[i+1]:undefined;};
+            const clickText=async label=>{const ok=await evalJs(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes(${JSON.stringify(label)}));if(!b)return false;b.click();return true;})()`);if(!ok)throw new Error('Button not found '+label);};
+            const clickLink=async label=>{const ok=await evalJs(`(()=>{const a=[...document.querySelectorAll('a')].find(x=>x.textContent.includes(${JSON.stringify(label)}));if(!a)return false;a.click();return true;})()`);if(!ok)throw new Error('Link not found '+label);};
+            return {ws,send,evalJs,sleep,text,waitText,valueAfter,clickText,clickLink};
+          }
+
+          const view=await cdp(9430,'127.0.0.1:5750');
+          let v=await view.waitText('Lifecycle\nReady');
+          await view.waitText('Confirmed basis\n0');
+          await view.clickLink('Open Diver Participation');
+          v=await view.waitText('Diver Participation');
+          const diver=view.valueAfter(v,'Session Diver ref');
+          const full0=view.valueAfter(v,'Continuity token');
+          if(!diver||diver==='-'||!full0||full0==='-') throw new Error('Initial View authority metadata missing.\n'+v);
+          if(view.valueAfter(v,'Status')!=='None'||view.valueAfter(v,'Binding generation')!=='0'||view.valueAfter(v,'Last accepted publication')!=='FULL') throw new Error('Initial View state is not NONE/FULL basis0.\n'+v);
+
+          await view.clickText('Request Alpha binding');
+          v=await view.waitText('Binding Operation participation.binding.created; confirmed basis 3.');
+          if(view.valueAfter(v,'Status')!=='Active'||view.valueAfter(v,'Confirmed Diver ref')!==diver||view.valueAfter(v,'Binding generation')!=='1'||view.valueAfter(v,'Effective from Step')!=='2'||view.valueAfter(v,'Projection basis Step')!=='3') throw new Error('Binding operation did not establish expected authoritative state.\n'+v);
+          if(view.valueAfter(v,'Last accepted publication')!=='DELTA'||view.valueAfter(v,'Base continuity token')!==full0) throw new Error('Binding update did not arrive through expected DELTA continuity.\n'+v);
+          const token3=view.valueAfter(v,'Continuity token');
+          if(!token3||token3==='-'||token3===full0) throw new Error('Basis3 continuity token did not advance.\n'+v);
+          if(view.valueAfter(v,'Last correction reason')!=='prediction.confirmed-authoritative'||view.valueAfter(v,'Active prediction count')!=='0') throw new Error('Prediction did not reconcile before restart.\n'+v);
+
+          const admin=await cdp(9431,'127.0.0.1:5660');
+          let a=await admin.waitText('Lifecycle\nReady');
+          await admin.waitText('Config generation\n1');
+          await admin.clickLink('Open Config / operational command management');
+          a=await admin.waitText('Config / Operational Command Management');
+          await admin.waitText('ConfigGeneration\n1');
+          await admin.clickText('Start local draft');
+          await admin.waitText('expected base ConfigGeneration: 1');
+          const configured=await admin.evalJs(`(()=>{const s=[...document.querySelectorAll('select')];const key=s[0],kind=s[1],input=document.querySelector('input');if(!key||!kind||!input)return false;key.value='peer.heartbeat-interval-ms';key.dispatchEvent(new Event('change',{bubbles:true}));kind.value='Uint';kind.dispatchEvent(new Event('change',{bubbles:true}));input.value='1200';input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+          if(!configured) throw new Error('Admin Config draft controls not found.');
+          await admin.sleep(300);
+          await admin.clickText('Add / replace edit');
+          await admin.waitText('Local edit prepared for peer.heartbeat-interval-ms.');
+          await admin.clickText('Submit Config change');
+          a=await admin.waitText('Config change result: config.change.applied; resulting generation 2.');
+          if(!a.includes('ConfigGeneration\n2')) throw new Error('Admin Config projection did not advance to generation2.\n'+a);
+          const rowOk=await admin.evalJs(`(()=>{const r=[...document.querySelectorAll('tr')].find(x=>x.innerText.includes('peer.heartbeat-interval-ms'));return !!r&&r.innerText.includes('1200');})()`);
+          if(!rowOk) throw new Error('Changed heartbeat value 1200 is not visible in confirmed Config projection.');
+
+          fs.writeFileSync(prePath,JSON.stringify({diver,full0,token3,configGeneration:2,heartbeat:1200}),{encoding:'utf8'});
+          view.ws.close(); admin.ws.close();
+          JS
+          browser_status=$?
+          set -e
+          if [ "$browser_status" -ne 0 ]; then
+            echo "--- Core log ---"; cat "$core_log"
+            echo "--- Gateway log ---"; cat "$gateway_log"
+            echo "--- View log ---"; cat "$view_log"
+            echo "--- Admin log ---"; cat "$admin_log"
+            echo "--- View browser log ---"; cat "$view_browser_log"
+            echo "--- Admin browser log ---"; cat "$admin_browser_log"
+            exit "$browser_status"
+          fi
+
+          python3 - "$pre_restart" <<'PY'
+          import json, sys
+          data=json.load(open(sys.argv[1], encoding='utf-8'))
+          assert data['configGeneration'] == 2, data
+          assert data['heartbeat'] == 1200, data
+          assert data['token3'] != data['full0'], data
+          print(data)
+          PY
+
+          stop_process "$gateway_pid"
+          stop_process "$core_pid"
+          start_core
+          wait_core
+          start_gateway
+          wait_gateway_basis 3
+
+          set +e
+          PRE_RESTART="$pre_restart" node <<'JS'
+          const fs=await import('node:fs');
+          const pre=JSON.parse(fs.readFileSync(process.env.PRE_RESTART,'utf8'));
+
+          async function cdp(port,urlPart) {
+            const pages=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+            const page=pages.find(x=>x.type==='page'&&x.url.includes(urlPart))??pages.find(x=>x.type==='page');
+            if(!page?.webSocketDebuggerUrl) throw new Error('No CDP page for '+urlPart);
+            const ws=new WebSocket(page.webSocketDebuggerUrl);
+            await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(new Error('CDP open timeout')),5000);ws.onopen=()=>{clearTimeout(t);resolve();};ws.onerror=reject;});
+            let id=1; const pending=new Map();
+            ws.onmessage=e=>{const m=JSON.parse(e.data);if(!m.id)return;const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.error?p.reject(new Error(JSON.stringify(m.error))):p.resolve(m.result);};
+            const send=(method,params={})=>new Promise((resolve,reject)=>{const n=id++;const t=setTimeout(()=>{pending.delete(n);reject(new Error('CDP timeout '+method));},7000);pending.set(n,{resolve:v=>{clearTimeout(t);resolve(v);},reject:e=>{clearTimeout(t);reject(e);}});ws.send(JSON.stringify({id:n,method,params}));});
+            await send('Runtime.enable'); await send('Page.enable');
+            const evalJs=async expression=>(await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true}))?.result?.value;
+            const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+            const text=()=>evalJs('document.body?.innerText ?? ""');
+            const waitText=async(needle,attempts=200)=>{let v='';for(let i=0;i<attempts;i++){v=await text();if(v.includes(needle))return v;await sleep(250);}throw new Error('Missing '+needle+'; DOM:\n'+v);};
+            const valueAfter=(v,label)=>{const lines=v.split('\n').map(x=>x.trim()).filter(Boolean);const i=lines.indexOf(label);return i>=0?lines[i+1]:undefined;};
+            const clickLink=async label=>{const ok=await evalJs(`(()=>{const a=[...document.querySelectorAll('a')].find(x=>x.textContent.includes(${JSON.stringify(label)}));if(!a)return false;a.click();return true;})()`);if(!ok)throw new Error('Link not found '+label);};
+            return {ws,send,evalJs,sleep,text,waitText,valueAfter,clickLink};
+          }
+
+          const view=await cdp(9430,'127.0.0.1:5750');
+          await view.send('Page.navigate',{url:'http://127.0.0.1:5750/'});
+          await view.waitText('Lifecycle\nReady');
+          await view.waitText('Confirmed basis\n3');
+          await view.clickLink('Open Diver Participation');
+          let v=await view.waitText('Diver Participation');
+          if(view.valueAfter(v,'Last accepted publication')!=='FULL') throw new Error('Restart View did not recover through FULL.\n'+v);
+          if(view.valueAfter(v,'Continuity token')!==pre.token3) throw new Error('Restart FULL token differs from pre-restart authoritative basis3 token.\n'+v);
+          if(view.valueAfter(v,'Confirmed Diver ref')!==pre.diver||view.valueAfter(v,'Status')!=='Active'||view.valueAfter(v,'Binding generation')!=='1'||view.valueAfter(v,'Effective from Step')!=='2'||view.valueAfter(v,'Projection basis Step')!=='3') throw new Error('Restart binding continuity failed.\n'+v);
+          if(view.valueAfter(v,'Continuity mismatch count')!=='0') throw new Error('Restart recovery reported a continuity mismatch.\n'+v);
+
+          const admin=await cdp(9431,'127.0.0.1:5660');
+          await admin.send('Page.navigate',{url:'http://127.0.0.1:5660/'});
+          await admin.waitText('Lifecycle\nReady');
+          await admin.waitText('Config generation\n2');
+          await admin.clickLink('Open Config / operational command management');
+          let a=await admin.waitText('Config / Operational Command Management');
+          await admin.waitText('ConfigGeneration\n2');
+          const rowOk=await admin.evalJs(`(()=>{const r=[...document.querySelectorAll('tr')].find(x=>x.innerText.includes('peer.heartbeat-interval-ms'));return !!r&&r.innerText.includes('1200');})()`);
+          if(!rowOk) throw new Error('Restart Config projection did not preserve heartbeat value 1200.\n'+a);
+
+          console.log('Combined Operation Config publication restart acceptance passed.');
+          view.ws.close(); admin.ws.close();
+          JS
+          browser_status=$?
+          set -e
+          if [ "$browser_status" -ne 0 ]; then
+            echo "--- Core log ---"; cat "$core_log"
+            echo "--- Gateway log ---"; cat "$gateway_log"
+            echo "--- View log ---"; cat "$view_log"
+            echo "--- Admin log ---"; cat "$admin_log"
+            echo "--- View browser log ---"; cat "$view_browser_log"
+            echo "--- Admin browser log ---"; cat "$admin_browser_log"
+            exit "$browser_status"
+          fi
