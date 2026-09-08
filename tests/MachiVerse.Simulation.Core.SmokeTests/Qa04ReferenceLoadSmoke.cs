@@ -177,6 +177,8 @@ internal static class Qa04ReferenceLoadSmoke
         Require(Qa04ReferenceScenariosV1.DetailTransitionCandidateId(promotion, 300, 0) ==
                 Qa04ReferenceScenariosV1.DetailTransitionCandidateId(promotion, 300, 0),
             "QA-04 detail transition candidate identity must be deterministic.");
+
+        StepStateApplicationSmoke.Run();
     }
 
     private static void Require(bool condition, string message)
