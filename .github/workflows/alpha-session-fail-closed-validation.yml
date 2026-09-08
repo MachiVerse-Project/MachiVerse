@@ -119,7 +119,7 @@ jobs:
 
           set +e
           node <<'JS'
-          const {execFileSync}=require('node:child_process');
+          const {execFileSync}=await import('node:child_process');
           const pages = await (await fetch('http://127.0.0.1:9424/json/list')).json();
           const page = pages.find(x => x.type === 'page' && x.url.includes('127.0.0.1:5750')) ?? pages.find(x => x.type === 'page');
           if (!page?.webSocketDebuggerUrl || typeof WebSocket === 'undefined') process.exit(2);
