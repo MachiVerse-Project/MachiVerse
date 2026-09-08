@@ -48,6 +48,9 @@ public static class Qa04ProcessTargetV1
                     request.RecordCount,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "running-snapshot-probe" => await Qa04RunningSnapshotBridgeV1.RunReducedAsync(
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 _ => throw new InvalidDataException("qa04.target.command-unsupported"),
             };
 
@@ -81,6 +84,7 @@ public static class Qa04ProcessTargetV1
             AuthoritativeStepStructuralBridgeAvailable = true,
             CoreSubstateTwoStepBridgeAvailable = true,
             DetailSubstateTwoStepBridgeAvailable = true,
+            RunningSnapshotBridgeAvailable = true,
             ReferenceWorldMaterialized = false,
             AuthoritativeStepLoopAvailable = false,
             ReleaseEvidenceCapable = false,
@@ -253,6 +257,7 @@ public sealed class Qa04ProcessInspectionV1
     public bool AuthoritativeStepStructuralBridgeAvailable { get; set; }
     public bool CoreSubstateTwoStepBridgeAvailable { get; set; }
     public bool DetailSubstateTwoStepBridgeAvailable { get; set; }
+    public bool RunningSnapshotBridgeAvailable { get; set; }
     public bool ReferenceWorldMaterialized { get; set; }
     public bool AuthoritativeStepLoopAvailable { get; set; }
     public bool ReleaseEvidenceCapable { get; set; }
