@@ -34,9 +34,11 @@ jobs:
           set -euo pipefail
           evidence="$RUNNER_TEMP/int03-evidence.json"
           record="$RUNNER_TEMP/ReleaseAcceptanceRecordV1.json"
+          placeholder_commit=1111111111111111111111111111111111111111
           dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release --no-build -- template "$evidence"
           set +e
-          dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release --no-build -- evaluate "$evidence" "$record"
+          dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release --no-build -- \
+            evaluate "$evidence" "$record" "$placeholder_commit"
           status=$?
           set -e
           if [[ "$status" != 2 ]]; then
