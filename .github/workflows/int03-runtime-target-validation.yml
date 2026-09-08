@@ -92,7 +92,7 @@ jobs:
           assert result['referenceWorldMaterialized'] is False, result
           assert result['releaseEvidenceCapable'] is False, result
           PY
-      - name: Prove reduced QA-04 Step crosses real SQLite COMMIT authority boundary
+      - name: Prove reduced QA-04 Step materializes State S+1 and publishes only after real SQLite COMMIT
         shell: bash
         run: |
           set -euo pipefail
@@ -120,15 +120,23 @@ jobs:
           assert result['domainOutputCount'] == 8, result
           assert result['partitionCandidateCount'] == 1, result
           assert result['candidatePublishableBeforeCommit'] is False, result
+          assert result['preparedStatePublishableBeforeCommit'] is False, result
           assert result['durableReceiptPublishable'] is True, result
+          assert result['resultingWorldStatePublishable'] is True, result
           assert result['schedulerReopenedAfterCommit'] is True, result
           assert result['realSqliteCommitObserved'] is True, result
-          assert len(result['candidateDiagnosticDigest']) == 64 and set(result['candidateDiagnosticDigest']) != {'0'}, result
-          assert len(result['resultingContinuityToken']) == 64 and set(result['resultingContinuityToken']) != {'0'}, result
+          assert result['resultingResidentPartitionRevision'] == 2, result
+          assert result['resultingResidentPartitionBasisStep'] == 1, result
+          assert result['basisStateDigest'] == result['previousStateDigest'], result
+          assert result['basisStateDigest'] != result['resultingStateDigest'], result
+          for key in ('candidateDiagnosticDigest','basisStateDigest','previousStateDigest','resultingStateDigest','resultingContinuityToken'):
+              digest = result[key]
+              assert len(digest) == 64 and set(digest) != {'0'}, result
           assert result['referenceWorldMaterialized'] is False, result
           assert result['authoritativeStepLoopAvailable'] is False, result
           assert result['releaseEvidenceCapable'] is False, result
-          assert 'qa04.target.resulting-world-state-materialization-not-assembled' in result['blockingFailureCodes'], result
+          assert 'qa04.target.core-substate-mutation-application-not-assembled' in result['blockingFailureCodes'], result
+          assert 'qa04.target.resulting-world-state-materialization-not-assembled' not in result['blockingFailureCodes'], result
           PY
       - name: Prove external adapter reaches Core and fails closed
         shell: bash
