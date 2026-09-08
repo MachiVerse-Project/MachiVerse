@@ -1,0 +1,249 @@
+name: Alpha Diver binding validation
+
+on:
+  pull_request:
+    branches:
+      - integration/1.0-alpha
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-diver-binding-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  diver-binding:
+    name: General View creates and recovers a confirmed Diver binding
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Core Gateway and General View
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release
+          dotnet build src/MachiVerse.View/MachiVerse.View.csproj --configuration Release
+      - name: Create binding then restart Core and Gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          world_root="$RUNNER_TEMP/machiverse-alpha-diver-world"
+          core_log="$RUNNER_TEMP/alpha-diver-core.log"
+          gateway_log="$RUNNER_TEMP/alpha-diver-gateway.log"
+          view_log="$RUNNER_TEMP/alpha-diver-view.log"
+          browser_log="$RUNNER_TEMP/alpha-diver-browser.log"
+
+          stop_process() {
+            pid="${1:-0}"
+            if [ "$pid" -le 1 ] || ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 20); do
+              if ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+              sleep 0.25
+            done
+            kill -9 "$pid" 2>/dev/null || true
+          }
+
+          start_core() {
+            MACHIVERSE_ALPHA_LOCAL=1 \
+            MACHIVERSE_WORLD_ROOT="$world_root" \
+            Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:5711 \
+            Kestrel__Endpoints__Grpc__Protocols=Http2 \
+            Kestrel__Endpoints__Health__Url=http://127.0.0.1:5710 \
+            Kestrel__Endpoints__Health__Protocols=Http1 \
+            dotnet run --project src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --no-build >>"$core_log" 2>&1 &
+            core_pid=$!
+          }
+
+          wait_core() {
+            for _ in $(seq 1 45); do
+              if curl --fail --silent http://127.0.0.1:5710/healthz >/dev/null; then return 0; fi
+              if ! kill -0 "$core_pid" 2>/dev/null; then cat "$core_log"; return 1; fi
+              sleep 1
+            done
+            cat "$core_log"
+            return 1
+          }
+
+          start_gateway() {
+            MACHIVERSE_ALPHA_LOCAL=1 \
+            MACHIVERSE_CORE_ENDPOINT=http://127.0.0.1:5711 \
+            ASPNETCORE_URLS=http://127.0.0.1:5520 \
+            dotnet run --project src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release --no-build >>"$gateway_log" 2>&1 &
+            gateway_pid=$!
+          }
+
+          wait_gateway_basis() {
+            expected="$1"
+            for _ in $(seq 1 60); do
+              if curl --fail --silent http://127.0.0.1:5520/healthz >"$RUNNER_TEMP/diver-gateway-health.json"; then
+                if python3 - "$RUNNER_TEMP/diver-gateway-health.json" "$expected" <<'PY'
+          import json, sys
+          data=json.load(open(sys.argv[1], encoding='utf-8'))
+          expected=int(sys.argv[2])
+          core=data.get('core') or {}
+          assert data.get('status') == 'ready', data
+          assert core.get('negotiated') is True, data
+          assert core.get('syncState') == 'Synced', data
+          assert core.get('basisStep') == expected, data
+          PY
+                then return 0; fi
+              fi
+              if ! kill -0 "$gateway_pid" 2>/dev/null; then cat "$gateway_log"; cat "$core_log"; return 1; fi
+              sleep 1
+            done
+            cat "$gateway_log"
+            cat "$core_log"
+            return 1
+          }
+
+          cleanup() {
+            stop_process "${browser_pid:-0}"
+            stop_process "${view_pid:-0}"
+            stop_process "${gateway_pid:-0}"
+            stop_process "${core_pid:-0}"
+          }
+          trap cleanup EXIT
+
+          start_core
+          wait_core
+          start_gateway
+          wait_gateway_basis 0
+
+          ASPNETCORE_URLS=http://127.0.0.1:5750 \
+          dotnet run --project src/MachiVerse.View/MachiVerse.View.csproj --configuration Release --no-build --no-launch-profile >"$view_log" 2>&1 &
+          view_pid=$!
+          for _ in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:5750/ >/dev/null; then break; fi
+            if ! kill -0 "$view_pid" 2>/dev/null; then cat "$view_log"; exit 1; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:5750/ >/dev/null
+
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [ -z "$browser" ]; then echo "No Chromium-compatible browser found."; exit 1; fi
+          "$browser" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --remote-debugging-address=127.0.0.1 --remote-debugging-port=9422 \
+            --user-data-dir="$RUNNER_TEMP/alpha-diver-chrome" \
+            http://127.0.0.1:5750/ >"$RUNNER_TEMP/alpha-diver-browser.stdout" 2>"$browser_log" &
+          browser_pid=$!
+
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9422/json/list >"$RUNNER_TEMP/diver-devtools.json"; then break; fi
+            sleep 1
+          done
+
+          set +e
+          node <<'JS'
+          const pages = await (await fetch('http://127.0.0.1:9422/json/list')).json();
+          const page = pages.find(x => x.type === 'page' && x.url.includes('127.0.0.1:5750')) ?? pages.find(x => x.type === 'page');
+          if (!page?.webSocketDebuggerUrl || typeof WebSocket === 'undefined') process.exit(2);
+          const ws = new WebSocket(page.webSocketDebuggerUrl);
+          await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(new Error('CDP open timeout')),5000);ws.onopen=()=>{clearTimeout(t);resolve();};ws.onerror=reject;});
+          let id=1; const pending=new Map();
+          ws.onmessage=e=>{const m=JSON.parse(e.data);if(!m.id)return;const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.error?p.reject(new Error(JSON.stringify(m.error))):p.resolve(m.result);};
+          const send=(method,params={})=>new Promise((resolve,reject)=>{const n=id++;const t=setTimeout(()=>{pending.delete(n);reject(new Error('CDP timeout '+method));},7000);pending.set(n,{resolve:v=>{clearTimeout(t);resolve(v);},reject:e=>{clearTimeout(t);reject(e);}});ws.send(JSON.stringify({id:n,method,params}));});
+          const evalJs=async expression => (await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true}))?.result?.value;
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const waitText=async (needle, attempts=120)=>{let text='';for(let i=0;i<attempts;i++){text=await evalJs('document.body?.innerText ?? ""');if(text.includes(needle))return text;await sleep(250);}throw new Error('Missing text '+needle+'; last DOM:\n'+text);};
+          const valueAfter=(text,label)=>{const lines=text.split('\n').map(x=>x.trim()).filter(Boolean);const i=lines.indexOf(label);return i>=0?lines[i+1]:undefined;};
+          const clickText=async text=>{const ok=await evalJs(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!b)return false;b.click();return true;})()`);if(!ok)throw new Error('Button not found: '+text);};
+          const clickLinkText=async text=>{const ok=await evalJs(`(()=>{const a=[...document.querySelectorAll('a')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!a)return false;a.click();return true;})()`);if(!ok)throw new Error('Link not found: '+text);};
+
+          await send('Runtime.enable');
+          await send('Page.enable');
+          await waitText('Lifecycle\nReady');
+          await waitText('Confirmed basis\n0');
+          await clickLinkText('Open Diver Participation');
+          let text=await waitText('Diver Participation');
+          if(!text.includes('Session state\nActive')) throw new Error('View session is not active.\n'+text);
+          const sessionDiver=valueAfter(text,'Session Diver ref');
+          if(!sessionDiver || sessionDiver==='-') throw new Error('Gateway-confirmed Diver ref is missing.\n'+text);
+          if(!text.includes('Status\nNone')) throw new Error('Initial binding is not NONE.\n'+text);
+          if(valueAfter(text,'Binding generation')!=='0') throw new Error('Initial binding generation is not 0.\n'+text);
+          if(valueAfter(text,'Confirmed Diver ref')!=='-') throw new Error('NONE binding unexpectedly carries a Diver ref.\n'+text);
+          if(!text.includes('Projection basis Step\n0')) throw new Error('Initial binding basis is not Step 0.\n'+text);
+          if(!text.includes('Binding request UX\neligible')) throw new Error('Binding request is not locally eligible.\n'+text);
+
+          await clickText('Request Alpha binding');
+          text=await waitText('Binding Operation participation.binding.created; confirmed basis 3.');
+          if(!text.includes('Status\nActive')) throw new Error('Binding did not become ACTIVE.\n'+text);
+          if(valueAfter(text,'Confirmed Diver ref')!==sessionDiver) throw new Error('Confirmed binding actor differs from authenticated session actor.\n'+text);
+          if(valueAfter(text,'Binding generation')!=='1') throw new Error('First binding generation is not 1.\n'+text);
+          if(!text.includes('Effective from Step\n2')) throw new Error('Binding effective Step is not 2.\n'+text);
+          if(!text.includes('Projection basis Step\n3')) throw new Error('Confirmed binding basis is not Step 3.\n'+text);
+          if(!text.includes('Confirmed absence policy\nalpha.default')) throw new Error('Binding policy is missing.\n'+text);
+          if(!text.includes('Diver control UX\neligible')) throw new Error('Active binding did not enable Diver control UX.\n'+text);
+
+          await clickLinkText('Back to world view');
+          await waitText('Confirmed basis\n3');
+          ws.close();
+          JS
+          browser_status=$?
+          set -e
+          if [ "$browser_status" -ne 0 ]; then
+            echo "--- Core log ---"; cat "$core_log"
+            echo "--- Gateway log ---"; cat "$gateway_log"
+            echo "--- View log ---"; cat "$view_log"
+            echo "--- Browser log ---"; cat "$browser_log"
+            exit "$browser_status"
+          fi
+
+          stop_process "$gateway_pid"
+          stop_process "$core_pid"
+          start_core
+          wait_core
+          start_gateway
+          wait_gateway_basis 3
+
+          set +e
+          node <<'JS'
+          const pages = await (await fetch('http://127.0.0.1:9422/json/list')).json();
+          const page = pages.find(x => x.type === 'page' && x.url.includes('127.0.0.1:5750')) ?? pages.find(x => x.type === 'page');
+          if (!page?.webSocketDebuggerUrl || typeof WebSocket === 'undefined') process.exit(2);
+          const ws = new WebSocket(page.webSocketDebuggerUrl);
+          await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(new Error('CDP open timeout')),5000);ws.onopen=()=>{clearTimeout(t);resolve();};ws.onerror=reject;});
+          let id=1; const pending=new Map();
+          ws.onmessage=e=>{const m=JSON.parse(e.data);if(!m.id)return;const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.error?p.reject(new Error(JSON.stringify(m.error))):p.resolve(m.result);};
+          const send=(method,params={})=>new Promise((resolve,reject)=>{const n=id++;const t=setTimeout(()=>{pending.delete(n);reject(new Error('CDP timeout '+method));},7000);pending.set(n,{resolve:v=>{clearTimeout(t);resolve(v);},reject:e=>{clearTimeout(t);reject(e);}});ws.send(JSON.stringify({id:n,method,params}));});
+          const evalJs=async expression => (await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true}))?.result?.value;
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const waitText=async (needle, attempts=160)=>{let text='';for(let i=0;i<attempts;i++){text=await evalJs('document.body?.innerText ?? ""');if(text.includes(needle))return text;await sleep(250);}throw new Error('Missing text '+needle+'; last DOM:\n'+text);};
+          const valueAfter=(text,label)=>{const lines=text.split('\n').map(x=>x.trim()).filter(Boolean);const i=lines.indexOf(label);return i>=0?lines[i+1]:undefined;};
+          const clickLinkText=async text=>{const ok=await evalJs(`(()=>{const a=[...document.querySelectorAll('a')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!a)return false;a.click();return true;})()`);if(!ok)throw new Error('Link not found: '+text);};
+
+          await send('Runtime.enable');
+          await send('Page.enable');
+          await send('Page.reload',{ignoreCache:true});
+          await waitText('Lifecycle\nReady');
+          await waitText('Confirmed basis\n3');
+          await clickLinkText('Open Diver Participation');
+          const text=await waitText('Diver Participation');
+          if(!text.includes('Session state\nActive')) throw new Error('Recovered View session is not active.\n'+text);
+          const sessionDiver=valueAfter(text,'Session Diver ref');
+          const confirmedDiver=valueAfter(text,'Confirmed Diver ref');
+          if(!sessionDiver || sessionDiver==='-' || confirmedDiver!==sessionDiver) throw new Error('Recovered binding actor does not match session actor.\n'+text);
+          if(!text.includes('Status\nActive')) throw new Error('Binding did not recover as ACTIVE.\n'+text);
+          if(valueAfter(text,'Binding generation')!=='1') throw new Error('Recovered binding generation is not 1.\n'+text);
+          if(!text.includes('Effective from Step\n2')) throw new Error('Recovered binding lost effective Step 2.\n'+text);
+          if(!text.includes('Projection basis Step\n3')) throw new Error('Recovered binding is not confirmed at Step 3.\n'+text);
+          if(text.includes('Request Alpha binding')) throw new Error('Recovered ACTIVE binding incorrectly exposes create action.\n'+text);
+          console.log(text);
+          ws.close();
+          JS
+          browser_status=$?
+          set -e
+          if [ "$browser_status" -ne 0 ]; then
+            echo "--- Core log ---"; cat "$core_log"
+            echo "--- Gateway log ---"; cat "$gateway_log"
+            echo "--- View log ---"; cat "$view_log"
+            echo "--- Browser log ---"; cat "$browser_log"
+            exit "$browser_status"
+          fi

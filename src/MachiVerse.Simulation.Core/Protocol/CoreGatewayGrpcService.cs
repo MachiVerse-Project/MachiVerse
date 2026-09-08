@@ -141,6 +141,23 @@ public sealed class CoreGatewayGrpcServiceV1 : MachiVerseInternalProtocolV1.Mach
                                     WorldContext(world, includeBasis: true),
                                     new OperationContextWireV1 { BatchId = batch.BatchId }),
                                 cancellationToken);
+
+                            var currentState = await _worldAuthority.GetCurrentFinalizedStateAsync(cancellationToken);
+                            if (currentState.Header.Step > world.FinalizedStep)
+                            {
+                                var bundle = await _publications.BuildDeltaAsync(currentState, cancellationToken);
+                                var after = await _store.ReadCoreProtocolHeadAsync(cancellationToken);
+                                var publicationContext = WorldContext(after, includeBasis: true, basisOverride: bundle.BasisStep);
+                                await responseStream.WriteAsync(
+                                    _envelopes.NormalResponse(envelope, "world.state.begin", bundle.Publication, negotiationGeneration, publicationContext),
+                                    cancellationToken);
+                                foreach (var chunk in bundle.Chunks)
+                                {
+                                    await responseStream.WriteAsync(
+                                        _envelopes.NormalResponse(envelope, "world.state.chunk", chunk, negotiationGeneration, publicationContext),
+                                        cancellationToken);
+                                }
+                            }
                             break;
                         }
                         case "operation.status.query":

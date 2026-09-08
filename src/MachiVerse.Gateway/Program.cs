@@ -28,6 +28,7 @@ if (alphaCoreOptions is not null)
     builder.Services.AddSingleton<SchedulingPolicyProjection>();
     builder.Services.AddSingleton<ConfirmedProjectionCache>();
     builder.Services.AddSingleton<ResyncCoordinator>();
+    builder.Services.AddSingleton<AlphaCoreOperationRouter>();
     builder.Services.AddSingleton(new MasterAuthorityTracker(alphaCoreOptions.GatewayLogicalId));
     builder.Services.AddSingleton<AlphaViewBridge>();
     builder.Services.AddSingleton<AlphaAdminBridge>();

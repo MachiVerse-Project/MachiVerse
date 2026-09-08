@@ -1,4 +1,5 @@
 using Google.Protobuf;
+using MachiVerse.Protocol.V1;
 
 namespace MachiVerse.View.Participation;
 
@@ -39,12 +40,13 @@ public sealed class ParticipationPreferenceCatalog
 
     internal static void ValidateToken(string value, string field)
     {
-        if (string.IsNullOrEmpty(value))
-            throw new InvalidDataException($"{field} must be non-empty.");
-        foreach (var ch in value)
+        if (string.IsNullOrEmpty(value) || value.Length > 64 || !IsLowerAlphaNumeric(value[0]))
+            throw new InvalidDataException($"{field} must use StableToken grammar.");
+        for (var i = 1; i < value.Length; i++)
         {
-            if (ch > 0x7f || char.IsControl(ch) || char.IsWhiteSpace(ch))
-                throw new InvalidDataException($"{field} must use canonical ASCII token text.");
+            var ch = value[i];
+            if (!IsLowerAlphaNumeric(ch) && ch is not ('.' or '_' or '/' or '-'))
+                throw new InvalidDataException($"{field} must use StableToken grammar.");
         }
     }
 
@@ -59,6 +61,9 @@ public sealed class ParticipationPreferenceCatalog
             previous = value;
         }
     }
+
+    private static bool IsLowerAlphaNumeric(char value)
+        => value is >= 'a' and <= 'z' or >= '0' and <= '9';
 }
 
 public sealed class AbsencePolicyProfileCatalog
@@ -133,6 +138,71 @@ public interface IParticipationOperationPayloadAdapter
         ParticipationOperationIntent intent,
         out EncodedParticipationOperation? operation,
         out string reasonCode);
+}
+
+/// <summary>
+/// View-owned semantic payload adapter for the currently standardized Alpha binding-create operation.
+/// OperationId/digest are intentionally filled by DiverParticipationController only after scheduling
+/// context is known, so immutable identity remains canonical and non-self-referential.
+/// </summary>
+public sealed class CanonicalParticipationOperationPayloadAdapter(ViewSessionProjectionStore session)
+    : IParticipationOperationPayloadAdapter
+{
+    private readonly ViewSessionProjectionStore _session = session ?? throw new ArgumentNullException(nameof(session));
+
+    public bool TryEncode(
+        ParticipationOperationIntent intent,
+        out EncodedParticipationOperation? operation,
+        out string reasonCode)
+    {
+        ArgumentNullException.ThrowIfNull(intent);
+        if (intent.Kind != ParticipationOperationIntentKind.BindingCreate)
+        {
+            operation = null;
+            reasonCode = "participation.operation-kind-unavailable";
+            return false;
+        }
+        if (_session.Snapshot.State != ViewSessionAccessState.Active || string.IsNullOrEmpty(_session.Snapshot.DiverRef))
+        {
+            operation = null;
+            reasonCode = "auth.unauthenticated";
+            return false;
+        }
+        if (intent.ConfirmedBinding.Freshness != ParticipationProjectionFreshness.Confirmed ||
+            intent.ConfirmedBinding.State != ParticipationBindingState.None)
+        {
+            operation = null;
+            reasonCode = "participation.binding-create-not-eligible";
+            return false;
+        }
+        if (string.IsNullOrEmpty(intent.JoinPreference.ProfileId))
+        {
+            operation = null;
+            reasonCode = "participation.preference-profile-required";
+            return false;
+        }
+
+        ParticipationPreferenceCatalog.ValidateToken(intent.JoinPreference.ProfileId, "preference profile");
+        ParticipationPreferenceCatalog.ValidateOrderedTokens(intent.JoinPreference.PreferenceTokens, "preference token");
+        var payload = new ParticipationBindingRequestV1
+        {
+            PreferenceProfile = intent.JoinPreference.ProfileId,
+            DiverRef = ByteString.CopyFrom(Convert.FromHexString(_session.Snapshot.DiverRef)),
+            ExpectedBindingGeneration = intent.ConfirmedBinding.BindingGeneration,
+        };
+        payload.PreferenceTokens.AddRange(intent.JoinPreference.PreferenceTokens);
+
+        operation = new EncodedParticipationOperation(
+            ViewParticipationBindingIdentityV1.OperationKind,
+            ViewParticipationBindingIdentityV1.PayloadSchemaId,
+            ViewParticipationBindingIdentityV1.PayloadSchemaMajor,
+            ViewParticipationBindingIdentityV1.PayloadSchemaMinor,
+            payload.ToByteString(),
+            "participation.binding",
+            ByteString.Empty);
+        reasonCode = string.Empty;
+        return true;
+    }
 }
 
 public sealed class UnavailableParticipationOperationPayloadAdapter : IParticipationOperationPayloadAdapter

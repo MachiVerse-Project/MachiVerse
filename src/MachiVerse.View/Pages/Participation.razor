@@ -5,6 +5,7 @@
 @inject DiverParticipationController ParticipationController
 @inject ParticipationPreferenceCatalog PreferenceCatalog
 @inject AbsencePolicyProfileCatalog AbsenceCatalog
+@inject GeneralViewGatewaySession GatewaySession
 
 <PageTitle>Participation</PageTitle>
 
@@ -17,45 +18,41 @@
     <section>
         <h2>Session / local eligibility</h2>
         <dl>
-            <dt>Session state</dt>
-            <dd>@Session.Snapshot.State</dd>
-            <dt>Role</dt>
-            <dd>@(string.IsNullOrEmpty(Session.Snapshot.EffectiveRoleSet) ? "-" : Session.Snapshot.EffectiveRoleSet)</dd>
-            <dt>Session generation</dt>
-            <dd>@Session.Snapshot.SessionGeneration</dd>
-            <dt>Participation UX state</dt>
-            <dd>@ParticipationController.State</dd>
-            <dt>Binding request UX</dt>
-            <dd>@(ParticipationController.CanRequestBinding ? "eligible" : "unavailable")</dd>
-            <dt>Absence policy UX</dt>
-            <dd>@(ParticipationController.CanEditAbsencePolicy ? "eligible" : "unavailable")</dd>
-            <dt>Diver control UX</dt>
-            <dd>@(ParticipationController.CanSubmitControl ? "eligible" : "unavailable")</dd>
+            <dt>Session state</dt><dd>@Session.Snapshot.State</dd>
+            <dt>Role</dt><dd>@(string.IsNullOrEmpty(Session.Snapshot.EffectiveRoleSet) ? "-" : Session.Snapshot.EffectiveRoleSet)</dd>
+            <dt>Session generation</dt><dd>@Session.Snapshot.SessionGeneration</dd>
+            <dt>Session Diver ref</dt><dd><code>@(Session.Snapshot.DiverRef ?? "-")</code></dd>
+            <dt>Participation UX state</dt><dd>@ParticipationController.State</dd>
+            <dt>Binding request UX</dt><dd>@(ParticipationController.CanRequestBinding ? "eligible" : "unavailable")</dd>
+            <dt>Absence policy UX</dt><dd>@(ParticipationController.CanEditAbsencePolicy ? "eligible" : "unavailable")</dd>
+            <dt>Diver control UX</dt><dd>@(ParticipationController.CanSubmitControl ? "eligible" : "unavailable")</dd>
         </dl>
-        <p>
-            These checks improve UX only. Gateway authorization remains mandatory for every protected request.
-        </p>
+        <p>These checks improve UX only. Gateway authorization remains mandatory for every protected request.</p>
+        @if (Binding.Snapshot.State == ParticipationBindingState.None)
+        {
+            <button @onclick="RequestAlphaBindingAsync" disabled="@(!ParticipationController.CanRequestBinding || _submitting)">
+                @(_submitting ? "Requesting Alpha binding..." : "Request Alpha binding")
+            </button>
+        }
+        @if (!string.IsNullOrWhiteSpace(_actionMessage))
+        {
+            <p>@_actionMessage</p>
+        }
     </section>
 
     <section>
         <h2>Confirmed binding</h2>
         <dl>
-            <dt>Freshness</dt>
-            <dd>@Binding.Snapshot.Freshness</dd>
-            <dt>Status</dt>
-            <dd>@Binding.Snapshot.State</dd>
-            <dt>Binding ID</dt>
-            <dd><code>@(Binding.Snapshot.BindingId ?? "-")</code></dd>
-            <dt>Resident ID</dt>
-            <dd><code>@(Binding.Snapshot.ResidentId ?? "-")</code></dd>
-            <dt>Effective from Step</dt>
-            <dd>@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")</dd>
-            <dt>Projection basis Step</dt>
-            <dd>@(Binding.Snapshot.BasisStep?.ToString() ?? "-")</dd>
-            <dt>Confirmed absence policy</dt>
-            <dd>@(Binding.Snapshot.AbsencePolicyProfile ?? "-")</dd>
-            <dt>Reason</dt>
-            <dd>@(Binding.Snapshot.ReasonCode ?? "-")</dd>
+            <dt>Freshness</dt><dd>@Binding.Snapshot.Freshness</dd>
+            <dt>Status</dt><dd>@Binding.Snapshot.State</dd>
+            <dt>Binding ID</dt><dd><code>@(Binding.Snapshot.BindingId ?? "-")</code></dd>
+            <dt>Resident ID</dt><dd><code>@(Binding.Snapshot.ResidentId ?? "-")</code></dd>
+            <dt>Confirmed Diver ref</dt><dd><code>@(Binding.Snapshot.DiverRef ?? "-")</code></dd>
+            <dt>Binding generation</dt><dd>@Binding.Snapshot.BindingGeneration</dd>
+            <dt>Effective from Step</dt><dd>@(Binding.Snapshot.EffectiveFromStep?.ToString() ?? "-")</dd>
+            <dt>Projection basis Step</dt><dd>@(Binding.Snapshot.BasisStep?.ToString() ?? "-")</dd>
+            <dt>Confirmed absence policy</dt><dd>@(Binding.Snapshot.AbsencePolicyProfile ?? "-")</dd>
+            <dt>Reason</dt><dd>@(Binding.Snapshot.ReasonCode ?? "-")</dd>
         </dl>
 
         @if (Binding.Snapshot.State == ParticipationBindingState.ResidentDeceased)
@@ -90,10 +87,8 @@
             </ul>
         }
         <dl>
-            <dt>Draft profile</dt>
-            <dd>@(ParticipationController.Draft.JoinPreference.ProfileId ?? "-")</dd>
-            <dt>Draft preference tokens</dt>
-            <dd>@(ParticipationController.Draft.JoinPreference.PreferenceTokens.Count == 0 ? "-" : string.Join(", ", ParticipationController.Draft.JoinPreference.PreferenceTokens))</dd>
+            <dt>Draft profile</dt><dd>@(ParticipationController.Draft.JoinPreference.ProfileId ?? "-")</dd>
+            <dt>Draft preference tokens</dt><dd>@(ParticipationController.Draft.JoinPreference.PreferenceTokens.Count == 0 ? "-" : string.Join(", ", ParticipationController.Draft.JoinPreference.PreferenceTokens))</dd>
         </dl>
     </section>
 
@@ -113,12 +108,9 @@
             </ul>
         }
         <dl>
-            <dt>Draft profile</dt>
-            <dd>@(ParticipationController.Draft.AbsencePolicy.ProfileId ?? "-")</dd>
-            <dt>Pending OperationId</dt>
-            <dd><code>@(ParticipationController.Draft.PendingOperationId ?? "-")</code></dd>
-            <dt>Local reason</dt>
-            <dd>@(ParticipationController.Draft.LastLocalReasonCode ?? "-")</dd>
+            <dt>Draft profile</dt><dd>@(ParticipationController.Draft.AbsencePolicy.ProfileId ?? "-")</dd>
+            <dt>Pending OperationId</dt><dd><code>@(ParticipationController.Draft.PendingOperationId ?? "-")</code></dd>
+            <dt>Local reason</dt><dd>@(ParticipationController.Draft.LastLocalReasonCode ?? "-")</dd>
         </dl>
         <p>Local edits are not shown as world-effective until authoritative Operation result and confirmed binding/policy projection arrive.</p>
     </section>
@@ -127,11 +119,38 @@
 </main>
 
 @code {
+    private bool _submitting;
+    private string? _actionMessage;
+
     protected override void OnInitialized()
     {
         Session.Changed += OnSessionChanged;
         Binding.Changed += OnBindingChanged;
         ParticipationController.Changed += OnParticipationChanged;
+        if (ParticipationController.Draft.JoinPreference.ProfileId is null &&
+            PreferenceCatalog.Profiles.Any(profile => string.Equals(profile.ProfileId, "alpha.default", StringComparison.Ordinal)))
+        {
+            ParticipationController.SetJoinPreference("alpha.default", Array.Empty<string>());
+        }
+    }
+
+    private async Task RequestAlphaBindingAsync()
+    {
+        _submitting = true;
+        _actionMessage = null;
+        try
+        {
+            var result = await GatewaySession.RequestAlphaBindingAsync();
+            _actionMessage = $"Binding Operation {result.LastReasonCode ?? result.State.ToString()}; confirmed basis {GatewaySession.ConfirmedBasisStep?.ToString() ?? "-"}.";
+        }
+        catch (Exception ex)
+        {
+            _actionMessage = ex.Message;
+        }
+        finally
+        {
+            _submitting = false;
+        }
     }
 
     private void OnSessionChanged(ViewSessionProjection snapshot) => _ = InvokeAsync(StateHasChanged);

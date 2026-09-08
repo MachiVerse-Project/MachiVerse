@@ -144,8 +144,10 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
     private readonly MasterAuthorityTracker _master;
     private readonly ConfirmedProjectionCache _cache;
     private readonly ResyncCoordinator _resync;
+    private readonly AlphaCoreOperationRouter _operationRouter;
     private readonly AlphaCoreLinkState _linkState;
     private readonly AlphaCoreEnvelopeFactory _envelopes;
+    private readonly SemaphoreSlim _requestWriteGate = new(1, 1);
 
     public AlphaCoreConnectionWorker(
         AlphaCoreLinkOptions options,
@@ -155,6 +157,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
         MasterAuthorityTracker master,
         ConfirmedProjectionCache cache,
         ResyncCoordinator resync,
+        AlphaCoreOperationRouter operationRouter,
         AlphaCoreLinkState linkState)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -164,6 +167,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
         _master = master ?? throw new ArgumentNullException(nameof(master));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _resync = resync ?? throw new ArgumentNullException(nameof(resync));
+        _operationRouter = operationRouter ?? throw new ArgumentNullException(nameof(operationRouter));
         _linkState = linkState ?? throw new ArgumentNullException(nameof(linkState));
         _envelopes = new AlphaCoreEnvelopeFactory(options.ComponentInstanceId, negotiation);
         _linkState.Enable();
@@ -188,6 +192,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
             }
             catch (Exception ex)
             {
+                _operationRouter.FailPending(ex);
                 _negotiation.Reset();
                 _resync.MarkSuspect("component.core-disconnected");
                 _linkState.MarkDisconnected(BoundedError(ex), _resync);
@@ -208,7 +213,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
             "protocol.hello",
             "protocol.hello.v1",
             BuildHello());
-        await call.RequestStream.WriteAsync(helloEnvelope);
+        await WriteAsync(call.RequestStream, helloEnvelope, cancellationToken);
 
         if (!await call.ResponseStream.MoveNext(cancellationToken))
             throw new InvalidDataException("component.core-handshake-closed");
@@ -223,7 +228,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
             throw new InvalidDataException("protocol.unexpected-bootstrap-response");
         _negotiation.Accept(ProtocolAcceptV1.Parser.ParseFrom(handshake.Payload));
 
-        await call.RequestStream.WriteAsync(_envelopes.Normal(
+        await WriteAsync(call.RequestStream, _envelopes.Normal(
             "gateway.register",
             "protocol.gateway-register.v1",
             new GatewayRegisterV1
@@ -232,17 +237,17 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
                 ComponentInstanceId = _options.ComponentInstanceId,
                 LastKnownMasterGeneration = _master.Current?.MasterGeneration ?? 0,
                 Readiness = (GatewayReadinessV1)2,
-            }));
+            }), cancellationToken);
 
         var worldId = await ReadRegistrationStateAsync(call.ResponseStream, cancellationToken);
         _linkState.MarkRegistered(worldId, _negotiation, _master);
 
         var request = _resync.BeginResync(worldId, forceFull: true);
-        await call.RequestStream.WriteAsync(_envelopes.Normal(
+        await WriteAsync(call.RequestStream, _envelopes.Normal(
             "world.state.resync-request",
             "protocol.state-resync-request.v1",
             request,
-            new WorldContextWireV1 { WorldId = worldId }));
+            new WorldContextWireV1 { WorldId = worldId }), cancellationToken);
 
         if (!await call.ResponseStream.MoveNext(cancellationToken))
             throw new InvalidDataException("component.core-resync-closed");
@@ -251,6 +256,7 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
         _linkState.MarkSynced(worldId, _negotiation, _resync, _cache, _master);
 
         var heartbeatTask = SendHeartbeatsAsync(call.RequestStream, worldId, cancellationToken);
+        var operationTask = SendOperationsAsync(call.RequestStream, worldId, cancellationToken);
         try
         {
             while (await call.ResponseStream.MoveNext(cancellationToken))
@@ -267,6 +273,9 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
                     case "world.scheduling-policy":
                         _scheduling.Apply(OperationSchedulingPolicyWireV1.Parser.ParseFrom(envelope.Payload));
                         break;
+                    case "operation.batch.result":
+                        _operationRouter.Complete(OperationBatchResultV1.Parser.ParseFrom(envelope.Payload));
+                        break;
                     case "world.state.begin":
                         await ApplyPublicationAsync(envelope, call.ResponseStream, cancellationToken);
                         break;
@@ -282,6 +291,8 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
         finally
         {
             try { await heartbeatTask; }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+            try { await operationTask; }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         }
     }
@@ -355,6 +366,28 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
         _resync.ApplyOrEnterSuspect(publication, beginEnvelope.WorldContext.BasisStep, chunks);
     }
 
+    private async Task SendOperationsAsync(
+        IClientStreamWriter<WireEnvelopeV1> requestStream,
+        ByteString worldId,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var submission in _operationRouter.Outbound.ReadAllAsync(cancellationToken))
+        {
+            var master = _master.Current ?? throw new InvalidDataException("master.authority-unknown");
+            var world = new WorldContextWireV1
+            {
+                WorldId = worldId,
+                MasterGeneration = master.MasterGeneration,
+            };
+            await WriteAsync(requestStream, _envelopes.Normal(
+                "operation.batch.submit",
+                "protocol.operation-batch.v1",
+                submission.Batch,
+                world,
+                new OperationContextWireV1 { BatchId = submission.Batch.BatchId }), cancellationToken);
+        }
+    }
+
     private async Task SendHeartbeatsAsync(
         IClientStreamWriter<WireEnvelopeV1> requestStream,
         ByteString worldId,
@@ -377,11 +410,27 @@ public sealed class AlphaCoreConnectionWorker : BackgroundService
                 heartbeat.ConfirmedBasisStep = confirmed.BasisStep;
                 heartbeat.ConfirmedContinuityToken = ByteString.CopyFrom(confirmed.ContinuityToken);
             }
-            await requestStream.WriteAsync(_envelopes.Normal(
+            await WriteAsync(requestStream, _envelopes.Normal(
                 "gateway.heartbeat",
                 "protocol.gateway-heartbeat.v1",
                 heartbeat,
-                new WorldContextWireV1 { WorldId = worldId }));
+                new WorldContextWireV1 { WorldId = worldId }), cancellationToken);
+        }
+    }
+
+    private async Task WriteAsync(
+        IClientStreamWriter<WireEnvelopeV1> stream,
+        WireEnvelopeV1 envelope,
+        CancellationToken cancellationToken)
+    {
+        await _requestWriteGate.WaitAsync(cancellationToken);
+        try
+        {
+            await stream.WriteAsync(envelope);
+        }
+        finally
+        {
+            _requestWriteGate.Release();
         }
     }
 
@@ -470,17 +519,18 @@ internal sealed class AlphaCoreEnvelopeFactory
     }
 
     public WireEnvelopeV1 Bootstrap(string type, string schema, IMessage payload)
-        => Create(type, schema, payload, bootstrap: true, world: null);
+        => Create(type, schema, payload, bootstrap: true, world: null, operation: null);
 
     public WireEnvelopeV1 Normal(
         string type,
         string schema,
         IMessage payload,
-        WorldContextWireV1? world = null)
+        WorldContextWireV1? world = null,
+        OperationContextWireV1? operation = null)
     {
         if (!_negotiation.IsNegotiated)
             throw new InvalidOperationException("protocol.not-negotiated");
-        return Create(type, schema, payload, bootstrap: false, world);
+        return Create(type, schema, payload, bootstrap: false, world, operation);
     }
 
     private WireEnvelopeV1 Create(
@@ -488,7 +538,8 @@ internal sealed class AlphaCoreEnvelopeFactory
         string schema,
         IMessage payload,
         bool bootstrap,
-        WorldContextWireV1? world)
+        WorldContextWireV1? world,
+        OperationContextWireV1? operation)
     {
         ArgumentNullException.ThrowIfNull(payload);
         var messageId = NextId();
@@ -512,6 +563,7 @@ internal sealed class AlphaCoreEnvelopeFactory
             Payload = payload.ToByteString(),
         };
         envelope.WorldContext = world;
+        envelope.OperationContext = operation;
         return envelope;
     }
 

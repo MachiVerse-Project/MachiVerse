@@ -2,20 +2,26 @@ using System.Security.Cryptography;
 using Google.Protobuf;
 using MachiVerse.Protocol.V1;
 using MachiVerse.View.Configuration;
+using MachiVerse.View.Operations;
+using MachiVerse.View.Participation;
 using MachiVerse.View.State;
 
 namespace MachiVerse.View.Protocol;
 
 /// <summary>
-/// Owns the initial General View protocol session. The browser consumes only Gateway-confirmed
-/// publications; it does not infer or reconstruct authoritative world state locally.
+/// Owns the General View Alpha protocol session. The browser consumes only Gateway-confirmed
+/// publications and explicit binding projections; local operation state is never authoritative.
 /// </summary>
 public sealed class GeneralViewGatewaySession(
     GeneralViewConfig config,
     GatewayProtocolClient gateway,
-    PublicationConsumer publications)
+    PublicationConsumer publications,
+    ViewSessionProjectionStore sessions,
+    ParticipationBindingProjectionStore binding,
+    ViewOperationController operations)
 {
     private readonly SemaphoreSlim _startGate = new(1, 1);
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly ByteString _senderInstanceId = RandomId128();
     private bool _started;
     private uint _negotiationGeneration;
@@ -24,6 +30,7 @@ public sealed class GeneralViewGatewaySession(
     public string? SessionIdHex { get; private set; }
     public string? SubscriptionIdHex { get; private set; }
     public ulong? ConfirmedBasisStep { get; private set; }
+    public ulong? SchedulingPolicyGeneration { get; private set; }
     public bool Started => _started;
 
     public event Action? Changed;
@@ -77,12 +84,17 @@ public sealed class GeneralViewGatewaySession(
             SessionIdHex = Convert.ToHexStringLower(login.SessionId.Span);
 
             var sessionEnvelope = await RequireNormalAsync("auth.session.changed", cancellationToken);
-            var session = AuthSessionStateV1.Parser.ParseFrom(sessionEnvelope.Payload);
-            if (!session.SessionId.Equals(login.SessionId) || (int)session.AuthDomain != 1 || (int)session.Status != 1 ||
-                session.SessionGeneration != login.SessionGeneration)
+            if (!sessions.TryApply(sessionEnvelope))
+                throw new InvalidDataException("auth.session-state-missing");
+            var session = sessions.Snapshot;
+            if (!string.Equals(session.SessionId, SessionIdHex, StringComparison.Ordinal) ||
+                session.SessionGeneration != login.SessionGeneration ||
+                session.State != ViewSessionAccessState.Active ||
+                string.IsNullOrEmpty(session.DiverRef))
                 throw new InvalidDataException("auth.session-stale");
 
             gateway.MarkSyncing();
+            operations.SetAccessState(ViewMutationAccessState.Resyncing, "view.initial-sync");
             publications.BeginSync();
             var worldId = ParseWorldId(config.WorldIdHex);
             var subscriptionId = RandomId128();
@@ -101,6 +113,12 @@ public sealed class GeneralViewGatewaySession(
 
             var confirmed = await ReceivePublicationAsync(worldId, subscriptionId, cancellationToken);
             ConfirmedBasisStep = confirmed.BasisStep;
+            var bindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
+            if (!binding.TryApply(bindingEnvelope))
+                throw new InvalidDataException("participation.binding-state-not-applied");
+            ValidateBindingActorForSession(session, binding.Snapshot);
+
+            operations.SetAccessState(ViewMutationAccessState.Ready);
             gateway.MarkReady();
             _started = true;
             Changed?.Invoke();
@@ -108,6 +126,7 @@ public sealed class GeneralViewGatewaySession(
         catch (Exception ex)
         {
             LastError = BoundedError(ex);
+            operations.SetAccessState(ViewMutationAccessState.Blocked, "view.session-start-failed");
             gateway.MarkDegraded();
             Changed?.Invoke();
             throw;
@@ -116,6 +135,112 @@ public sealed class GeneralViewGatewaySession(
         {
             _startGate.Release();
         }
+    }
+
+    public async Task<TrackedViewOperation> RequestAlphaBindingAsync(CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!_started || ConfirmedBasisStep is null || SchedulingPolicyGeneration is null)
+                throw new InvalidOperationException("General View must be Ready before requesting a Diver binding.");
+            var session = sessions.Snapshot;
+            if (!session.HasPermission(ViewPermissionTokens.OperationDiver) ||
+                !session.HasPermission(ViewPermissionTokens.ParticipationBind))
+                throw new InvalidOperationException("Current General View session lacks Diver binding permissions.");
+            if (string.IsNullOrEmpty(session.DiverRef))
+                throw new InvalidOperationException("Current General View session has no confirmed Diver identity.");
+            if (binding.Snapshot.Freshness != ParticipationProjectionFreshness.Confirmed ||
+                binding.Snapshot.State != ParticipationBindingState.None)
+                throw new InvalidOperationException("Alpha binding create requires confirmed NONE binding state.");
+
+            var expectedBindingGeneration = binding.Snapshot.BindingGeneration;
+            var operationId = RandomId128();
+            var admission = new OperationSchedulingAdmissionWireV1
+            {
+                AdmissionBasisStep = ConfirmedBasisStep.Value,
+                SchedulingPolicyGeneration = SchedulingPolicyGeneration.Value,
+            };
+            var payload = new ParticipationBindingRequestV1
+            {
+                PreferenceProfile = "alpha.default",
+                DiverRef = ByteString.CopyFrom(Convert.FromHexString(session.DiverRef)),
+                ExpectedBindingGeneration = expectedBindingGeneration,
+            };
+            var digestBytes = ViewParticipationBindingIdentityV1.ComputeImmutablePayloadDigest(admission, payload);
+            var digest = ByteString.CopyFrom(digestBytes);
+            payload.OperationId = operationId;
+            payload.ImmutablePayloadDigest = digest;
+
+            var draft = new ViewOperationDraft(
+                ViewParticipationBindingIdentityV1.OperationKind,
+                admission.AdmissionBasisStep,
+                admission.SchedulingPolicyGeneration,
+                RequestedNotBeforeStep: null,
+                RequestedDeadlineStep: null,
+                CandidateStep: null,
+                ViewParticipationBindingIdentityV1.PayloadSchemaId,
+                ViewParticipationBindingIdentityV1.PayloadSchemaMajor,
+                ViewParticipationBindingIdentityV1.PayloadSchemaMinor,
+                payload.ToByteString(),
+                SemanticTarget: "participation.binding",
+                PredictedPayload: ByteString.Empty);
+            _ = operations.Prepare(draft, operationId, digest);
+            var request = operations.TakeForSubmission(operationId);
+            _ = ViewParticipationBindingIdentityV1.ValidateStandardOperation(request);
+
+            var worldId = ParseWorldId(config.WorldIdHex);
+            var operationContext = new OperationContextWireV1
+            {
+                OperationId = operationId,
+                OperationPayloadDigest = digest,
+            };
+            await gateway.SendAsync(NormalEnvelope(
+                "participation.binding.request",
+                "protocol.standard-operation.v1",
+                request,
+                new WorldContextWireV1 { WorldId = worldId, BasisStep = ConfirmedBasisStep.Value },
+                operationContext), cancellationToken);
+
+            var resultEnvelope = await RequireNormalAsync("operation.result", cancellationToken);
+            if (!operations.TryApplyResult(resultEnvelope))
+                throw new InvalidDataException("operation.result-not-applied");
+            var tracked = operations.Operations.Single(item => string.Equals(item.OperationId, Convert.ToHexStringLower(operationId.Span), StringComparison.Ordinal));
+            if (tracked.State is ViewOperationLifecycleState.Rejected or ViewOperationLifecycleState.Failed)
+                return tracked;
+            if (tracked.State != ViewOperationLifecycleState.Terminal)
+                throw new InvalidDataException("alpha.binding-operation-not-terminal");
+
+            var subscriptionId = ByteString.CopyFrom(Convert.FromHexString(SubscriptionIdHex
+                ?? throw new InvalidOperationException("SubscriptionId is unavailable.")));
+            var confirmed = await ReceivePublicationAsync(worldId, subscriptionId, cancellationToken);
+            ConfirmedBasisStep = confirmed.BasisStep;
+            var bindingEnvelope = await RequireNormalAsync("participation.binding.state", cancellationToken);
+            if (!binding.TryApply(bindingEnvelope))
+                throw new InvalidDataException("participation.binding-state-not-applied");
+            ValidateBindingActorForSession(session, binding.Snapshot);
+            if (binding.Snapshot.State != ParticipationBindingState.Active ||
+                binding.Snapshot.BindingGeneration != checked(expectedBindingGeneration + 1))
+                throw new InvalidDataException("participation.binding-confirmation-generation-mismatch");
+
+            Changed?.Invoke();
+            return operations.Operations.Single(item => string.Equals(item.OperationId, Convert.ToHexStringLower(operationId.Span), StringComparison.Ordinal));
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private static void ValidateBindingActorForSession(
+        ViewSessionProjection session,
+        ParticipationBindingProjection confirmedBinding)
+    {
+        if (confirmedBinding.State != ParticipationBindingState.Active)
+            return;
+        if (string.IsNullOrEmpty(session.DiverRef) ||
+            !string.Equals(confirmedBinding.DiverRef, session.DiverRef, StringComparison.Ordinal))
+            throw new InvalidDataException("participation.binding-actor-mismatch");
     }
 
     private async Task<ConfirmedWorldSnapshot> ReceivePublicationAsync(
@@ -127,6 +252,8 @@ public sealed class GeneralViewGatewaySession(
         if (beginEnvelope.WorldContext is null || !beginEnvelope.WorldContext.HasBasisStep ||
             !beginEnvelope.WorldContext.WorldId.Equals(worldId))
             throw new InvalidDataException("protocol.publication-context-mismatch");
+        if (beginEnvelope.WorldContext.HasConfigGeneration)
+            SchedulingPolicyGeneration = beginEnvelope.WorldContext.ConfigGeneration;
         var publication = StatePublicationV1.Parser.ParseFrom(beginEnvelope.Payload);
         if (publication.ChunkCount is 0 or > 65535)
             throw new InvalidDataException("protocol.invalid-publication-chunks");
@@ -193,7 +320,8 @@ public sealed class GeneralViewGatewaySession(
         string type,
         string schema,
         IMessage payload,
-        WorldContextWireV1? world = null)
+        WorldContextWireV1? world = null,
+        OperationContextWireV1? operation = null)
     {
         if (_negotiationGeneration == 0) throw new InvalidOperationException("Gateway protocol is not negotiated.");
         var envelope = new WireEnvelopeV1
@@ -212,6 +340,7 @@ public sealed class GeneralViewGatewaySession(
             Payload = payload.ToByteString(),
         };
         if (world is not null) envelope.WorldContext = world;
+        if (operation is not null) envelope.OperationContext = operation;
         return envelope;
     }
 
