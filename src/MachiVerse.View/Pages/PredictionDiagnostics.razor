@@ -1,0 +1,44 @@
+@page "/prediction-diagnostics"
+@implements IDisposable
+@inject PredictionStore Predictions
+@inject ReconciliationCoordinator Reconciliation
+
+<PageTitle>Prediction Reconciliation</PageTitle>
+
+<main class="shell">
+    <h1>Prediction / Reconciliation</h1>
+    <p>
+        These values describe non-authoritative presentation prediction only. Confirmed world state remains owned by Simulation Core and is installed separately through Gateway publication.
+    </p>
+
+    <dl>
+        <dt>Active prediction count</dt><dd>@Predictions.Entries.Count</dd>
+        <dt>Correction count</dt><dd>@Reconciliation.CorrectionCount</dd>
+        <dt>Last correction operation</dt><dd><code>@(Reconciliation.LastTrace?.OperationId ?? "-")</code></dd>
+        <dt>Last correction reason</dt><dd>@(Reconciliation.LastTrace?.ReasonCode ?? "-")</dd>
+        <dt>Prediction source basis Step</dt><dd>@(Reconciliation.LastTrace?.SourceConfirmedBasisStep.ToString() ?? "-")</dd>
+        <dt>Prediction source continuity token</dt><dd><code>@(Reconciliation.LastTrace?.SourceConfirmedTokenHex ?? "-")</code></dd>
+        <dt>Awaiting confirmed through Step</dt><dd>@(Reconciliation.LastTrace?.AwaitingConfirmedThroughStep?.ToString() ?? "-")</dd>
+        <dt>Reconciled confirmed basis Step</dt><dd>@(Reconciliation.LastTrace?.ConfirmedBasisStep?.ToString() ?? "-")</dd>
+    </dl>
+
+    <p>Prediction source metadata is retained only as diagnostic provenance. It does not become a confirmed basis or authoritative continuity token.</p>
+    <p><a href="/participation">Back to participation</a></p>
+</main>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Predictions.Changed += OnPredictionChanged;
+        Reconciliation.Corrected += OnCorrected;
+    }
+
+    private void OnPredictionChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnCorrected(PredictionCorrection correction) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Predictions.Changed -= OnPredictionChanged;
+        Reconciliation.Corrected -= OnCorrected;
+    }
+}
