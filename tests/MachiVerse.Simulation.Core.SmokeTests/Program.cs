@@ -260,6 +260,7 @@ await PersistenceMigrationSmoke.RunAsync();
 await PortableWorldExportSmoke.RunAsync();
 Qa04ReferenceLoadSmoke.Run();
 await Qa04RuntimeTargetSmoke.RunAsync();
+await Qa04CoreSubstateAuthoritySmoke.RunAsync();
 Sim04WorldStateSmoke.Run();
 Sim04DiagnosticSmoke.Run();
 Sim05OperationLifecycleSmoke.Run();
