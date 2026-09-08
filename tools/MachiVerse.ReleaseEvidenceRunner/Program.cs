@@ -20,7 +20,7 @@ internal static class Program
             var root = FindRepositoryRoot(Directory.GetCurrentDirectory());
             if (args.Length == 0 || string.Equals(args[0], "verify", StringComparison.Ordinal))
             {
-                ReleaseEvidenceRunner.VerifyContract(root);
+                ReleaseEvidenceRunnerVerification.VerifyContract(root);
                 return 0;
             }
 
