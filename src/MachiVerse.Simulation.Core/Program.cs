@@ -1,7 +1,14 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.Protocol;
 using MachiVerse.Simulation.Core.Runtime;
+
+if (args.Length == 1 && string.Equals(args[0], "qa04-target", StringComparison.Ordinal))
+{
+    Environment.ExitCode = await Qa04ProcessTargetV1.RunAsync();
+    return;
+}
 
 var options = AlphaSingleGatewayOptions.FromEnvironment();
 var runtime = await AlphaSingleGatewayRuntime.CreateAsync(options);
