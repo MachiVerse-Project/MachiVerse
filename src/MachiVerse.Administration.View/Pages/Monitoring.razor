@@ -1,0 +1,221 @@
+@page "/monitoring"
+@implements IDisposable
+@inject IMonitoringModuleBoundary MonitoringStore
+
+<PageTitle>監視 - MachiVerse 管理ビュー</PageTitle>
+
+<main class="shell">
+    <h1>可観測性 / 監査</h1>
+    <p>Gatewayから投影された管理データだけを表示します。編集済み・非公開・未提供のデータをコンポーネントへ直接アクセスして再構成することはありません。</p>
+
+    <section>
+        <h2>チャネル状態</h2>
+        <dl>
+            <dt>ヘルス / メトリクス</dt>
+            <dd>@FormatChannel(_snapshot.HealthChannel)</dd>
+            <dt>診断ログ</dt>
+            <dd>@FormatChannel(_snapshot.LogChannel)</dd>
+            <dt>管理監査</dt>
+            <dd>@FormatChannel(_snapshot.AuditChannel)</dd>
+        </dl>
+    </section>
+
+    <section>
+        <h2>管理対象</h2>
+        @if (_snapshot.Targets.Count == 0)
+        {
+            <p>対象のヘルス投影はまだ受信していません。</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>コンポーネント</th><th>インスタンス</th><th>ヘルス</th><th>観測時刻</th></tr></thead>
+                <tbody>
+                @foreach (var target in _snapshot.Targets)
+                {
+                    <tr>
+                        <td>@FormatComponentKind(target.ComponentKind)</td>
+                        <td><code>@(target.LogicalInstanceId ?? "既定の論理インスタンス")</code></td>
+                        <td>@FormatState(target.HealthState)</td>
+                        <td>@target.LastObservedAtUnixMillis</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section>
+        <h2>メトリクス / 状態</h2>
+        @foreach (var component in _snapshot.Health)
+        {
+            <article>
+                <h3>@FormatTargetKey(component.Target.StableKey)</h3>
+                @if (component.Metrics.Count == 0)
+                {
+                    <p>現在の投影にメトリクスはありません。</p>
+                }
+                else
+                {
+                    <table>
+                        <thead><tr><th>メトリクス</th><th>値</th><th>観測時刻</th></tr></thead>
+                        <tbody>
+                        @foreach (var metric in component.Metrics)
+                        {
+                            <tr><td>@metric.Name</td><td><code>@metric.ValueJson</code></td><td>@metric.ObservedAtUnixMillis</td></tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+
+                @foreach (var condition in component.Conditions)
+                {
+                    <p><strong>@FormatState(condition.Severity)</strong> @condition.Code: @condition.Diagnostic</p>
+                }
+            </article>
+        }
+    </section>
+
+    <section>
+        <h2>構造化ログ</h2>
+        <p><strong>ページトレース:</strong> @FormatTrace(_snapshot.LogPageTrace)</p>
+        @if (_snapshot.Logs.Count == 0)
+        {
+            <p>診断ログページはまだ受信していません。</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>時刻</th><th>重要度</th><th>イベント</th><th>送信元</th><th>相関情報</th></tr></thead>
+                <tbody>
+                @foreach (var record in _snapshot.Logs)
+                {
+                    <tr>
+                        <td>@record.TimestampUnixMillis</td>
+                        <td>@FormatState(record.Severity)</td>
+                        <td>@record.EventKind</td>
+                        <td>@record.SourceTargetKey</td>
+                        <td>@FormatCorrelation(record.Correlation)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section>
+        <h2>管理監査</h2>
+        <p>監査は診断ログとは別のauthority / presentationチャネルとして保持されます。</p>
+        <p><strong>ページトレース:</strong> @FormatTrace(_snapshot.AuditPageTrace)</p>
+        @if (_snapshot.Audit.Count == 0)
+        {
+            <p>監査ページはまだ受信していません。</p>
+        }
+        else
+        {
+            <table>
+                <thead><tr><th>時刻</th><th>イベント</th><th>Actor参照</th><th>Operation</th><th>対象</th><th>結果</th></tr></thead>
+                <tbody>
+                @foreach (var record in _snapshot.Audit)
+                {
+                    <tr>
+                        <td>@record.TimestampUnixMillis</td>
+                        <td>@record.AuditEventKind</td>
+                        <td><code>@record.ActorAccountRef</code></td>
+                        <td><code>@(record.OperationId ?? "-")</code></td>
+                        <td>@record.TargetKind</td>
+                        <td>@record.ResultCode</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+
+            <details>
+                <summary>CSV出力プレビュー</summary>
+                <pre>@AuditCsv</pre>
+            </details>
+        }
+    </section>
+</main>
+
+@code {
+    private MonitoringSnapshot _snapshot = default!;
+    private string AuditCsv => AuditExportFormatter.ToCsv(_snapshot.Audit);
+
+    protected override void OnInitialized()
+    {
+        _snapshot = MonitoringStore.Snapshot;
+        MonitoringStore.Changed += OnMonitoringChanged;
+    }
+
+    private void OnMonitoringChanged()
+    {
+        _snapshot = MonitoringStore.Snapshot;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static string FormatChannel(MonitoringChannelState channel)
+    {
+        var state = FormatState(channel.State);
+        return channel.ReasonCode is null ? state : $"{state} ({channel.ReasonCode})";
+    }
+
+    private static string FormatComponentKind(object? value)
+        => value?.ToString() switch
+        {
+            "ComponentKindGateway" or "Gateway" => "Gateway",
+            "ComponentKindSimulationCore" or "SimulationCore" => "シミュレーションCore",
+            "ComponentKindGeneralView" or "GeneralView" => "一般ビュー",
+            "ComponentKindAdministrationView" or "AdministrationView" => "管理ビュー",
+            null => "-",
+            var text => text,
+        };
+
+    private static string FormatTargetKey(string value)
+        => value.StartsWith("ComponentKindGateway:", StringComparison.Ordinal)
+            ? "Gateway:" + value["ComponentKindGateway:".Length..]
+            : value.StartsWith("ComponentKindSimulationCore:", StringComparison.Ordinal)
+                ? "シミュレーションCore:" + value["ComponentKindSimulationCore:".Length..]
+                : value;
+
+    private static string FormatState(object? value)
+        => value?.ToString() switch
+        {
+            "Available" => "利用可能",
+            "Unavailable" => "利用不可",
+            "Unauthorized" => "権限なし",
+            "Redacted" => "秘匿済み",
+            "Healthy" or "HealthStateHealthy" => "正常",
+            "Degraded" or "HealthStateDegraded" => "制限状態",
+            "Unhealthy" or "HealthStateUnhealthy" => "異常",
+            "Ready" => "準備完了",
+            "Info" or "HealthConditionSeverityInfo" => "情報",
+            "Warning" or "HealthConditionSeverityWarning" => "警告",
+            "Error" or "HealthConditionSeverityError" => "エラー",
+            "Critical" or "HealthConditionSeverityCritical" => "重大",
+            null => "-",
+            var text => text,
+        };
+
+    private static string FormatCorrelation(CorrelationContextProjection context)
+    {
+        var parts = new List<string>();
+        if (context.CorrelationId is not null) parts.Add($"corr={context.CorrelationId}");
+        if (context.OperationId is not null) parts.Add($"op={context.OperationId}");
+        if (context.BatchId is not null) parts.Add($"batch={context.BatchId}");
+        if (context.SimulationStep is not null) parts.Add($"step={context.SimulationStep.Value}");
+        return parts.Count == 0 ? "-" : string.Join(" ", parts);
+    }
+
+    private static string FormatTrace(EnvelopeTraceProjection? trace)
+    {
+        if (trace is null) return "-";
+        var parts = new List<string>();
+        if (trace.MessageId is not null) parts.Add($"msg={trace.MessageId}");
+        if (trace.CorrelationId is not null) parts.Add($"corr={trace.CorrelationId}");
+        if (trace.CausationId is not null) parts.Add($"cause={trace.CausationId}");
+        return parts.Count == 0 ? "-" : string.Join(" ", parts);
+    }
+
+    public void Dispose() => MonitoringStore.Changed -= OnMonitoringChanged;
+}

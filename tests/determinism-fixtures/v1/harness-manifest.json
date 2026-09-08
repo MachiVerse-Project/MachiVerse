@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "1.0",
+  "profileId": "perf.reference.v1",
+  "workerCounts": [1, 4, 8, 16],
+  "restartModes": ["none", "scenario-checkpoint"],
+  "gatewayCounts": [1, 2, 4],
+  "gatewayRoutePermutations": ["route-0", "route-1", "route-2", "route-3"],
+  "viewSubscriberCounts": [0, 100],
+  "loggingLevels": ["debug", "warn"],
+  "telemetryModes": ["disabled", "enabled", "failing"],
+  "semanticDigestFields": [
+    "stateDigest",
+    "terminalOperationDigest",
+    "transactionResultDigest",
+    "configHistoryDigest"
+  ],
+  "testCaseIds": [
+    "config.view-world-independence",
+    "config.worker-count-independence",
+    "determinism.conflict.custom",
+    "determinism.conflict.exclusive-first-valid",
+    "determinism.conflict.reduce",
+    "determinism.conflict.sequential",
+    "determinism.conflict.set-merge",
+    "determinism.order.permutation",
+    "determinism.order.thread-count",
+    "determinism.random.order-independence",
+    "observability.exporter-failure",
+    "observability.trace.world-independence",
+    "persistence.replay.fresh-process",
+    "persistence.replay.historical",
+    "persistence.replay.no-wall-time",
+    "protocol.gateway.arrival-order"
+  ],
+  "adapterContract": {
+    "protocol": "jsonl",
+    "runRequestFields": [
+      "gatewayCount",
+      "gatewayRoutePermutation",
+      "loggingLevel",
+      "profileId",
+      "restartCheckpointToken",
+      "restartMode",
+      "runId",
+      "telemetryMode",
+      "viewSubscriberCount",
+      "workerCount"
+    ],
+    "traceResultFields": [
+      "operational",
+      "profileId",
+      "runId",
+      "schemaVersion",
+      "steps"
+    ],
+    "ignoredOperationalFields": [
+      "elapsedMs",
+      "logDigest",
+      "telemetryDigest",
+      "traceId"
+    ],
+    "restartCheckpointRule": "restartMode=scenario-checkpoint requires a deterministic checkpoint token supplied by the target scenario contract; the QA harness does not invent an authoritative Step checkpoint."
+  }
+}

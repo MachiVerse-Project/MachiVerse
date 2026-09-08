@@ -1,0 +1,64 @@
+[meta]
+format = "machiverse-config"
+schema_version = "1.0"
+component = "gateway"
+
+[network]
+connect-timeout-ms = 10000
+reconnect-initial-ms = 250
+reconnect-max-ms = 10000
+reconnect-multiplier-permille = 2000
+reconnect-jitter-permille = 200
+
+[peer]
+heartbeat-interval-ms = 1000
+heartbeat-timeout-ms = 5000
+
+[aggregation]
+window-ms = 10
+max-operations = 512
+max-uncompressed-bytes = 4194304
+
+[queue]
+connection-ingress-capacity = 4096
+local-operation-capacity = 16384
+custody-admission-limit = 65536
+peer-batch-capacity = 2048
+publication-capacity = 64
+result-capacity = 8192
+
+[publication]
+buffer-ms = 1000
+max-client-backlog = 8
+
+[cache]
+max-mebibytes = 1024
+max-confirmed-publications = 120
+
+[result]
+rich-retention-seconds = 86400
+
+[custody]
+local-terminal-retention-seconds = 86400
+
+[auth.oidc]
+issuer = "https://idp.example.invalid/"
+client-id = "machiverse-gateway"
+client-secret-ref = "secret://gateway/oidc-client-secret"
+redirect-base-uri = "https://machiverse.example.invalid/"
+
+[auth]
+allowed-origins = ["https://machiverse.example.invalid"]
+login-transaction-lifetime-seconds = 600
+session-idle-lifetime-seconds = 3600
+session-absolute-lifetime-seconds = 43200
+max-active-sessions-per-account = 16
+
+[audit]
+retention-days = 400
+query-max-page-size = 1000
+
+[observability]
+log-level = "info"
+metric-export-interval-ms = 1000
+log-retention-days = 14
