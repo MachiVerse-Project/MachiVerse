@@ -1,3 +1,4 @@
+using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
 using MachiVerse.Protocol.V1;
@@ -6,6 +7,7 @@ namespace MachiVerse.Gateway.Protocol;
 
 public sealed class CoreProtocolClient : IAsyncDisposable
 {
+    private const string AlphaGatewayIdentityHeader = "x-machiverse-gateway-logical-id";
     private readonly GrpcChannel _channel;
     private readonly MachiVerseInternalProtocolV1.MachiVerseInternalProtocolV1Client _client;
 
@@ -18,6 +20,18 @@ public sealed class CoreProtocolClient : IAsyncDisposable
 
     public AsyncDuplexStreamingCall<WireEnvelopeV1, WireEnvelopeV1> Connect(CancellationToken cancellationToken = default)
         => _client.Connect(cancellationToken: cancellationToken);
+
+    public AsyncDuplexStreamingCall<WireEnvelopeV1, WireEnvelopeV1> Connect(
+        ByteString gatewayLogicalId,
+        CancellationToken cancellationToken = default)
+    {
+        WireEnvelopeValidator.ValidateId128(gatewayLogicalId, "gateway_logical_id", allowZero: false);
+        var headers = new Metadata
+        {
+            { AlphaGatewayIdentityHeader, Convert.ToHexStringLower(gatewayLogicalId.Span) },
+        };
+        return _client.Connect(headers: headers, cancellationToken: cancellationToken);
+    }
 
     public ValueTask DisposeAsync()
     {
