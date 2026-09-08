@@ -7,6 +7,11 @@ using MachiVerse.Protocol.V1;
 const string ProtocolId = "mv.gateway-view";
 var gatewayHttp = new Uri(args.Length > 0 ? args[0] : "http://127.0.0.1:5520");
 var viewWs = new Uri(args.Length > 1 ? args[1] : "ws://127.0.0.1:5520/ws/v1/view");
+var slowHoldMilliseconds = args.Length > 2 && int.TryParse(args[2], out var requestedHold)
+    ? requestedHold
+    : 0;
+if (slowHoldMilliseconds is < 0 or > 60000)
+    throw new ArgumentOutOfRangeException(nameof(slowHoldMilliseconds), "Slow-consumer hold must be within 0..60000 ms.");
 
 using var http = new HttpClient { BaseAddress = gatewayHttp };
 using var healthResponse = await http.GetAsync("/healthz");
@@ -62,6 +67,18 @@ var subscribeEnvelope = Normal(
     senderInstanceId,
     new WorldContextWireV1 { WorldId = worldId });
 await SendAsync(socket, subscribeEnvelope);
+
+if (slowHoldMilliseconds > 0)
+{
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        status = "holding",
+        worldId = worldIdHex,
+        holdMilliseconds = slowHoldMilliseconds,
+    }));
+    await Task.Delay(slowHoldMilliseconds);
+    return;
+}
 
 var beginEnvelope = await ReceiveNormalAsync(socket, "world.state.begin");
 if (beginEnvelope.WorldContext is null || !beginEnvelope.WorldContext.HasBasisStep || !beginEnvelope.WorldContext.WorldId.Equals(worldId))
