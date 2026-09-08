@@ -58,6 +58,7 @@ jobs:
           assert inspect['canonicalResidentCount'] == 1000000, inspect
           assert inspect['initialResidentLifecycle'] == 'alive', inspect
           assert inspect['authoritativeStepStructuralBridgeAvailable'] is True, inspect
+          assert inspect['coreSubstateTwoStepBridgeAvailable'] is True, inspect
           assert inspect['referenceWorldMaterialized'] is False, inspect
           assert inspect['authoritativeStepLoopAvailable'] is False, inspect
           assert inspect['releaseEvidenceCapable'] is False, inspect
@@ -137,6 +138,60 @@ jobs:
           assert result['releaseEvidenceCapable'] is False, result
           assert 'qa04.target.core-substate-mutation-application-not-assembled' in result['blockingFailureCodes'], result
           assert 'qa04.target.resulting-world-state-materialization-not-assembled' not in result['blockingFailureCodes'], result
+          PY
+      - name: Prove scheduler and Operation authority survives two consecutive SQLite COMMIT Steps
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          persistence="$RUNNER_TEMP/qa04-core-substate-persistence"
+          request=$(python3 - "$persistence" <<'PY'
+          import json, sys
+          print(json.dumps({
+              'schemaVersion':'1.0',
+              'command':'core-substate-two-step-probe',
+              'workerCount':4,
+              'recordCount':128,
+              'persistenceRoot':sys.argv[1],
+          }, separators=(',', ':')))
+          PY
+          )
+          printf '%s\n' "$request" | "$core" qa04-target > "$RUNNER_TEMP/core-substate-two-step.json"
+          python3 - "$RUNNER_TEMP/core-substate-two-step.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['basisStep'] == 0, result
+          assert result['firstResultingStep'] == 1 and result['finalResultingStep'] == 2, result
+          assert result['workerCount'] == 4 and result['residentRecordCount'] == 128, result
+          assert result['firstStepCoreSubstateCandidateCount'] == 2, result
+          assert result['secondStepCoreSubstateCandidateCount'] == 2, result
+          assert result['firstStepFrozenOperationCount'] == 1, result
+          assert result['secondStepFrozenOperationCount'] == 1, result
+          assert result['futureOperationCarriedToSecondStep'] is True, result
+          for key in (
+              'firstStepSchedulerDigestMatchedDurableRuntime',
+              'firstStepOperationDigestMatchedSqlite',
+              'secondStepSchedulerDigestMatchedDurableRuntime',
+              'secondStepOperationDigestMatchedSqlite',
+              'firstOperationTerminalDurable',
+              'secondOperationTerminalDurable',
+              'firstStateChainValid',
+              'secondStateChainValid',
+              'realSqliteCommitObservedThroughStepTwo',
+              'reducedTwoStepAuthorityAvailable',
+          ):
+              assert result[key] is True, result
+          assert result['basisStateDigest'] != result['firstStateDigest'], result
+          assert result['firstStateDigest'] != result['finalStateDigest'], result
+          for key in ('basisStateDigest','firstStateDigest','finalStateDigest','finalContinuityToken'):
+              digest = result[key]
+              assert len(digest) == 64 and set(digest) != {'0'}, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['authoritativeStepLoopAvailable'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
+          assert 'qa04.target.core-substate-mutation-application-not-assembled' not in result['blockingFailureCodes'], result
+          assert 'qa04.target.detail-substate-mutation-application-not-assembled' in result['blockingFailureCodes'], result
           PY
       - name: Prove external adapter reaches Core and fails closed
         shell: bash
