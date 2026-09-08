@@ -171,6 +171,11 @@ jobs:
           if(valueAfter(text,'Confirmed Diver ref')!=='-') throw new Error('NONE binding unexpectedly carries a Diver ref.\n'+text);
           if(!text.includes('Projection basis Step\n0')) throw new Error('Initial binding basis is not Step 0.\n'+text);
           if(!text.includes('Binding request UX\neligible')) throw new Error('Binding request is not locally eligible.\n'+text);
+          if(valueAfter(text,'Last accepted publication')!=='FULL') throw new Error('Initial world publication is not FULL.\n'+text);
+          if(valueAfter(text,'Base continuity token')!=='-') throw new Error('Initial FULL unexpectedly has a base token.\n'+text);
+          const initialToken=valueAfter(text,'Continuity token');
+          if(!initialToken || initialToken==='-') throw new Error('Initial FULL continuity token is missing.\n'+text);
+          if(valueAfter(text,'Continuity mismatch count')!=='0') throw new Error('Initial View already reports a continuity mismatch.\n'+text);
 
           await clickText('Request Alpha binding');
           text=await waitText('Binding Operation participation.binding.created; confirmed basis 3.');
@@ -181,6 +186,13 @@ jobs:
           if(!text.includes('Projection basis Step\n3')) throw new Error('Confirmed binding basis is not Step 3.\n'+text);
           if(!text.includes('Confirmed absence policy\nalpha.default')) throw new Error('Binding policy is missing.\n'+text);
           if(!text.includes('Diver control UX\neligible')) throw new Error('Active binding did not enable Diver control UX.\n'+text);
+          if(valueAfter(text,'Last accepted publication')!=='DELTA') throw new Error('Post-binding confirmed publication is not DELTA.\n'+text);
+          if(valueAfter(text,'Base continuity token')!==initialToken) throw new Error('DELTA base token does not equal the initial FULL token.\n'+text);
+          const deltaToken=valueAfter(text,'Continuity token');
+          if(!deltaToken || deltaToken==='-' || deltaToken===initialToken) throw new Error('DELTA continuity token did not advance.\n'+text);
+          if(valueAfter(text,'Continuity mismatch count')!=='0') throw new Error('Normal DELTA path reported a continuity mismatch.\n'+text);
+          if(valueAfter(text,'Automatic resync count')!=='0') throw new Error('Normal DELTA path unexpectedly required automatic resync.\n'+text);
+          await evalJs(`sessionStorage.setItem('machiverse-alpha-delta-token', ${JSON.stringify(deltaToken)})`);
 
           await clickLinkText('Back to world view');
           await waitText('Confirmed basis\n3');
@@ -221,6 +233,8 @@ jobs:
 
           await send('Runtime.enable');
           await send('Page.enable');
+          const expectedToken=await evalJs(`sessionStorage.getItem('machiverse-alpha-delta-token')`);
+          if(!expectedToken) throw new Error('Expected DELTA continuity token was not retained across the restart check.');
           await send('Page.reload',{ignoreCache:true});
           await waitText('Lifecycle\nReady');
           await waitText('Confirmed basis\n3');
@@ -234,6 +248,10 @@ jobs:
           if(valueAfter(text,'Binding generation')!=='1') throw new Error('Recovered binding generation is not 1.\n'+text);
           if(!text.includes('Effective from Step\n2')) throw new Error('Recovered binding lost effective Step 2.\n'+text);
           if(!text.includes('Projection basis Step\n3')) throw new Error('Recovered binding is not confirmed at Step 3.\n'+text);
+          if(valueAfter(text,'Last accepted publication')!=='FULL') throw new Error('Recovered connection did not begin from FULL.\n'+text);
+          if(valueAfter(text,'Base continuity token')!=='-') throw new Error('Recovered FULL unexpectedly has a base token.\n'+text);
+          if(valueAfter(text,'Continuity token')!==expectedToken) throw new Error('Restart changed the continuity token for the same recovered confirmed state.\n'+text);
+          if(valueAfter(text,'Continuity mismatch count')!=='0') throw new Error('Restart recovery reported an unexpected continuity mismatch.\n'+text);
           if(text.includes('Request Alpha binding')) throw new Error('Recovered ACTIVE binding incorrectly exposes create action.\n'+text);
           console.log(text);
           ws.close();
