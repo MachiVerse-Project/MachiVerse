@@ -1,0 +1,198 @@
+@page "/operations"
+@implements IDisposable
+@inject AdminSessionProjectionStore Session
+@inject HighImpactConfirmationController Confirmation
+@inject SimulationAdminOperationController AdminOperations
+@inject AdminOperationCatalog OperationCatalog
+
+<PageTitle>高影響操作</PageTitle>
+
+<main class="shell">
+    <h1>高影響 / シミュレーション管理操作</h1>
+    <p>
+        確認操作はimmutable request identityに結び付いたローカルのfail-closed安全ゲートです。
+        認可資格ではなく、Gateway認可の代替にもなりません。
+    </p>
+
+    <section>
+        <h2>管理セッション</h2>
+        <dl>
+            <dt>状態</dt>
+            <dd>@FormatState(Session.Snapshot.State)</dd>
+            <dt>セッション世代</dt>
+            <dd>@Session.Snapshot.SessionGeneration</dd>
+            <dt>Operation権限</dt>
+            <dd>@(Session.Snapshot.HasPermission(AdminPermissionTokens.OperationSubmit) ? "利用可能" : "利用不可")</dd>
+            <dt>理由コード</dt>
+            <dd>@(Session.Snapshot.ReasonCode ?? "-")</dd>
+        </dl>
+    </section>
+
+    <section>
+        <h2>確認</h2>
+        <dl>
+            <dt>状態</dt>
+            <dd>@FormatState(Confirmation.Snapshot.State)</dd>
+            <dt>要求フィンガープリント</dt>
+            <dd>@(Confirmation.Snapshot.Fingerprint?.ToString() ?? "-")</dd>
+            <dt>有効期限</dt>
+            <dd>@(Confirmation.Snapshot.ExpiresAt?.ToString("O") ?? "-")</dd>
+            <dt>理由コード</dt>
+            <dd>@(Confirmation.Snapshot.ReasonCode ?? "-")</dd>
+        </dl>
+    </section>
+
+    <section>
+        <h2>登録済みシミュレーション管理Operation</h2>
+        @if (OperationCatalog.Descriptors.Count == 0)
+        {
+            <p>
+                このbuildにはcanonicalな管理Operation descriptorが登録されていません。
+                未定義のworld mutationはブラウザ側で生成せず拒否します。
+            </p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var descriptor in OperationCatalog.Descriptors)
+                {
+                    <li>@descriptor.OperationKind — @(descriptor.HighImpact ? "高影響" : "標準")</li>
+                }
+            </ul>
+        }
+    </section>
+
+    <section>
+        <h2>追跡中のOperation</h2>
+        @if (AdminOperations.Operations.Count == 0)
+        {
+            <p>準備済みの管理Operationはありません。</p>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>OperationId</th>
+                        <th>種別</th>
+                        <th>状態</th>
+                        <th>候補Step</th>
+                        <th>有効Step</th>
+                        <th>結果</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var operation in AdminOperations.Operations)
+                    {
+                        <tr>
+                            <td><code>@operation.OperationId</code></td>
+                            <td>@operation.OperationKind</td>
+                            <td>@FormatState(operation.State)</td>
+                            <td>@(operation.CandidateStep?.ToString() ?? "-")</td>
+                            <td>@(operation.EffectiveStep?.ToString() ?? "-")</td>
+                            <td>@(operation.TerminalResult?.Code ?? operation.LastReasonCode ?? "-")</td>
+                            <td>
+                                @if (NeedsConfirmationStart(operation))
+                                {
+                                    <button @onclick="() => BeginConfirmation(operation.OperationId)">
+                                        @(Confirmation.Snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid ? "再確認" : "確認を開始")
+                                    </button>
+                                }
+                                else if (operation.State == AdminOperationLifecycleState.AwaitingConfirmation
+                                    && Confirmation.Snapshot.Fingerprint?.OperationId == operation.OperationId
+                                    && Confirmation.Snapshot.State == HighImpactConfirmationState.Confirming)
+                                {
+                                    <button @onclick="() => ConfirmOperation(operation.OperationId)">確認する</button>
+                                }
+                                else
+                                {
+                                    <span>-</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <p><a href="/">戻る</a></p>
+</main>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Session.Changed += SessionChanged;
+        Confirmation.Changed += ProjectionChanged;
+        AdminOperations.Changed += ProjectionChanged;
+    }
+
+    private bool NeedsConfirmationStart(TrackedAdminOperation operation)
+    {
+        var snapshot = Confirmation.Snapshot;
+        if (!operation.HighImpact || snapshot.Fingerprint?.OperationId != operation.OperationId)
+        {
+            return false;
+        }
+
+        return operation.State == AdminOperationLifecycleState.AwaitingConfirmation
+            && snapshot.State == HighImpactConfirmationState.Required
+            || operation.State is AdminOperationLifecycleState.AwaitingConfirmation or AdminOperationLifecycleState.ReadyForSubmit
+                && snapshot.State == HighImpactConfirmationState.ExpiredOrInvalid;
+    }
+
+    private void BeginConfirmation(string operationId)
+    {
+        AdminOperations.BeginConfirmation(ParseId(operationId));
+        StateHasChanged();
+    }
+
+    private void ConfirmOperation(string operationId)
+    {
+        _ = AdminOperations.Confirm(ParseId(operationId));
+        StateHasChanged();
+    }
+
+    private static string FormatState(object? value)
+        => value?.ToString() switch
+        {
+            "Active" => "有効",
+            "Available" => "利用可能",
+            "Unavailable" => "利用不可",
+            "NotRequired" => "不要",
+            "Required" => "確認が必要",
+            "Confirming" => "確認中",
+            "Confirmed" => "確認済み",
+            "ExpiredOrInvalid" => "期限切れ / 無効",
+            "Prepared" => "準備済み",
+            "AwaitingConfirmation" => "確認待ち",
+            "ReadyForSubmit" => "送信可能",
+            "Submitted" => "送信済み",
+            "Accepted" => "受理済み",
+            "Scheduled" => "予定済み",
+            "DeliveryUnknown" => "配送結果不明",
+            "Terminal" => "完了",
+            "Rejected" => "拒否",
+            "Unauthorized" => "権限なし",
+            "Faulted" or "Failed" => "失敗",
+            null => "-",
+            var text => text,
+        };
+
+    private void SessionChanged(AdminSessionProjection session)
+        => _ = InvokeAsync(StateHasChanged);
+
+    private void ProjectionChanged()
+        => _ = InvokeAsync(StateHasChanged);
+
+    private static Google.Protobuf.ByteString ParseId(string value)
+        => Google.Protobuf.ByteString.CopyFrom(Convert.FromHexString(value));
+
+    public void Dispose()
+    {
+        Session.Changed -= SessionChanged;
+        Confirmation.Changed -= ProjectionChanged;
+        AdminOperations.Changed -= ProjectionChanged;
+    }
+}
