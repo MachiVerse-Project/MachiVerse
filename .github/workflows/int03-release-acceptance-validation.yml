@@ -1,0 +1,54 @@
+name: INT-03 release acceptance contract
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-release-acceptance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  release-acceptance-contract:
+    name: ReleaseAcceptanceRecordV1 fail-closed contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build release acceptance evaluator
+        run: dotnet build tools/MachiVerse.ReleaseAcceptance/MachiVerse.ReleaseAcceptance.csproj --configuration Release
+      - name: Verify release acceptance contract and negative cases
+        run: dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release --no-build -- verify
+      - name: Verify missing real evidence fails closed as INCOMPLETE
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/int03-evidence.json"
+          record="$RUNNER_TEMP/ReleaseAcceptanceRecordV1.json"
+          dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release --no-build -- template "$evidence"
+          set +e
+          dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release --no-build -- evaluate "$evidence" "$record"
+          status=$?
+          set -e
+          if [[ "$status" != 2 ]]; then
+            echo "Expected INCOMPLETE/FAIL evaluator exit code 2, found $status" >&2
+            exit 1
+          fi
+          python3 - "$record" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as handle:
+              record = json.load(handle)
+          assert record['result'] == 'INCOMPLETE', record
+          assert record['performance_report_refs'] == [], record
+          PY
+      - name: Verify QA-04 performance/soak contract remains compatible
+        run: dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release -- verify
