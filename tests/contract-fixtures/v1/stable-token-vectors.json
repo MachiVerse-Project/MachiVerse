@@ -1,0 +1,19 @@
+{
+  "valid": [
+    "a",
+    "core.control",
+    "sim.resident",
+    "choose-destination",
+    "mv.operation-payload.v1",
+    "a/b_c.d-0"
+  ],
+  "invalid": [
+    "",
+    "Upper",
+    " leading",
+    "contains space",
+    ".starts-with-dot",
+    "日本語",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ]
+}

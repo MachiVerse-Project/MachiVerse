@@ -7,6 +7,15 @@ public sealed record PredictionCorrection(
     string ReasonCode,
     ulong? ConfirmedBasisStep);
 
+public sealed record PredictionReconciliationTrace(
+    ulong Sequence,
+    string OperationId,
+    string ReasonCode,
+    ulong SourceConfirmedBasisStep,
+    string SourceConfirmedTokenHex,
+    ulong? AwaitingConfirmedThroughStep,
+    ulong? ConfirmedBasisStep);
+
 public sealed class ReconciliationCoordinator : IDisposable
 {
     private readonly ConfirmedWorldStore _confirmed;
@@ -19,6 +28,9 @@ public sealed class ReconciliationCoordinator : IDisposable
         _confirmed.Changed += OnConfirmedChanged;
     }
 
+    public ulong CorrectionCount { get; private set; }
+    public PredictionReconciliationTrace? LastTrace { get; private set; }
+
     public event Action<PredictionCorrection>? Corrected;
 
     public void OnTerminal(ReadOnlySpan<byte> operationId, ResultV1 terminalResult, ulong? effectiveStep)
@@ -27,12 +39,14 @@ public sealed class ReconciliationCoordinator : IDisposable
         var status = (int)terminalResult.Status;
         if (status is 6 or 7)
         {
-            if (_predictions.Remove(operationId))
+            if (_predictions.TryGet(operationId, out var rejectedPrediction)
+                && rejectedPrediction is not null
+                && _predictions.Remove(operationId))
             {
-                Corrected?.Invoke(new PredictionCorrection(
-                    Convert.ToHexStringLower(operationId),
-                    terminalResult.Code,
-                    _confirmed.Current?.BasisStep));
+                RecordCorrection(
+                    rejectedPrediction,
+                    string.IsNullOrEmpty(terminalResult.Code) ? "operation.rejected" : terminalResult.Code,
+                    _confirmed.Current?.BasisStep);
             }
             return;
         }
@@ -64,14 +78,28 @@ public sealed class ReconciliationCoordinator : IDisposable
 
             if (_predictions.Remove(entry.OperationId))
             {
-                Corrected?.Invoke(new PredictionCorrection(
-                    entry.OperationId,
+                RecordCorrection(
+                    entry,
                     entry.State == PredictionEntryState.Frozen
                         ? "prediction.rebased-after-confirmed-swap"
                         : "prediction.confirmed-authoritative",
-                    snapshot.BasisStep));
+                    snapshot.BasisStep);
             }
         }
+    }
+
+    private void RecordCorrection(PredictionEntry entry, string reasonCode, ulong? confirmedBasisStep)
+    {
+        var sequence = checked(++CorrectionCount);
+        LastTrace = new PredictionReconciliationTrace(
+            sequence,
+            entry.OperationId,
+            reasonCode,
+            entry.SourceConfirmedBasisStep,
+            Convert.ToHexStringLower(entry.SourceConfirmedToken),
+            entry.AwaitingConfirmedThroughStep,
+            confirmedBasisStep);
+        Corrected?.Invoke(new PredictionCorrection(entry.OperationId, reasonCode, confirmedBasisStep));
     }
 
     public void Dispose() => _confirmed.Changed -= OnConfirmedChanged;

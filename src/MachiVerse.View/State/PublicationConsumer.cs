@@ -18,6 +18,11 @@ public sealed class PublicationConsumer(ConfirmedWorldStore store)
 
     public ViewLifecycleState LifecycleState { get; private set; } = ViewLifecycleState.Syncing;
     public string? ResyncReason { get; private set; }
+    public string? LastAcceptedPublicationKind { get; private set; }
+    public string? LastAcceptedBaseContinuityTokenHex { get; private set; }
+    public string? LastAcceptedContinuityTokenHex { get; private set; }
+    public string? LastRejectedPublicationKind { get; private set; }
+    public uint ContinuityMismatchCount { get; private set; }
 
     public ConfirmedWorldSnapshot Consume(
         StatePublicationV1 publication,
@@ -28,12 +33,34 @@ public sealed class PublicationConsumer(ConfirmedWorldStore store)
         {
             var snapshot = BuildCandidate(publication, basisStep, chunks);
             store.Install(snapshot);
+            var kind = (int)publication.Kind;
+            LastAcceptedPublicationKind = kind switch
+            {
+                PublicationFull => "FULL",
+                PublicationDelta => "DELTA",
+                _ => throw new InvalidDataException("protocol.invalid-publication-kind")
+            };
+            LastAcceptedBaseContinuityTokenHex = publication.HasBaseStateContinuityToken
+                ? Convert.ToHexStringLower(publication.BaseStateContinuityToken.Span)
+                : null;
+            LastAcceptedContinuityTokenHex = Convert.ToHexStringLower(publication.StateContinuityToken.Span);
             LifecycleState = ViewLifecycleState.Ready;
             ResyncReason = null;
             return snapshot;
         }
         catch (ContinuityMismatchException ex)
         {
+            // A mismatched DELTA must never leave the previous snapshot looking current. Clearing
+            // the confirmed store drives renderer/state subscribers out of the authoritative
+            // presentation until a new FULL snapshot is installed.
+            store.ClearForWorldChange();
+            LastRejectedPublicationKind = (int)publication.Kind switch
+            {
+                PublicationFull => "FULL",
+                PublicationDelta => "DELTA",
+                _ => "UNKNOWN"
+            };
+            ContinuityMismatchCount = checked(ContinuityMismatchCount + 1);
             LifecycleState = ViewLifecycleState.Resyncing;
             ResyncReason = ex.Message;
             throw;
