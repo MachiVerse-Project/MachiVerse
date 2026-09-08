@@ -5,6 +5,8 @@ using System.Text.Json.Serialization;
 
 internal static class Program
 {
+    private const string CanonicalQa04ManifestSha256 = "5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423";
+
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -20,16 +22,16 @@ internal static class Program
             var manifestPath = Path.Combine(root, "tests", "release-acceptance-fixtures", "v1", "acceptance-manifest.json");
             var manifestBytes = File.ReadAllBytes(manifestPath);
             var manifest = Deserialize<AcceptanceManifest>(manifestBytes, "INT-03 acceptance manifest");
-            ValidateManifest(manifest);
+            ValidateManifest(manifest, root);
 
             var command = args.Length == 0 ? "verify" : args[0];
             return command switch
             {
                 "verify" => Verify(manifest, manifestBytes),
-                "evaluate" when args.Length == 3 => EvaluateFile(manifest, args[1], args[2]),
+                "evaluate" when args.Length == 4 => EvaluateFile(manifest, args[1], args[2], args[3]),
                 "template" when args.Length == 2 => WriteTemplate(manifest, args[1]),
                 _ => throw new ArgumentException(
-                    "Usage: MachiVerse.ReleaseAcceptance [verify|evaluate <evidence.json> <record.json>|template <evidence.json>]")
+                    "Usage: MachiVerse.ReleaseAcceptance [verify|evaluate <evidence.json> <record.json> <expected-source-commit>|template <evidence.json>]")
             };
         }
         catch (Exception ex)
@@ -44,6 +46,7 @@ internal static class Program
         SelfTest(manifest);
         Console.WriteLine("INT-03 ReleaseAcceptanceRecordV1 contract verification PASS");
         Console.WriteLine($"Manifest SHA-256: {Sha256Hex(manifestBytes)}");
+        Console.WriteLine($"QA-04 manifest SHA-256: {manifest.Qa04ManifestSha256}");
         Console.WriteLine($"Required suites: {manifest.RequiredSuiteIds.Length}");
         Console.WriteLine($"Required performance profiles: {string.Join(",", manifest.RequiredPerformanceProfiles.OrderBy(static x => x, StringComparer.Ordinal))}");
         Console.WriteLine($"Minimum soak duration: {manifest.Soak.MinimumDurationSeconds} seconds");
@@ -51,10 +54,15 @@ internal static class Program
         return 0;
     }
 
-    private static int EvaluateFile(AcceptanceManifest manifest, string evidencePath, string recordPath)
+    private static int EvaluateFile(
+        AcceptanceManifest manifest,
+        string evidencePath,
+        string recordPath,
+        string expectedSourceCommit)
     {
+        RequireLowerHex(expectedSourceCommit, 40, "expectedSourceCommit", allowAllZero: false);
         var evidence = Deserialize<ReleaseEvidence>(File.ReadAllBytes(Path.GetFullPath(evidencePath)), "release evidence");
-        var evaluation = Evaluate(manifest, evidence);
+        var evaluation = Evaluate(manifest, evidence, expectedSourceCommit);
         var fullRecordPath = Path.GetFullPath(recordPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullRecordPath) ?? Directory.GetCurrentDirectory());
         File.WriteAllText(fullRecordPath, JsonSerializer.Serialize(evaluation.Record, Json) + Environment.NewLine, new UTF8Encoding(false));
@@ -89,15 +97,22 @@ internal static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? Directory.GetCurrentDirectory());
         File.WriteAllText(fullPath, JsonSerializer.Serialize(template, Json) + Environment.NewLine, new UTF8Encoding(false));
         Console.WriteLine($"INCOMPLETE release evidence template written to {fullPath}");
+        Console.WriteLine($"Template placeholder sourceCommit: {template.SourceCommit}");
         return 0;
     }
 
-    private static Evaluation Evaluate(AcceptanceManifest manifest, ReleaseEvidence evidence)
+    private static Evaluation Evaluate(
+        AcceptanceManifest manifest,
+        ReleaseEvidence evidence,
+        string expectedSourceCommit)
     {
         ValidateEvidenceShape(evidence);
+        RequireLowerHex(expectedSourceCommit, 40, "expectedSourceCommit", allowAllZero: false);
         var incomplete = new SortedSet<string>(StringComparer.Ordinal);
         var failures = new SortedSet<string>(StringComparer.Ordinal);
 
+        if (!string.Equals(evidence.SourceCommit, expectedSourceCommit, StringComparison.Ordinal))
+            incomplete.Add("evidence.expected-source-commit-mismatch");
         if (!string.Equals(evidence.SchemaVersion, manifest.SchemaVersion, StringComparison.Ordinal))
             incomplete.Add("evidence.schema-version-mismatch");
         if (!string.Equals(evidence.TestSuiteVersion, manifest.TestSuiteVersion, StringComparison.Ordinal))
@@ -200,33 +215,36 @@ internal static class Program
     private static void SelfTest(AcceptanceManifest manifest)
     {
         var valid = BuildValidFixture(manifest);
-        RequireResult(Evaluate(manifest, valid), "PASS", "complete evidence");
+        RequireResult(Evaluate(manifest, valid, valid.SourceCommit), "PASS", "complete evidence");
+
+        var wrongCandidate = Clone(valid);
+        RequireResult(Evaluate(manifest, wrongCandidate, new string('2', 40)), "INCOMPLETE", "wrong release-candidate commit");
 
         var shortSoak = Clone(valid);
         shortSoak.Soak!.DurationSeconds = manifest.Soak.MinimumDurationSeconds - 1;
-        RequireResult(Evaluate(manifest, shortSoak), "INCOMPLETE", "short soak");
+        RequireResult(Evaluate(manifest, shortSoak, shortSoak.SourceCommit), "INCOMPLETE", "short soak");
 
         var missingSuite = Clone(valid);
         missingSuite.SuiteEvidence = missingSuite.SuiteEvidence.Skip(1).ToArray();
-        RequireResult(Evaluate(manifest, missingSuite), "INCOMPLETE", "missing required suite");
+        RequireResult(Evaluate(manifest, missingSuite, missingSuite.SourceCommit), "INCOMPLETE", "missing required suite");
 
         var staleSuite = Clone(valid);
         staleSuite.SuiteEvidence[0].SourceCommit = new string('2', 40);
-        RequireResult(Evaluate(manifest, staleSuite), "INCOMPLETE", "wrong-commit suite evidence");
+        RequireResult(Evaluate(manifest, staleSuite, staleSuite.SourceCommit), "INCOMPLETE", "wrong-commit suite evidence");
 
         var missingPerformance = Clone(valid);
         missingPerformance.PerformanceReports = missingPerformance.PerformanceReports.Skip(1).ToArray();
-        RequireResult(Evaluate(manifest, missingPerformance), "INCOMPLETE", "missing performance report");
+        RequireResult(Evaluate(manifest, missingPerformance, missingPerformance.SourceCommit), "INCOMPLETE", "missing performance report");
 
         var nonWaivable = Clone(valid);
         var forbidden = manifest.NonWaivableFailureCodes[0];
         nonWaivable.ObservedFailureCodes = [forbidden];
         nonWaivable.KnownWaivers = [new WaiverEvidence { Code = forbidden, Reason = "must not override" }];
-        RequireResult(Evaluate(manifest, nonWaivable), "FAIL", "non-waivable failure with waiver");
+        RequireResult(Evaluate(manifest, nonWaivable, nonWaivable.SourceCommit), "FAIL", "non-waivable failure with waiver");
 
         var loss = Clone(valid);
         loss.Soak!.AcceptedOperationLoss = 1;
-        RequireResult(Evaluate(manifest, loss), "FAIL", "accepted Operation loss");
+        RequireResult(Evaluate(manifest, loss, loss.SourceCommit), "FAIL", "accepted Operation loss");
     }
 
     private static ReleaseEvidence BuildValidFixture(AcceptanceManifest manifest)
@@ -248,12 +266,14 @@ internal static class Program
                 SourceCommit = commit,
                 Status = "passed",
                 ArtifactRef = $"fixture://{id}",
+                ArtifactDigest = new string('e', 64),
             }).ToArray(),
             PerformanceReports = manifest.RequiredPerformanceProfiles.Select(id => new PerformanceReportEvidence
             {
                 ProfileId = id,
                 SourceCommit = commit,
                 ReportRef = $"fixture://{id}",
+                ReportDigest = new string('f', 64),
                 Passed = true,
                 FailureCodes = [],
             }).ToArray(),
@@ -262,6 +282,7 @@ internal static class Program
                 TestCaseId = manifest.Soak.TestCaseId,
                 SourceCommit = commit,
                 ReportRef = "fixture://performance.soak.24h",
+                ReportDigest = new string('9', 64),
                 DurationSeconds = manifest.Soak.MinimumDurationSeconds,
                 Passed = true,
                 ParallelVerifierDigestMatched = true,
@@ -276,10 +297,14 @@ internal static class Program
         };
     }
 
-    private static void ValidateManifest(AcceptanceManifest manifest)
+    private static void ValidateManifest(AcceptanceManifest manifest, string repositoryRoot)
     {
         RequireEqual(manifest.SchemaVersion, "1.0", "manifest schemaVersion");
         RequireEqual(manifest.TestSuiteVersion, "p4-08.v1", "testSuiteVersion");
+        RequireEqual(manifest.Qa04ManifestSha256, CanonicalQa04ManifestSha256, "qa04ManifestSha256");
+        var actualQa04Digest = Sha256Hex(File.ReadAllBytes(Path.Combine(
+            repositoryRoot, "tests", "performance-fixtures", "v1", "harness-manifest.json")));
+        RequireEqual(actualQa04Digest, manifest.Qa04ManifestSha256, "current QA-04 manifest digest");
         RequireUniqueNonEmpty(manifest.RequiredSuiteIds, "requiredSuiteIds");
         RequireUniqueNonEmpty(manifest.RequiredTestCaseIds, "requiredTestCaseIds");
         RequireExactSet(manifest.RequiredPerformanceProfiles,
@@ -336,6 +361,7 @@ internal static class Program
         {
             if (string.IsNullOrWhiteSpace(suite.SuiteId)) throw new InvalidDataException("suiteId is required.");
             RequireLowerHex(suite.SourceCommit, 40, $"suite sourceCommit:{suite.SuiteId}", allowAllZero: false);
+            RequireLowerHex(suite.ArtifactDigest, 64, $"suite artifactDigest:{suite.SuiteId}", allowAllZero: false);
             if (suite.Status is not ("passed" or "failed" or "incomplete"))
                 throw new InvalidDataException($"Suite {suite.SuiteId} status must be passed/failed/incomplete.");
         }
@@ -343,11 +369,13 @@ internal static class Program
         {
             if (string.IsNullOrWhiteSpace(report.ProfileId)) throw new InvalidDataException("performance profileId is required.");
             RequireLowerHex(report.SourceCommit, 40, $"performance sourceCommit:{report.ProfileId}", allowAllZero: false);
+            RequireLowerHex(report.ReportDigest, 64, $"performance reportDigest:{report.ProfileId}", allowAllZero: false);
             RequireUniqueNonEmpty(report.FailureCodes, $"failureCodes:{report.ProfileId}", allowEmpty: true);
         }
         if (evidence.Soak is { } soak)
         {
             RequireLowerHex(soak.SourceCommit, 40, "soak sourceCommit", allowAllZero: false);
+            RequireLowerHex(soak.ReportDigest, 64, "soak reportDigest", allowAllZero: false);
             if (soak.DurationSeconds < 0) throw new InvalidDataException("soak durationSeconds cannot be negative.");
             if (soak.MaxPostWarmupMemoryGrowthPercent < 0) throw new InvalidDataException("soak memory growth cannot be negative.");
             if (soak.AcceptedOperationLoss < 0) throw new InvalidDataException("soak acceptedOperationLoss cannot be negative.");
@@ -429,6 +457,7 @@ internal static class Program
     {
         public string SchemaVersion { get; set; } = "";
         public string TestSuiteVersion { get; set; } = "";
+        public string Qa04ManifestSha256 { get; set; } = "";
         public string[] RequiredSuiteIds { get; set; } = [];
         public string[] RequiredTestCaseIds { get; set; } = [];
         public string[] RequiredPerformanceProfiles { get; set; } = [];
@@ -472,6 +501,7 @@ internal static class Program
         public string SourceCommit { get; set; } = "";
         public string Status { get; set; } = "";
         public string ArtifactRef { get; set; } = "";
+        public string ArtifactDigest { get; set; } = "";
     }
 
     internal sealed class PerformanceReportEvidence
@@ -479,6 +509,7 @@ internal static class Program
         public string ProfileId { get; set; } = "";
         public string SourceCommit { get; set; } = "";
         public string ReportRef { get; set; } = "";
+        public string ReportDigest { get; set; } = "";
         public bool Passed { get; set; }
         public string[] FailureCodes { get; set; } = [];
     }
@@ -488,6 +519,7 @@ internal static class Program
         public string TestCaseId { get; set; } = "";
         public string SourceCommit { get; set; } = "";
         public string ReportRef { get; set; } = "";
+        public string ReportDigest { get; set; } = "";
         public long DurationSeconds { get; set; }
         public bool Passed { get; set; }
         public bool ParallelVerifierDigestMatched { get; set; }
