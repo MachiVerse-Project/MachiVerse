@@ -88,5 +88,7 @@ internal static class PersistenceSnapshotSmoke
         }
 
         await RunningSnapshotCoordinatorSmoke.RunAsync();
+        await CanonicalSnapshotReassemblySmoke.RunAsync();
+        await RunningCanonicalSnapshotCommitSmoke.RunAsync();
     }
 }
