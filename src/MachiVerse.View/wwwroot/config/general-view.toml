@@ -33,6 +33,10 @@ receive-queue-capacity = 256
 pending-capacity = 1024
 
 [network]
+# INT-01 local Alpha defaults. Release deployment must use wss:// and disable the insecure-loopback flag.
+gateway-endpoint = "ws://127.0.0.1:5520/ws/v1/view"
+world-id = "00000000000000000000000000000001"
+allow-insecure-loopback-alpha = true
 reconnect-initial-ms = 250
 reconnect-max-ms = 10000
 reconnect-multiplier-permille = 2000

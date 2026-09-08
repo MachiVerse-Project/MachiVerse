@@ -25,6 +25,8 @@ public sealed record ParticipationBindingProjection(
     ParticipationProjectionFreshness Freshness,
     string? BindingId,
     string? ResidentId,
+    string? DiverRef,
+    ulong BindingGeneration,
     ulong? EffectiveFromStep,
     string? AbsencePolicyProfile,
     ulong? BasisStep,
@@ -42,6 +44,8 @@ public sealed class ParticipationBindingProjectionStore
         ParticipationProjectionFreshness.Unknown,
         BindingId: null,
         ResidentId: null,
+        DiverRef: null,
+        BindingGeneration: 0,
         EffectiveFromStep: null,
         AbsencePolicyProfile: null,
         BasisStep: null,
@@ -81,6 +85,7 @@ public sealed class ParticipationBindingProjectionStore
         ArgumentNullException.ThrowIfNull(wire);
         if (wire.HasBindingId) ValidateId128(wire.BindingId, nameof(wire.BindingId));
         if (wire.HasResidentId) ValidateId128(wire.ResidentId, nameof(wire.ResidentId));
+        if (wire.HasDiverRef) ValidateId128(wire.DiverRef, nameof(wire.DiverRef));
         if (wire.HasAbsencePolicyProfile) ValidateStableToken(wire.AbsencePolicyProfile, nameof(wire.AbsencePolicyProfile));
 
         var state = (int)wire.Status switch
@@ -93,11 +98,31 @@ public sealed class ParticipationBindingProjectionStore
             _ => throw new InvalidDataException("Participation binding status is unspecified or unsupported.")
         };
 
+        if (state == ParticipationBindingState.None)
+        {
+            if (wire.BindingGeneration != 0 || wire.HasBindingId || wire.HasResidentId || wire.HasDiverRef || wire.HasEffectiveFromStep)
+                throw new InvalidDataException("Confirmed NONE binding has an invalid authoritative shape.");
+        }
+        else if (state == ParticipationBindingState.Active)
+        {
+            if (!wire.HasBindingId || !wire.HasResidentId || !wire.HasDiverRef || !wire.HasEffectiveFromStep || wire.BindingGeneration == 0)
+                throw new InvalidDataException("Confirmed ACTIVE binding is missing authoritative identity/generation fields.");
+        }
+
+        if (Snapshot.Freshness == ParticipationProjectionFreshness.Confirmed &&
+            Snapshot.BasisStep is { } previousBasis && basisStep >= previousBasis &&
+            wire.BindingGeneration < Snapshot.BindingGeneration)
+        {
+            throw new InvalidDataException("Participation binding generation regressed within confirmed continuity.");
+        }
+
         Snapshot = new ParticipationBindingProjection(
             state,
             ParticipationProjectionFreshness.Confirmed,
             wire.HasBindingId ? Hex(wire.BindingId) : null,
             wire.HasResidentId ? Hex(wire.ResidentId) : null,
+            wire.HasDiverRef ? Hex(wire.DiverRef) : null,
+            wire.BindingGeneration,
             wire.HasEffectiveFromStep ? wire.EffectiveFromStep : null,
             wire.HasAbsencePolicyProfile ? wire.AbsencePolicyProfile : null,
             basisStep,
@@ -125,20 +150,24 @@ public sealed class ParticipationBindingProjectionStore
 
     private static void ValidateId128(ByteString value, string field)
     {
-        if (value.Length != 16 || value.Span.ToArray().All(static octet => octet == 0))
+        if (value.Length != 16 || value.Span.IndexOfAnyExcept((byte)0) < 0)
             throw new InvalidDataException($"{field} must be non-zero Id128.");
     }
 
     private static void ValidateStableToken(string value, string field)
     {
-        if (string.IsNullOrEmpty(value))
-            throw new InvalidDataException($"{field} must be non-empty when present.");
-        foreach (var ch in value)
+        if (string.IsNullOrEmpty(value) || value.Length > 64 || !IsLowerAlphaNumeric(value[0]))
+            throw new InvalidDataException($"{field} must use StableToken grammar.");
+        for (var i = 1; i < value.Length; i++)
         {
-            if (ch > 0x7f || char.IsControl(ch) || char.IsWhiteSpace(ch))
-                throw new InvalidDataException($"{field} must use canonical ASCII token text.");
+            var ch = value[i];
+            if (!IsLowerAlphaNumeric(ch) && ch is not ('.' or '_' or '/' or '-'))
+                throw new InvalidDataException($"{field} must use StableToken grammar.");
         }
     }
+
+    private static bool IsLowerAlphaNumeric(char value)
+        => value is >= 'a' and <= 'z' or >= '0' and <= '9';
 
     private static string Hex(ByteString value) => Convert.ToHexStringLower(value.Span);
 }

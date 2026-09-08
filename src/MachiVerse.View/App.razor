@@ -1,11 +1,25 @@
-<Router AppAssembly="@typeof(App).Assembly">
-    <Found Context="routeData">
-        <RouteView RouteData="@routeData" />
-    </Found>
-    <NotFound>
-        <PageTitle>Not found</PageTitle>
-        <main class="shell">
-            <h1>Page not found</h1>
-        </main>
-    </NotFound>
-</Router>
+<div class="app-frame">
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="brand/icon.png" alt="MachiVerse" />
+            <span class="brand-copy">MachiVerse<small>一般ビュー · Alpha 1.0</small></span>
+        </a>
+        <nav class="topnav" aria-label="一般ビュー ナビゲーション">
+            <a href="/">世界</a>
+            <a href="/participation">参加</a>
+        </nav>
+    </header>
+
+    <Router AppAssembly="@typeof(App).Assembly">
+        <Found Context="routeData">
+            <RouteView RouteData="@routeData" />
+        </Found>
+        <NotFound>
+            <PageTitle>ページが見つかりません</PageTitle>
+            <main class="shell">
+                <h1>ページが見つかりません</h1>
+                <p><a href="/">世界ビューへ戻る</a></p>
+            </main>
+        </NotFound>
+    </Router>
+</div>

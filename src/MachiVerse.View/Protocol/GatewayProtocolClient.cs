@@ -10,11 +10,20 @@ public sealed class GatewayProtocolClient : IAsyncDisposable
     public ViewLifecycleState State { get; private set; } = ViewLifecycleState.Starting;
     public event Action<ViewLifecycleState>? StateChanged;
 
-    public async Task ConnectAsync(Uri endpoint, CancellationToken cancellationToken = default)
+    public Task ConnectAsync(Uri endpoint, CancellationToken cancellationToken = default)
+        => ConnectAsync(endpoint, allowInsecureLoopbackAlpha: false, cancellationToken);
+
+    public async Task ConnectAsync(
+        Uri endpoint,
+        bool allowInsecureLoopbackAlpha,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
-        if (!string.Equals(endpoint.Scheme, Uri.UriSchemeWss, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Gateway endpoint must use wss://.", nameof(endpoint));
+        var secure = string.Equals(endpoint.Scheme, "wss", StringComparison.OrdinalIgnoreCase);
+        var localAlpha = string.Equals(endpoint.Scheme, "ws", StringComparison.OrdinalIgnoreCase) &&
+                         allowInsecureLoopbackAlpha && endpoint.IsLoopback;
+        if (!secure && !localAlpha)
+            throw new ArgumentException("Gateway endpoint must use wss:// unless an explicit loopback Alpha ws:// endpoint is enabled.", nameof(endpoint));
 
         var reconnecting = State is ViewLifecycleState.Closed or ViewLifecycleState.Faulted;
         _socket?.Dispose();
@@ -34,14 +43,31 @@ public sealed class GatewayProtocolClient : IAsyncDisposable
         }
     }
 
-    public async Task SendAsync(WireEnvelopeV1 envelope, CancellationToken cancellationToken = default)
+    public Task SendBootstrapAsync(WireEnvelopeV1 envelope, CancellationToken cancellationToken = default)
+        => SendBytesAsync(GatewayBootstrapEnvelopeCodec.Encode(envelope), cancellationToken);
+
+    public async Task<WireEnvelopeV1> ReceiveBootstrapAsync(CancellationToken cancellationToken = default)
+        => GatewayBootstrapEnvelopeCodec.Decode(await ReceiveBytesAsync(cancellationToken).ConfigureAwait(false));
+
+    public Task SendAsync(WireEnvelopeV1 envelope, CancellationToken cancellationToken = default)
+        => SendBytesAsync(GatewayEnvelopeCodec.Encode(envelope), cancellationToken);
+
+    public async Task<WireEnvelopeV1> ReceiveAsync(CancellationToken cancellationToken = default)
+        => GatewayEnvelopeCodec.Decode(await ReceiveBytesAsync(cancellationToken).ConfigureAwait(false));
+
+    public void MarkAuthenticating() => SetState(ViewLifecycleState.Authenticating);
+    public void MarkSyncing() => SetState(ViewLifecycleState.Syncing);
+    public void MarkReady() => SetState(ViewLifecycleState.Ready);
+    public void MarkResyncing() => SetState(ViewLifecycleState.Resyncing);
+    public void MarkDegraded() => SetState(ViewLifecycleState.Degraded);
+
+    private async Task SendBytesAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         var socket = RequireOpenSocket();
-        var bytes = GatewayEnvelopeCodec.Encode(envelope);
         await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Binary, true, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<WireEnvelopeV1> ReceiveAsync(CancellationToken cancellationToken = default)
+    private async Task<byte[]> ReceiveBytesAsync(CancellationToken cancellationToken)
     {
         var socket = RequireOpenSocket();
         var buffer = new byte[64 * 1024];
@@ -62,15 +88,8 @@ public sealed class GatewayProtocolClient : IAsyncDisposable
                 throw new InvalidDataException("protocol.limit-exceeded: envelope exceeds 8 MiB.");
             if (result.EndOfMessage) break;
         }
-
-        return GatewayEnvelopeCodec.Decode(message.ToArray());
+        return message.ToArray();
     }
-
-    public void MarkAuthenticating() => SetState(ViewLifecycleState.Authenticating);
-    public void MarkSyncing() => SetState(ViewLifecycleState.Syncing);
-    public void MarkReady() => SetState(ViewLifecycleState.Ready);
-    public void MarkResyncing() => SetState(ViewLifecycleState.Resyncing);
-    public void MarkDegraded() => SetState(ViewLifecycleState.Degraded);
 
     private ClientWebSocket RequireOpenSocket()
         => _socket is { State: WebSocketState.Open } socket

@@ -57,6 +57,8 @@ if (consumer.LifecycleState != ViewLifecycleState.Ready || confirmed.BasisStep !
     throw new InvalidOperationException("FULL publication must atomically produce a Ready confirmed snapshot.");
 if (confirmedChangeCount != 1)
     throw new InvalidOperationException("Confirmed install must notify presentation consumers exactly once.");
+if (consumer.LastAcceptedPublicationKind != "FULL" || consumer.LastAcceptedBaseContinuityTokenHex is not null)
+    throw new InvalidOperationException("Initial FULL publication metadata must be exposed without a base token.");
 
 var delta = new StatePublicationV1
 {
@@ -88,6 +90,9 @@ if (deltaConfirmed.BasisStep != 21 || deltaConfirmed.Records[key].Revision != 2 
     throw new InvalidOperationException("Matching DELTA must advance the confirmed snapshot atomically.");
 if (confirmedChangeCount != 2)
     throw new InvalidOperationException("Confirmed DELTA swap must notify presentation consumers exactly once.");
+if (consumer.LastAcceptedPublicationKind != "DELTA" ||
+    consumer.LastAcceptedBaseContinuityTokenHex != Convert.ToHexStringLower(Hash(4).Span))
+    throw new InvalidOperationException("Accepted DELTA must expose its exact confirmed base token.");
 
 var mismatch = new StatePublicationV1
 {
@@ -115,14 +120,47 @@ catch (ContinuityMismatchException)
 }
 if (!rejected || consumer.LifecycleState != ViewLifecycleState.Resyncing)
     throw new InvalidOperationException("Continuity mismatch must enter Resyncing and remain outside normal confirmed state.");
-if (store.Current?.BasisStep != 21)
-    throw new InvalidOperationException("Rejected DELTA must not replace the last confirmed snapshot.");
-if (confirmedChangeCount != 2)
-    throw new InvalidOperationException("Rejected DELTA must not notify presentation as a confirmed swap.");
+if (store.Current is not null)
+    throw new InvalidOperationException("Continuity mismatch must clear the authoritative-looking confirmed snapshot until FULL recovery.");
+if (confirmedChangeCount != 3)
+    throw new InvalidOperationException("Continuity mismatch must notify presentation consumers that confirmed display authority was cleared.");
+if (consumer.LastRejectedPublicationKind != "DELTA" || consumer.ContinuityMismatchCount != 1)
+    throw new InvalidOperationException("Continuity mismatch diagnostics must record the rejected DELTA.");
 
-var request = consumer.CreateResyncRequest(Id(10), forceFull: false);
-if (!request.HasClientBasisStep || request.ClientBasisStep != 21 || !request.HasClientContinuityToken)
-    throw new InvalidOperationException("Resync request must use last confirmed basis/token.");
+var request = consumer.CreateResyncRequest(Id(10), forceFull: true);
+if (request.HasClientBasisStep || request.HasClientContinuityToken || (int)request.Preference != 2)
+    throw new InvalidOperationException("After continuity mismatch the View must request force-FULL without reusing the rejected base.");
+
+var recovery = new StatePublicationV1
+{
+    PublicationId = Id(18),
+    Kind = (PublicationKindV1)1,
+    StateContinuityToken = Hash(19),
+    ChunkCount = 1,
+    ProjectionSchemaDigest = Hash(5)
+};
+var recoveryPayload = new ProjectionChunkPayloadV1
+{
+    SubscriptionId = Id(3),
+    PublicationId = recovery.PublicationId,
+    ChunkIndex = 0
+};
+recoveryPayload.Records.Add(new ProjectionRecordV1
+{
+    RecordSchemaId = "view.test-record.v1",
+    RecordSchemaVersion = new SchemaVersionWireV1 { Major = 1, Minor = 0 },
+    RecordId = recordId,
+    RecordRevision = 3,
+    MutationKind = (ProjectionMutationKindV1)1,
+    Payload = ByteString.CopyFromUtf8("record-v3")
+});
+var recovered = consumer.Consume(recovery, 23, [Chunk(recovery, recoveryPayload)]);
+if (recovered.BasisStep != 23 || store.Current?.BasisStep != 23 || consumer.LifecycleState != ViewLifecycleState.Ready)
+    throw new InvalidOperationException("Force-FULL recovery must restore a Ready confirmed snapshot.");
+if (consumer.LastAcceptedPublicationKind != "FULL" || consumer.ResyncReason is not null)
+    throw new InvalidOperationException("FULL recovery must clear the active resync reason and become the accepted publication.");
+if (confirmedChangeCount != 4)
+    throw new InvalidOperationException("FULL recovery must notify presentation consumers exactly once after fail-closed clear.");
 
 var terrainRecordId = Id(11).ToByteArray();
 var builtRecordId = Id(12).ToByteArray();
