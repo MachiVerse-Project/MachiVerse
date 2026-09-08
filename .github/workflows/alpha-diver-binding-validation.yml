@@ -153,6 +153,7 @@ jobs:
           const evalJs=async expression => (await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true}))?.result?.value;
           const sleep=ms=>new Promise(r=>setTimeout(r,ms));
           const waitText=async (needle, attempts=120)=>{let text='';for(let i=0;i<attempts;i++){text=await evalJs('document.body?.innerText ?? ""');if(text.includes(needle))return text;await sleep(250);}throw new Error('Missing text '+needle+'; last DOM:\n'+text);};
+          const valueAfter=(text,label)=>{const lines=text.split('\n').map(x=>x.trim()).filter(Boolean);const i=lines.indexOf(label);return i>=0?lines[i+1]:undefined;};
           const clickText=async text=>{const ok=await evalJs(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!b)return false;b.click();return true;})()`);if(!ok)throw new Error('Button not found: '+text);};
           const clickLinkText=async text=>{const ok=await evalJs(`(()=>{const a=[...document.querySelectorAll('a')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!a)return false;a.click();return true;})()`);if(!ok)throw new Error('Link not found: '+text);};
 
@@ -163,13 +164,19 @@ jobs:
           await clickLinkText('Open Diver Participation');
           let text=await waitText('Diver Participation');
           if(!text.includes('Session state\nActive')) throw new Error('View session is not active.\n'+text);
+          const sessionDiver=valueAfter(text,'Session Diver ref');
+          if(!sessionDiver || sessionDiver==='-') throw new Error('Gateway-confirmed Diver ref is missing.\n'+text);
           if(!text.includes('Status\nNone')) throw new Error('Initial binding is not NONE.\n'+text);
+          if(valueAfter(text,'Binding generation')!=='0') throw new Error('Initial binding generation is not 0.\n'+text);
+          if(valueAfter(text,'Confirmed Diver ref')!=='-') throw new Error('NONE binding unexpectedly carries a Diver ref.\n'+text);
           if(!text.includes('Projection basis Step\n0')) throw new Error('Initial binding basis is not Step 0.\n'+text);
           if(!text.includes('Binding request UX\neligible')) throw new Error('Binding request is not locally eligible.\n'+text);
 
           await clickText('Request Alpha binding');
           text=await waitText('Binding Operation participation.binding.created; confirmed basis 3.');
           if(!text.includes('Status\nActive')) throw new Error('Binding did not become ACTIVE.\n'+text);
+          if(valueAfter(text,'Confirmed Diver ref')!==sessionDiver) throw new Error('Confirmed binding actor differs from authenticated session actor.\n'+text);
+          if(valueAfter(text,'Binding generation')!=='1') throw new Error('First binding generation is not 1.\n'+text);
           if(!text.includes('Effective from Step\n2')) throw new Error('Binding effective Step is not 2.\n'+text);
           if(!text.includes('Projection basis Step\n3')) throw new Error('Confirmed binding basis is not Step 3.\n'+text);
           if(!text.includes('Confirmed absence policy\nalpha.default')) throw new Error('Binding policy is missing.\n'+text);
@@ -209,6 +216,7 @@ jobs:
           const evalJs=async expression => (await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true}))?.result?.value;
           const sleep=ms=>new Promise(r=>setTimeout(r,ms));
           const waitText=async (needle, attempts=160)=>{let text='';for(let i=0;i<attempts;i++){text=await evalJs('document.body?.innerText ?? ""');if(text.includes(needle))return text;await sleep(250);}throw new Error('Missing text '+needle+'; last DOM:\n'+text);};
+          const valueAfter=(text,label)=>{const lines=text.split('\n').map(x=>x.trim()).filter(Boolean);const i=lines.indexOf(label);return i>=0?lines[i+1]:undefined;};
           const clickLinkText=async text=>{const ok=await evalJs(`(()=>{const a=[...document.querySelectorAll('a')].find(x=>x.textContent.includes(${JSON.stringify(text)}));if(!a)return false;a.click();return true;})()`);if(!ok)throw new Error('Link not found: '+text);};
 
           await send('Runtime.enable');
@@ -219,7 +227,11 @@ jobs:
           await clickLinkText('Open Diver Participation');
           const text=await waitText('Diver Participation');
           if(!text.includes('Session state\nActive')) throw new Error('Recovered View session is not active.\n'+text);
+          const sessionDiver=valueAfter(text,'Session Diver ref');
+          const confirmedDiver=valueAfter(text,'Confirmed Diver ref');
+          if(!sessionDiver || sessionDiver==='-' || confirmedDiver!==sessionDiver) throw new Error('Recovered binding actor does not match session actor.\n'+text);
           if(!text.includes('Status\nActive')) throw new Error('Binding did not recover as ACTIVE.\n'+text);
+          if(valueAfter(text,'Binding generation')!=='1') throw new Error('Recovered binding generation is not 1.\n'+text);
           if(!text.includes('Effective from Step\n2')) throw new Error('Recovered binding lost effective Step 2.\n'+text);
           if(!text.includes('Projection basis Step\n3')) throw new Error('Recovered binding is not confirmed at Step 3.\n'+text);
           if(text.includes('Request Alpha binding')) throw new Error('Recovered ACTIVE binding incorrectly exposes create action.\n'+text);
