@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "1.0",
+  "mutationSeed": "machiverse.qa-03.v1",
+  "crashOperations": [
+    "audit-append",
+    "migration-generation-switch",
+    "operation-acceptance",
+    "operation-scheduling",
+    "snapshot-commit",
+    "transition-commit"
+  ],
+  "crashPoints": [
+    "before-db-begin",
+    "before-fsync-or-commit",
+    "before-response-or-publication",
+    "immediately-after-commit",
+    "mid-write"
+  ],
+  "fuzzTargets": [
+    {
+      "id": "config-toml",
+      "category": "toml",
+      "testCaseId": "config.type-range",
+      "seedText": "[gateway]\\nqueue.publication-capacity = 128\\n",
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
+      "expectedDisposition": "reject-or-explicit-failure"
+    },
+    {
+      "id": "history-payload",
+      "category": "history",
+      "testCaseId": "persistence.history.unknown-authoritative-type",
+      "seedText": "history-record-fixture-v1",
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
+      "expectedDisposition": "reject-or-explicit-failure"
+    },
+    {
+      "id": "law-ast",
+      "category": "law-ast",
+      "testCaseId": "domain.law.arbitrary-code-reject",
+      "seedText": "{\"node\":\"registered.fixture\",\"args\":[]}",
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
+      "expectedDisposition": "reject-or-explicit-failure"
+    },
+    {
+      "id": "log-audit-filter",
+      "category": "log-audit-filter",
+      "testCaseId": "observability.log.redaction",
+      "seedText": "event_kind=fixture.safe;page_size=200",
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
+      "expectedDisposition": "reject-or-explicit-failure"
+    },
+    {
+      "id": "protobuf-envelope",
+      "category": "protobuf",
+      "testCaseId": "protocol.envelope.size-limit",
+      "seedText": "wire-envelope-fixture-v1",
+      "mutations": ["append-zero", "empty", "flip-first-bit", "oversize-metadata", "truncate-half"],
+      "expectedDisposition": "reject-or-explicit-failure"
+    },
+    {
+      "id": "snapshot-manifest",
+      "category": "snapshot",
+      "testCaseId": "persistence.snapshot.required-sections",
+      "seedText": "{\"snapshot_generation\":1,\"sections\":103}",
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
+      "expectedDisposition": "reject-or-explicit-failure"
+    },
+    {
+      "id": "stable-token",
+      "category": "stable-token",
+      "testCaseId": "schema.stable-token.invalid",
+      "seedText": "fixture.valid-token",
+      "mutations": ["append-zero", "duplicate-prefix", "empty", "flip-first-bit", "truncate-half"],
+      "expectedDisposition": "reject-or-explicit-failure"
+    },
+    {
+      "id": "websocket-binary-frame",
+      "category": "websocket",
+      "testCaseId": "protocol.envelope.size-limit",
+      "seedText": "binary-websocket-frame-v1",
+      "mutations": ["append-zero", "empty", "flip-first-bit", "oversize-metadata", "truncate-half"],
+      "expectedDisposition": "reject-or-explicit-failure"
+    }
+  ],
+  "securityCases": [
+    {"id":"audit-hash-chain-tamper","testCaseId":"observability.audit.hash-chain","expectedDisposition":"tamper-detected","syntheticOnly":true},
+    {"id":"audit-secret-redaction","testCaseId":"observability.log.redaction","expectedDisposition":"no-secret","syntheticOnly":true},
+    {"id":"credential-domain-separation","testCaseId":"security.credential-domain-separation","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"disconnect-binding-separation","testCaseId":"security.disconnect-binding-separation","expectedDisposition":"no-auto-release","syntheticOnly":true},
+    {"id":"internal-auth-not-master-authority","testCaseId":"security.internal-auth-not-master-authority","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-cert-not-browser-session","testCaseId":"security.internal-cert-not-browser-session","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-mtls-before-protocol","testCaseId":"security.internal-mtls.before-protocol-hello","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-mtls-expired","testCaseId":"security.internal-mtls.expired","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-mtls-gateway-id-mismatch","testCaseId":"security.internal-mtls.gateway-id-mismatch","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-mtls-no-downgrade","testCaseId":"security.internal-mtls.no-downgrade","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-mtls-required","testCaseId":"security.internal-mtls.required","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-mtls-revocation-reconnect","testCaseId":"security.internal-mtls.revocation-reconnect","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-mtls-role-mismatch","testCaseId":"security.internal-mtls.core-role","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-mtls-untrusted","testCaseId":"security.internal-mtls.untrusted","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"internal-secret-not-world-state","testCaseId":"security.internal-secret-not-world-state","expectedDisposition":"no-secret","syntheticOnly":true},
+    {"id":"oidc-pkce-invalid","testCaseId":"security.oidc.pkce-required","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"role-domain-separation","testCaseId":"security.role-domain-separation","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"session-revoked","testCaseId":"security.session-revoke","expectedDisposition":"deny","syntheticOnly":true},
+    {"id":"token-not-browser-exposed","testCaseId":"security.token-not-browser-exposed","expectedDisposition":"no-secret","syntheticOnly":true}
+  ],
+  "adapterContract": {
+    "protocol": "jsonl",
+    "requestFields": ["caseId", "category", "declaredLength", "expectedDisposition", "payloadBase64"],
+    "resultFields": ["caseId", "diagnosticDigest", "outcome", "reasonCode"],
+    "allowedOutcomes": ["accepted", "explicit-failure", "no-auto-release", "no-secret", "rejected", "tamper-detected"],
+    "rule": "Harness expectations never authorize acceptance; target-specific acceptance remains canonical component behavior."
+  }
+}
