@@ -9,6 +9,7 @@ internal static class Qa04RuntimeTargetSmoke
     internal static async Task RunAsync()
     {
         VerifyResidentMaterialization();
+        await VerifyStructuralAuthorityPathAsync();
 
         Require(Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.SequenceEqual(new[] { 1, 4, 8, 16 }),
             "QA-04 runtime target worker-count set drifted.");
@@ -65,6 +66,41 @@ internal static class Qa04RuntimeTargetSmoke
             wrongWorldRejected = true;
         }
         Require(wrongWorldRejected, "QA-04 runtime target must reject a non-reference WorldId.");
+    }
+
+    private static async Task VerifyStructuralAuthorityPathAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "machiverse-qa04-structural-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var probe = await Qa04AuthoritativeStepBridgeV1.RunReducedAsync(
+                workerCount: 4,
+                residentRecordCount: 32,
+                persistenceRoot: root);
+            Require(probe.BasisStep == 0 && probe.ResultingStep == 1,
+                "QA-04 structural Step bridge did not advance the durable transition from 0 to 1.");
+            Require(probe.WorkerCount == 4 && probe.ResidentRecordCount == 32 && probe.DomainOutputCount == 8,
+                "QA-04 structural Step bridge execution receipt mismatch.");
+            Require(probe.PartitionCandidateCount == 1,
+                "QA-04 structural Step bridge must carry the Resident partition candidate through StepCandidate.");
+            Require(!probe.CandidatePublishableBeforeCommit && probe.DurableReceiptPublishable,
+                "QA-04 structural Step authority boundary drifted.");
+            Require(probe.SchedulerReopenedAfterCommit && probe.RealSqliteCommitObserved,
+                "QA-04 structural Step bridge did not cross the SQLite COMMIT boundary.");
+            Require(probe.CandidateDiagnosticDigest.Length == 64 && probe.CandidateDiagnosticDigest.Any(c => c != '0') &&
+                    probe.ResultingContinuityToken.Length == 64 && probe.ResultingContinuityToken.Any(c => c != '0'),
+                "QA-04 structural Step digests must be non-zero SHA-256 values.");
+            Require(!probe.ReferenceWorldMaterialized && !probe.AuthoritativeStepLoopAvailable && !probe.ReleaseEvidenceCapable,
+                "QA-04 reduced structural Step must remain unable to impersonate release execution.");
+            Require(probe.BlockingFailureCodes.Contains(
+                    "qa04.target.resulting-world-state-materialization-not-assembled",
+                    StringComparer.Ordinal),
+                "QA-04 structural Step must expose the remaining State(S+1) materialization boundary.");
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     private static void VerifyResidentMaterialization()

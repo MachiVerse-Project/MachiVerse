@@ -33,6 +33,11 @@ public static class Qa04ProcessTargetV1
                 "inspect" => Inspect(),
                 "worker-probe" => await ProbeWorkerAsync(request.WorkerCount, cancellationToken).ConfigureAwait(false),
                 "resident-materialize-probe" => MaterializeResident(request.RecordCount),
+                "authoritative-step-probe" => await Qa04AuthoritativeStepBridgeV1.RunReducedAsync(
+                    request.WorkerCount,
+                    request.RecordCount,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 _ => throw new InvalidDataException("qa04.target.command-unsupported"),
             };
 
@@ -63,6 +68,7 @@ public static class Qa04ProcessTargetV1
             ResidentIdentityMaterializationAvailable = true,
             CanonicalResidentCount = Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount,
             InitialResidentLifecycle = Qa04ReferenceWorldMaterializerV1.InitialResidentLifecycle.Value,
+            AuthoritativeStepStructuralBridgeAvailable = true,
             ReferenceWorldMaterialized = false,
             AuthoritativeStepLoopAvailable = false,
             ReleaseEvidenceCapable = false,
@@ -217,6 +223,7 @@ public sealed class Qa04ProcessRequestV1
     public string Command { get; set; } = "";
     public int WorkerCount { get; set; }
     public ulong RecordCount { get; set; }
+    public string PersistenceRoot { get; set; } = "";
 }
 
 public sealed class Qa04ProcessInspectionV1
@@ -231,6 +238,7 @@ public sealed class Qa04ProcessInspectionV1
     public bool ResidentIdentityMaterializationAvailable { get; set; }
     public ulong CanonicalResidentCount { get; set; }
     public string InitialResidentLifecycle { get; set; } = "";
+    public bool AuthoritativeStepStructuralBridgeAvailable { get; set; }
     public bool ReferenceWorldMaterialized { get; set; }
     public bool AuthoritativeStepLoopAvailable { get; set; }
     public bool ReleaseEvidenceCapable { get; set; }
