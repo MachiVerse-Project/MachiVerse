@@ -8,6 +8,51 @@ using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
 
+internal static class CoreSnapshotSecondaryProtoV1
+{
+    internal static void WriteInt32(Stream stream, int field, int value)
+        => WriteVarintField(stream, field, unchecked((ulong)(long)value));
+
+    internal static void WriteSInt64(Stream stream, int field, long value)
+    {
+        var encoded = unchecked((ulong)((value << 1) ^ (value >> 63)));
+        WriteVarintField(stream, field, encoded);
+    }
+
+    internal static void WriteBool(Stream stream, int field, bool value)
+        => WriteVarintField(stream, field, value ? 1UL : 0UL);
+
+    internal static int DecodeInt32(ulong value) => unchecked((int)value);
+
+    internal static long DecodeSInt64(ulong value)
+        => unchecked((long)(value >> 1) ^ -((long)value & 1));
+
+    internal static bool DecodeBool(ulong value)
+        => value switch
+        {
+            0 => false,
+            1 => true,
+            _ => throw new InvalidDataException("snapshot-core.config.bool-noncanonical"),
+        };
+
+    private static void WriteVarintField(Stream stream, int field, ulong value)
+    {
+        if (field <= 0) throw new ArgumentOutOfRangeException(nameof(field));
+        WriteVarUInt64(stream, checked((ulong)field << 3));
+        WriteVarUInt64(stream, value);
+    }
+
+    private static void WriteVarUInt64(Stream stream, ulong value)
+    {
+        while (value >= 0x80)
+        {
+            stream.WriteByte((byte)((value & 0x7f) | 0x80));
+            value >>= 7;
+        }
+        stream.WriteByte((byte)value);
+    }
+}
+
 public sealed class FrozenDetailDirectorySnapshotOwnerV1 : IFrozenCoreSnapshotOwnerMaterialV1
 {
     private FrozenDetailDirectorySnapshotOwnerV1(ulong basisStep, DetailDirectoryV1 directory)
@@ -98,11 +143,10 @@ public static class CoreConfigSnapshotRehydrationV1
             !fields.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(CoreConfigSchema.Fields.Keys))
             throw new InvalidDataException("snapshot-core.config.field-set-mismatch");
 
-        var text = BuildToml(fields);
         EffectiveCoreConfig loaded;
         try
         {
-            loaded = new CoreConfigCoordinator().LoadStartup(text);
+            loaded = new CoreConfigCoordinator().LoadStartup(BuildToml(fields));
         }
         catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
         {
@@ -155,6 +199,7 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
     public static byte[] Encode(ulong basisStep, IReadOnlyList<object> items)
     {
         ArgumentNullException.ThrowIfNull(items);
+        ValidateCanonical(items);
         using var stream = new MemoryStream();
         CoreSnapshotProtoV1.WriteUInt64(stream, 1, basisStep);
         foreach (var item in items)
@@ -176,7 +221,6 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
         var seenBasis = false;
         ulong basisStep = 0;
         var items = new List<object>();
-        var pendingSeen = false;
         while (!reader.End)
         {
             var (field, wire) = reader.ReadTag("snapshot-core.detail.field");
@@ -188,10 +232,7 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
                     basisStep = reader.ReadUInt64(wire, "snapshot-core.detail.basis-step");
                     break;
                 case 2:
-                    var item = DecodeItem(reader.ReadBytes(wire, "snapshot-core.detail.item"));
-                    if (item is DetailTransitionCandidateV1) pendingSeen = true;
-                    else if (pendingSeen) throw new InvalidDataException("snapshot-core.detail.noncanonical-order");
-                    items.Add(item);
+                    items.Add(DecodeItem(reader.ReadBytes(wire, "snapshot-core.detail.item")));
                     break;
                 default:
                     throw new InvalidDataException("snapshot-core.detail.unknown-field");
@@ -216,9 +257,9 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
     internal static void ValidateCanonical(IReadOnlyList<object> items)
     {
         var regions = items.TakeWhile(static item => item is DetailRegionStateV1).Cast<DetailRegionStateV1>().ToArray();
-        var transitions = items.Skip(regions.Length).Cast<DetailTransitionCandidateV1>().ToArray();
-        if (regions.Length + transitions.Length != items.Count)
+        if (items.Skip(regions.Length).Any(static item => item is not DetailTransitionCandidateV1))
             throw new InvalidDataException("snapshot-core.detail.item-kind-order");
+        var transitions = items.Skip(regions.Length).Cast<DetailTransitionCandidateV1>().ToArray();
         for (var i = 1; i < regions.Length; i++)
         {
             if (regions[i - 1].DetailRegionId.CompareTo(regions[i].DetailRegionId) >= 0)
@@ -349,7 +390,7 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
         CoreSnapshotProtoV1.WriteUInt32(stream, 3, checked((uint)value.CurrentLevel + 1));
         CoreSnapshotProtoV1.WriteUInt32(stream, 4, checked((uint)value.TargetLevel + 1));
         CoreSnapshotProtoV1.WriteUInt64(stream, 5, value.RequiredEffectiveStep);
-        CoreSnapshotProtoV1.WriteInt32(stream, 6, value.SemanticPriority);
+        CoreSnapshotSecondaryProtoV1.WriteInt32(stream, 6, value.SemanticPriority);
         CoreSnapshotProtoV1.WriteUInt32(stream, 7, (uint)value.TriggerSource);
         CoreSnapshotProtoV1.WriteBytes(stream, 8, value.TriggerId.ToBytes());
         CoreSnapshotProtoV1.WriteUInt64(stream, 9, value.TriggerObservedStep);
@@ -379,7 +420,7 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
                 case 3: current = reader.ReadUInt32(wire, "snapshot-core.detail.transition-current"); break;
                 case 4: target = reader.ReadUInt32(wire, "snapshot-core.detail.transition-target"); break;
                 case 5: required = reader.ReadUInt64(wire, "snapshot-core.detail.transition-required-step"); break;
-                case 6: priority = reader.ReadInt32(wire, "snapshot-core.detail.transition-priority"); break;
+                case 6: priority = CoreSnapshotSecondaryProtoV1.DecodeInt32(reader.ReadUInt64(wire, "snapshot-core.detail.transition-priority")); break;
                 case 7: source = reader.ReadUInt32(wire, "snapshot-core.detail.transition-source"); break;
                 case 8: triggerId = reader.ReadBytes(wire, "snapshot-core.detail.transition-trigger-id"); break;
                 case 9: observed = reader.ReadUInt64(wire, "snapshot-core.detail.transition-observed-step"); break;
@@ -426,7 +467,7 @@ public static class CoreDetailDirectorySnapshotWireCodecV1
 internal sealed record CoreConfigSnapshotFragmentV1(
     ulong BasisStep,
     ulong Generation,
-    IReadOnlyDictionary<string, object> Fields);
+    IReadOnlyList<KeyValuePair<string, object>> Fields);
 
 public static class CoreConfigStateSnapshotWireCodecV1
 {
@@ -468,9 +509,7 @@ public static class CoreConfigStateSnapshotWireCodecV1
         if ((seen & 0b1111) != 0b1111 || generation == 0 || schema != CoreConfigSchema.SchemaVersion || component != CoreConfigSchema.Component)
             throw new InvalidDataException("snapshot-core.config.metadata-invalid");
         ValidateCanonical(fields);
-        var map = new ReadOnlyDictionary<string, object>(fields.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal));
-        _ = CoreConfigSnapshotRehydrationV1.Rehydrate(generation, map);
-        return new CoreConfigSnapshotFragmentV1(basis, generation, map);
+        return new CoreConfigSnapshotFragmentV1(basis, generation, Array.AsReadOnly(fields.ToArray()));
     }
 
     internal static int EncodedFieldLength(KeyValuePair<string, object> field)
@@ -496,8 +535,8 @@ public static class CoreConfigStateSnapshotWireCodecV1
         CoreSnapshotProtoV1.WriteString(stream, 1, field.Key);
         switch (field.Value)
         {
-            case long number: CoreSnapshotProtoV1.WriteSInt64(stream, 2, number); break;
-            case bool boolean: CoreSnapshotProtoV1.WriteBool(stream, 3, boolean); break;
+            case long number: CoreSnapshotSecondaryProtoV1.WriteSInt64(stream, 2, number); break;
+            case bool boolean: CoreSnapshotSecondaryProtoV1.WriteBool(stream, 3, boolean); break;
             case string text: CoreSnapshotProtoV1.WriteString(stream, 4, text); break;
             default: throw new InvalidDataException("snapshot-core.config.value-kind-invalid");
         }
@@ -522,11 +561,11 @@ public static class CoreConfigStateSnapshotWireCodecV1
                     break;
                 case 2:
                     if (value is not null) throw new InvalidDataException("snapshot-core.config.entry-oneof");
-                    value = reader.ReadSInt64(wire, "snapshot-core.config.int64");
+                    value = CoreSnapshotSecondaryProtoV1.DecodeSInt64(reader.ReadUInt64(wire, "snapshot-core.config.int64"));
                     break;
                 case 3:
                     if (value is not null) throw new InvalidDataException("snapshot-core.config.entry-oneof");
-                    value = reader.ReadBool(wire, "snapshot-core.config.bool");
+                    value = CoreSnapshotSecondaryProtoV1.DecodeBool(reader.ReadUInt64(wire, "snapshot-core.config.bool"));
                     break;
                 case 4:
                     if (value is not null) throw new InvalidDataException("snapshot-core.config.entry-oneof");
@@ -594,16 +633,22 @@ public static class CoreSnapshotSecondarySectionProviderV1
 
     private static IReadOnlyList<SnapshotSectionFragmentMaterialV1> FragmentDetail(ulong basisStep, IReadOnlyList<object> items)
     {
-        var groups = SplitItems(items, CoreDetailDirectorySnapshotWireCodecV1.EncodedItemFieldLength, 1);
+        var groups = SplitItems(items, CoreDetailDirectorySnapshotWireCodecV1.EncodedItemFieldLength, 16);
         if (groups.Count == 0) groups.Add(Array.Empty<object>());
-        return Array.AsReadOnly(groups.Select((group, index) => new SnapshotSectionFragmentMaterialV1(
-            CoreSnapshotOwnerSectionRegistryV1.DetailDirectory,
-            (uint)index,
-            (uint)groups.Count,
-            null,
-            null,
-            (ulong)group.Count,
-            CoreDetailDirectorySnapshotWireCodecV1.Encode(basisStep, group))).ToArray());
+        var result = groups.Select((group, index) =>
+        {
+            var payload = CoreDetailDirectorySnapshotWireCodecV1.Encode(basisStep, group);
+            RequirePayloadLimit(payload);
+            return new SnapshotSectionFragmentMaterialV1(
+                CoreSnapshotOwnerSectionRegistryV1.DetailDirectory,
+                (uint)index,
+                (uint)groups.Count,
+                null,
+                null,
+                (ulong)group.Count,
+                payload);
+        }).ToArray();
+        return Array.AsReadOnly(result);
     }
 
     private static IReadOnlyList<SnapshotSectionFragmentMaterialV1> FragmentConfig(
@@ -611,15 +656,21 @@ public static class CoreSnapshotSecondarySectionProviderV1
         EffectiveCoreConfig config,
         IReadOnlyList<KeyValuePair<string, object>> fields)
     {
-        var groups = SplitItems(fields, CoreConfigStateSnapshotWireCodecV1.EncodedFieldLength, 4);
-        return Array.AsReadOnly(groups.Select((group, index) => new SnapshotSectionFragmentMaterialV1(
-            CoreSnapshotOwnerSectionRegistryV1.ConfigState,
-            (uint)index,
-            (uint)groups.Count,
-            null,
-            null,
-            (ulong)group.Count,
-            CoreConfigStateSnapshotWireCodecV1.Encode(basisStep, config, group))).ToArray());
+        var groups = SplitItems(fields, CoreConfigStateSnapshotWireCodecV1.EncodedFieldLength, 64);
+        var result = groups.Select((group, index) =>
+        {
+            var payload = CoreConfigStateSnapshotWireCodecV1.Encode(basisStep, config, group);
+            RequirePayloadLimit(payload);
+            return new SnapshotSectionFragmentMaterialV1(
+                CoreSnapshotOwnerSectionRegistryV1.ConfigState,
+                (uint)index,
+                (uint)groups.Count,
+                null,
+                null,
+                (ulong)group.Count,
+                payload);
+        }).ToArray();
+        return Array.AsReadOnly(result);
     }
 
     private static List<IReadOnlyList<T>> SplitItems<T>(IReadOnlyList<T> items, Func<T, int> encodedLength, int metadataAllowance)
@@ -646,6 +697,12 @@ public static class CoreSnapshotSecondarySectionProviderV1
         if (current.Count > 0) groups.Add(Array.AsReadOnly(current.ToArray()));
         return groups;
     }
+
+    private static void RequirePayloadLimit(byte[] payload)
+    {
+        if (payload.Length > CanonicalSnapshotSectionValidationV1.HardMaxUncompressedBytes)
+            throw new InvalidDataException("persistence.snapshot-item-too-large");
+    }
 }
 
 public static class CoreSnapshotSecondarySemanticVerifierV1
@@ -666,23 +723,19 @@ public static class CoreSnapshotSecondarySemanticVerifierV1
         ulong snapshotStep,
         IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments)
     {
-        var regions = new List<DetailRegionStateV1>();
-        var pending = new List<DetailTransitionCandidateV1>();
+        var allItems = new List<object>();
         var total = 0UL;
-        foreach (var fragment in fragments.OrderBy(static value => value.FragmentIndex))
+        foreach (var fragment in fragments)
         {
             var decoded = CoreDetailDirectorySnapshotWireCodecV1.Decode(fragment.FragmentPayload);
             if (decoded.BasisStep != snapshotStep) throw new InvalidDataException("snapshot-core.detail.step-mismatch");
             if ((ulong)decoded.Items.Count != fragment.ItemCount) throw new InvalidDataException("snapshot-core.detail.fragment-item-count");
             total = checked(total + fragment.ItemCount);
-            foreach (var item in decoded.Items)
-            {
-                if (item is DetailRegionStateV1 region) regions.Add(region);
-                else pending.Add((DetailTransitionCandidateV1)item);
-            }
+            allItems.AddRange(decoded.Items);
         }
-        var combined = regions.Cast<object>().Concat(pending).ToArray();
-        CoreDetailDirectorySnapshotWireCodecV1.ValidateCanonical(combined);
+        CoreDetailDirectorySnapshotWireCodecV1.ValidateCanonical(allItems);
+        var regions = allItems.TakeWhile(static item => item is DetailRegionStateV1).Cast<DetailRegionStateV1>().ToArray();
+        var pending = allItems.Skip(regions.Length).Cast<DetailTransitionCandidateV1>().ToArray();
         var authority = DetailDirectorySubstateV1.Canonicalize(new DetailDirectoryV1(regions, pending));
         return new SnapshotSectionSemanticVerificationV1(total, authority.CanonicalDigest);
     }
@@ -694,7 +747,7 @@ public static class CoreSnapshotSecondarySemanticVerifierV1
         ulong? generation = null;
         var fields = new List<KeyValuePair<string, object>>();
         var total = 0UL;
-        foreach (var fragment in fragments.OrderBy(static value => value.FragmentIndex))
+        foreach (var fragment in fragments)
         {
             var decoded = CoreConfigStateSnapshotWireCodecV1.Decode(fragment.FragmentPayload);
             if (decoded.BasisStep != snapshotStep) throw new InvalidDataException("snapshot-core.config.step-mismatch");
@@ -705,8 +758,11 @@ public static class CoreSnapshotSecondarySemanticVerifierV1
             fields.AddRange(decoded.Fields);
         }
         CoreConfigStateSnapshotWireCodecV1.ValidateCanonical(fields);
-        var map = new ReadOnlyDictionary<string, object>(fields.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal));
-        var config = CoreConfigSnapshotRehydrationV1.Rehydrate(generation ?? throw new InvalidDataException("snapshot-core.config.fragment-missing"), map);
+        var map = new ReadOnlyDictionary<string, object>(
+            fields.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal));
+        var config = CoreConfigSnapshotRehydrationV1.Rehydrate(
+            generation ?? throw new InvalidDataException("snapshot-core.config.fragment-missing"),
+            map);
         return new SnapshotSectionSemanticVerificationV1(total, config.Digest);
     }
 }
