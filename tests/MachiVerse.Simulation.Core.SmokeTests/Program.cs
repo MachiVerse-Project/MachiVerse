@@ -259,6 +259,7 @@ await PersistenceSnapshotSmoke.RunAsync();
 await PersistenceMigrationSmoke.RunAsync();
 await PortableWorldExportSmoke.RunAsync();
 Qa04ReferenceLoadSmoke.Run();
+await Qa04RuntimeTargetSmoke.RunAsync();
 Sim04WorldStateSmoke.Run();
 Sim04DiagnosticSmoke.Run();
 Sim05OperationLifecycleSmoke.Run();
@@ -289,4 +290,4 @@ Sim13CrossDomainTransactionSmoke.Run();
 Sim13DetailTransitionSmoke.Run();
 await Sim14CoreProtocolSmoke.RunAsync();
 
-Console.WriteLine("SIM-01..SIM-14 component smoke tests and QA-04 canonical reference-load validation passed.");
+Console.WriteLine("SIM-01..SIM-14 component smoke tests and QA-04 canonical runtime-target validation passed.");
