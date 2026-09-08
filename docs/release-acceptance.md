@@ -23,6 +23,8 @@ The evaluator follows:
 - `tests/performance-fixtures/v1/harness-manifest.json`
 - `tests/release-acceptance-fixtures/v1/acceptance-manifest.json`
 
+The INT-03 manifest pins the canonical QA-04 manifest SHA-256. Evaluation fails if the checkout's QA-04 profile contract does not match that pinned digest.
+
 ## Commands
 
 Verify the release-gate contract and built-in negative cases:
@@ -37,11 +39,14 @@ Create an intentionally incomplete evidence template:
 dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release -- template artifacts/release/evidence.json
 ```
 
-Evaluate collected evidence and materialize `ReleaseAcceptanceRecordV1`:
+Evaluate collected evidence and materialize `ReleaseAcceptanceRecordV1`. The expected commit must be the exact release-candidate source commit:
 
 ```bash
+candidate_commit="$(git rev-parse HEAD)"
 dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release -- \
-  evaluate artifacts/release/evidence.json artifacts/release/ReleaseAcceptanceRecordV1.json
+  evaluate artifacts/release/evidence.json \
+  artifacts/release/ReleaseAcceptanceRecordV1.json \
+  "$candidate_commit"
 ```
 
 Exit codes:
@@ -52,16 +57,18 @@ Exit codes:
 
 ## Evidence binding
 
-Every required suite/performance/soak artifact is bound to the same `sourceCommit` used by the release record. A different commit is `INCOMPLETE`, not silently accepted.
+Every required suite/performance/soak artifact is bound to the same `sourceCommit` used by the release record. The evaluator additionally compares that source commit with the explicit expected release-candidate commit supplied on the command line. A mismatch is `INCOMPLETE`, not silently accepted.
+
+Suite and report references are accompanied by lowercase SHA-256 digests so the evidence file identifies immutable artifact content rather than trusting a mutable path or URL alone.
 
 The release evidence document carries:
 
 - build/source identity;
 - schema/algorithm/config registry digests;
 - test-suite version and passed TestCaseIds;
-- per-suite status and artifact references;
-- performance profile report references;
-- 24-hour soak result;
+- per-suite status, artifact reference, and artifact digest;
+- performance profile report reference and report digest;
+- 24-hour soak report reference and report digest;
 - determinism digest summary;
 - waivers and observed failure codes.
 
@@ -91,6 +98,8 @@ A release candidate must provide passing reports for all three QA-04 profiles:
 - `perf.persistence.v1`
 - `perf.publication.v1`
 
+Each performance entry must identify the exact candidate commit, immutable report reference/digest, pass state, and failure-code set.
+
 The QA-04 repository workflow only validates the profile/adapter contracts. It does not generate release performance evidence.
 
 ## 24-hour soak evidence
@@ -103,7 +112,7 @@ The QA-04 repository workflow only validates the profile/adapter contracts. It d
 - history/audit chains remain valid;
 - no unrecoverable queue deadlock occurs.
 
-A shorter run is always `INCOMPLETE` even when every observed metric is otherwise healthy.
+The soak evidence must also bind the exact candidate commit and immutable report digest. A shorter run is always `INCOMPLETE` even when every observed metric is otherwise healthy.
 
 ## Waivers
 
