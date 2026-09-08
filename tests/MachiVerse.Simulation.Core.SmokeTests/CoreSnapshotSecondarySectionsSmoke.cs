@@ -101,7 +101,7 @@ internal static class CoreSnapshotSecondarySectionsSmoke
         var detailSection = CoreSnapshotSecondarySectionProviderV1.CreateDetail(cut);
         var configSection = CoreSnapshotSecondarySectionProviderV1.CreateConfig(cut);
         Verify(detailSection, CoreSnapshotSecondarySemanticVerifierV1.Detail(step));
-        Verify(configSection, CoreSnapshotSecondarySemanticVerifierV1.Config(step));
+        Verify(configSection, CoreSnapshotSecondarySemanticVerifierV1.Config(step, config.Generation));
 
         if (detailSection.LogicalItemCount != 2 || configSection.LogicalItemCount != (ulong)CoreConfigSchema.Fields.Count)
             throw new InvalidOperationException("Secondary Core snapshot item counts are incorrect.");
@@ -114,18 +114,58 @@ internal static class CoreSnapshotSecondarySectionsSmoke
             () => staleDetail.Verify(detailSection.Fragments),
             "snapshot-core.detail.step-mismatch",
             "Stale detail snapshot Step must be rejected.");
-        var staleConfig = CoreSnapshotSecondarySemanticVerifierV1.Config(step + 1);
+        var staleConfig = CoreSnapshotSecondarySemanticVerifierV1.Config(step + 1, config.Generation);
         RequireRejected(
             () => staleConfig.Verify(configSection.Fragments),
             "snapshot-core.config.step-mismatch",
             "Stale config snapshot Step must be rejected.");
+
+        RequireRejected(
+            () => CoreSnapshotSecondarySemanticVerifierV1.Config(step, config.Generation + 1).Verify(configSection.Fragments),
+            "snapshot-core.config.generation-mismatch",
+            "Config Snapshot generation must be bound to the expected frozen generation.");
+
+        var staleGenerationConfig = CoreConfigSnapshotRehydrationV1.Rehydrate(config.Generation + 1, config.Fields);
+        var staleGenerationCut = CoreSnapshotOwnerMaterialCutV1.Create(
+            state,
+            Array.Empty<DurableOperationStateV1>(),
+            Array.Empty<ScheduledOperationRefV1>(),
+            new IFrozenCoreSnapshotOwnerMaterialV1[]
+            {
+                detailOwner,
+                registryOwner,
+                FrozenCoreConfigSnapshotOwnerV1.Freeze(step, staleGenerationConfig),
+            });
+        RequireRejected(
+            () => CoreSnapshotSecondarySectionProviderV1.CreateConfig(staleGenerationCut),
+            "snapshot-core.config.generation-mismatch",
+            "Config owner generation must match the frozen WorldState header generation.");
+
+        var rangedDetailFragments = detailSection.Fragments
+            .Select((fragment, index) => index == 0
+                ? fragment with { FirstRecordId = regionId.ToBytes(), LastRecordId = regionId.ToBytes() }
+                : fragment)
+            .ToArray();
+        RequireRejected(
+            () => CoreSnapshotSecondarySemanticVerifierV1.Detail(step).Verify(rangedDetailFragments),
+            "snapshot-core.fragment-record-range-forbidden",
+            "Core detail fragments must reject artificial record ranges.");
+
+        var zeroRegionPayload = ZeroFirstOccurrence(detailSection.Fragments[0].FragmentPayload, regionId.ToBytes());
+        var zeroRegionFragments = detailSection.Fragments
+            .Select((fragment, index) => index == 0 ? fragment with { FragmentPayload = zeroRegionPayload } : fragment)
+            .ToArray();
+        RequireRejected(
+            () => CoreSnapshotSecondarySemanticVerifierV1.Detail(step).Verify(zeroRegionFragments),
+            "snapshot-core.detail.region-zero-identity",
+            "ZERO detail identities must be rejected as invalid Snapshot data.");
 
         var unknownConfigPayload = configSection.Fragments[0].FragmentPayload.Concat(new byte[] { 0x30, 0x00 }).ToArray();
         var unknownConfigFragments = configSection.Fragments
             .Select((fragment, index) => index == 0 ? fragment with { FragmentPayload = unknownConfigPayload } : fragment)
             .ToArray();
         RequireRejected(
-            () => CoreSnapshotSecondarySemanticVerifierV1.Config(step).Verify(unknownConfigFragments),
+            () => CoreSnapshotSecondarySemanticVerifierV1.Config(step, config.Generation).Verify(unknownConfigFragments),
             "snapshot-core.config.unknown-field",
             "Unknown authoritative config field must be rejected.");
 
@@ -161,6 +201,16 @@ internal static class CoreSnapshotSecondarySectionsSmoke
             () => CoreSnapshotSecondarySectionProviderV1.CreateDetail(fixedDetailCut),
             "snapshot-core.detail.production-owner-required",
             "Digest-only detail owner must not serialize as recovery material.");
+    }
+
+    private static byte[] ZeroFirstOccurrence(byte[] source, byte[] target)
+    {
+        var copy = source.ToArray();
+        var index = copy.AsSpan().IndexOf(target);
+        if (index < 0)
+            throw new InvalidOperationException("Snapshot smoke could not locate the encoded DetailRegionId.");
+        copy.AsSpan(index, target.Length).Clear();
+        return copy;
     }
 
     private static OrderedPartitionDirectoryV1 EmptyPartitions()
