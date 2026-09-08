@@ -7,6 +7,8 @@
 @inject AbsencePolicyProfileCatalog AbsenceCatalog
 @inject GeneralViewGatewaySession GatewaySession
 @inject PublicationConsumer Publications
+@inject PredictionStore Predictions
+@inject ReconciliationCoordinator Reconciliation
 
 <PageTitle>Participation</PageTitle>
 
@@ -55,6 +57,21 @@
             <dt>Resync reason</dt><dd>@(Publications.ResyncReason ?? "-")</dd>
         </dl>
         <p>DELTA is accepted only when its base token exactly matches the installed confirmed snapshot. A continuity mismatch clears current display authority, marks participation state refresh-required, and recovers only after a force-FULL publication is accepted.</p>
+    </section>
+
+    <section>
+        <h2>Prediction / reconciliation</h2>
+        <dl>
+            <dt>Active prediction count</dt><dd>@Predictions.Entries.Count</dd>
+            <dt>Correction count</dt><dd>@Reconciliation.CorrectionCount</dd>
+            <dt>Last correction operation</dt><dd><code>@(Reconciliation.LastTrace?.OperationId ?? "-")</code></dd>
+            <dt>Last correction reason</dt><dd>@(Reconciliation.LastTrace?.ReasonCode ?? "-")</dd>
+            <dt>Prediction source basis Step</dt><dd>@(Reconciliation.LastTrace?.SourceConfirmedBasisStep.ToString() ?? "-")</dd>
+            <dt>Prediction source continuity token</dt><dd><code>@(Reconciliation.LastTrace?.SourceConfirmedTokenHex ?? "-")</code></dd>
+            <dt>Awaiting confirmed through Step</dt><dd>@(Reconciliation.LastTrace?.AwaitingConfirmedThroughStep?.ToString() ?? "-")</dd>
+            <dt>Reconciled confirmed basis Step</dt><dd>@(Reconciliation.LastTrace?.ConfirmedBasisStep?.ToString() ?? "-")</dd>
+        </dl>
+        <p>Prediction is presentation-only. Source basis/token are retained only as provenance and never become a new authoritative world basis or continuity token.</p>
     </section>
 
     <section>
@@ -144,6 +161,8 @@
         Session.Changed += OnSessionChanged;
         Binding.Changed += OnBindingChanged;
         ParticipationController.Changed += OnParticipationChanged;
+        Predictions.Changed += OnPredictionChanged;
+        Reconciliation.Corrected += OnReconciliationCorrected;
         if (ParticipationController.Draft.JoinPreference.ProfileId is null &&
             PreferenceCatalog.Profiles.Any(profile => string.Equals(profile.ProfileId, "alpha.default", StringComparison.Ordinal)))
         {
@@ -173,11 +192,15 @@
     private void OnSessionChanged(ViewSessionProjection snapshot) => _ = InvokeAsync(StateHasChanged);
     private void OnBindingChanged(ParticipationBindingProjection snapshot) => _ = InvokeAsync(StateHasChanged);
     private void OnParticipationChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnPredictionChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnReconciliationCorrected(PredictionCorrection correction) => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
         Session.Changed -= OnSessionChanged;
         Binding.Changed -= OnBindingChanged;
         ParticipationController.Changed -= OnParticipationChanged;
+        Predictions.Changed -= OnPredictionChanged;
+        Reconciliation.Corrected -= OnReconciliationCorrected;
     }
 }

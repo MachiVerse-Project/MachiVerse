@@ -176,6 +176,7 @@ jobs:
           const initialToken=valueAfter(text,'Continuity token');
           if(!initialToken || initialToken==='-') throw new Error('Initial FULL continuity token is missing.\n'+text);
           if(valueAfter(text,'Continuity mismatch count')!=='0') throw new Error('Initial View already reports a continuity mismatch.\n'+text);
+          if(valueAfter(text,'Active prediction count')!=='0' || valueAfter(text,'Correction count')!=='0') throw new Error('Fresh View unexpectedly has prediction/reconciliation history.\n'+text);
 
           await clickText('Request Alpha binding');
           text=await waitText('Binding Operation participation.binding.created; confirmed basis 3.');
@@ -192,6 +193,17 @@ jobs:
           if(!deltaToken || deltaToken==='-' || deltaToken===initialToken) throw new Error('DELTA continuity token did not advance.\n'+text);
           if(valueAfter(text,'Continuity mismatch count')!=='0') throw new Error('Normal DELTA path reported a continuity mismatch.\n'+text);
           if(valueAfter(text,'Automatic resync count')!=='0') throw new Error('Normal DELTA path unexpectedly required automatic resync.\n'+text);
+
+          if(valueAfter(text,'Active prediction count')!=='0') throw new Error('Prediction was not removed after authoritative confirmed publication.\n'+text);
+          if(valueAfter(text,'Correction count')!=='1') throw new Error('Binding did not produce exactly one reconciliation correction.\n'+text);
+          const correctionOperation=valueAfter(text,'Last correction operation');
+          if(!correctionOperation || correctionOperation==='-') throw new Error('Reconciliation did not retain the predicted OperationId.\n'+text);
+          if(valueAfter(text,'Last correction reason')!=='prediction.confirmed-authoritative') throw new Error('Prediction did not converge through confirmed-authoritative reconciliation.\n'+text);
+          if(valueAfter(text,'Prediction source basis Step')!=='0') throw new Error('Prediction did not originate from confirmed basis Step 0.\n'+text);
+          if(valueAfter(text,'Prediction source continuity token')!==initialToken) throw new Error('Prediction provenance token differs from the actual initial confirmed FULL token.\n'+text);
+          if(valueAfter(text,'Awaiting confirmed through Step')!=='2') throw new Error('Prediction did not await the Core-confirmed effective Step 2.\n'+text);
+          if(valueAfter(text,'Reconciled confirmed basis Step')!=='3') throw new Error('Prediction did not reconcile on the Step 3 confirmed publication.\n'+text);
+
           await evalJs(`sessionStorage.setItem('machiverse-alpha-delta-token', ${JSON.stringify(deltaToken)})`);
 
           await clickLinkText('Back to world view');
