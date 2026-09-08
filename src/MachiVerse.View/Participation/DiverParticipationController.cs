@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using Google.Protobuf;
+using MachiVerse.Protocol.V1;
 using MachiVerse.View.Operations;
 
 namespace MachiVerse.View.Participation;
@@ -66,19 +68,25 @@ public sealed class DiverParticipationController : IDisposable
 
     public bool CanRequestBinding
         => _session.Snapshot.HasPermission(ViewPermissionTokens.ParticipationBind)
+            && !string.IsNullOrEmpty(_session.Snapshot.DiverRef)
             && _binding.Snapshot.Freshness == ParticipationProjectionFreshness.Confirmed
-            && _binding.Snapshot.State is not ParticipationBindingState.Active;
+            && _binding.Snapshot.State == ParticipationBindingState.None;
 
     public bool CanReleaseOrRebind
         => _session.Snapshot.HasPermission(ViewPermissionTokens.ParticipationBind)
-            && _binding.Snapshot.CanTreatAsCurrentControl;
+            && OwnsConfirmedBinding;
 
     public bool CanEditAbsencePolicy
         => _session.Snapshot.HasPermission(ViewPermissionTokens.ParticipationPolicyWrite);
 
     public bool CanSubmitControl
         => _session.Snapshot.HasPermission(ViewPermissionTokens.OperationDiver)
-            && _binding.Snapshot.CanTreatAsCurrentControl;
+            && OwnsConfirmedBinding;
+
+    private bool OwnsConfirmedBinding
+        => _binding.Snapshot.CanTreatAsCurrentControl
+            && !string.IsNullOrEmpty(_session.Snapshot.DiverRef)
+            && string.Equals(_binding.Snapshot.DiverRef, _session.Snapshot.DiverRef, StringComparison.Ordinal);
 
     public event Action? Changed;
 
@@ -124,6 +132,90 @@ public sealed class DiverParticipationController : IDisposable
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// Prepares the canonical binding-create Operation from Gateway-confirmed actor identity,
+    /// confirmed binding generation and immutable scheduling admission. The caller supplies only
+    /// the stable OperationId; this method computes the authoritative immutable digest.
+    /// </summary>
+    public TrackedViewOperation PrepareBindingCreate(
+        ParticipationSchedulingContext scheduling,
+        ByteString operationId)
+    {
+        RequireLocalEligibility(ParticipationOperationIntentKind.BindingCreate);
+        if (scheduling.SchedulingPolicyGeneration == 0)
+            throw new InvalidDataException("Participation scheduling policy generation must be non-zero.");
+
+        var intent = new ParticipationOperationIntent(
+            ParticipationOperationIntentKind.BindingCreate,
+            Draft.JoinPreference,
+            Draft.AbsencePolicy,
+            _binding.Snapshot);
+        if (!_payloadAdapter.TryEncode(intent, out var encoded, out var reasonCode) || encoded is null)
+        {
+            FailLocal(reasonCode);
+            throw new InvalidOperationException(reasonCode);
+        }
+        ValidateEncodedIntent(ParticipationOperationIntentKind.BindingCreate, encoded);
+
+        ParticipationBindingRequestV1 payload;
+        try
+        {
+            payload = ParticipationBindingRequestV1.Parser.ParseFrom(encoded.Payload);
+        }
+        catch (InvalidProtocolBufferException ex)
+        {
+            throw new InvalidDataException("participation.binding.payload-malformed", ex);
+        }
+        payload.OperationId = operationId;
+
+        var admission = new OperationSchedulingAdmissionWireV1
+        {
+            AdmissionBasisStep = scheduling.AdmissionBasisStep,
+            SchedulingPolicyGeneration = scheduling.SchedulingPolicyGeneration,
+        };
+        if (scheduling.RequestedNotBeforeStep.HasValue)
+            admission.RequestedNotBeforeStep = scheduling.RequestedNotBeforeStep.Value;
+        if (scheduling.RequestedDeadlineStep.HasValue)
+            admission.RequestedDeadlineStep = scheduling.RequestedDeadlineStep.Value;
+
+        var digest = ByteString.CopyFrom(ViewParticipationBindingIdentityV1.ComputeImmutablePayloadDigest(admission, payload));
+        payload.ImmutablePayloadDigest = digest;
+        var operationDraft = new ViewOperationDraft(
+            encoded.OperationKind,
+            scheduling.AdmissionBasisStep,
+            scheduling.SchedulingPolicyGeneration,
+            scheduling.RequestedNotBeforeStep,
+            scheduling.RequestedDeadlineStep,
+            scheduling.CandidateStep,
+            encoded.PayloadSchemaId,
+            encoded.PayloadSchemaMajor,
+            encoded.PayloadSchemaMinor,
+            payload.ToByteString(),
+            encoded.SemanticTarget,
+            encoded.PredictedPayload);
+
+        var tracked = _operations.Prepare(operationDraft, operationId, digest);
+        var prepared = _operations.TakeForSubmission(operationId);
+        _ = ViewParticipationBindingIdentityV1.ValidateStandardOperation(prepared);
+        // Put it back into a retryable, not-yet-confirmed delivery state without changing identity.
+        _operations.MarkDeliveryUnknown(operationId);
+        var retry = _operations.RetryDelivery(operationId);
+        if (!retry.Equals(prepared))
+            throw new InvalidDataException("participation.binding-prepared-identity-drift");
+
+        Draft = Draft with
+        {
+            PendingOperationId = tracked.OperationId,
+            LastLocalReasonCode = null
+        };
+        Changed?.Invoke();
+        return tracked;
+    }
+
+    /// <summary>
+    /// Generic owner-codec path retained for future standardized Participation Operations.
+    /// BindingCreate must use PrepareBindingCreate so the View cannot accept a caller-supplied digest.
+    /// </summary>
     public TrackedViewOperation PrepareOperation(
         ParticipationOperationIntentKind kind,
         ParticipationSchedulingContext scheduling,
@@ -131,9 +223,14 @@ public sealed class DiverParticipationController : IDisposable
         ByteString immutablePayloadDigest,
         ByteString? controlPayload = null)
     {
+        if (kind == ParticipationOperationIntentKind.BindingCreate)
+            throw new InvalidOperationException("participation.binding-create-use-canonical-api");
+
         RequireLocalEligibility(kind);
         if (scheduling.SchedulingPolicyGeneration == 0)
             throw new InvalidDataException("Participation scheduling policy generation must be non-zero.");
+        if (immutablePayloadDigest.Length != 32)
+            throw new InvalidDataException("immutable payload digest must be Hash256.");
 
         var intent = new ParticipationOperationIntent(
             kind,
@@ -143,8 +240,7 @@ public sealed class DiverParticipationController : IDisposable
             controlPayload);
         if (!_payloadAdapter.TryEncode(intent, out var encoded, out var reasonCode) || encoded is null)
         {
-            Draft = Draft with { LastLocalReasonCode = reasonCode };
-            Changed?.Invoke();
+            FailLocal(reasonCode);
             throw new InvalidOperationException(reasonCode);
         }
 
@@ -171,6 +267,12 @@ public sealed class DiverParticipationController : IDisposable
         };
         Changed?.Invoke();
         return tracked;
+    }
+
+    private void FailLocal(string reasonCode)
+    {
+        Draft = Draft with { LastLocalReasonCode = reasonCode };
+        Changed?.Invoke();
     }
 
     private void RequireLocalEligibility(ParticipationOperationIntentKind kind)
@@ -217,7 +319,6 @@ public sealed class DiverParticipationController : IDisposable
     {
         if (_session.Snapshot.State != ViewSessionAccessState.Active)
         {
-            // Session loss stops new input but never invents a binding release Operation.
             _operations.SetAccessState(_session.Snapshot.State switch
             {
                 ViewSessionAccessState.Revoked => ViewMutationAccessState.SessionRevoked,
