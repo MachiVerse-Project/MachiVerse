@@ -23,6 +23,12 @@ public sealed class AlphaViewBridge(
     private const string ProtocolId = "mv.gateway-view";
     private const string ProjectionProfile = "standard";
     private const string BindingSchemaId = "protocol.participation-binding-view.v1";
+    private const int PublicationFull = 1;
+    private const int PublicationDelta = 2;
+    private const int MutationUpsert = 1;
+    private const int MutationDelete = 2;
+    private const int ResyncContinueIfPossible = 1;
+    private const int ResyncForceFull = 2;
     private readonly AlphaCoreLinkOptions _coreOptions = coreOptions ?? throw new ArgumentNullException(nameof(coreOptions));
     private readonly AlphaCoreLinkState _coreLinkState = coreLinkState ?? throw new ArgumentNullException(nameof(coreLinkState));
     private readonly SchedulingPolicyProjection _scheduling = scheduling ?? throw new ArgumentNullException(nameof(scheduling));
@@ -101,6 +107,7 @@ public sealed class AlphaViewBridge(
             await SendAsync(socket, Notification("auth.session.changed", "protocol.auth-session-state.v1", sessionState), context.RequestAborted);
 
             ByteString? activeSubscriptionId = null;
+            ConfirmedStateSnapshot? viewPublicationBase = null;
             while (socket.State == WebSocketState.Open && !context.RequestAborted.IsCancellationRequested)
             {
                 var request = await ReceiveNormalAsync(socket, context.RequestAborted);
@@ -111,23 +118,37 @@ public sealed class AlphaViewBridge(
                         var subscription = ViewSubscriptionRequestV1.Parser.ParseFrom(request.Payload);
                         ValidateSubscription(subscription);
                         activeSubscriptionId = subscription.SubscriptionId.Clone();
-                        await SendConfirmedFullAsync(socket, activeSubscriptionId, request, context.RequestAborted);
-                        await SendBindingStateAsync(socket, request, context.RequestAborted);
+                        var snapshot = RequireCurrentConfirmedSnapshot();
+                        await SendConfirmedFullAsync(socket, activeSubscriptionId, request, context.RequestAborted, snapshot);
+                        viewPublicationBase = snapshot;
+                        await SendBindingStateAsync(socket, request, context.RequestAborted, snapshot);
                         break;
                     }
                     case "world.state.resync-request":
                     {
-                        _ = StateResyncRequestV1.Parser.ParseFrom(request.Payload);
+                        var resync = StateResyncRequestV1.Parser.ParseFrom(request.Payload);
+                        ValidateResyncRequest(resync);
                         activeSubscriptionId ??= RandomId128();
-                        await SendConfirmedFullAsync(socket, activeSubscriptionId, request, context.RequestAborted);
-                        await SendBindingStateAsync(socket, request, context.RequestAborted);
+                        var snapshot = RequireCurrentConfirmedSnapshot();
+                        if (CanContinueWithDelta(resync, viewPublicationBase, snapshot))
+                            await SendConfirmedDeltaAsync(socket, activeSubscriptionId, request, viewPublicationBase!, snapshot, context.RequestAborted);
+                        else
+                            await SendConfirmedFullAsync(socket, activeSubscriptionId, request, context.RequestAborted, snapshot);
+                        viewPublicationBase = snapshot;
+                        await SendBindingStateAsync(socket, request, context.RequestAborted, snapshot);
                         break;
                     }
                     case "participation.binding.request":
                     {
                         if (activeSubscriptionId is null)
                             throw new InvalidDataException("protocol.missing-required: world.subscribe is required before binding operations.");
-                        await HandleBindingRequestAsync(socket, activeSubscriptionId, diverRef, request, context.RequestAborted);
+                        viewPublicationBase = await HandleBindingRequestAsync(
+                            socket,
+                            activeSubscriptionId,
+                            diverRef,
+                            viewPublicationBase,
+                            request,
+                            context.RequestAborted);
                         break;
                     }
                     default:
@@ -151,10 +172,11 @@ public sealed class AlphaViewBridge(
         }
     }
 
-    private async Task HandleBindingRequestAsync(
+    private async Task<ConfirmedStateSnapshot?> HandleBindingRequestAsync(
         WebSocket socket,
         ByteString subscriptionId,
         ByteString authenticatedDiverRef,
+        ConfirmedStateSnapshot? viewPublicationBase,
         WireEnvelopeV1 request,
         CancellationToken cancellationToken)
     {
@@ -192,7 +214,7 @@ public sealed class AlphaViewBridge(
         if (!bindingRequest.DiverRef.Equals(authenticatedDiverRef))
             throw new InvalidDataException("auth.unauthorized: binding diver_ref does not match authenticated session identity.");
 
-        var before = _confirmedCache.Current ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
+        var before = RequireCurrentConfirmedSnapshot();
         if (request.WorldContext.BasisStep != before.BasisStep)
             throw new InvalidDataException("world.basis-stale");
         var confirmedBinding = ReadConfirmedBinding(before);
@@ -226,16 +248,24 @@ public sealed class AlphaViewBridge(
             operation: operationContext), cancellationToken);
 
         if ((int)entry.Lifecycle != 4 || entry.Result is null || (int)entry.Result.Status is not (1 or 4 or 5))
-            return;
+            return viewPublicationBase;
 
         var advanced = await WaitForConfirmedAdvanceAsync(before.BasisStep, cancellationToken);
         var resultingBinding = ReadConfirmedBinding(advanced);
         if (!resultingBinding.HasDiverRef || !resultingBinding.DiverRef.Equals(authenticatedDiverRef) ||
             resultingBinding.BindingGeneration != checked(bindingRequest.ExpectedBindingGeneration + 1))
             throw new InvalidDataException("component.binding-projection-actor-generation-mismatch");
-        await SendConfirmedFullAsync(socket, subscriptionId, request, cancellationToken, advanced);
+
+        if (CanSendDelta(viewPublicationBase, advanced))
+            await SendConfirmedDeltaAsync(socket, subscriptionId, request, viewPublicationBase!, advanced, cancellationToken);
+        else
+            await SendConfirmedFullAsync(socket, subscriptionId, request, cancellationToken, advanced);
         await SendBindingStateAsync(socket, request, cancellationToken, advanced);
+        return advanced;
     }
+
+    private ConfirmedStateSnapshot RequireCurrentConfirmedSnapshot()
+        => _confirmedCache.Current ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
 
     private static ParticipationBindingViewV1 ReadConfirmedBinding(ConfirmedStateSnapshot snapshot)
     {
@@ -256,14 +286,49 @@ public sealed class AlphaViewBridge(
         throw new InvalidDataException("component.core-confirmed-state-timeout");
     }
 
+    private void ValidateResyncRequest(StateResyncRequestV1 request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        RequireId128(request.WorldId, "world_id");
+        var link = _coreLinkState.Current;
+        if (link.WorldId is null || !request.WorldId.Span.SequenceEqual(Convert.FromHexString(link.WorldId)))
+            throw new InvalidDataException("world.not-found");
+        if ((int)request.Preference is not (ResyncContinueIfPossible or ResyncForceFull))
+            throw new InvalidDataException("protocol.field-out-of-range:resync_preference");
+        if (request.HasClientBasisStep != request.HasClientContinuityToken)
+            throw new InvalidDataException("protocol.missing-required:client_resync_base");
+        if (request.HasClientContinuityToken && request.ClientContinuityToken.Length != 32)
+            throw new InvalidDataException("protocol.invalid-continuity-token-length");
+    }
+
+    private static bool CanContinueWithDelta(
+        StateResyncRequestV1 request,
+        ConfirmedStateSnapshot? retainedBase,
+        ConfirmedStateSnapshot current)
+    {
+        if ((int)request.Preference != ResyncContinueIfPossible ||
+            !request.HasClientBasisStep || !request.HasClientContinuityToken || retainedBase is null)
+            return false;
+        if (request.ClientBasisStep != retainedBase.BasisStep ||
+            !request.ClientContinuityToken.Span.SequenceEqual(retainedBase.ContinuityToken))
+            return false;
+        return CanSendDelta(retainedBase, current);
+    }
+
+    private static bool CanSendDelta(ConfirmedStateSnapshot? retainedBase, ConfirmedStateSnapshot current)
+        => retainedBase is not null
+            && current.BasisStep > retainedBase.BasisStep
+            && retainedBase.ContinuityToken.Length == 32
+            && current.ContinuityToken.Length == 32
+            && retainedBase.ProjectionSchemaDigest.AsSpan().SequenceEqual(current.ProjectionSchemaDigest);
+
     private async Task SendBindingStateAsync(
         WebSocket socket,
         WireEnvelopeV1 request,
         CancellationToken cancellationToken,
         ConfirmedStateSnapshot? suppliedSnapshot = null)
     {
-        var snapshot = suppliedSnapshot ?? _confirmedCache.Current
-            ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
+        var snapshot = suppliedSnapshot ?? RequireCurrentConfirmedSnapshot();
         var binding = ReadConfirmedBinding(snapshot);
         var world = CurrentWorldContext(snapshot.BasisStep);
         await SendAsync(socket, NormalResponse(
@@ -281,9 +346,63 @@ public sealed class AlphaViewBridge(
         CancellationToken cancellationToken,
         ConfirmedStateSnapshot? suppliedSnapshot = null)
     {
+        var snapshot = suppliedSnapshot ?? RequireCurrentConfirmedSnapshot();
+        var records = snapshot.Records
+            .OrderBy(static item => item.Key.SchemaId, StringComparer.Ordinal)
+            .ThenBy(static item => item.Key.RecordIdHex, StringComparer.Ordinal)
+            .Select(static item => ToUpsert(item.Value))
+            .ToArray();
+        await SendConfirmedPublicationAsync(
+            socket,
+            subscriptionId,
+            request,
+            snapshot,
+            PublicationFull,
+            baseContinuityToken: null,
+            records,
+            cancellationToken);
+    }
+
+    private async Task SendConfirmedDeltaAsync(
+        WebSocket socket,
+        ByteString subscriptionId,
+        WireEnvelopeV1 request,
+        ConfirmedStateSnapshot retainedBase,
+        ConfirmedStateSnapshot current,
+        CancellationToken cancellationToken)
+    {
+        if (!CanSendDelta(retainedBase, current))
+            throw new InvalidDataException("protocol.continuity-mismatch:unprovable-alpha-view-delta");
+        var records = BuildDeltaRecords(retainedBase, current);
+        await SendConfirmedPublicationAsync(
+            socket,
+            subscriptionId,
+            request,
+            current,
+            PublicationDelta,
+            retainedBase.ContinuityToken,
+            records,
+            cancellationToken);
+    }
+
+    private async Task SendConfirmedPublicationAsync(
+        WebSocket socket,
+        ByteString subscriptionId,
+        WireEnvelopeV1 request,
+        ConfirmedStateSnapshot snapshot,
+        int publicationKind,
+        byte[]? baseContinuityToken,
+        IReadOnlyCollection<ProjectionRecordV1> records,
+        CancellationToken cancellationToken)
+    {
         RequireId128(subscriptionId, "subscription_id");
-        var snapshot = suppliedSnapshot ?? _confirmedCache.Current
-            ?? throw new InvalidDataException("component.core-confirmed-state-unavailable");
+        if (snapshot.ContinuityToken.Length != 32 || snapshot.ProjectionSchemaDigest.Length != 32)
+            throw new InvalidDataException("protocol.invalid-confirmed-publication-authority");
+        if (publicationKind == PublicationFull && baseContinuityToken is not null)
+            throw new InvalidDataException("protocol.full-publication-has-base");
+        if (publicationKind == PublicationDelta && (baseContinuityToken is null || baseContinuityToken.Length != 32))
+            throw new InvalidDataException("protocol.delta-publication-missing-base");
+
         var publicationId = RandomId128();
         var payload = new ProjectionChunkPayloadV1
         {
@@ -291,21 +410,7 @@ public sealed class AlphaViewBridge(
             PublicationId = publicationId,
             ChunkIndex = 0,
         };
-        foreach (var item in snapshot.Records.OrderBy(static item => item.Key.SchemaId, StringComparer.Ordinal)
-                     .ThenBy(static item => item.Key.RecordIdHex, StringComparer.Ordinal))
-        {
-            var record = item.Value;
-            payload.Records.Add(new ProjectionRecordV1
-            {
-                RecordSchemaId = record.SchemaId,
-                RecordSchemaVersion = new SchemaVersionWireV1 { Major = 1, Minor = 0 },
-                RecordId = ByteString.CopyFrom(record.RecordId),
-                RecordRevision = record.Revision,
-                MutationKind = (ProjectionMutationKindV1)1,
-                Payload = ByteString.CopyFrom(record.Payload),
-            });
-        }
-
+        payload.Records.AddRange(records);
         var payloadBytes = payload.ToByteArray();
         if (payloadBytes.Length > 1024 * 1024)
             throw new InvalidDataException("protocol.limit-exceeded: Alpha bridge currently requires one <=1MiB projection chunk.");
@@ -313,11 +418,14 @@ public sealed class AlphaViewBridge(
         var publication = new StatePublicationV1
         {
             PublicationId = publicationId,
-            Kind = (PublicationKindV1)1,
+            Kind = (PublicationKindV1)publicationKind,
             StateContinuityToken = ByteString.CopyFrom(snapshot.ContinuityToken),
             ChunkCount = 1,
             ProjectionSchemaDigest = ByteString.CopyFrom(snapshot.ProjectionSchemaDigest),
         };
+        if (baseContinuityToken is not null)
+            publication.BaseStateContinuityToken = ByteString.CopyFrom(baseContinuityToken);
+
         var world = CurrentWorldContext(snapshot.BasisStep);
         await SendAsync(socket, NormalResponse(
             request,
@@ -342,6 +450,55 @@ public sealed class AlphaViewBridge(
             chunk,
             world), cancellationToken);
     }
+
+    private static IReadOnlyCollection<ProjectionRecordV1> BuildDeltaRecords(
+        ConfirmedStateSnapshot retainedBase,
+        ConfirmedStateSnapshot current)
+    {
+        var records = new List<ProjectionRecordV1>();
+        foreach (var item in current.Records.OrderBy(static item => item.Key.SchemaId, StringComparer.Ordinal)
+                     .ThenBy(static item => item.Key.RecordIdHex, StringComparer.Ordinal))
+        {
+            var record = item.Value;
+            if (!retainedBase.Records.TryGetValue(item.Key, out var previous) ||
+                previous.Revision != record.Revision ||
+                !previous.Payload.AsSpan().SequenceEqual(record.Payload))
+            {
+                records.Add(ToUpsert(record));
+            }
+        }
+
+        foreach (var item in retainedBase.Records.OrderBy(static item => item.Key.SchemaId, StringComparer.Ordinal)
+                     .ThenBy(static item => item.Key.RecordIdHex, StringComparer.Ordinal))
+        {
+            if (current.Records.ContainsKey(item.Key)) continue;
+            records.Add(new ProjectionRecordV1
+            {
+                RecordSchemaId = item.Value.SchemaId,
+                RecordSchemaVersion = new SchemaVersionWireV1 { Major = 1, Minor = 0 },
+                RecordId = ByteString.CopyFrom(item.Value.RecordId),
+                RecordRevision = item.Value.Revision == ulong.MaxValue ? ulong.MaxValue : item.Value.Revision + 1,
+                MutationKind = (ProjectionMutationKindV1)MutationDelete,
+                Payload = ByteString.Empty,
+            });
+        }
+
+        return records
+            .OrderBy(static record => record.RecordSchemaId, StringComparer.Ordinal)
+            .ThenBy(static record => Convert.ToHexStringLower(record.RecordId.Span), StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static ProjectionRecordV1 ToUpsert(ConfirmedProjectionRecord record)
+        => new()
+        {
+            RecordSchemaId = record.SchemaId,
+            RecordSchemaVersion = new SchemaVersionWireV1 { Major = 1, Minor = 0 },
+            RecordId = ByteString.CopyFrom(record.RecordId),
+            RecordRevision = record.Revision,
+            MutationKind = (ProjectionMutationKindV1)MutationUpsert,
+            Payload = ByteString.CopyFrom(record.Payload),
+        };
 
     private WorldContextWireV1 CurrentWorldContext(ulong basisStep)
     {
