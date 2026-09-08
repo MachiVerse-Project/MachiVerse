@@ -67,6 +67,8 @@ internal static class Qa04CoreSubstateAuthoritySmoke
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+
+        await Qa04DetailSubstateAuthoritySmoke.RunAsync();
     }
 
     private static void VerifyFailClosedBindings()
