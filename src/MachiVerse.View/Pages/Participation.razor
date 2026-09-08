@@ -48,9 +48,13 @@
             <dt>Last accepted publication</dt><dd>@(Publications.LastAcceptedPublicationKind ?? "-")</dd>
             <dt>Base continuity token</dt><dd><code>@(Publications.LastAcceptedBaseContinuityTokenHex ?? "-")</code></dd>
             <dt>Continuity token</dt><dd><code>@(Publications.LastAcceptedContinuityTokenHex ?? "-")</code></dd>
+            <dt>Last rejected publication</dt><dd>@(Publications.LastRejectedPublicationKind ?? "-")</dd>
+            <dt>Continuity mismatch count</dt><dd>@Publications.ContinuityMismatchCount</dd>
+            <dt>Automatic resync count</dt><dd>@GatewaySession.AutomaticResyncCount</dd>
+            <dt>Last automatic resync reason</dt><dd>@(GatewaySession.LastAutomaticResyncReason ?? "-")</dd>
             <dt>Resync reason</dt><dd>@(Publications.ResyncReason ?? "-")</dd>
         </dl>
-        <p>DELTA is accepted only when its base token exactly matches the installed confirmed snapshot. A continuity mismatch moves the View to Resyncing instead of installing the candidate state.</p>
+        <p>DELTA is accepted only when its base token exactly matches the installed confirmed snapshot. A continuity mismatch clears current display authority, marks participation state refresh-required, and recovers only after a force-FULL publication is accepted.</p>
     </section>
 
     <section>
