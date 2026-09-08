@@ -1,3 +1,4 @@
+using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
@@ -101,7 +102,7 @@ public static class CoreSnapshotSectionWireRegistryV1
 
         foreach (var entry in CanonicalEntries)
         {
-            _ = new Determinism.StableToken(entry.SectionId);
+            _ = new StableToken(entry.SectionId);
             _ = entry.SectionSchema.SchemaId.Value;
             if (entry.SectionSchema.Version != new SchemaVersionV1(1, 0))
                 throw new InvalidOperationException($"Core snapshot section schema must be v1.0: {entry.SectionId}");
