@@ -296,6 +296,9 @@ public sealed class WorldStateV1
 
     public static WorldSubstateRefV1 EmptySubstate(string schemaId)
     {
+        if (string.Equals(schemaId, "core.domain-registry-state", StringComparison.Ordinal))
+            return MachiVerse.Simulation.Core.Runtime.StandardDomainRegistryAuthorityV1.Generation1SubstateRef();
+
         var schema = new SchemaRefV1(schemaId);
         var digest = HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {

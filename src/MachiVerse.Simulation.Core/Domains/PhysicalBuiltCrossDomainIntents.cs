@@ -8,12 +8,17 @@ public static class PhysicalBuiltCrossDomainIntentFactoryV1
     private static readonly StableToken SourceDomain = new("physical_built");
     private static readonly StableToken SpatialDomain = new("spatial");
     private static readonly StableToken TerrainPartition = new("spatial.terrain_geometry");
-    private static readonly HashSet<string> AllowedTerrainMutationKinds = new(StringComparer.Ordinal)
+    private static readonly IReadOnlyList<DomainIntentCapabilityV1> Capabilities = Array.AsReadOnly(new[]
     {
-        "spatial.intent.geometry-carve",
-        "spatial.intent.geometry-fill",
-        "spatial.intent.geometry-deform",
-    };
+        new DomainIntentCapabilityV1(SourceDomain, SpatialDomain, TerrainPartition, new StableToken("spatial.intent.geometry-carve")),
+        new DomainIntentCapabilityV1(SourceDomain, SpatialDomain, TerrainPartition, new StableToken("spatial.intent.geometry-deform")),
+        new DomainIntentCapabilityV1(SourceDomain, SpatialDomain, TerrainPartition, new StableToken("spatial.intent.geometry-fill")),
+    });
+    private static readonly HashSet<string> AllowedTerrainMutationKinds = Capabilities
+        .Select(static value => value.IntentKind.Value)
+        .ToHashSet(StringComparer.Ordinal);
+
+    public static IReadOnlyList<DomainIntentCapabilityV1> EmittedCapabilities => Capabilities;
 
     public static MutationIntentCandidateV1 CreateSpatialTerrainMutation(
         OpaqueId128 intentId,
