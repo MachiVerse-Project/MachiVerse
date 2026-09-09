@@ -91,6 +91,16 @@ internal static class Qa04TerrainV2Exact97ProductionCanaryInitializer
             standardTerrainProvider);
         Require(resolvedProvider is SpatialTerrainGeometrySnapshotSectionProviderV2,
             "Actual Terrain v2 authority must select the registered v2 production provider.");
+
+        var semanticVerifier = resolvedProvider.CreateSemanticVerifier(terrainAuthority.Header);
+        var semanticResult = semanticVerifier.VerifyWithContext?.Invoke(
+            terrainSection.Fragments,
+            new SnapshotSectionSemanticVerificationContextV1(recoveredAll97))
+            ?? throw new InvalidOperationException("Terrain v2 production verifier must support recovered all-97 reference context.");
+        Require(semanticResult.LogicalItemCount == terrainSection.LogicalItemCount &&
+                semanticResult.LogicalContentDigest.SequenceEqual(terrainSection.LogicalContentDigest),
+            "Recovery phase 2 must reconstruct and rehash Terrain v2 against the recovered all-97 resolver.");
+
         Require(StandardDomainPartitionRegistry.Get(terrainId).RecordSchema.Version == new SchemaVersionV1(1, 0),
             "The migration canary must not mutate the global standard registry from v1.");
     }
