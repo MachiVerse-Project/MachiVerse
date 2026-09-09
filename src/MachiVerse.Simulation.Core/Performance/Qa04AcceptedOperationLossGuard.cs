@@ -30,6 +30,22 @@ public sealed record Qa04AcceptedOperationLossGuardReceiptV1(
 /// </summary>
 public static class Qa04AcceptedOperationLossGuardV1
 {
+    /// <summary>
+    /// canonical QA-04 Operation descriptor から、durable acceptance 後も失ってはならない
+    /// identity/digest expectation だけを抽出する。Domain、effective Step、SameStepOrderKey 等の
+    /// 未確定 workload binding はここでは決定しない。
+    /// </summary>
+    public static IReadOnlyList<Qa04AcceptedOperationExpectationV1> FromCanonicalDescriptors(
+        IEnumerable<Qa04OperationDescriptorV1> descriptors)
+    {
+        ArgumentNullException.ThrowIfNull(descriptors);
+        return Array.AsReadOnly(descriptors
+            .Select(static descriptor => new Qa04AcceptedOperationExpectationV1(
+                descriptor.OperationId,
+                descriptor.PayloadDigest.ToArray()))
+            .ToArray());
+    }
+
     public static Qa04AcceptedOperationLossGuardReceiptV1 Validate(
         IEnumerable<Qa04AcceptedOperationExpectationV1> acceptedExpectations,
         IEnumerable<DurableOperationStateV1> durableStates)
