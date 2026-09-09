@@ -57,7 +57,6 @@ internal static class ProductionSnapshot103CanarySmoke
             Require(authorities.CanonicalAuthorities.Sum(static value => checked((long)value.ActualItemCount)) == 1,
                 "103-section canary must contain exactly one actual Domain record.");
 
-            var domainSections = DomainPartitionSnapshotProductionProviderV1.CreateAll97(authorities, providers);
             var coreOwnerCut = CoreSnapshotOwnerMaterialCutV1.Create(
                 frozenState,
                 Array.Empty<DurableOperationStateV1>(),
@@ -68,15 +67,10 @@ internal static class ProductionSnapshot103CanarySmoke
                     FrozenDomainRegistrySnapshotOwnerV1.Freeze(frozenState.Header.Step, registry),
                     FrozenCoreConfigSnapshotOwnerV1.Freeze(frozenState.Header.Step, config),
                 });
-            var coreSections = CoreSnapshotProductionSectionProviderV1.CreateAllSix(coreOwnerCut);
-            CoreSnapshotProductionSectionProviderV1.VerifyAllSix(
-                coreSections,
-                frozenState.Header.Step,
-                config.Generation);
-
-            var sections = CanonicalSnapshotSectionValidationV1.ValidateStandard(
-                coreSections.Concat(domainSections),
-                frozenState);
+            var sections = StandardSnapshotOwnerCompositionV1.CreateAll103(
+                coreOwnerCut,
+                authorities,
+                providers);
             Require(sections.Count == SnapshotManifestValidation.StandardRequiredSectionCount && sections.Count == 103,
                 "Production canary must assemble exactly 103 canonical sections.");
             Require(sections.Count(static value => StandardSnapshotSectionSetV1.IsCoreSection(value.SectionId)) == 6,
@@ -125,17 +119,8 @@ internal static class ProductionSnapshot103CanarySmoke
             Require(staged.Chunks.Count > 0,
                 "Production 103-section canary must emit at least one physical chunk.");
 
-            var coreVerifiers = new SnapshotSectionSemanticVerifierV1[]
-            {
-                CoreSnapshotSecondarySemanticVerifierV1.Config(frozenState.Header.Step, config.Generation),
-                CoreSnapshotSecondarySemanticVerifierV1.Detail(frozenState.Header.Step),
-                CoreSnapshotDomainRegistrySemanticVerifierV1.Create(frozenState.Header.Step),
-                CoreSnapshotPrimarySemanticVerifierV1.Operation(frozenState.Header.Step),
-                CoreSnapshotPrimarySemanticVerifierV1.Scheduler(frozenState.Header.Step),
-                CoreSnapshotPrimarySemanticVerifierV1.WorldStateHeader(frozenState.Header.Step),
-            };
-            var semanticVerifiers = DomainPartitionSnapshotProductionProviderV1.CreateSemanticVerifierRegistry(
-                coreVerifiers,
+            var semanticVerifiers = StandardSnapshotOwnerCompositionV1.CreateSemanticVerifierRegistry(
+                coreOwnerCut,
                 authorities,
                 providers);
             await CanonicalSnapshotStagingValidatorV1.ValidateAsync(
