@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
@@ -43,7 +44,7 @@ public sealed class DomainPartitionSnapshotReferenceSourceV1<TPayload> : IDomain
 }
 
 /// <summary>
-/// Structure-only recovered source for one Domain section. It validates fragment/header/range/order
+/// Structure-only recovered source for one standard-v1 Domain section. It validates fragment/header/range/order
 /// and decodes record identities without requiring the cross-partition reference resolver yet.
 /// Full payload semantic/reference validation runs in the second recovery phase.
 /// </summary>
@@ -155,6 +156,7 @@ public sealed class DomainSnapshotRecoveredReferenceSourceV1 : IDomainPartitionS
 /// <summary>
 /// Frozen all-97 actual-record resolver used by Snapshot production/recovery semantic validation.
 /// Construction fails unless every standard partition contributes exactly one actual record source.
+/// Registered record-schema migrations are preserved per source; unregistered versions fail closed.
 /// </summary>
 public sealed class DomainSnapshotReferenceResolverV1 : IDomainRecordSchemaResolverV1
 {
@@ -172,8 +174,12 @@ public sealed class DomainSnapshotReferenceResolverV1 : IDomainRecordSchemaResol
         {
             ArgumentNullException.ThrowIfNull(source);
             var identity = StandardDomainPartitionRegistry.Get(source.PartitionId.Value);
-            if (source.RecordSchema != identity.RecordSchema)
+            if (!StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedRecordSchema(
+                    identity.PartitionId.Value,
+                    source.RecordSchema))
+            {
                 throw new InvalidDataException($"persistence.snapshot.reference-source-schema-mismatch:{identity.PartitionId.Value}");
+            }
             if (source.ActualItemCount != checked((ulong)source.RecordIdsCanonical.Count))
                 throw new InvalidDataException($"persistence.snapshot.reference-source-count-mismatch:{identity.PartitionId.Value}");
             if (!sourceByPartition.TryAdd(identity.PartitionId.Value, source))
@@ -194,7 +200,7 @@ public sealed class DomainSnapshotReferenceResolverV1 : IDomainRecordSchemaResol
                 if (previous is { } prior && prior.CompareTo(recordId) >= 0)
                     throw new InvalidDataException($"persistence.snapshot.reference-source-order:{identity.PartitionId.Value}");
                 previous = recordId;
-                if (!records.TryAdd((identity.PartitionId.Value, recordId), identity.RecordSchema))
+                if (!records.TryAdd((identity.PartitionId.Value, recordId), source.RecordSchema))
                     throw new InvalidDataException($"persistence.snapshot.reference-source-record-duplicate:{identity.PartitionId.Value}");
             }
         }
@@ -231,16 +237,58 @@ public sealed class DomainSnapshotReferenceResolverV1 : IDomainRecordSchemaResol
             if (section.SectionSchema != identity.PartitionSchema)
                 throw new InvalidDataException($"persistence.snapshot.recovered-reference-section-schema:{identity.PartitionId.Value}");
 
-            var source = new DomainSnapshotRecoveredReferenceSourceV1(
-                identity.PartitionId.Value,
-                section.Fragments,
-                nestedCodecs);
+            var source = CreateRecoveredSource(identity, section, nestedCodecs);
+            var sourceHeader = source switch
+            {
+                DomainSnapshotRecoveredReferenceSourceV1 v1 => v1.Header,
+                SpatialTerrainGeometryRecoveredReferenceSourceV2 terrainV2 => terrainV2.Header,
+                _ => throw new InvalidDataException($"persistence.snapshot.recovered-reference-source-type:{identity.PartitionId.Value}"),
+            };
             if (source.ActualItemCount != section.LogicalItemCount ||
-                !CryptographicOperations.FixedTimeEquals(source.Header.CanonicalDigest, section.LogicalContentDigest))
+                !CryptographicOperations.FixedTimeEquals(sourceHeader.CanonicalDigest, section.LogicalContentDigest))
                 throw new InvalidDataException($"persistence.snapshot.recovered-reference-section-authority:{identity.PartitionId.Value}");
             sources.Add(source);
         }
 
         return new DomainSnapshotReferenceResolverV1(sources);
+    }
+
+    private static IDomainPartitionSnapshotReferenceSourceV1 CreateRecoveredSource(
+        DomainPartitionIdentityV1 identity,
+        CanonicalSnapshotSectionMaterialV1 section,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs)
+    {
+        if (!string.Equals(identity.PartitionId.Value, SpatialTerrainGeometryRecordSchemaV2.PartitionId, StringComparison.Ordinal) ||
+            section.LogicalItemCount == 0)
+        {
+            return new DomainSnapshotRecoveredReferenceSourceV1(
+                identity.PartitionId.Value,
+                section.Fragments,
+                nestedCodecs);
+        }
+
+        InvalidDataException? v2Failure = null;
+        try
+        {
+            return new SpatialTerrainGeometryRecoveredReferenceSourceV2(section.Fragments);
+        }
+        catch (InvalidDataException ex)
+        {
+            v2Failure = ex;
+        }
+
+        try
+        {
+            return new DomainSnapshotRecoveredReferenceSourceV1(
+                identity.PartitionId.Value,
+                section.Fragments,
+                nestedCodecs);
+        }
+        catch (InvalidDataException v1Failure)
+        {
+            throw new InvalidDataException(
+                "persistence.snapshot.recovered-reference-terrain-schema-unrecognized",
+                new AggregateException(v2Failure, v1Failure));
+        }
     }
 }
