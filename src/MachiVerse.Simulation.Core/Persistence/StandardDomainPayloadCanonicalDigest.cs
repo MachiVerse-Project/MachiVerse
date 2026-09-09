@@ -10,6 +10,7 @@ namespace MachiVerse.Simulation.Core.Persistence;
 public static class StandardDomainPayloadCanonicalDigestV1
 {
     public const string HashDomain = "mv.domain-payload.v1";
+    private const int MaxSelfRecursiveDepth = 64;
 
     public static byte[] Compute(
         string partitionId,
@@ -60,18 +61,35 @@ public static class StandardDomainPayloadCanonicalDigestV1
         MvDcborWriter writer,
         string parentPartitionId,
         string parentFieldName,
-        DomainNestedSnapshotSchemaDescriptorV1 descriptor,
+        IDomainNestedSnapshotCodecV1 codec,
         IReadOnlyDictionary<string, object?> values,
         DomainNestedSnapshotCodecRegistryV1 nestedCodecs,
-        IDomainRecordReferenceResolverV1? references)
+        IDomainRecordReferenceResolverV1? references,
+        int depth)
     {
+        var descriptor = codec.Descriptor;
         var present = PresentFields(descriptor.Fields, values, $"{parentPartitionId}:{parentFieldName}:{descriptor.Schema.SchemaId.Value}");
         writer.WriteArrayStart(checked((ulong)present.Count));
         foreach (var entry in present)
         {
-            ValidateNestedField(parentPartitionId, parentFieldName, entry.Rule, entry.Value, references);
             writer.WriteArrayStart(2);
             writer.WriteUnsigned(entry.FieldNumber);
+            if (entry.Rule.Kind is DomainPayloadFieldKindV1.OrderedNestedList or DomainPayloadFieldKindV1.RuleAst)
+            {
+                WriteSelfRecursiveNestedField(
+                    writer,
+                    parentPartitionId,
+                    parentFieldName,
+                    codec,
+                    entry.Rule,
+                    entry.Value,
+                    nestedCodecs,
+                    references,
+                    depth);
+                continue;
+            }
+
+            ValidateNestedField(parentPartitionId, parentFieldName, entry.Rule, entry.Value, references);
             WriteValue(writer, parentPartitionId, entry.Rule, entry.Value, nestedCodecs, references);
         }
     }
@@ -243,6 +261,29 @@ public static class StandardDomainPayloadCanonicalDigestV1
     {
         ArgumentNullException.ThrowIfNull(value);
         var codec = nestedCodecs.GetForBinding(parentPartitionId, parentFieldName);
+        WriteNestedValueWithCodec(
+            writer,
+            parentPartitionId,
+            parentFieldName,
+            codec,
+            value,
+            nestedCodecs,
+            references,
+            0);
+    }
+
+    private static void WriteNestedValueWithCodec(
+        MvDcborWriter writer,
+        string parentPartitionId,
+        string parentFieldName,
+        IDomainNestedSnapshotCodecV1 codec,
+        ICanonicalDomainNestedValueV1 value,
+        DomainNestedSnapshotCodecRegistryV1 nestedCodecs,
+        IDomainRecordReferenceResolverV1? references,
+        int depth)
+    {
+        if (depth > MaxSelfRecursiveDepth)
+            throw new InvalidDataException($"domain.payload.digest-self-recursive-depth:{codec.Descriptor.Schema.SchemaId.Value}");
         if (!codec.CanEncode(value))
             throw new InvalidDataException($"domain.payload.digest-nested-type:{parentPartitionId}:{parentFieldName}");
         value.ValidateCanonical();
@@ -255,7 +296,72 @@ public static class StandardDomainPayloadCanonicalDigestV1
         writer.WriteUnsigned(1); writer.WriteUnsigned(descriptor.Schema.Version.Major);
         writer.WriteUnsigned(2); writer.WriteUnsigned(descriptor.Schema.Version.Minor);
         writer.WriteUnsigned(3);
-        WriteNestedFields(writer, parentPartitionId, parentFieldName, descriptor, fields, nestedCodecs, references);
+        WriteNestedFields(
+            writer,
+            parentPartitionId,
+            parentFieldName,
+            codec,
+            fields,
+            nestedCodecs,
+            references,
+            depth);
+    }
+
+    private static void WriteSelfRecursiveNestedField(
+        MvDcborWriter writer,
+        string parentPartitionId,
+        string parentFieldName,
+        IDomainNestedSnapshotCodecV1 codec,
+        DomainPayloadFieldRuleV1 rule,
+        object value,
+        DomainNestedSnapshotCodecRegistryV1 nestedCodecs,
+        IDomainRecordReferenceResolverV1? references,
+        int depth)
+    {
+        if (!codec.AllowsSelfRecursion)
+            throw new InvalidDataException($"domain.payload.digest-recursive-nested-unavailable:{parentPartitionId}:{parentFieldName}:{rule.Name}");
+
+        switch (rule.Kind)
+        {
+            case DomainPayloadFieldKindV1.OrderedNestedList:
+            {
+                var children = Require<IReadOnlyList<ICanonicalDomainNestedValueV1>>(value, parentPartitionId, rule.Name);
+                writer.WriteArrayStart(checked((ulong)children.Count));
+                foreach (var child in children)
+                {
+                    if (child is null || !codec.CanEncode(child))
+                        throw new InvalidDataException($"domain.payload.digest-self-recursive-type:{parentPartitionId}:{parentFieldName}:{rule.Name}");
+                    WriteNestedValueWithCodec(
+                        writer,
+                        parentPartitionId,
+                        parentFieldName,
+                        codec,
+                        child,
+                        nestedCodecs,
+                        references,
+                        checked(depth + 1));
+                }
+                return;
+            }
+            case DomainPayloadFieldKindV1.RuleAst:
+            {
+                var child = Require<ICanonicalDomainNestedValueV1>(value, parentPartitionId, rule.Name);
+                if (!codec.CanEncode(child))
+                    throw new InvalidDataException($"domain.payload.digest-self-recursive-type:{parentPartitionId}:{parentFieldName}:{rule.Name}");
+                WriteNestedValueWithCodec(
+                    writer,
+                    parentPartitionId,
+                    parentFieldName,
+                    codec,
+                    child,
+                    nestedCodecs,
+                    references,
+                    checked(depth + 1));
+                return;
+            }
+            default:
+                throw new InvalidOperationException($"Unhandled recursive nested domain payload kind: {rule.Kind}");
+        }
     }
 
     private static void ValidateNestedField(
