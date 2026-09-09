@@ -9,6 +9,8 @@ public enum Qa04ReferenceDependencyBlockerKindV1 : byte
     PartitionMapping = 2,
     PersistentAuthority = 3,
     NestedPayloadSchema = 4,
+    RecordSchema = 5,
+    CanonicalMaterial = 6,
 }
 
 public sealed record Qa04ReferenceDependencyBlockerV1(
@@ -21,14 +23,14 @@ public sealed record Qa04ReferenceDependencyBlockerV1(
 /// <summary>
 /// Exact fail-closed list of unresolved normative dependencies that prevent perf.reference.v1 from
 /// becoming authoritative material. These are not implementation TODO placeholders: each entry is
-/// a missing authority target, benchmark-to-partition mapping, persistent authority, or exact nested
-/// payload schema that cannot be inferred safely from CLR shape or benchmark counts.
+/// a missing benchmark-to-partition mapping, persistent authority, exact nested/record schema, or
+/// canonical material rule that cannot be inferred safely from CLR shape or benchmark counts.
 /// </summary>
 public static class Qa04ReferenceWorldDependencyContractV1
 {
     private static readonly IReadOnlyList<Qa04ReferenceDependencyBlockerV1> BlockersValue = Array.AsReadOnly(new[]
     {
-        AuthorityTarget(
+        RecordSchema(
             "physical.presence.shape-ref-target",
             "physical.presence",
             "shape_ref",
@@ -42,17 +44,17 @@ public static class Qa04ReferenceWorldDependencyContractV1
         PartitionMapping(
             "society-governance.active-record.partition-mapping",
             "qa04.material.society-governance-partition-mapping-undefined"),
-        AuthorityTarget(
+        RecordSchema(
             "society.market-transaction.market-ref-target",
             "society.market_transaction",
             "market_ref",
             "qa04.material.market-ref-authority-undefined"),
-        AuthorityTarget(
+        RecordSchema(
             "infrastructure.network-topology.node-edge-targets",
             "infrastructure.network_topology",
             "node_refs/edge_refs",
             "qa04.material.infrastructure-node-edge-authority-undefined"),
-        AuthorityTarget(
+        CanonicalMaterial(
             "spatial.terrain-geometry.root-brick-target",
             "spatial.terrain_geometry",
             "root_brick_ref",
@@ -106,19 +108,19 @@ public static class Qa04ReferenceWorldDependencyContractV1
 
         Require(
             "society.market-transaction.market-ref-target",
-            Qa04ReferenceDependencyBlockerKindV1.AuthorityTarget,
+            Qa04ReferenceDependencyBlockerKindV1.RecordSchema,
             "society.market_transaction",
             "market_ref",
             "qa04.material.market-ref-authority-undefined");
         Require(
             "physical.presence.shape-ref-target",
-            Qa04ReferenceDependencyBlockerKindV1.AuthorityTarget,
+            Qa04ReferenceDependencyBlockerKindV1.RecordSchema,
             "physical.presence",
             "shape_ref",
             "qa04.material.physical-presence-shape-authority-undefined");
         Require(
             "spatial.terrain-geometry.root-brick-target",
-            Qa04ReferenceDependencyBlockerKindV1.AuthorityTarget,
+            Qa04ReferenceDependencyBlockerKindV1.CanonicalMaterial,
             "spatial.terrain_geometry",
             "root_brick_ref",
             "qa04.material.terrain-brick-authority-undefined");
@@ -140,17 +142,42 @@ public static class Qa04ReferenceWorldDependencyContractV1
             throw new InvalidDataException($"qa04.material.dependency-blocker-drift:{dependencyId}");
     }
 
-    private static Qa04ReferenceDependencyBlockerV1 AuthorityTarget(
+    private static Qa04ReferenceDependencyBlockerV1 PartitionScoped(
         string dependencyId,
+        Qa04ReferenceDependencyBlockerKindV1 kind,
         string partitionId,
         string fieldName,
         string failureCode)
         => new(
             new StableToken(dependencyId),
-            Qa04ReferenceDependencyBlockerKindV1.AuthorityTarget,
+            kind,
             new StableToken(partitionId),
             fieldName,
             new StableToken(failureCode));
+
+    private static Qa04ReferenceDependencyBlockerV1 RecordSchema(
+        string dependencyId,
+        string partitionId,
+        string fieldName,
+        string failureCode)
+        => PartitionScoped(
+            dependencyId,
+            Qa04ReferenceDependencyBlockerKindV1.RecordSchema,
+            partitionId,
+            fieldName,
+            failureCode);
+
+    private static Qa04ReferenceDependencyBlockerV1 CanonicalMaterial(
+        string dependencyId,
+        string partitionId,
+        string fieldName,
+        string failureCode)
+        => PartitionScoped(
+            dependencyId,
+            Qa04ReferenceDependencyBlockerKindV1.CanonicalMaterial,
+            partitionId,
+            fieldName,
+            failureCode);
 
     private static Qa04ReferenceDependencyBlockerV1 PartitionMapping(
         string dependencyId,
@@ -177,10 +204,10 @@ public static class Qa04ReferenceWorldDependencyContractV1
         string partitionId,
         string fieldName,
         string failureCode)
-        => new(
-            new StableToken(dependencyId),
+        => PartitionScoped(
+            dependencyId,
             Qa04ReferenceDependencyBlockerKindV1.NestedPayloadSchema,
-            new StableToken(partitionId),
+            partitionId,
             fieldName,
-            new StableToken(failureCode));
+            failureCode);
 }
