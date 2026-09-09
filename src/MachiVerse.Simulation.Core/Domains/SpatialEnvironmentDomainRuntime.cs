@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -64,9 +65,22 @@ public sealed class SpatialDomainRuntimeV1 : DeterministicDomainRuntimeV1
 {
     public SpatialDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
-        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null,
+        SpatialDomainStateV1? state = null)
         : base("spatial", intentEvaluator, partitionCandidateEvaluator)
     {
+        State = state;
+    }
+
+    public SpatialDomainStateV1? State { get; }
+
+    public SpatialDomainStateV1 RequireState()
+        => State ?? throw new InvalidDataException("spatial.runtime-state.unavailable");
+
+    public SpatialDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        return RequireState().BindSnapshotMaterial(frozenState);
     }
 }
 
