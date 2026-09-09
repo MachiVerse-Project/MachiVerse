@@ -1,12 +1,14 @@
+using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Spatial;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
 /// <summary>
-/// Supplies the payload values for one QA-04 hot-terrain-brick descriptor.
-/// Implementing this interface does not make the supplied values canonical. The release path may
-/// use a source only after the canonical perf.reference.v1 terrain generation/material rule has
-/// been normatively fixed.
+/// QA-04 の hot-terrain-brick descriptor 1件に対応する payload 値を供給する境界。
+/// この interface を実装しただけでは値を canonical とみなさない。
+/// release path で使用できるのは、perf.reference.v1 の canonical Terrain 生成・material 規則が
+/// 正本仕様として確定した content source に限る。
 /// </summary>
 public interface IQa04TerrainBrickContentSourceV1
 {
@@ -27,26 +29,25 @@ public sealed class Qa04TerrainBrickDescriptorMaterializationV1
     public ulong MaterializedBrickCount { get; }
 
     /// <summary>
-    /// True only when every QA-04 hot-terrain-brick descriptor has a corresponding v2 brick record.
-    /// This is a descriptor/count statement, not proof that the supplied SDF/material values are the
-    /// canonical benchmark terrain or that the required terrain_root/scope closure exists.
+    /// QA-04 の全 hot-terrain-brick descriptor に対応する v2 brick record が存在する場合のみ true。
+    /// これは descriptor/count の充足だけを表し、SDF/material 値が canonical benchmark Terrain であること、
+    /// または terrain_root/scope closure が成立したことを示さない。
     /// </summary>
     public bool FullDescriptorCountMaterialized
         => MaterializedBrickCount == Qa04TerrainBrickDescriptorMaterializerV1.CanonicalTerrainBrickCount;
 }
 
 /// <summary>
-/// Binds the already-canonical QA-04 terrain descriptor identities to exact TerrainBrickV1/v2 record
-/// material without inventing the missing terrain-generation semantics. Cell origin, SDF samples,
-/// surface material ids, and revision are deliberately supplied by an explicit content source.
+/// 既に canonical な QA-04 Terrain descriptor identity を、exact TerrainBrickV1/v2 record material へ結び付ける。
+/// 未定義の Terrain 生成 semantics は補完しない。cell origin、SDF sample、surface material id、revision は
+/// 明示的な content source からのみ受け取る。
 /// </summary>
 public static class Qa04TerrainBrickDescriptorMaterializerV1
 {
     public const ulong CanonicalTerrainBrickCount = 500_000;
     public const uint D0SampleSpacingMm = 250;
 
-    private static readonly Determinism.StableToken TerrainReferenceClass =
-        new("spatial.hot-terrain-brick");
+    private static readonly StableToken TerrainReferenceClass = new("spatial.hot-terrain-brick");
 
     public static void ValidateCanonicalContract()
     {
@@ -61,8 +62,8 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
 
         var first = Qa04ReferenceLoadV1.Record(TerrainReferenceClass, 0);
         var last = Qa04ReferenceLoadV1.Record(TerrainReferenceClass, CanonicalTerrainBrickCount - 1);
-        if (first.DetailLevel != WorldState.DetailLevelV1.D0Entity ||
-            last.DetailLevel != WorldState.DetailLevelV1.D0Entity)
+        if (first.DetailLevel != DetailLevelV1.D0Entity ||
+            last.DetailLevel != DetailLevelV1.D0Entity)
             throw new InvalidDataException("qa04.materialization.terrain-detail-drift");
     }
 
@@ -94,7 +95,7 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
         for (ulong ordinal = 0; ordinal < count; ordinal++)
         {
             var descriptor = Qa04ReferenceLoadV1.Record(TerrainReferenceClass, ordinal);
-            if (descriptor.DetailLevel != WorldState.DetailLevelV1.D0Entity)
+            if (descriptor.DetailLevel != DetailLevelV1.D0Entity)
                 throw new InvalidDataException("qa04.materialization.terrain-detail-not-d0");
 
             var brick = contentSource.CreateBrick(descriptor)
