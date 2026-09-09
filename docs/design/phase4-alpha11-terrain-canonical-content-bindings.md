@@ -87,7 +87,9 @@ Implemented:
 - actual serialized record-schema preservation
 - `Qa04TerrainBrickDescriptorMaterializerV1`
 
-The descriptor materializer requires exact descriptor/brick identity, D0 spacing, and common initial record revision. It intentionally accepts cell origin, SDF, surface material, and the remaining content semantics only from an explicit content source. Supplying 500,000 records therefore proves descriptor coverage only; it does not prove canonical Terrain.
+The descriptor materializer requires exact descriptor/brick identity, D0 spacing, and common initial record revision. It intentionally accepts cell origin, SDF, surface material, and the remaining content semantics only from an explicit content source.
+
+`FullDescriptorCountMaterialized=true` therefore means only that all 500,000 canonical descriptor identities are represented by exact v2 brick records. It does **not** prove canonical SDF/material values, Terrain root/scope closure, or `referenceWorldMaterialized=true`.
 
 ## 3. 未解決の canonical content dependencies
 
