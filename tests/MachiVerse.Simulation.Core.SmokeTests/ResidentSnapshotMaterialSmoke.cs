@@ -13,7 +13,7 @@ internal static class ResidentSnapshotMaterialSmoke
     internal static void Run()
     {
         VerifyTypedOwnerRootsAndQa04SemanticIdentity();
-        VerifyUndefinedNestedSchemasFailClosed();
+        VerifyNestedSchemaBoundary();
     }
 
     private static void VerifyTypedOwnerRootsAndQa04SemanticIdentity()
@@ -107,7 +107,7 @@ internal static class ResidentSnapshotMaterialSmoke
             "Resident identity P4-05 payload must round-trip losslessly.");
     }
 
-    private static void VerifyUndefinedNestedSchemasFailClosed()
+    private static void VerifyNestedSchemaBoundary()
     {
         var residentRef = new PartitionRecordRefV1(
             ResidentIdentityLifecyclePayloadV1.PartitionId,
@@ -134,17 +134,20 @@ internal static class ResidentSnapshotMaterialSmoke
                 bodyHealth.ToStandardPayload(),
                 StandardDomainNestedSnapshotCodecRegistryV1.Default));
         ExpectInvalid(
-            "resident perceived-fact nested schema must remain unavailable until normatively defined",
-            () => _ = DomainPartitionSnapshotWireCodecV1.EncodePayload(
-                ResidentPerceptionPayloadV1.PartitionId,
-                perception.ToStandardPayload(),
-                StandardDomainNestedSnapshotCodecRegistryV1.Default));
-        ExpectInvalid(
             "resident body-region semantic digest must not guess an undefined nested schema",
             () => _ = bodyHealth.CanonicalDigest());
-        ExpectInvalid(
-            "resident perceived-fact semantic digest must not guess an undefined nested schema",
-            () => _ = perception.CanonicalDigest());
+
+        var perceptionWire = DomainPartitionSnapshotWireCodecV1.EncodePayload(
+            ResidentPerceptionPayloadV1.PartitionId,
+            perception.ToStandardPayload(),
+            StandardDomainNestedSnapshotCodecRegistryV1.Default);
+        var perceptionRound = ResidentPerceptionPayloadV1.FromStandardPayload(
+            DomainPartitionSnapshotWireCodecV1.DecodePayload(
+                ResidentPerceptionPayloadV1.PartitionId,
+                perceptionWire,
+                StandardDomainNestedSnapshotCodecRegistryV1.Default));
+        Require(perceptionRound.PerceivedFacts.Count == 0 && perception.CanonicalDigest().Length == 32,
+            "Resolved perceived-fact nested schema must allow canonical empty-list payload wire/digest.");
     }
 
     private static DomainPartitionStateV1<T> Empty<T>(string id)
