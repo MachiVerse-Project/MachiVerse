@@ -25,9 +25,10 @@ public sealed record Qa04TerrainCanonicalContentDependencyV1(
 /// This is a subdependency contract beneath the single Terrain CanonicalMaterial blocker in
 /// Qa04ReferenceWorldDependencyContractV1. It intentionally does not add seven world blockers or
 /// replace the compatibility failure code qa04.material.terrain-brick-authority-undefined.
-/// Existing SBO-SDF shape, descriptor identity/count, D0 spacing, migration, Snapshot, and recovery
-/// contracts are treated as fixed. Only missing benchmark content-generation/closure rules appear
-/// here; no synthetic smoke value is promoted into release material.
+/// Existing SBO-SDF shape, descriptor identity/count, D0 spacing, common initial record revision,
+/// migration, Snapshot, and recovery contracts are treated as fixed. Only missing benchmark
+/// content-generation/closure rules appear here; no synthetic smoke value is promoted into release
+/// material.
 /// </summary>
 public static class Qa04TerrainCanonicalContentDependencyContractV1
 {
@@ -61,9 +62,9 @@ public static class Qa04TerrainCanonicalContentDependencyContractV1
             Qa04TerrainCanonicalContentDependencyKindV1.RootClosure,
             "qa04.terrain.root-topology-connectivity-undefined"),
         Blocker(
-            "terrain.content.initial-revision-lineage",
+            "terrain.content.geometry-revision-lineage",
             Qa04TerrainCanonicalContentDependencyKindV1.Lifecycle,
-            "qa04.terrain.revision-lineage-undefined"),
+            "qa04.terrain.geometry-revision-lineage-undefined"),
     }
     .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
     .ToArray());
@@ -101,6 +102,8 @@ public static class Qa04TerrainCanonicalContentDependencyContractV1
             throw new InvalidDataException("qa04.terrain.canonical-brick-count-drift");
         if (Qa04TerrainBrickDescriptorMaterializerV1.D0SampleSpacingMm != 250)
             throw new InvalidDataException("qa04.terrain.d0-spacing-drift");
+        if (Qa04TerrainBrickDescriptorMaterializerV1.InitialRecordRevision != 1)
+            throw new InvalidDataException("qa04.terrain.initial-record-revision-drift");
         if (Qa04ReferenceLoadV1.RegionalTileRows != 64 ||
             Qa04ReferenceLoadV1.RegionalTileColumns != 64 ||
             Qa04ReferenceLoadV1.RegionalTileCount != 4_096)
