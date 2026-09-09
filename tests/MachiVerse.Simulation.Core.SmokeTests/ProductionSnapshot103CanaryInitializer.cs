@@ -4,5 +4,5 @@ internal static class ProductionSnapshot103CanaryInitializer
 {
     [ModuleInitializer]
     internal static void Initialize()
-        => ProductionSnapshot103CanarySmoke.RunAsync().GetAwaiter().GetResult();
+        => ProductionSnapshot103CanarySmoke.VerifyComposition();
 }
