@@ -7,11 +7,13 @@ namespace MachiVerse.Simulation.Core.Persistence;
 
 /// <summary>
 /// Exact DomainNestedValueWireV1 / DomainNestedListWireV1 implementation for explicitly registered
-/// non-recursive nested schemas. Nested schemas containing another OrderedNestedList or RuleAst
-/// remain fail-closed until their domain owner supplies an explicit recursive codec contract.
+/// nested schemas. Recursive nested fields remain fail-closed unless the bound owner codec explicitly
+/// opts into same-schema self recursion; recursive children can never switch codec/schema implicitly.
 /// </summary>
 public static class DomainNestedSnapshotWireCodecV1
 {
+    private const int MaxSelfRecursiveDepth = 64;
+
     public static byte[] EncodeValue(
         string parentPartitionId,
         string parentFieldName,
@@ -21,6 +23,65 @@ public static class DomainNestedSnapshotWireCodecV1
         ArgumentNullException.ThrowIfNull(value);
         ArgumentNullException.ThrowIfNull(registry);
         var codec = registry.GetForBinding(parentPartitionId, parentFieldName);
+        return EncodeValue(codec, value, registry, 0);
+    }
+
+    public static ICanonicalDomainNestedValueV1 DecodeValue(
+        string parentPartitionId,
+        string parentFieldName,
+        ReadOnlySpan<byte> encoded,
+        DomainNestedSnapshotCodecRegistryV1 registry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        var bound = registry.GetForBinding(parentPartitionId, parentFieldName);
+        return DecodeValue(bound, encoded, registry, 0);
+    }
+
+    public static byte[] EncodeList(
+        string parentPartitionId,
+        string parentFieldName,
+        IReadOnlyList<ICanonicalDomainNestedValueV1> values,
+        DomainNestedSnapshotCodecRegistryV1 registry)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(registry);
+        registry.ValidateOrderedList(parentPartitionId, parentFieldName, values);
+        var codec = registry.GetForBinding(parentPartitionId, parentFieldName);
+        return Proto.Encode(stream =>
+        {
+            foreach (var value in values)
+                Proto.WriteMessage(stream, 1, EncodeValue(codec, value, registry, 0));
+        });
+    }
+
+    public static IReadOnlyList<ICanonicalDomainNestedValueV1> DecodeList(
+        string parentPartitionId,
+        string parentFieldName,
+        ReadOnlySpan<byte> encoded,
+        DomainNestedSnapshotCodecRegistryV1 registry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        var codec = registry.GetForBinding(parentPartitionId, parentFieldName);
+        var reader = new Proto.Reader(encoded);
+        var values = new List<ICanonicalDomainNestedValueV1>();
+        while (!reader.End)
+        {
+            var (field, wire) = reader.ReadTag();
+            if (field != 1) throw Error($"nested-list-unknown-field:{parentPartitionId}:{parentFieldName}");
+            reader.RequireWire(wire, 2);
+            values.Add(DecodeValue(codec, reader.ReadBytes(), registry, 0));
+        }
+        registry.ValidateOrderedList(parentPartitionId, parentFieldName, values);
+        return Array.AsReadOnly(values.ToArray());
+    }
+
+    private static byte[] EncodeValue(
+        IDomainNestedSnapshotCodecV1 codec,
+        ICanonicalDomainNestedValueV1 value,
+        DomainNestedSnapshotCodecRegistryV1 registry,
+        int depth)
+    {
+        RequireDepth(codec, depth);
         if (!codec.CanEncode(value))
             throw Error($"nested-codec-type-mismatch:{codec.ParentPartitionId}:{codec.ParentFieldName}");
         value.ValidateCanonical();
@@ -44,21 +105,20 @@ public static class DomainNestedSnapshotWireCodecV1
                 var entry = Proto.Encode(entryStream =>
                 {
                     Proto.WriteUInt32(entryStream, 1, checked((uint)index + 1u));
-                    Proto.WriteMessage(entryStream, 2, EncodeScalarValue(codec, rule, fieldValue));
+                    Proto.WriteMessage(entryStream, 2, EncodeScalarValue(codec, rule, fieldValue, registry, depth));
                 });
                 Proto.WriteMessage(stream, 3, entry);
             }
         });
     }
 
-    public static ICanonicalDomainNestedValueV1 DecodeValue(
-        string parentPartitionId,
-        string parentFieldName,
+    private static ICanonicalDomainNestedValueV1 DecodeValue(
+        IDomainNestedSnapshotCodecV1 bound,
         ReadOnlySpan<byte> encoded,
-        DomainNestedSnapshotCodecRegistryV1 registry)
+        DomainNestedSnapshotCodecRegistryV1 registry,
+        int depth)
     {
-        ArgumentNullException.ThrowIfNull(registry);
-        var bound = registry.GetForBinding(parentPartitionId, parentFieldName);
+        RequireDepth(bound, depth);
         var reader = new Proto.Reader(encoded);
         string? schemaId = null;
         SchemaVersionV1? schemaVersion = null;
@@ -109,7 +169,7 @@ public static class DomainNestedSnapshotWireCodecV1
             if (entry.Number == 0 || entry.Number > bound.Descriptor.Fields.Count)
                 throw Error($"nested-field-number:{schemaId}:{entry.Number}");
             var rule = bound.Descriptor.Fields[checked((int)entry.Number - 1)];
-            values.Add(rule.Name, DecodeScalarValue(bound, rule, entry.Value));
+            values.Add(rule.Name, DecodeScalarValue(bound, rule, entry.Value, registry, depth));
         }
         foreach (var rule in bound.Descriptor.Fields)
         {
@@ -123,42 +183,6 @@ public static class DomainNestedSnapshotWireCodecV1
             throw Error($"nested-codec-type-mismatch:{bound.ParentPartitionId}:{bound.ParentFieldName}");
         result.ValidateCanonical();
         return result;
-    }
-
-    public static byte[] EncodeList(
-        string parentPartitionId,
-        string parentFieldName,
-        IReadOnlyList<ICanonicalDomainNestedValueV1> values,
-        DomainNestedSnapshotCodecRegistryV1 registry)
-    {
-        ArgumentNullException.ThrowIfNull(values);
-        ArgumentNullException.ThrowIfNull(registry);
-        registry.ValidateOrderedList(parentPartitionId, parentFieldName, values);
-        return Proto.Encode(stream =>
-        {
-            foreach (var value in values)
-                Proto.WriteMessage(stream, 1, EncodeValue(parentPartitionId, parentFieldName, value, registry));
-        });
-    }
-
-    public static IReadOnlyList<ICanonicalDomainNestedValueV1> DecodeList(
-        string parentPartitionId,
-        string parentFieldName,
-        ReadOnlySpan<byte> encoded,
-        DomainNestedSnapshotCodecRegistryV1 registry)
-    {
-        ArgumentNullException.ThrowIfNull(registry);
-        var reader = new Proto.Reader(encoded);
-        var values = new List<ICanonicalDomainNestedValueV1>();
-        while (!reader.End)
-        {
-            var (field, wire) = reader.ReadTag();
-            if (field != 1) throw Error($"nested-list-unknown-field:{parentPartitionId}:{parentFieldName}");
-            reader.RequireWire(wire, 2);
-            values.Add(DecodeValue(parentPartitionId, parentFieldName, reader.ReadBytes(), registry));
-        }
-        registry.ValidateOrderedList(parentPartitionId, parentFieldName, values);
-        return Array.AsReadOnly(values.ToArray());
     }
 
     private static void ValidateFieldSet(
@@ -177,7 +201,9 @@ public static class DomainNestedSnapshotWireCodecV1
     private static byte[] EncodeScalarValue(
         IDomainNestedSnapshotCodecV1 codec,
         DomainPayloadFieldRuleV1 rule,
-        object value)
+        object value,
+        DomainNestedSnapshotCodecRegistryV1 registry,
+        int depth)
     {
         var schema = codec.Descriptor.Schema.SchemaId.Value;
         return Proto.Encode(stream =>
@@ -240,8 +266,32 @@ public static class DomainNestedSnapshotWireCodecV1
                     Proto.WriteBytes(stream, 11, digest);
                     break;
                 case DomainPayloadFieldKindV1.OrderedNestedList:
+                {
+                    if (!codec.AllowsSelfRecursion)
+                        throw Error($"nested-recursive-codec-unavailable:{schema}:{rule.Name}");
+                    if (value is not IReadOnlyList<ICanonicalDomainNestedValueV1> nestedValues)
+                        throw TypeOrRange(schema, rule);
+                    var listWire = Proto.Encode(listStream =>
+                    {
+                        foreach (var nested in nestedValues)
+                        {
+                            if (nested is null || !codec.CanEncode(nested))
+                                throw Error($"nested-self-recursive-type-mismatch:{schema}:{rule.Name}");
+                            Proto.WriteMessage(listStream, 1, EncodeValue(codec, nested, registry, checked(depth + 1)));
+                        }
+                    });
+                    Proto.WriteMessage(stream, 12, listWire);
+                    break;
+                }
                 case DomainPayloadFieldKindV1.RuleAst:
-                    throw Error($"nested-recursive-codec-unavailable:{schema}:{rule.Name}");
+                {
+                    if (!codec.AllowsSelfRecursion)
+                        throw Error($"nested-recursive-codec-unavailable:{schema}:{rule.Name}");
+                    if (value is not ICanonicalDomainNestedValueV1 nested || !codec.CanEncode(nested))
+                        throw TypeOrRange(schema, rule);
+                    Proto.WriteMessage(stream, 13, EncodeValue(codec, nested, registry, checked(depth + 1)));
+                    break;
+                }
                 default:
                     throw Error($"nested-field-kind-unsupported:{schema}:{rule.Name}:{rule.Kind}");
             }
@@ -251,7 +301,9 @@ public static class DomainNestedSnapshotWireCodecV1
     private static object DecodeScalarValue(
         IDomainNestedSnapshotCodecV1 codec,
         DomainPayloadFieldRuleV1 rule,
-        ReadOnlySpan<byte> encoded)
+        ReadOnlySpan<byte> encoded,
+        DomainNestedSnapshotCodecRegistryV1 registry,
+        int depth)
     {
         var schema = codec.Descriptor.Schema.SchemaId.Value;
         var reader = new Proto.Reader(encoded);
@@ -306,12 +358,46 @@ public static class DomainNestedSnapshotWireCodecV1
                     value = digest;
                     break;
                 }
+                case 12:
+                {
+                    reader.RequireWire(wire, 2);
+                    if (!codec.AllowsSelfRecursion)
+                        throw Error($"nested-recursive-codec-unavailable:{schema}:{rule.Name}");
+                    value = DecodeSelfRecursiveList(codec, reader.ReadBytes(), registry, checked(depth + 1));
+                    break;
+                }
+                case 13:
+                    reader.RequireWire(wire, 2);
+                    if (!codec.AllowsSelfRecursion)
+                        throw Error($"nested-recursive-codec-unavailable:{schema}:{rule.Name}");
+                    value = DecodeValue(codec, reader.ReadBytes(), registry, checked(depth + 1));
+                    break;
                 default:
                     throw Error($"nested-field-value-arm-unsupported:{schema}:{rule.Name}:{field}");
             }
         }
         if (value is null) throw Error($"nested-field-value-missing:{schema}:{rule.Name}");
         return NormalizeScalar(schema, rule, arm, value);
+    }
+
+    private static IReadOnlyList<ICanonicalDomainNestedValueV1> DecodeSelfRecursiveList(
+        IDomainNestedSnapshotCodecV1 codec,
+        ReadOnlySpan<byte> encoded,
+        DomainNestedSnapshotCodecRegistryV1 registry,
+        int depth)
+    {
+        RequireDepth(codec, depth);
+        var reader = new Proto.Reader(encoded);
+        var values = new List<ICanonicalDomainNestedValueV1>();
+        while (!reader.End)
+        {
+            var (field, wire) = reader.ReadTag();
+            if (field != 1)
+                throw Error($"nested-self-recursive-list-unknown-field:{codec.Descriptor.Schema.SchemaId.Value}");
+            reader.RequireWire(wire, 2);
+            values.Add(DecodeValue(codec, reader.ReadBytes(), registry, depth));
+        }
+        return Array.AsReadOnly(values.ToArray());
     }
 
     private static object NormalizeScalar(string schema, DomainPayloadFieldRuleV1 rule, int arm, object value)
@@ -329,6 +415,8 @@ public static class DomainNestedSnapshotWireCodecV1
             DomainPayloadFieldKindV1.Int64 or DomainPayloadFieldKindV1.Length or DomainPayloadFieldKindV1.Mass or DomainPayloadFieldKindV1.Volume or DomainPayloadFieldKindV1.Power or DomainPayloadFieldKindV1.Energy or DomainPayloadFieldKindV1.Money when arm == 9 && value is long => value,
             DomainPayloadFieldKindV1.Bool when arm == 10 && value is bool => value,
             DomainPayloadFieldKindV1.Digest when arm == 11 && value is byte[] digest && digest.Length == 32 => digest,
+            DomainPayloadFieldKindV1.OrderedNestedList when arm == 12 && value is IReadOnlyList<ICanonicalDomainNestedValueV1> => value,
+            DomainPayloadFieldKindV1.RuleAst when arm == 13 && value is ICanonicalDomainNestedValueV1 => value,
             _ => throw Error($"nested-field-kind-mismatch:{schema}:{rule.Name}"),
         };
     }
@@ -379,6 +467,12 @@ public static class DomainNestedSnapshotWireCodecV1
         if (major == 0 || major > ushort.MaxValue || minor > ushort.MaxValue)
             throw Error("nested-schema-version-range");
         return new SchemaVersionV1((ushort)major, (ushort)minor);
+    }
+
+    private static void RequireDepth(IDomainNestedSnapshotCodecV1 codec, int depth)
+    {
+        if (depth > MaxSelfRecursiveDepth)
+            throw Error($"nested-self-recursive-depth:{codec.Descriptor.Schema.SchemaId.Value}");
     }
 
     private static InvalidDataException TypeOrRange(string schema, DomainPayloadFieldRuleV1 rule)
