@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Participation;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -18,10 +19,18 @@ public sealed class ParticipationDomainRuntimeV1 : DeterministicDomainRuntimeV1
 {
     public ParticipationDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
-        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null,
+        ParticipationDomainSnapshotMaterialV1? snapshotMaterial = null)
         : base("participation", intentEvaluator, partitionCandidateEvaluator)
     {
+        SnapshotMaterial = snapshotMaterial;
     }
+
+    public ParticipationDomainSnapshotMaterialV1? SnapshotMaterial { get; }
+
+    public ParticipationDomainSnapshotMaterialV1 RequireSnapshotMaterial()
+        => SnapshotMaterial
+            ?? throw new InvalidDataException("participation.snapshot-material.runtime-unavailable");
 }
 
 public static class ResidentParticipationPartitionCandidateFactoryV1
