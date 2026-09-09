@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.WorldState;
 using ZstdSharp;
@@ -34,9 +35,9 @@ public sealed class ZstdSnapshotChunkCompressionCodecV1 : ISnapshotChunkCompress
             throw new InvalidDataException("persistence.snapshot.uncompressed-length-over-hard-max");
         try
         {
+            var decoded = GC.AllocateUninitializedArray<byte>(checked((int)expectedUncompressedLength));
             using var decompressor = new Decompressor();
-            var decoded = decompressor.Unwrap(storedPayload.Span).ToArray();
-            if ((ulong)decoded.Length != expectedUncompressedLength)
+            if (!decompressor.TryUnwrap(storedPayload.Span, decoded, out var written) || written != decoded.Length)
                 throw new InvalidDataException("persistence.snapshot.uncompressed-length-mismatch");
             return decoded;
         }
@@ -158,6 +159,31 @@ public static class CanonicalSnapshotProductionPhysicalDrainV1
                 relative));
         }
         return Array.AsReadOnly(descriptors.ToArray());
+    }
+
+    public static Task<IReadOnlyList<PhysicalSnapshotChunkDescriptor>> StageRunningCutAsync(
+        RunningSnapshotCutV1 cut,
+        SnapshotPhysicalPaths physical,
+        IEnumerable<CanonicalSnapshotSectionMaterialV1> sections,
+        EffectiveCoreConfig frozenConfig,
+        ISnapshotChunkCompressionCodecV1? zstdCodec = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(cut);
+        ArgumentNullException.ThrowIfNull(physical);
+        ArgumentNullException.ThrowIfNull(frozenConfig);
+        if (physical.SnapshotId != cut.SnapshotId)
+            throw new InvalidDataException("snapshot-running.physical-id-mismatch");
+        if (frozenConfig.Generation != cut.FrozenState.Header.ConfigGeneration ||
+            !CryptographicOperations.FixedTimeEquals(frozenConfig.Digest, cut.FrozenState.Diagnostic.ConfigDigest))
+            throw new InvalidDataException("snapshot-running.compression-config-authority-mismatch");
+        return StageAsync(
+            physical,
+            sections,
+            frozenConfig,
+            cut.FrozenState,
+            zstdCodec,
+            cancellationToken);
     }
 
     public static IReadOnlyList<ISnapshotChunkCompressionDecoderV1> ProductionDecoders(
