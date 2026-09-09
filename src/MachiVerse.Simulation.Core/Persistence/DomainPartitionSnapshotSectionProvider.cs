@@ -76,7 +76,13 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
         return new SnapshotSectionSemanticVerifierV1(
             SectionId,
             SectionSchema,
-            fragments => VerifyRecoveredFragments(frozen, fragments, references));
+            fragments => VerifyRecoveredFragments(frozen, fragments, references))
+        {
+            VerifyWithContext = (fragments, context) => VerifyRecoveredFragments(
+                frozen,
+                fragments,
+                context.DomainReferences ?? references),
+        };
     }
 
     private IReadOnlyList<SnapshotSectionFragmentMaterialV1> BuildFragments(
