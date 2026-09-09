@@ -25,6 +25,8 @@ internal static class ReleaseEvidenceRunnerVerification
         if (boundary > limit || regression <= limit)
             throw new InvalidDataException("worker16 median-p95 acceptance boundary self-test failed.");
 
+        Qa04DeterminismEvidenceVerifier.VerifyContract();
+
         var soak = root.GetProperty("soakProfile");
         if (soak.GetProperty("durationHours").GetInt32() != 24)
             throw new InvalidDataException("QA-04 soak duration must remain 24 hours.");
