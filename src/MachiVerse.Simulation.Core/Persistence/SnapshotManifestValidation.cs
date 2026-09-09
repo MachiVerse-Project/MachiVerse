@@ -118,7 +118,10 @@ public static class SnapshotManifestValidation
             throw new InvalidDataException("persistence.snapshot.no-physical-chunks");
 
         var sectionIds = logical.Sections.Select(static section => section.SectionId).ToArray();
-        var nextSectionIndex = 0;
+        var sectionIndex = sectionIds
+            .Select(static (id, index) => (Id: id, Index: index))
+            .ToDictionary(static value => value.Id, static value => value.Index, StringComparer.Ordinal);
+        var coveredLastIndex = -1;
 
         for (var i = 0; i < chunks.Count; i++)
         {
@@ -139,26 +142,31 @@ public static class SnapshotManifestValidation
             RequireHash(chunk.StoredPayloadDigest, "chunk-stored-payload-digest");
             SnapshotChunkFile.ValidateRelativePath(chunk.RelativePath, chunk.ChunkIndex);
 
-            if (nextSectionIndex >= sectionIds.Length || !string.Equals(sectionIds[nextSectionIndex], first, StringComparison.Ordinal))
-                throw new InvalidDataException("persistence.snapshot.chunk-section-coverage-gap");
-
-            var foundLast = false;
-            while (nextSectionIndex < sectionIds.Length)
-            {
-                var current = sectionIds[nextSectionIndex++];
-                if (string.Equals(current, last, StringComparison.Ordinal))
-                {
-                    foundLast = true;
-                    break;
-                }
-                if (string.CompareOrdinal(current, last) > 0)
-                    break;
-            }
-            if (!foundLast)
+            if (!sectionIndex.TryGetValue(first, out var firstIndex) ||
+                !sectionIndex.TryGetValue(last, out var lastIndex) ||
+                firstIndex > lastIndex)
                 throw new InvalidDataException("persistence.snapshot.chunk-section-range-mismatch");
+
+            if (i == 0)
+            {
+                if (firstIndex != 0)
+                    throw new InvalidDataException("persistence.snapshot.chunk-section-coverage-gap");
+            }
+            else
+            {
+                // A logical section may be fragmented across adjacent physical chunks. In that
+                // case the next chunk legitimately begins with the same section id as the previous
+                // chunk ended with. Otherwise it must begin at the immediately following section.
+                if (firstIndex < coveredLastIndex || firstIndex > checked(coveredLastIndex + 1))
+                    throw new InvalidDataException("persistence.snapshot.chunk-section-coverage-gap");
+            }
+
+            if (lastIndex < coveredLastIndex)
+                throw new InvalidDataException("persistence.snapshot.chunk-section-range-mismatch");
+            coveredLastIndex = lastIndex;
         }
 
-        if (nextSectionIndex != sectionIds.Length)
+        if (coveredLastIndex != sectionIds.Length - 1)
             throw new InvalidDataException("persistence.snapshot.chunk-section-coverage-incomplete");
     }
 
