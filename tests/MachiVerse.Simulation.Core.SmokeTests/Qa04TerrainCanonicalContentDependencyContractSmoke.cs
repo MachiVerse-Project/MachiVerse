@@ -12,13 +12,15 @@ internal static class Qa04TerrainCanonicalContentDependencyContractSmoke
             "QA-04 Terrain canonical content dependency count drifted.");
         Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 9,
             "Terrain subdependencies must not change the reference-world blocker count.");
+        Require(Qa04TerrainBrickDescriptorMaterializerV1.InitialRecordRevision == 1,
+            "Common Domain initial revision must already be fixed before Terrain content binding.");
 
         var expected = new[]
         {
             ("terrain.content.cell-origin-mapping", Qa04TerrainCanonicalContentDependencyKindV1.SpatialMapping,
                 "qa04.terrain.cell-origin-mapping-undefined"),
-            ("terrain.content.initial-revision-lineage", Qa04TerrainCanonicalContentDependencyKindV1.Lifecycle,
-                "qa04.terrain.revision-lineage-undefined"),
+            ("terrain.content.geometry-revision-lineage", Qa04TerrainCanonicalContentDependencyKindV1.Lifecycle,
+                "qa04.terrain.geometry-revision-lineage-undefined"),
             ("terrain.content.root-scope-identity", Qa04TerrainCanonicalContentDependencyKindV1.RootClosure,
                 "qa04.terrain.root-scope-identity-undefined"),
             ("terrain.content.root-topology-connectivity", Qa04TerrainCanonicalContentDependencyKindV1.RootClosure,
