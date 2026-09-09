@@ -20,17 +20,37 @@ public sealed class ParticipationDomainRuntimeV1 : DeterministicDomainRuntimeV1
     public ParticipationDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
         DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null,
-        ParticipationDomainSnapshotMaterialV1? snapshotMaterial = null)
+        ParticipationDomainSnapshotMaterialV1? snapshotMaterial = null,
+        ParticipationDomainStateV1? state = null)
         : base("participation", intentEvaluator, partitionCandidateEvaluator)
     {
+        if (snapshotMaterial is not null && state is not null)
+            throw new InvalidDataException("participation.snapshot-material.runtime-authority-ambiguous");
         SnapshotMaterial = snapshotMaterial;
+        State = state;
     }
 
+    /// <summary>
+    /// Legacy/pre-bound frozen material seam. New production runtime ownership should prefer State
+    /// and derive Snapshot material against the exact frozen WorldState via BindSnapshotMaterial.
+    /// </summary>
     public ParticipationDomainSnapshotMaterialV1? SnapshotMaterial { get; }
+
+    public ParticipationDomainStateV1? State { get; }
 
     public ParticipationDomainSnapshotMaterialV1 RequireSnapshotMaterial()
         => SnapshotMaterial
             ?? throw new InvalidDataException("participation.snapshot-material.runtime-unavailable");
+
+    public ParticipationDomainStateV1 RequireState()
+        => State
+            ?? throw new InvalidDataException("participation.runtime-state.unavailable");
+
+    public ParticipationDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        return RequireState().BindSnapshotMaterial(frozenState);
+    }
 }
 
 public static class ResidentParticipationPartitionCandidateFactoryV1
