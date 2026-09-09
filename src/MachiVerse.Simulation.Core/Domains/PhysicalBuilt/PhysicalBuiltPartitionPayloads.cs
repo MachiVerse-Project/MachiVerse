@@ -395,20 +395,23 @@ public sealed record PhysicalLineagePayloadV1(
 public static class PhysicalBuiltDomainSnapshotProviderV1
 {
     public static IReadOnlyList<IDomainPartitionSnapshotSectionProviderV1> CreateAll()
-        => Array.AsReadOnly<IDomainPartitionSnapshotSectionProviderV1>(
-        [
-            Provider(PhysicalPresencePayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalPresencePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(PhysicalOccupancyPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalOccupancyPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(BuiltStructurePayloadV1.PartitionId, static value => value.ToStandardPayload(), BuiltStructurePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(BuiltSpacePayloadV1.PartitionId, static value => value.ToStandardPayload(), BuiltSpacePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(BuiltOpeningPayloadV1.PartitionId, static value => value.ToStandardPayload(), BuiltOpeningPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(PhysicalContainerLocationPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalContainerLocationPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(BuiltWorksitePayloadV1.PartitionId, static value => value.ToStandardPayload(), BuiltWorksitePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(PhysicalConditionPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalConditionPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(PhysicalCombustionPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalCombustionPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(PhysicalMaterialHandoffPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalMaterialHandoffPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-            Provider(PhysicalLineagePayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalLineagePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
-        ].OrderBy(static provider => provider.SectionId, StringComparer.Ordinal).ToArray());
+    {
+        IDomainPartitionSnapshotSectionProviderV1[] providers =
+        {
+            Provider<PhysicalPresencePayloadV1>(PhysicalPresencePayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalPresencePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<PhysicalOccupancyPayloadV1>(PhysicalOccupancyPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalOccupancyPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<BuiltStructurePayloadV1>(BuiltStructurePayloadV1.PartitionId, static value => value.ToStandardPayload(), BuiltStructurePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<BuiltSpacePayloadV1>(BuiltSpacePayloadV1.PartitionId, static value => value.ToStandardPayload(), BuiltSpacePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<BuiltOpeningPayloadV1>(BuiltOpeningPayloadV1.PartitionId, static value => value.ToStandardPayload(), BuiltOpeningPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<PhysicalContainerLocationPayloadV1>(PhysicalContainerLocationPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalContainerLocationPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<BuiltWorksitePayloadV1>(BuiltWorksitePayloadV1.PartitionId, static value => value.ToStandardPayload(), BuiltWorksitePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<PhysicalConditionPayloadV1>(PhysicalConditionPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalConditionPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<PhysicalCombustionPayloadV1>(PhysicalCombustionPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalCombustionPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<PhysicalMaterialHandoffPayloadV1>(PhysicalMaterialHandoffPayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalMaterialHandoffPayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+            Provider<PhysicalLineagePayloadV1>(PhysicalLineagePayloadV1.PartitionId, static value => value.ToStandardPayload(), PhysicalLineagePayloadV1.FromStandardPayload, static value => value.CanonicalDigest()),
+        };
+        return Array.AsReadOnly(providers.OrderBy(static provider => provider.SectionId, StringComparer.Ordinal).ToArray());
+    }
 
     public static IDomainPartitionSnapshotSectionProviderV1 CreatePresence()
         => CreateAll().Single(static provider => provider.SectionId == PhysicalPresencePayloadV1.PartitionId);
