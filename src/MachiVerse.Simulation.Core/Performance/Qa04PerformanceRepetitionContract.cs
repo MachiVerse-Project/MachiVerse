@@ -88,15 +88,15 @@ public static class Qa04PerformanceRepetitionContractV1
             var baseline = determinismRuns[0].Determinism;
             foreach (var run in determinismRuns.Skip(1))
             {
-                if (!baseline.FinalStateDigest.AsSpan().SequenceEqual(run.Determinism.FinalStateDigest))
+                if (!DigestEqual(baseline.FinalStateDigest, run.Determinism.FinalStateDigest))
                     failures.Add("qa04.determinism.final-state-digest");
-                if (!baseline.TransitionCommittedDigest.AsSpan().SequenceEqual(run.Determinism.TransitionCommittedDigest))
+                if (!DigestEqual(baseline.TransitionCommittedDigest, run.Determinism.TransitionCommittedDigest))
                     failures.Add("qa04.determinism.transition-committed-digest");
-                if (!baseline.OperationTerminalSemanticDigest.AsSpan().SequenceEqual(run.Determinism.OperationTerminalSemanticDigest))
+                if (!DigestEqual(baseline.OperationTerminalSemanticDigest, run.Determinism.OperationTerminalSemanticDigest))
                     failures.Add("qa04.determinism.operation-terminal-semantic-digest");
-                if (!baseline.ConfigHistoryDigest.AsSpan().SequenceEqual(run.Determinism.ConfigHistoryDigest))
+                if (!DigestEqual(baseline.ConfigHistoryDigest, run.Determinism.ConfigHistoryDigest))
                     failures.Add("qa04.determinism.config-history-digest");
-                if (!baseline.PromotionDeferralOrderDigest.AsSpan().SequenceEqual(run.Determinism.PromotionDeferralOrderDigest))
+                if (!DigestEqual(baseline.PromotionDeferralOrderDigest, run.Determinism.PromotionDeferralOrderDigest))
                     failures.Add("qa04.determinism.promotion-deferral-order-digest");
             }
         }
@@ -142,4 +142,7 @@ public static class Qa04PerformanceRepetitionContractV1
         if (evidence.PromotionDeferralOrderDigest is not { Length: 32 })
             failures.Add("qa04.determinism.promotion-deferral-order-digest-size");
     }
+
+    private static bool DigestEqual(byte[]? left, byte[]? right)
+        => left is { Length: 32 } && right is { Length: 32 } && left.AsSpan().SequenceEqual(right);
 }
