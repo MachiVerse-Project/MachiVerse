@@ -23,8 +23,8 @@ public sealed record DomainPartitionSnapshotFragmentDecodedV1(
 /// Exact P4-04/INT-03 protobuf wire codec for standard Domain partition fragments.
 /// Top-level payload field numbers are the 1-based P4-05 descriptor ordinal.
 /// Unknown fields, duplicate singular fields, type substitutions, and non-canonical
-/// top-level payload field order fail closed. Nested values remain unavailable until
-/// their explicit owner codec is registered.
+/// top-level payload field order fail closed. Nested values are accepted only through
+/// an explicit DomainNestedSnapshotCodecRegistryV1 binding.
 /// </summary>
 public static class DomainPartitionSnapshotWireCodecV1
 {
@@ -104,7 +104,10 @@ public static class DomainPartitionSnapshotWireCodecV1
             digest);
     }
 
-    public static byte[] EncodePayload(string partitionId, IReadOnlyDictionary<string, object?> payload)
+    public static byte[] EncodePayload(
+        string partitionId,
+        IReadOnlyDictionary<string, object?> payload,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
         var descriptor = StandardDomainPayloadSchemaRegistry.Get(partitionId);
@@ -125,14 +128,17 @@ public static class DomainPartitionSnapshotWireCodecV1
                 var entry = Proto.Encode(entryStream =>
                 {
                     Proto.WriteUInt32(entryStream, 1, fieldNumber);
-                    Proto.WriteMessage(entryStream, 2, EncodeValue(partitionId, rule, value));
+                    Proto.WriteMessage(entryStream, 2, EncodeValue(partitionId, rule, value, nestedCodecs));
                 });
                 Proto.WriteMessage(stream, 1, entry);
             }
         });
     }
 
-    public static IReadOnlyDictionary<string, object?> DecodePayload(string partitionId, ReadOnlySpan<byte> encoded)
+    public static IReadOnlyDictionary<string, object?> DecodePayload(
+        string partitionId,
+        ReadOnlySpan<byte> encoded,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
     {
         var descriptor = StandardDomainPayloadSchemaRegistry.Get(partitionId);
         var reader = new Proto.Reader(encoded);
@@ -168,7 +174,7 @@ public static class DomainPartitionSnapshotWireCodecV1
             previousField = fieldNumber;
 
             var rule = descriptor.Fields[checked((int)fieldNumber - 1)];
-            values.Add(rule.Name, DecodeValue(partitionId, rule, valueBytes));
+            values.Add(rule.Name, DecodeValue(partitionId, rule, valueBytes, nestedCodecs));
         }
 
         foreach (var rule in descriptor.Fields)
@@ -185,7 +191,8 @@ public static class DomainPartitionSnapshotWireCodecV1
     public static byte[] EncodeRecord<TPayload>(
         string partitionId,
         DomainRecordEnvelopeV1<TPayload> record,
-        Func<TPayload, IReadOnlyDictionary<string, object?>> toStandardPayload)
+        Func<TPayload, IReadOnlyDictionary<string, object?>> toStandardPayload,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
     {
         ArgumentNullException.ThrowIfNull(record);
         ArgumentNullException.ThrowIfNull(toStandardPayload);
@@ -193,7 +200,7 @@ public static class DomainPartitionSnapshotWireCodecV1
         if (record.RecordSchema != identity.RecordSchema)
             throw WireError($"record-schema-mismatch:{partitionId}");
 
-        var payload = EncodePayload(partitionId, toStandardPayload(record.Payload));
+        var payload = EncodePayload(partitionId, toStandardPayload(record.Payload), nestedCodecs);
         return Proto.Encode(stream =>
         {
             Proto.WriteBytes(stream, 1, record.RecordId.ToBytes());
@@ -211,7 +218,8 @@ public static class DomainPartitionSnapshotWireCodecV1
     public static DomainRecordSnapshotMaterialV1 DecodeRecord(
         string partitionId,
         ReadOnlySpan<byte> encoded,
-        ulong partitionBasisStep)
+        ulong partitionBasisStep,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
     {
         var identity = StandardDomainPartitionRegistry.Get(partitionId);
         var reader = new Proto.Reader(encoded);
@@ -276,13 +284,14 @@ public static class DomainPartitionSnapshotWireCodecV1
             retiredStep,
             (DetailLevelV1)detail,
             lineage,
-            DecodePayload(partitionId, payloadBytes));
+            DecodePayload(partitionId, payloadBytes, nestedCodecs));
     }
 
     public static byte[] EncodeFragment<TPayload>(
         DomainPartitionSnapshotAuthorityV1<TPayload> authority,
         IReadOnlyList<DomainRecordEnvelopeV1<TPayload>> records,
-        Func<TPayload, IReadOnlyDictionary<string, object?>> toStandardPayload)
+        Func<TPayload, IReadOnlyDictionary<string, object?>> toStandardPayload,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(records);
@@ -298,14 +307,15 @@ public static class DomainPartitionSnapshotWireCodecV1
                 if (previous is { } prior && prior.CompareTo(record.RecordId) >= 0)
                     throw WireError($"fragment-record-order:{authority.PartitionId.Value}");
                 previous = record.RecordId;
-                Proto.WriteMessage(stream, 2, EncodeRecord(authority.PartitionId.Value, record, toStandardPayload));
+                Proto.WriteMessage(stream, 2, EncodeRecord(authority.PartitionId.Value, record, toStandardPayload, nestedCodecs));
             }
         });
     }
 
     public static DomainPartitionSnapshotFragmentDecodedV1 DecodeFragment(
         string partitionId,
-        ReadOnlySpan<byte> encoded)
+        ReadOnlySpan<byte> encoded,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
     {
         var reader = new Proto.Reader(encoded);
         PartitionStateHeaderV1? header = null;
@@ -339,7 +349,7 @@ public static class DomainPartitionSnapshotWireCodecV1
         OpaqueId128? previous = null;
         foreach (var bytes in recordBytes)
         {
-            var record = DecodeRecord(partitionId, bytes, header.BasisStep);
+            var record = DecodeRecord(partitionId, bytes, header.BasisStep, nestedCodecs);
             if (previous is { } prior && prior.CompareTo(record.RecordId) >= 0)
                 throw WireError($"fragment-record-order:{partitionId}");
             previous = record.RecordId;
@@ -349,7 +359,11 @@ public static class DomainPartitionSnapshotWireCodecV1
         return new DomainPartitionSnapshotFragmentDecodedV1(header, Array.AsReadOnly(records.ToArray()));
     }
 
-    private static byte[] EncodeValue(string partitionId, DomainPayloadFieldRuleV1 rule, object value)
+    private static byte[] EncodeValue(
+        string partitionId,
+        DomainPayloadFieldRuleV1 rule,
+        object value,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs)
     {
         return Proto.Encode(stream =>
         {
@@ -429,15 +443,40 @@ public static class DomainPartitionSnapshotWireCodecV1
                     Proto.WriteMessage(stream, 16, EncodeMap((IReadOnlyList<KeyValuePair<string, int>>)value, static (s, v) => Proto.WriteSInt32(s, 2, v)));
                     break;
                 case DomainPayloadFieldKindV1.OrderedNestedList:
+                {
+                    if (nestedCodecs is null)
+                        throw WireError($"nested-codec-unavailable:{partitionId}:{rule.Name}");
+                    if (value is not IReadOnlyList<ICanonicalDomainNestedValueV1> nestedValues)
+                        throw WireError($"payload-value-kind-mismatch:{partitionId}:{rule.Name}");
+                    Proto.WriteMessage(
+                        stream,
+                        17,
+                        DomainNestedSnapshotWireCodecV1.EncodeList(partitionId, rule.Name, nestedValues, nestedCodecs));
+                    break;
+                }
                 case DomainPayloadFieldKindV1.RuleAst:
-                    throw WireError($"nested-codec-unavailable:{partitionId}:{rule.Name}");
+                {
+                    if (nestedCodecs is null)
+                        throw WireError($"nested-codec-unavailable:{partitionId}:{rule.Name}");
+                    if (value is not ICanonicalDomainNestedValueV1 nestedValue)
+                        throw WireError($"payload-value-kind-mismatch:{partitionId}:{rule.Name}");
+                    Proto.WriteMessage(
+                        stream,
+                        18,
+                        DomainNestedSnapshotWireCodecV1.EncodeValue(partitionId, rule.Name, nestedValue, nestedCodecs));
+                    break;
+                }
                 default:
                     throw new InvalidOperationException($"Unhandled payload kind: {rule.Kind}");
             }
         });
     }
 
-    private static object DecodeValue(string partitionId, DomainPayloadFieldRuleV1 rule, ReadOnlySpan<byte> encoded)
+    private static object DecodeValue(
+        string partitionId,
+        DomainPayloadFieldRuleV1 rule,
+        ReadOnlySpan<byte> encoded,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs)
     {
         var reader = new Proto.Reader(encoded);
         object? result = null;
@@ -525,8 +564,25 @@ public static class DomainPartitionSnapshotWireCodecV1
                     result = DecodeIntMap(reader.ReadBytes());
                     break;
                 case 17:
+                    reader.RequireWire(wire, 2);
+                    if (nestedCodecs is null)
+                        throw WireError($"nested-codec-unavailable:{partitionId}:{rule.Name}");
+                    result = DomainNestedSnapshotWireCodecV1.DecodeList(
+                        partitionId,
+                        rule.Name,
+                        reader.ReadBytes(),
+                        nestedCodecs);
+                    break;
                 case 18:
-                    throw WireError($"nested-codec-unavailable:{partitionId}:{rule.Name}");
+                    reader.RequireWire(wire, 2);
+                    if (nestedCodecs is null)
+                        throw WireError($"nested-codec-unavailable:{partitionId}:{rule.Name}");
+                    result = DomainNestedSnapshotWireCodecV1.DecodeValue(
+                        partitionId,
+                        rule.Name,
+                        reader.ReadBytes(),
+                        nestedCodecs);
+                    break;
                 default:
                     throw WireError($"payload-value-unknown-arm:{partitionId}:{rule.Name}");
             }
