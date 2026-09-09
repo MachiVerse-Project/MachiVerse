@@ -74,6 +74,7 @@ public static class Qa04ProcessTargetV1
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
         Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         return new Qa04ProcessInspectionV1
         {
             SchemaVersion = "1.0",
@@ -94,11 +95,9 @@ public static class Qa04ProcessTargetV1
             ReferenceWorldMaterialized = false,
             AuthoritativeStepLoopAvailable = false,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes =
-            [
+            BlockingFailureCodes = CurrentBlockingFailureCodes(
                 "qa04.target.reference-world-not-materialized",
-                "qa04.target.authoritative-step-loop-not-assembled",
-            ],
+                "qa04.target.authoritative-step-loop-not-assembled"),
         };
     }
 
@@ -126,11 +125,9 @@ public static class Qa04ProcessTargetV1
             CanonicalResidentPopulationComplete = result.CanonicalResidentPopulationComplete,
             ReferenceWorldMaterialized = false,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes =
-            [
+            BlockingFailureCodes = CurrentBlockingFailureCodes(
                 "qa04.target.reference-world-other-partitions-not-materialized",
-                "qa04.target.authoritative-step-loop-not-assembled",
-            ],
+                "qa04.target.authoritative-step-loop-not-assembled"),
         };
     }
 
@@ -173,8 +170,20 @@ public static class Qa04ProcessTargetV1
             WorkerCountAppliedToDomainExecutor = receipt.WorkerCount == workerCount && probe.MaxConcurrency == expectedConcurrency,
             ReferenceWorldMaterialized = false,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes = ["qa04.target.reference-world-not-materialized"],
+            BlockingFailureCodes = CurrentBlockingFailureCodes("qa04.target.reference-world-not-materialized"),
         };
+    }
+
+    private static string[] CurrentBlockingFailureCodes(params string[] additional)
+    {
+        Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
+        return Qa04ReferenceWorldDependencyContractV1.FailureCodes
+            .Select(static code => code.Value)
+            .Concat(additional)
+            .Where(static code => !string.IsNullOrWhiteSpace(code))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static code => code, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static WorldStateV1 CreateProbeWorldState()
