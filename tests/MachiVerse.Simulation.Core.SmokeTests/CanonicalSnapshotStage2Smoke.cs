@@ -136,9 +136,11 @@ internal static class CanonicalSnapshotStage2Smoke
 
     private static void VerifyNestedWireRegistryRoundTrip()
     {
+        const string partitionId = "participation.absence_policy";
+        const string fieldName = "priority_rules";
         var codec = new DomainNestedSnapshotCodecV1<ParticipationPolicyRuleProbe>(
-            "participation.absence_policy",
-            "priority_rules",
+            partitionId,
+            fieldName,
             StandardDomainNestedSnapshotSchemaV1.ParticipationPolicyRule,
             static value => new Dictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -160,13 +162,13 @@ internal static class CanonicalSnapshotStage2Smoke
             new ParticipationPolicyRuleProbe(20, "routine"),
         ];
         var encoded = DomainNestedSnapshotWireCodecV1.EncodeList(
-            "participation.absence_policy",
-            "priority_rules",
+            partitionId,
+            fieldName,
             source,
             registry);
         var decoded = DomainNestedSnapshotWireCodecV1.DecodeList(
-            "participation.absence_policy",
-            "priority_rules",
+            partitionId,
+            fieldName,
             encoded,
             registry);
 
@@ -175,18 +177,39 @@ internal static class CanonicalSnapshotStage2Smoke
                 decoded[1] is ParticipationPolicyRuleProbe second && second.Priority == 20 && second.RuleId == "routine",
             "Explicit nested Snapshot codec must preserve registered participation policy rule fields.");
 
+        var topLevel = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["diver_ref"] = OpaqueId128.Parse("0000000000000000000000000001a001"),
+            ["policy_generation"] = 1u,
+            [fieldName] = source,
+            ["effective_from"] = 10UL,
+        };
+        var payloadWire = DomainPartitionSnapshotWireCodecV1.EncodePayload(partitionId, topLevel, registry);
+        var restoredPayload = DomainPartitionSnapshotWireCodecV1.DecodePayload(partitionId, payloadWire, registry);
+        Require(restoredPayload[fieldName] is IReadOnlyList<ICanonicalDomainNestedValueV1> restoredRules &&
+                restoredRules.Count == 2 &&
+                restoredRules[0] is ParticipationPolicyRuleProbe restoredFirst && restoredFirst.RuleId == "safety" &&
+                restoredRules[1] is ParticipationPolicyRuleProbe restoredSecond && restoredSecond.RuleId == "routine",
+            "Top-level Domain payload wire must route OrderedNestedList through the registered nested codec.");
+
+        ExpectInvalid(
+            "top-level nested payload without codec registry",
+            () => _ = DomainPartitionSnapshotWireCodecV1.EncodePayload(partitionId, topLevel));
+        ExpectInvalid(
+            "top-level nested recovery without codec registry",
+            () => _ = DomainPartitionSnapshotWireCodecV1.DecodePayload(partitionId, payloadWire));
         ExpectInvalid(
             "nested ordered list semantic order",
             () => _ = DomainNestedSnapshotWireCodecV1.EncodeList(
-                "participation.absence_policy",
-                "priority_rules",
+                partitionId,
+                fieldName,
                 source.Reverse().ToArray(),
                 registry));
         ExpectInvalid(
             "nested codec unavailable",
             () => _ = DomainNestedSnapshotWireCodecV1.EncodeList(
-                "participation.absence_policy",
-                "priority_rules",
+                partitionId,
+                fieldName,
                 source,
                 new DomainNestedSnapshotCodecRegistryV1(Array.Empty<IDomainNestedSnapshotCodecV1>())));
     }
