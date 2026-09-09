@@ -21,21 +21,48 @@ internal static class DomainRegistryAuthoritySmoke
             "DomainRegistry must own exactly 97 authoritative partitions.");
         Require(registry.Domains.SelectMany(static domain => domain.OwnedPartitions).Distinct().Count() == 97,
             "Every authoritative partition must have exactly one owner.");
-        Require(registry.Domains.All(static domain => domain.StateReadDependencies.Count == 7),
-            "Generation 1 runtime exposes the full immutable WorldState, so each domain has seven foreign state-read dependencies.");
         Require(registry.Domains.All(static domain => domain.SameStepDependencies.Count == 0),
-            "Generation 1 standard runtime has no production same-Step dependency edges.");
+            "Generation 1 standard runtime must not claim an unimplemented same-Step dependency edge.");
         Require(registry.Domains.All(static domain => domain.EmittedEventKinds.Count == 0),
-            "Generation 1 must not invent domain event producers.");
+            "Generation 1 must not invent a DomainEvent output capability that the runtime does not expose.");
         Require(registry.Domains.All(static domain => domain.InvariantIds.Count == 0),
-            "Generation 1 must not invent domain invariant producers.");
+            "Generation 1 must not reclassify Core transaction invariants as domain-emitted invariants.");
+
+        var expectedReads = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["environment"] = ["governance_security", "infrastructure_information", "physical_built", "resident", "society_economy", "spatial"],
+            ["governance_security"] = ["society_economy"],
+            ["infrastructure_information"] = ["environment", "governance_security", "physical_built"],
+            ["participation"] = ["resident"],
+            ["physical_built"] = ["environment", "spatial"],
+            ["resident"] = ["environment", "physical_built"],
+            ["society_economy"] = ["governance_security"],
+            ["spatial"] = [],
+        };
+        foreach (var domain in registry.Domains)
+        {
+            Require(expectedReads.TryGetValue(domain.DomainToken.Value, out var expected),
+                $"Unexpected standard domain: {domain.DomainToken.Value}.");
+            Require(domain.StateReadDependencies.Select(static value => value.Value).SequenceEqual(expected!),
+                $"Generation 1 state-read capability mismatch: {domain.DomainToken.Value}.");
+            Require(domain.DomainSchema == new SchemaRefV1($"domain.{domain.DomainToken.Value}.runtime"),
+                $"Generation 1 domain schema mismatch: {domain.DomainToken.Value}.");
+        }
 
         var capabilities = StandardDomainRuntimeCapabilityRegistryV1.Generation1IntentCapabilities;
-        Require(capabilities.Count == 4, "Generation 1 must contain only the four actual Intent producer capabilities.");
+        Require(capabilities.Count == 5, "Generation 1 must contain exactly the five implemented Intent producer tuples.");
+        Require(capabilities.Count(static value => value.SourceDomain.Value == "environment") == 1,
+            "Environment must expose exactly the implemented Spatial geometry-deform Intent tuple.");
         Require(capabilities.Count(static value => value.SourceDomain.Value == "physical_built") == 3,
-            "Physical/Built must expose exactly the three implemented spatial geometry Intent kinds.");
+            "Physical/Built must expose exactly the three implemented Spatial geometry Intent tuples.");
         Require(capabilities.Count(static value => value.SourceDomain.Value == "resident") == 1,
-            "Resident must expose exactly the implemented physical move Intent kind.");
+            "Resident must expose exactly the implemented physical move Intent tuple.");
+        Require(capabilities.All(static value => value.IntentKind.Value is
+            "physical.intent.move" or
+            "spatial.intent.geometry-carve" or
+            "spatial.intent.geometry-deform" or
+            "spatial.intent.geometry-fill"),
+            "Generation 1 must not contain an unimplemented future Intent kind.");
 
         ExpectInvalid("duplicate domain", () =>
         {
@@ -82,6 +109,8 @@ internal static class DomainRegistryAuthoritySmoke
             domainSchema: new SchemaRefV1("domain.environment.runtime.stale"));
         var staleRegistry = new DomainRegistryStateV1(1, staleDomains);
         ExpectInvalid("stale registry material", staleRegistry.RequireExactStandardGeneration1);
+        ExpectInvalid("stale registry state ref", () => StandardDomainRegistryAuthorityV1.RequireGeneration1StateRef(
+            new WorldSubstateRefV1(DomainRegistryStateV1.StateSchema, staleRegistry.CanonicalDigest)));
 
         var worldId = OpaqueId128.Parse("000000000000000000000000000000a1");
         var config = new CoreConfigCoordinator().LoadStartup(
@@ -92,6 +121,7 @@ internal static class DomainRegistryAuthoritySmoke
             component = "simulation-core"
             """);
         var state = BuildState(worldId, step, config, registry);
+        StandardDomainRegistryAuthorityV1.RequireGeneration1StateRef(state.DomainRegistryState);
         var frozenInput = new FrozenStepInputV1(worldId, step, config.Generation, config.Digest, Array.Empty<ScheduledOperationRefV1>());
 
         var unauthorized = CreateUnauthorizedIntent(step);
@@ -123,14 +153,24 @@ internal static class DomainRegistryAuthoritySmoke
                 FrozenDomainRegistrySnapshotOwnerV1.Freeze(step, registry),
                 FrozenCoreConfigSnapshotOwnerV1.Freeze(step, config),
             });
+
+        var laterState = BuildState(worldId, step + 1, config, registry);
+        Require(laterState.Header.Step == 31, "Historical six-Core smoke must advance live authority to State(31) before drain.");
+
         var sections = CoreSnapshotProductionSectionProviderV1.CreateAllSix(cut);
         Require(sections.Count == 6, "Core snapshot must materialize all six production Core sections.");
         CoreSnapshotProductionSectionProviderV1.VerifyAllSix(sections, step, config.Generation);
+        var headerSection = sections.Single(static section => section.SectionId == CoreSnapshotOwnerSectionRegistryV1.WorldStateHeader);
+        var restoredHeader = CoreWorldStateHeaderSnapshotWireCodecV1.Decode(headerSection.Fragments.Single().FragmentPayload);
+        Require(restoredHeader.Step == 30 && laterState.Header.Step == 31,
+            "State(30) frozen six-Core owner cut must remain Snapshot(30) after live authority reaches State(31).");
 
         var registrySection = sections.Single(static section => section.SectionId == CoreSnapshotOwnerSectionRegistryV1.DomainRegistry);
         var restored = CoreSnapshotDomainRegistrySemanticVerifierV1.Restore(registrySection.Fragments, step);
         Require(restored.CanonicalDigest.SequenceEqual(registry.CanonicalDigest),
             "DomainRegistry snapshot recovery must recompute the same authority digest.");
+        Require(restored.ToWorldSubstateRef().CanonicalDigest.SequenceEqual(state.DomainRegistryState.CanonicalDigest),
+            "Recovered DomainRegistry authority must reconstruct the frozen WorldState substate authority.");
 
         ExpectInvalid("snapshot payload tamper", () =>
         {
