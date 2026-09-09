@@ -98,6 +98,8 @@ public sealed class DomainPartitionSnapshotAuthorityV1<TPayload> : IDomainPartit
 /// <summary>
 /// Exact frozen 97-partition material set. Construction fails unless every standard partition has
 /// exactly one actual material owner and every owner is bound to the frozen WorldState header.
+/// A record-schema migration is accepted only when it is explicitly registered; all other identity
+/// fields remain byte-for-byte equivalent to the standard partition identity.
 /// </summary>
 public sealed class DomainPartitionSnapshotAuthoritySetV1
 {
@@ -119,6 +121,8 @@ public sealed class DomainPartitionSnapshotAuthoritySetV1
         {
             ArgumentNullException.ThrowIfNull(authority);
             authority.VerifyBoundAuthority();
+            if (!StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedPartitionIdentity(authority.Identity))
+                throw new InvalidDataException($"persistence.snapshot.partition-authority-identity-mismatch:{authority.PartitionId.Value}");
             if (!map.TryAdd(authority.PartitionId.Value, authority))
                 throw new InvalidDataException($"persistence.snapshot.partition-authority-duplicate:{authority.PartitionId.Value}");
         }
@@ -127,7 +131,8 @@ public sealed class DomainPartitionSnapshotAuthoritySetV1
         {
             if (!map.TryGetValue(identity.PartitionId.Value, out var authority))
                 throw new InvalidDataException($"persistence.snapshot.partition-authority-missing:{identity.PartitionId.Value}");
-            if (authority.Identity != identity)
+            if (!StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedPartitionIdentity(authority.Identity) ||
+                authority.Identity.PartitionId != identity.PartitionId)
                 throw new InvalidDataException($"persistence.snapshot.partition-authority-identity-mismatch:{identity.PartitionId.Value}");
 
             var frozenHeader = FrozenState.Partitions.Get(identity.PartitionId.Value).Header;
