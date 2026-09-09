@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Participation;
+using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -10,6 +11,79 @@ internal static class ParticipationSnapshotMaterialSmoke
     internal static void Initialize() => Run();
 
     internal static void Run()
+    {
+        VerifyTypedEmptyMaterial();
+        VerifyAbsencePolicyActualMaterial();
+    }
+
+    private static void VerifyTypedEmptyMaterial()
+    {
+        var frozen = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(1).WorldState;
+        var binding = Empty<ParticipationBindingPayloadV1>(ParticipationBindingPayloadV1.PartitionId);
+        var absencePolicy = Empty<ParticipationAbsencePolicyPayloadV1>(ParticipationAbsencePolicyPayloadV1.PartitionId);
+        var controlMode = Empty<ParticipationControlModePayloadV1>(ParticipationControlModePayloadV1.PartitionId);
+        var history = Empty<ParticipationHistoryPayloadV1>(ParticipationHistoryPayloadV1.PartitionId);
+        var detailRequirement = Empty<ParticipationDetailRequirementPayloadV1>(ParticipationDetailRequirementPayloadV1.PartitionId);
+
+        var material = ParticipationDomainSnapshotMaterialV1.BindTypedEmpty(
+            frozen,
+            binding,
+            absencePolicy,
+            controlMode,
+            history,
+            detailRequirement);
+        Require(material.Authorities.Count == 5 && material.Authorities.All(static authority => authority.ActualItemCount == 0),
+            "Participation typed empty material must bind all five actual partition roots.");
+
+        var providers = ParticipationDomainSnapshotProviderV1.CreateAll()
+            .ToDictionary(static provider => provider.SectionId, StringComparer.Ordinal);
+        foreach (var authority in material.Authorities)
+        {
+            var provider = providers[authority.PartitionId.Value];
+            var section = provider.Create(authority);
+            Require(section.LogicalItemCount == 0 &&
+                    section.LogicalContentDigest.SequenceEqual(authority.Header.CanonicalDigest) &&
+                    section.Fragments.Count == 1,
+                $"Actual empty Participation partition must emit exactly one canonical fragment: {authority.PartitionId.Value}.");
+            var fragment = section.Fragments[0];
+            Require(fragment.ItemCount == 0 && fragment.FirstRecordId is null && fragment.LastRecordId is null,
+                $"Actual empty Participation fragment must not fabricate record ranges: {authority.PartitionId.Value}.");
+
+            var semantic = provider.CreateSemanticVerifier(authority.Header).Verify(section.Fragments);
+            Require(semantic.LogicalItemCount == 0 &&
+                    semantic.LogicalContentDigest.SequenceEqual(authority.Header.CanonicalDigest),
+                $"Actual empty Participation recovery must recompute the frozen canonical digest: {authority.PartitionId.Value}.");
+        }
+
+        var identity = StandardDomainPartitionRegistry.Get(ParticipationAbsencePolicyPayloadV1.PartitionId);
+        var payload = new ParticipationAbsencePolicyPayloadV1(
+            OpaqueId128.Parse("0000000000000000000000000001e001"),
+            PolicyGeneration: 1,
+            PriorityRules: Array.AsReadOnly(new[] { new ParticipationPolicyRuleV1(0, new StableToken("default")) }),
+            EffectiveFrom: 0,
+            EffectiveUntil: null);
+        var record = new DomainRecordEnvelopeV1<ParticipationAbsencePolicyPayloadV1>(
+            OpaqueId128.Parse("0000000000000000000000000001e002"),
+            identity.RecordSchema,
+            revision: 1,
+            createdStep: 0,
+            retiredStep: null,
+            detailLevel: DetailLevelV1.D0Entity,
+            lineageRef: null,
+            payload);
+        var nonempty = new DomainPartitionStateV1<ParticipationAbsencePolicyPayloadV1>(identity, new[] { record });
+        ExpectInvalid(
+            "nonempty partition cannot be bound as typed empty material",
+            () => _ = ParticipationDomainSnapshotMaterialV1.BindTypedEmpty(
+                frozen,
+                binding,
+                nonempty,
+                controlMode,
+                history,
+                detailRequirement));
+    }
+
+    private static void VerifyAbsencePolicyActualMaterial()
     {
         var identity = StandardDomainPartitionRegistry.Get(ParticipationAbsencePolicyPayloadV1.PartitionId);
         var payload = new ParticipationAbsencePolicyPayloadV1(
@@ -48,23 +122,44 @@ internal static class ParticipationSnapshotMaterialSmoke
         var section = provider.Create(authority);
         var restored = provider.CreateSemanticVerifier(header).Verify(section.Fragments);
 
-        if (section.LogicalItemCount != 1 || restored.LogicalItemCount != 1)
-            throw new InvalidOperationException("Participation Snapshot provider must preserve actual item count.");
-        if (!section.LogicalContentDigest.SequenceEqual(header.CanonicalDigest) ||
-            !restored.LogicalContentDigest.SequenceEqual(header.CanonicalDigest))
-            throw new InvalidOperationException("Participation Snapshot recovery must recompute the frozen partition digest.");
+        Require(section.LogicalItemCount == 1 && restored.LogicalItemCount == 1,
+            "Participation Snapshot provider must preserve actual item count.");
+        Require(section.LogicalContentDigest.SequenceEqual(header.CanonicalDigest) &&
+                restored.LogicalContentDigest.SequenceEqual(header.CanonicalDigest),
+            "Participation Snapshot recovery must recompute the frozen partition digest.");
 
         var decoded = DomainPartitionSnapshotWireCodecV1.DecodeFragment(
             ParticipationAbsencePolicyPayloadV1.PartitionId,
             section.Fragments.Single().FragmentPayload,
             StandardDomainNestedSnapshotCodecRegistryV1.Default);
         var restoredPayload = ParticipationAbsencePolicyPayloadV1.FromStandardPayload(decoded.Records.Single().Payload);
-        if (restoredPayload.PriorityRules.Count != 2 ||
-            restoredPayload.PriorityRules[0].RuleId.Value != "safety" ||
-            restoredPayload.PriorityRules[1].RuleId.Value != "routine" ||
-            !restoredPayload.CanonicalDigest().SequenceEqual(payload.CanonicalDigest()))
+        Require(restoredPayload.PriorityRules.Count == 2 &&
+                restoredPayload.PriorityRules[0].RuleId.Value == "safety" &&
+                restoredPayload.PriorityRules[1].RuleId.Value == "routine" &&
+                restoredPayload.CanonicalDigest().SequenceEqual(payload.CanonicalDigest()),
+            "Participation nested payload semantic digest did not round-trip canonically.");
+    }
+
+    private static DomainPartitionStateV1<TPayload> Empty<TPayload>(string partitionId)
+        => new(
+            StandardDomainPartitionRegistry.Get(partitionId),
+            Array.Empty<DomainRecordEnvelopeV1<TPayload>>());
+
+    private static void ExpectInvalid(string name, Action action)
+    {
+        try
         {
-            throw new InvalidOperationException("Participation nested payload semantic digest did not round-trip canonically.");
+            action();
         }
+        catch (InvalidDataException)
+        {
+            return;
+        }
+        throw new InvalidOperationException($"Expected rejection: {name}.");
+    }
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
     }
 }
