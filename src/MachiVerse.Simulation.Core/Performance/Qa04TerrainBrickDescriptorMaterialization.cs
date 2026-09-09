@@ -39,13 +39,15 @@ public sealed class Qa04TerrainBrickDescriptorMaterializationV1
 
 /// <summary>
 /// 既に canonical な QA-04 Terrain descriptor identity を、exact TerrainBrickV1/v2 record material へ結び付ける。
-/// 未定義の Terrain 生成 semantics は補完しない。cell origin、SDF sample、surface material id、revision は
-/// 明示的な content source からのみ受け取る。
+/// 未定義の Terrain 生成 semantics は補完しない。cell origin、SDF sample、surface material id は
+/// 明示的な content source からのみ受け取る。common Domain record contract が固定する genesis revision=1 は
+/// descriptor binding で強制する。
 /// </summary>
 public static class Qa04TerrainBrickDescriptorMaterializerV1
 {
     public const ulong CanonicalTerrainBrickCount = 500_000;
     public const uint D0SampleSpacingMm = 250;
+    public const ulong InitialRecordRevision = 1;
 
     private static readonly StableToken TerrainReferenceClass = new("spatial.hot-terrain-brick");
 
@@ -59,6 +61,8 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
             entry => entry.ClassToken == TerrainReferenceClass);
         if (definition.Count != CanonicalTerrainBrickCount)
             throw new InvalidDataException("qa04.materialization.terrain-count-drift");
+        if (InitialRecordRevision != 1)
+            throw new InvalidDataException("qa04.materialization.terrain-initial-revision-drift");
 
         var first = Qa04ReferenceLoadV1.Record(TerrainReferenceClass, 0);
         var last = Qa04ReferenceLoadV1.Record(TerrainReferenceClass, CanonicalTerrainBrickCount - 1);
@@ -114,6 +118,8 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
             throw new InvalidDataException("qa04.materialization.terrain-brick-id-mismatch");
         if (brick.SampleSpacingMm != D0SampleSpacingMm)
             throw new InvalidDataException("qa04.materialization.terrain-d0-spacing-mismatch");
+        if (brick.Revision != InitialRecordRevision)
+            throw new InvalidDataException("qa04.materialization.terrain-initial-revision-mismatch");
         if (brick.SdfMm.Count != TerrainBrickV1.SdfSampleCount ||
             brick.SurfaceMaterialIds.Count != TerrainBrickV1.SurfaceMaterialCount)
             throw new InvalidDataException("qa04.materialization.terrain-brick-cardinality-mismatch");
