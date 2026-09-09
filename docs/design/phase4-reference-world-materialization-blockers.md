@@ -21,12 +21,12 @@ Those deterministic descriptors are not sufficient by themselves to claim `refer
 | `physical.d0-presence` | 500,000 | candidate `physical.presence` | blocked: `shape_ref` authority/target schema is not defined |
 | `environment.d0-cell-cohort` | 1,000,000 | none | blocked: class-to-P4-05 partition/material split is not defined |
 | `environment.d1-aggregate` | 250,000 | none | blocked: aggregate-to-P4-05 partition/material split is not defined |
-| `society-governance.active-record` | 2,000,000 | none | blocked: allocation across Society/Governance authoritative partitions is not defined |
+| `society-governance.active-record` | 2,000,000 | none | blocked: allocation across Society/Governance authoritative partitions is not defined; P4-06 market load also lacks an authoritative target for `society.market_transaction.market_ref` |
 | `infrastructure.active-record` | 500,000 | none | blocked: QA-04 defines node/edge/request identities, but no authoritative node/edge record partition exists in the 97-partition contract |
 | `spatial.hot-terrain-brick` | 500,000 | candidate `spatial.terrain_geometry` root | blocked: `TerrainBrickV1` exists as SBO-SDF algorithm state, but no standard partition owns a brick record targeted by `root_brick_ref` |
 | `transaction.active-cross-domain` | 10,000 | runtime transaction candidate only | blocked: `CrossDomainTransactionCandidateV1.IsAuthoritative` is explicitly false and no persistent active-transaction authority is defined |
 
-The machine-readable mirror is `Qa04ReferenceWorldMaterialContractV1`.
+The eight-class machine-readable mirror is `Qa04ReferenceWorldMaterialContractV1`. The finer-grained unresolved authority/mapping/nested-schema dependencies are machine-readable in `Qa04ReferenceWorldDependencyContractV1`; this includes the market reference target gap described below.
 
 ## Physical D0 blocker
 
@@ -79,6 +79,14 @@ The 2,000,000 active-record target spans two owners with 33 total partitions. P4
 
 A benchmark implementation must define that decomposition and all required Ref targets before materialization can be considered canonical.
 
+### Market reference authority sub-blocker
+
+Phase 3 defines a distinct conceptual `MarketState` with market identity/scope, tradable class, participant access, demand/supply summary, transaction refs, price state, and activity state. P4-06 then fixes 100 deterministic market scopes and 10,000 active orders per scope.
+
+P4-05, however, exposes `society.market_transaction` with a required `market_ref: Ref` but the 97 standard partitions do not include an authoritative market-state record partition that this reference can target. `society.organization`, `society.contract_claim`, or another convenient record cannot be substituted without changing the domain semantics.
+
+Therefore the one-million-order market load cannot be promoted to canonical reference-world material merely from the existing deterministic market/order IDs. The missing `market_ref` target authority must be specified first. This dependency is fixed in code as `qa04.material.market-ref-authority-undefined`.
+
 ## Infrastructure blocker
 
 P4-06 fixes 20,000 network nodes, 100,000 stable edges, and 250,000 queued service requests. QA-04 already derives stable IDs for all three groups. P4-05 has `infrastructure.network_topology` with `node_refs` and `edge_refs`, and `infrastructure.service_queue` for service requests, but the standard 14 Infrastructure/Information partitions do not define authoritative node/edge payload records that those refs can target.
@@ -110,5 +118,7 @@ P4-05 names these nested values and gives their top-level canonical ordering, wh
 3. close every required `PartitionRecordRefV1` against actual material in the same world;
 4. produce canonical partition/state digests from that material;
 5. participate in the actual 103-section production Snapshot -> staging -> recovery -> semantic rehash proof.
+
+The reduced infrastructure canaries may use genuinely typed empty runtime roots where the actual reduced world is empty, but those empties never count as material for a non-empty `perf.reference.v1` target class.
 
 Until then PR #265 remains Draft and Stage 2 remains open.
