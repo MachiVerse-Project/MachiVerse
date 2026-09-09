@@ -41,8 +41,17 @@ internal static class Qa04GcPauseSamplerInitializer
         phase = 2;
         sampler.SampleCompletedCollections();
         var gap = sampler.Snapshot();
+        var gapMeasurement = collector.Snapshot();
         Require(gap.PauseSampleCount == 2 && gap.UnresolvedStartedGcIndexCount == 1,
             "QA-04 GC sampler must expose an unseen started-GC index instead of hiding telemetry loss.");
+        var gapAcceptance = Qa04PerformanceTelemetryAcceptanceV1.EvaluateCompleteMeasurement(
+            gapMeasurement,
+            acceptedOperationLossCount: 0,
+            hiddenSolverIterationReductionCount: 0,
+            persistenceMetricObserverFailureCount: 0,
+            gap);
+        Require(gapAcceptance.FailureCodes.Contains("qa04.measurement.gc-index-gap", StringComparer.Ordinal),
+            "QA-04 acceptance must fail closed on an unresolved GC index gap.");
 
         phase = 3;
         sampler.SampleCompletedCollections();
@@ -51,9 +60,19 @@ internal static class Qa04GcPauseSamplerInitializer
         Require(recovered.PauseSampleCount == 3 && recovered.TelemetryComplete,
             "QA-04 GC sampler must accept out-of-order background completion after the index gap is observed.");
 
-        var pauses = collector.Snapshot().GcPauseDuration;
+        var finalMeasurement = collector.Snapshot();
+        var pauses = finalMeasurement.GcPauseDuration;
         Require(pauses?.SampleCount == 3 && pauses.P99 == TimeSpan.FromMilliseconds(3),
             "QA-04 GC pause duration series must contain each completed GC exactly once.");
+        var recoveredAcceptance = Qa04PerformanceTelemetryAcceptanceV1.EvaluateCompleteMeasurement(
+            finalMeasurement,
+            acceptedOperationLossCount: 0,
+            hiddenSolverIterationReductionCount: 0,
+            persistenceMetricObserverFailureCount: 0,
+            recovered);
+        Require(!recoveredAcceptance.FailureCodes.Contains("qa04.measurement.gc-index-gap", StringComparer.Ordinal) &&
+                !recoveredAcceptance.FailureCodes.Contains("qa04.measurement.gc-pause-sample-count-mismatch", StringComparer.Ordinal),
+            "QA-04 acceptance must clear GC telemetry-integrity failures after the delayed collection is observed.");
     }
 
     private static Qa04GcMemoryInfoSampleV1 Sample(long index, int pauseMilliseconds = 0)
