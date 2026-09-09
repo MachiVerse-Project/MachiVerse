@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
@@ -14,6 +15,7 @@ internal static class CanonicalSnapshotReassemblySmoke
             var fixture = BuildFixture(OpaqueId128.Parse("00000000000000000000000000000091"));
             var paths = PersistenceLayout.Resolve(root, fixture.State.Header.WorldId, 1);
             PersistenceLayout.EnsureGenerationDirectories(paths);
+            await VerifyProductionManifestDrainAsync(paths, fixture);
             await VerifyCrossChunkReassemblyAsync(paths, fixture);
             VerifyMissingVerifierRejected(fixture);
             await VerifySemanticTamperRejectedAsync(paths, fixture);
@@ -28,6 +30,48 @@ internal static class CanonicalSnapshotReassemblySmoke
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static async Task VerifyProductionManifestDrainAsync(WorldPersistencePaths paths, Fixture fixture)
+    {
+        var physical = SnapshotPhysicalStaging.Prepare(paths, Id(0x9a));
+        var historyDigest = SHA256.HashData("snapshot-production-history"u8);
+        var continuity = SHA256.HashData("snapshot-production-continuity"u8);
+        var cut = new RunningSnapshotCutV1(
+            fixture.State,
+            physical.SnapshotId,
+            new HistoryAnchor(1, historyDigest),
+            continuity,
+            [],
+            []);
+        var zstd = new ZstdSnapshotChunkCompressionCodecV1();
+        var staged = await CanonicalSnapshotProductionManifestDrainV1.StageRunningCutAsync(
+            cut,
+            physical,
+            fixture.Materials,
+            fixture.Config,
+            fixture.WorldSeed,
+            zstdCodec: zstd);
+
+        Require(File.Exists(physical.StagingManifestPath),
+            "Production Snapshot drain must durably write manifest.pb.");
+        Require(staged.SnapshotDigest.Length == 32 && staged.PhysicalManifestDigest.Length == 32,
+            "Production Snapshot drain must return both authoritative manifest digests.");
+        Require(staged.Manifest.Logical.SnapshotId == cut.SnapshotId &&
+                staged.Manifest.Logical.HistoryAnchorSequence == cut.HistoryAnchor.Sequence &&
+                staged.Manifest.Logical.HistoryAnchorDigest.SequenceEqual(cut.HistoryAnchor.Digest) &&
+                staged.Manifest.Logical.StateContinuityToken.SequenceEqual(cut.StateContinuityToken),
+            "Production manifest must bind the exact frozen running cut.");
+
+        await CanonicalSnapshotStagingValidatorV1.ValidateAsync(
+            physical,
+            fixture.Materials,
+            fixture.Verifiers,
+            fixture.State,
+            CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders(zstd),
+            expectedCut: cut,
+            expectedSnapshotDigest: staged.SnapshotDigest,
+            expectedPhysicalManifestDigest: staged.PhysicalManifestDigest);
     }
 
     private static async Task VerifyCrossChunkReassemblyAsync(WorldPersistencePaths paths, Fixture fixture)
@@ -217,7 +261,7 @@ internal static class CanonicalSnapshotReassemblySmoke
             HistoryAnchorSequence: 1,
             HistoryAnchorDigest: SHA256.HashData("snapshot-reassembly-history"u8),
             StateContinuityToken: SHA256.HashData("snapshot-reassembly-continuity"u8),
-            WorldSeed: SHA256.HashData("snapshot-reassembly-world-seed-material"u8),
+            WorldSeed: fixture.WorldSeed.ToBytes(),
             SimulationConfigGeneration: fixture.State.Header.ConfigGeneration,
             SimulationConfigDigest: fixture.State.Diagnostic.ConfigDigest.ToArray(),
             MasterGeneration: fixture.State.Header.MasterGeneration,
@@ -264,7 +308,14 @@ internal static class CanonicalSnapshotReassemblySmoke
             plans.Add(id, new Plan(schema, count, OwnerDigest(fragments), fragments));
         }
 
-        var configDigest = SHA256.HashData("snapshot-reassembly-config"u8);
+        var config = new CoreConfigCoordinator().LoadStartup(
+            """
+            [meta]
+            format = "machiverse-config"
+            schema_version = "1.0"
+            component = "simulation-core"
+            """);
+        var worldSeed = new WorldSeed256(SHA256.HashData("snapshot-reassembly-world-seed-material"u8));
         var partitions = StandardDomainPartitionRegistry.Entries.Select(identity =>
         {
             var plan = plans[identity.PartitionId.Value];
@@ -272,13 +323,19 @@ internal static class CanonicalSnapshotReassemblySmoke
                 identity, 1, 11, DetailLevelV1.D0Entity, plan.Count, plan.Digest));
         });
         var state = new WorldStateV1(
-            new WorldStateHeaderV1(worldId, 11, SHA256.HashData("snapshot-reassembly-seed"u8), 1, 1, 1),
+            new WorldStateHeaderV1(
+                worldId,
+                11,
+                SHA256.HashData(worldSeed.ToBytes()),
+                config.Generation,
+                1,
+                1),
             new OrderedPartitionDirectoryV1(partitions),
             WorldStateV1.EmptySubstate("core.scheduler-state"),
             WorldStateV1.EmptySubstate("core.operation-state"),
             WorldStateV1.EmptySubstate("core.detail-state"),
             WorldStateV1.EmptySubstate("core.domain-registry-state"),
-            configDigest);
+            config.Digest);
         var materials = StandardSnapshotSectionSetV1.SectionIds.Select(id =>
         {
             var plan = plans[id];
@@ -290,7 +347,13 @@ internal static class CanonicalSnapshotReassemblySmoke
             fragments => new SnapshotSectionSemanticVerificationV1(
                 fragments.Aggregate(0UL, static (sum, fragment) => checked(sum + fragment.ItemCount)),
                 OwnerDigest(fragments)))).ToArray();
-        return new Fixture(state, Array.AsReadOnly(materials), Array.AsReadOnly(entries), new CanonicalSnapshotSemanticVerifierRegistryV1(entries));
+        return new Fixture(
+            state,
+            config,
+            worldSeed,
+            Array.AsReadOnly(materials),
+            Array.AsReadOnly(entries),
+            new CanonicalSnapshotSemanticVerifierRegistryV1(entries));
     }
 
     private static byte[] OwnerDigest(IEnumerable<SnapshotSectionFragmentMaterialV1> fragments)
@@ -323,6 +386,8 @@ internal static class CanonicalSnapshotReassemblySmoke
     private sealed record Plan(SchemaRefV1 Schema, ulong Count, byte[] Digest, SnapshotSectionFragmentMaterialV1[] Fragments);
     private sealed record Fixture(
         WorldStateV1 State,
+        EffectiveCoreConfig Config,
+        WorldSeed256 WorldSeed,
         IReadOnlyList<CanonicalSnapshotSectionMaterialV1> Materials,
         IReadOnlyList<SnapshotSectionSemanticVerifierV1> VerifierEntries,
         CanonicalSnapshotSemanticVerifierRegistryV1 Verifiers);
