@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Configuration;
+using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
@@ -8,6 +9,7 @@ internal static class CanonicalSnapshotStage2Smoke
     internal static async Task RunAsync()
     {
         VerifyActualPartitionAuthorityBinding();
+        VerifyDomainWireRoundTrip();
         await VerifyProductionZstdChunkPathAsync();
     }
 
@@ -56,6 +58,69 @@ internal static class CanonicalSnapshotStage2Smoke
             () => _ = new DomainPartitionSnapshotAuthoritySetV1(
                 resident.WorldState,
                 new IDomainPartitionSnapshotAuthorityV1[] { authority }));
+    }
+
+    private static void VerifyDomainWireRoundTrip()
+    {
+        const string partitionId = "resident.identity_lifecycle";
+        var resident = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(1);
+        var authority = new DomainPartitionSnapshotAuthorityV1<Qa04ResidentIdentityLifecyclePayloadV1>(
+            resident.Partition,
+            resident.PartitionHeader,
+            static payload => payload.CanonicalDigest());
+        var records = resident.Partition.RecordsCanonical.ToArray();
+        var encoded = DomainPartitionSnapshotWireCodecV1.EncodeFragment(
+            authority,
+            records,
+            static payload => StandardResidentPayload(payload));
+        var decoded = DomainPartitionSnapshotWireCodecV1.DecodeFragment(partitionId, encoded);
+
+        Require(decoded.Header.PartitionId == resident.PartitionHeader.PartitionId &&
+                decoded.Header.OwnerDomain == resident.PartitionHeader.OwnerDomain &&
+                decoded.Header.Schema == resident.PartitionHeader.Schema &&
+                decoded.Header.Revision == resident.PartitionHeader.Revision &&
+                decoded.Header.BasisStep == resident.PartitionHeader.BasisStep &&
+                decoded.Header.DetailLevel == resident.PartitionHeader.DetailLevel &&
+                decoded.Header.ItemCount == resident.PartitionHeader.ItemCount &&
+                decoded.Header.CanonicalDigest.SequenceEqual(resident.PartitionHeader.CanonicalDigest),
+            "Domain partition header wire round-trip must preserve frozen authority.");
+        Require(decoded.Records.Count == 1 && decoded.Records[0].RecordId == records[0].RecordId,
+            "Domain record wire round-trip must preserve canonical record identity.");
+        Require(decoded.Records[0].Payload["resident_id"] is OpaqueId128 residentId && residentId == records[0].Payload.ResidentId,
+            "Domain payload Id128 field must round-trip through the P4-05 field-number wire.");
+        Require(decoded.Records[0].Payload["lifecycle"] is string lifecycle && lifecycle == records[0].Payload.Lifecycle.Value,
+            "Domain payload Token field must round-trip through the P4-05 field-number wire.");
+        Require(decoded.Records[0].Payload["lineage_generation"] is uint generation && generation == records[0].Payload.LineageGeneration,
+            "Domain payload UInt32 field must preserve its exact scalar family.");
+
+        var badType = new Dictionary<string, object?>(StandardResidentPayload(records[0].Payload), StringComparer.Ordinal)
+        {
+            ["lineage_generation"] = (ulong)records[0].Payload.LineageGeneration,
+        };
+        ExpectInvalid(
+            "P4-05 payload scalar kind substitution",
+            () => _ = DomainPartitionSnapshotWireCodecV1.EncodePayload(partitionId, badType));
+
+        var missingRequired = new Dictionary<string, object?>(StandardResidentPayload(records[0].Payload), StringComparer.Ordinal);
+        missingRequired.Remove("lifecycle");
+        ExpectInvalid(
+            "P4-05 required payload field omission",
+            () => _ = DomainPartitionSnapshotWireCodecV1.EncodePayload(partitionId, missingRequired));
+    }
+
+    private static IReadOnlyDictionary<string, object?> StandardResidentPayload(Qa04ResidentIdentityLifecyclePayloadV1 payload)
+    {
+        var values = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["resident_id"] = payload.ResidentId,
+            ["lifecycle"] = payload.Lifecycle.Value,
+            ["parent_refs"] = payload.ParentRefs,
+            ["lineage_generation"] = payload.LineageGeneration,
+            ["profile_token"] = payload.ProfileToken.Value,
+        };
+        if (payload.BirthStep is { } birthStep) values["birth_step"] = birthStep;
+        if (payload.DeathStep is { } deathStep) values["death_step"] = deathStep;
+        return values;
     }
 
     private static async Task VerifyProductionZstdChunkPathAsync()
