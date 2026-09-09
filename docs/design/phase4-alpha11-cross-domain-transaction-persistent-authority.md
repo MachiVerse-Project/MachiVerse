@@ -128,7 +128,7 @@ qa04.material.cross-domain-transaction-authority-undefined
    - `qa04.cross-domain-transaction.authority-owner-undefined`
 2. `BenchmarkTurnoverBinding`
    - initial 10,000 と 300-Step creation mix に対する completion/retirement/replenishment rule
-   - `qa04.cross-domain-transaction.benchmark-turnover-binding-undefined`
+   - `qa04.transaction.benchmark-turnover-binding-undefined`
 3. `DetailGuardBinding`
    - active transaction -> guarded detail region/domain の付与/解除 authority
    - `qa04.cross-domain-transaction.detail-guard-binding-undefined`
