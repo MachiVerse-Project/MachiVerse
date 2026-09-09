@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
 using MachiVerse.Simulation.Core.Domains.Participation;
+using MachiVerse.Simulation.Core.Domains.Resident;
 using MachiVerse.Simulation.Core.Domains.ResidentParticipation;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -195,6 +196,20 @@ public static class StandardDomainNestedSnapshotSchemaV1
             new DomainPayloadFieldRuleV1("rule_id", DomainPayloadFieldKindV1.Token, Optional: false),
         }));
 
+    public static DomainNestedSnapshotSchemaDescriptorV1 ResidentBodyRegionState { get; } = new(
+        new SchemaRefV1("domain.resident.body-region-state"),
+        Array.AsReadOnly(new[]
+        {
+            new DomainPayloadFieldRuleV1("region_token", DomainPayloadFieldKindV1.Token, Optional: false),
+            new DomainPayloadFieldRuleV1("integrity_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
+            new DomainPayloadFieldRuleV1("function_capacity_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
+            new DomainPayloadFieldRuleV1("pain_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
+            new DomainPayloadFieldRuleV1("injury_load_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
+            new DomainPayloadFieldRuleV1("disease_load_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
+            new DomainPayloadFieldRuleV1("impairment_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
+            new DomainPayloadFieldRuleV1("recovery_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
+        }));
+
     public static DomainNestedSnapshotSchemaDescriptorV1 ResidentPerceivedFact { get; } = new(
         new SchemaRefV1("domain.resident.perceived-fact"),
         Array.AsReadOnly(new[]
@@ -255,6 +270,31 @@ public static class StandardDomainNestedSnapshotCodecRegistryV1
                     var priority = left.Priority.CompareTo(right.Priority);
                     return priority != 0 ? priority : string.CompareOrdinal(left.RuleId.Value, right.RuleId.Value);
                 }),
+            new DomainNestedSnapshotCodecV1<ResidentBodyRegionStateNestedValueV1>(
+                "resident.body_health",
+                "body_region_states",
+                StandardDomainNestedSnapshotSchemaV1.ResidentBodyRegionState,
+                static value => new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["region_token"] = value.RegionToken.Value,
+                    ["integrity_ppm"] = value.IntegrityPpm,
+                    ["function_capacity_ppm"] = value.FunctionCapacityPpm,
+                    ["pain_ppm"] = value.PainPpm,
+                    ["injury_load_ppm"] = value.InjuryLoadPpm,
+                    ["disease_load_ppm"] = value.DiseaseLoadPpm,
+                    ["impairment_ppm"] = value.ImpairmentPpm,
+                    ["recovery_ppm"] = value.RecoveryPpm,
+                },
+                static fields => new ResidentBodyRegionStateNestedValueV1(
+                    new StableToken((string)fields["region_token"]!),
+                    (uint)fields["integrity_ppm"]!,
+                    (uint)fields["function_capacity_ppm"]!,
+                    (uint)fields["pain_ppm"]!,
+                    (uint)fields["injury_load_ppm"]!,
+                    (uint)fields["disease_load_ppm"]!,
+                    (uint)fields["impairment_ppm"]!,
+                    (uint)fields["recovery_ppm"]!),
+                static (left, right) => string.CompareOrdinal(left.RegionToken.Value, right.RegionToken.Value)),
             new DomainNestedSnapshotCodecV1<ResidentPerceivedFactNestedValueV1>(
                 "resident.perception",
                 "perceived_facts",
