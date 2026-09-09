@@ -11,6 +11,8 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
 
         Require(Qa04ReferenceWorldMaterialContractV1.Bindings.Count == 8,
             "QA-04 material contract must cover all eight canonical reference classes.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 9,
+            "QA-04 dependency contract must remain a separate nine-blocker normative gate.");
         Require(!Qa04ReferenceWorldMaterialContractV1.AllProductionMaterializersAvailable,
             "QA-04 reference world must remain fail-closed while material bindings are unresolved.");
 
@@ -20,6 +22,14 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
                 resident.PrimaryPartitionId?.Value == "resident.identity_lifecycle" &&
                 resident.BlockingFailureCode is null,
             "QA-04 Resident production material binding drifted.");
+
+        RequireState("physical.d0-presence", Qa04ReferenceMaterialBindingStateV1.BlockedByRecordSchema);
+        RequireState("environment.d0-cell-cohort", Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping);
+        RequireState("environment.d1-aggregate", Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping);
+        RequireState("society-governance.active-record", Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping);
+        RequireState("infrastructure.active-record", Qa04ReferenceMaterialBindingStateV1.BlockedByRecordSchema);
+        RequireState("spatial.hot-terrain-brick", Qa04ReferenceMaterialBindingStateV1.BlockedByCanonicalMaterial);
+        RequireState("transaction.active-cross-domain", Qa04ReferenceMaterialBindingStateV1.BlockedByPersistentAuthority);
 
         var blocked = Qa04ReferenceWorldMaterialContractV1.Bindings
             .Where(static binding => !binding.ProductionMaterializerAvailable)
@@ -39,10 +49,28 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
             "qa04.material.terrain-brick-authority-undefined",
             "qa04.material.cross-domain-transaction-authority-undefined",
         };
-        Require(Qa04ReferenceWorldMaterialContractV1.BlockingFailureCodes
-                .Select(static code => code.Value)
-                .SequenceEqual(expectedBlockers, StringComparer.Ordinal),
+        var materialBlockerCodes = Qa04ReferenceWorldMaterialContractV1.BlockingFailureCodes
+            .Select(static code => code.Value)
+            .ToArray();
+        Require(materialBlockerCodes.SequenceEqual(expectedBlockers, StringComparer.Ordinal),
             "QA-04 material blocker ordering/content drifted.");
+
+        var dependencyCodes = Qa04ReferenceWorldDependencyContractV1.FailureCodes
+            .Select(static code => code.Value)
+            .ToHashSet(StringComparer.Ordinal);
+        Require(materialBlockerCodes.All(dependencyCodes.Contains),
+            "Every blocked top-level material class must be backed by a dependency-contract failure code.");
+
+        var dependencyOnly = dependencyCodes
+            .Except(materialBlockerCodes, StringComparer.Ordinal)
+            .OrderBy(static code => code, StringComparer.Ordinal)
+            .ToArray();
+        Require(dependencyOnly.SequenceEqual(new[]
+            {
+                "qa04.material.body-region-state-schema-undefined",
+                "qa04.material.market-ref-authority-undefined",
+            }, StringComparer.Ordinal),
+            "QA-04 dependency-only blockers must remain distinct from the eight top-level material classes.");
 
         var rejected = false;
         try
@@ -56,6 +84,13 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
         }
         Require(rejected,
             "QA-04 full materialization guard must fail closed on the first unresolved canonical class.");
+    }
+
+    private static void RequireState(string classToken, Qa04ReferenceMaterialBindingStateV1 expected)
+    {
+        var binding = Qa04ReferenceWorldMaterialContractV1.Get(new StableToken(classToken));
+        Require(!binding.ProductionMaterializerAvailable && binding.State == expected,
+            $"QA-04 material binding state drifted for {classToken}.");
     }
 
     private static void Require(bool condition, string message)
