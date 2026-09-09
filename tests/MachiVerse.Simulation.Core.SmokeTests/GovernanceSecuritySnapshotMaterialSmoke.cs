@@ -15,7 +15,7 @@ internal static class GovernanceSecuritySnapshotMaterialSmoke
     {
         VerifyTypedOwnerRoots();
         VerifyJurisdictionRoundTrip();
-        VerifyRuleAstFailsClosed();
+        VerifyRuleAstRoundTrip();
     }
 
     private static void VerifyTypedOwnerRoots()
@@ -101,11 +101,96 @@ internal static class GovernanceSecuritySnapshotMaterialSmoke
             () => _ = provider.Create(authority, new Resolver([polity])));
     }
 
-    private static void VerifyRuleAstFailsClosed()
+    private static void VerifyRuleAstRoundTrip()
     {
         var jurisdiction = Ref("governance.jurisdiction", "0000000000000000000000000009b001");
-        ICanonicalDomainNestedValueV1 predicate = new ParticipationPolicyRuleV1(10, new StableToken("predicate-probe"));
-        ICanonicalDomainNestedValueV1 effect = new ParticipationPolicyRuleV1(20, new StableToken("effect-probe"));
+        var factEquals = new LawPredicateNodeV1(
+            LawPredicateNodeKindV1.FactEquals,
+            Array.Empty<LawPredicateNodeV1>(),
+            Key: new StableToken("subject.class"),
+            TokenValue: new StableToken("resident"));
+        var timeRange = new LawPredicateNodeV1(
+            LawPredicateNodeKindV1.TimeStepRange,
+            Array.Empty<LawPredicateNodeV1>(),
+            FromStep: 200,
+            UntilStep: 300);
+        var notTimeRange = new LawPredicateNodeV1(
+            LawPredicateNodeKindV1.Not,
+            Array.AsReadOnly(new[] { timeRange }));
+        var predicateRuntime = new LawPredicateNodeV1(
+            LawPredicateNodeKindV1.And,
+            Array.AsReadOnly(new[] { factEquals, notTimeRange }));
+        var effectRuntime = new LawEffectV1(
+            LawEffectKindV1.Permit,
+            new StableToken("law.permit"));
+        var predicate = GovernanceRulePredicateAstNestedValueV1.FromRuntime(predicateRuntime);
+        var effect = GovernanceRuleEffectAstNestedValueV1.FromRuntime(effectRuntime);
+        var registry = StandardDomainNestedSnapshotCodecRegistryV1.Default;
+
+        var predicateCodec = registry.GetForBinding(GovernanceLawRulePayloadV1.PartitionId, "predicate_ast");
+        var effectCodec = registry.GetForBinding(GovernanceLawRulePayloadV1.PartitionId, "effect_ast");
+        Require(predicateCodec.Descriptor.Schema == new SchemaRefV1("domain.governance.rule-predicate-ast") &&
+                predicateCodec.Descriptor.Fields.Count == 8 && predicateCodec.AllowsSelfRecursion,
+            "Governance predicate AST must use the exact registered eight-field self-recursive schema.");
+        Require(effectCodec.Descriptor.Schema == new SchemaRefV1("domain.governance.rule-effect-ast") &&
+                effectCodec.Descriptor.Fields.Count == 2 && !effectCodec.AllowsSelfRecursion,
+            "Governance effect AST must use the exact registered two-field non-recursive schema.");
+
+        var predicateWire = DomainNestedSnapshotWireCodecV1.EncodeValue(
+            GovernanceLawRulePayloadV1.PartitionId,
+            "predicate_ast",
+            predicate,
+            registry);
+        var predicateDecoded = DomainNestedSnapshotWireCodecV1.DecodeValue(
+            GovernanceLawRulePayloadV1.PartitionId,
+            "predicate_ast",
+            predicateWire,
+            registry);
+        Require(predicateDecoded is GovernanceRulePredicateAstNestedValueV1,
+            "Governance predicate AST must decode to the exact registered wrapper.");
+        var predicateRound = (GovernanceRulePredicateAstNestedValueV1)predicateDecoded;
+        var predicateWireRound = DomainNestedSnapshotWireCodecV1.EncodeValue(
+            GovernanceLawRulePayloadV1.PartitionId,
+            "predicate_ast",
+            predicateRound,
+            registry);
+        Require(predicateWireRound.SequenceEqual(predicateWire),
+            "Governance recursive predicate AST decode->encode must be byte-canonical.");
+        Require(predicateRound.Node.Kind == LawPredicateNodeKindV1.And &&
+                predicateRound.Node.Children.Count == 2 &&
+                predicateRound.Node.Children[0].Kind == LawPredicateNodeKindV1.FactEquals &&
+                predicateRound.Node.Children[1].Kind == LawPredicateNodeKindV1.Not &&
+                predicateRound.Node.Children[1].Children.Single().Kind == LawPredicateNodeKindV1.TimeStepRange,
+            "Governance predicate AST runtime structure must reconstruct losslessly.");
+
+        var context = new LawEvaluationContextV1(
+            jurisdiction.RecordId,
+            150,
+            new Dictionary<StableToken, StableToken>
+            {
+                [new StableToken("subject.class")] = new StableToken("resident"),
+            },
+            new Dictionary<StableToken, long>(),
+            new HashSet<StableToken>(),
+            new HashSet<StableToken>(),
+            new HashSet<StableToken>());
+        Require(predicateRuntime.Evaluate(context) && predicateRound.ToRuntime().Evaluate(context),
+            "Governance predicate AST must preserve executable deterministic semantics after snapshot roundtrip.");
+
+        var effectWire = DomainNestedSnapshotWireCodecV1.EncodeValue(
+            GovernanceLawRulePayloadV1.PartitionId,
+            "effect_ast",
+            effect,
+            registry);
+        var effectDecoded = DomainNestedSnapshotWireCodecV1.DecodeValue(
+            GovernanceLawRulePayloadV1.PartitionId,
+            "effect_ast",
+            effectWire,
+            registry);
+        Require(effectDecoded is GovernanceRuleEffectAstNestedValueV1 effectRound &&
+                effectRound.ToRuntime() == effectRuntime,
+            "Governance effect AST must reconstruct the exact runtime effect.");
+
         var law = new GovernanceLawRulePayloadV1(
             jurisdiction,
             Priority: 10,
@@ -115,16 +200,70 @@ internal static class GovernanceSecuritySnapshotMaterialSmoke
             PredicateAst: predicate,
             EffectAst: effect,
             Status: new StableToken("active"));
+        var payloadWire = DomainPartitionSnapshotWireCodecV1.EncodePayload(
+            GovernanceLawRulePayloadV1.PartitionId,
+            law.ToStandardPayload(),
+            registry);
+        var lawRound = GovernanceLawRulePayloadV1.FromStandardPayload(
+            DomainPartitionSnapshotWireCodecV1.DecodePayload(
+                GovernanceLawRulePayloadV1.PartitionId,
+                payloadWire,
+                registry));
+        Require(lawRound.PredicateAst is GovernanceRulePredicateAstNestedValueV1 &&
+                lawRound.EffectAst is GovernanceRuleEffectAstNestedValueV1 &&
+                lawRound.CanonicalDigest().SequenceEqual(law.CanonicalDigest()),
+            "Governance law_rule payload must preserve recursive AST semantic digest through standard wire.");
 
+        var identity = StandardDomainPartitionRegistry.Get(GovernanceLawRulePayloadV1.PartitionId);
+        var record = new DomainRecordEnvelopeV1<GovernanceLawRulePayloadV1>(
+            OpaqueId128.Parse("0000000000000000000000000009b101"),
+            identity.RecordSchema,
+            1,
+            100,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            law);
+        var partition = new DomainPartitionStateV1<GovernanceLawRulePayloadV1>(identity, [record]);
+        var resolver = new Resolver([jurisdiction]);
+        var header = PartitionStateHeaderV1.CreateCanonical(
+            partition,
+            1,
+            100,
+            DetailLevelV1.D0Entity,
+            value => value.CanonicalDigest(resolver));
+        var authority = new DomainPartitionSnapshotAuthorityV1<GovernanceLawRulePayloadV1>(
+            partition,
+            header,
+            value => value.CanonicalDigest(resolver));
+        var provider = GovernanceSecurityDomainSnapshotProviderV1.CreateAll()
+            .Single(x => x.SectionId == GovernanceLawRulePayloadV1.PartitionId);
+        var section = provider.Create(authority, resolver);
+        var verifier = provider.CreateSemanticVerifier(header);
+        var restored = verifier.VerifyWithContext!(
+            section.Fragments,
+            new SnapshotSectionSemanticVerificationContextV1(resolver));
+        Require(restored.LogicalContentDigest.SequenceEqual(header.CanonicalDigest),
+            "Governance law_rule production provider/recovery must rehash recursive AST authority exactly.");
+
+        ICanonicalDomainNestedValueV1 unrelated = new ParticipationPolicyRuleV1(
+            10,
+            new StableToken("predicate-probe"));
+        var invalidLaw = new GovernanceLawRulePayloadV1(
+            jurisdiction,
+            Priority: 10,
+            Specificity: 1,
+            EffectiveFrom: 100,
+            EffectiveUntil: null,
+            PredicateAst: unrelated,
+            EffectAst: effect,
+            Status: new StableToken("active"));
         ExpectInvalid(
-            "governance predicate RuleAst must reject a nested type whose parent-field codec is not normatively registered",
+            "governance predicate AST must reject an unrelated nested type",
             () => _ = DomainPartitionSnapshotWireCodecV1.EncodePayload(
                 GovernanceLawRulePayloadV1.PartitionId,
-                law.ToStandardPayload(),
-                StandardDomainNestedSnapshotCodecRegistryV1.Default));
-        ExpectInvalid(
-            "governance RuleAst semantic digest must not reuse an unrelated nested codec",
-            () => _ = law.CanonicalDigest());
+                invalidLaw.ToStandardPayload(),
+                registry));
     }
 
     private static PartitionRecordRefV1 Ref(string partitionId, string recordId)
