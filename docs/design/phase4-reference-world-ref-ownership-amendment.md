@@ -1,6 +1,6 @@
 # Phase 4 QA-04 reference-world Ref ownership amendment
 
-Status: Decided normative amendment / implementation pending  
+Status: Decided normative amendment / partial implementation  
 Tracking: #240  
 Implementation: Draft PR #265  
 Applies to: `perf.reference.v1`
@@ -9,7 +9,7 @@ Applies to: `perf.reference.v1`
 
 The Stage 2 materialization audit found four cases where P4-05 contains a required `Ref`/`RefList`, while the referenced semantic family already belongs to one of the existing 97 standard partitions but the current v1 record schema has no record arm that can own the target.
 
-This amendment fixes **ownership only**. It does not claim that the v2 record schemas, migrations, codecs, target-kind validation, or canonical benchmark material are implemented. Until those pieces exist, the existing `Qa04ReferenceWorldDependencyContractV1` blockers remain active and `referenceWorldMaterialized` remains false.
+This amendment fixes **ownership** and tracks the record-schema repair needed to make each decided target materially representable. It does not claim that every repaired v2 partition is production-active or that canonical benchmark material is populated. Until production migrations/materializers and the remaining independent dependencies exist, the existing `Qa04ReferenceWorldDependencyContractV1` blockers remain active and `referenceWorldMaterialized` remains false.
 
 ## 2. Invariants
 
@@ -33,7 +33,7 @@ The repair must preserve all of the following:
 | `infrastructure.network_topology.edge_refs` | `infrastructure.network_topology` | `edge` | `edge`, `network`, `node` |
 | `society.market_transaction.market_ref` | `society.market_transaction` | `market_state` | `market_state`, `order_or_offer`, `transaction_or_price_fact` |
 
-The machine-readable mirror is `Qa04ReferenceWorldRefOwnershipContractV1`.
+The machine-readable ownership mirror is `Qa04ReferenceWorldRefOwnershipContractV1`.
 
 ## 4. Why these owners
 
@@ -47,7 +47,15 @@ The exact lossless v2 shape arm still needs to freeze the canonical fields for S
 
 P4-01 assigns natural terrain solid/void geometry authority to `spatial`, and P4-04 already defines `TerrainBrickV1` as SBO-SDF algorithm state. The root record and brick records therefore belong to the same `spatial.terrain_geometry` authority family.
 
-This closes the owner question for `root_brick_ref`, but it does not define the canonical `perf.reference.v1` contents of the 500,000 hot bricks. Benchmark SDF/material sample generation remains a separate unresolved materialization decision.
+The exact v2 record shape is now frozen in `phase4-terrain-geometry-record-v2.md` and implemented by `SpatialTerrainGeometryRecordSchemaV2` plus the standalone fail-closed `SpatialTerrainGeometryRecordWireCodecV2`:
+
+- `terrain_root` is a lossless v1-root arm with explicit `record_kind`;
+- `terrain_brick` maps `TerrainBrickV1.brick_id -> record_id` and `TerrainBrickV1.revision -> record revision`;
+- the brick payload preserves `level`, `SpatialCellKeyV1`, spacing, all 729 SDF samples, and all 512 material ids;
+- valid standalone v2 material is canonical under decode -> encode;
+- the current production standard registry intentionally remains at v1.
+
+This removes the **terrain field-schema ambiguity**, but it does not define the canonical `perf.reference.v1` contents of the 500,000 hot bricks or activate mixed-record v2 in production Snapshot/recovery. Benchmark SDF/material sample generation and production v2 integration therefore remain unresolved materialization work.
 
 ### 4.3 Network node/edge -> `infrastructure.network_topology`
 
@@ -67,16 +75,18 @@ The four affected v1 schemas are not extended by adding optional fields and pret
 
 1. required canonical `record_kind` discrimination;
 2. arm-specific required and forbidden field sets;
-3. exact P4-05 descriptor ordering for every arm;
+3. exact descriptor ordering for every arm;
 4. semantic Ref target-kind validation;
 5. deterministic v1 -> v2 migration only where an exact recipe exists;
 6. recovery rejection of unknown arm/version and preservation of serialized schema identity.
 
-The standard runtime registry remains at v1 until each migration is implemented and validated. This amendment alone must not flip a production partition to v2.
+For `spatial.terrain_geometry`, items 1-3 and the lossless standalone migration/wire basis are now implemented. Item 4 and production partition-wide migration/recovery activation remain pending.
+
+The standard runtime registry remains at v1 until each production migration is implemented and validated. A standalone v2 schema/codec must not silently flip a production partition to v2.
 
 ## 6. Remaining blockers
 
-This decision removes ambiguity about **which existing partition owns each orphan target**, but Stage 2 still cannot materialize those benchmark classes until exact v2 record contracts are implemented.
+This decision removes ambiguity about **which existing partition owns each orphan target**. The Terrain slice additionally removes ambiguity about the exact `terrain_root` / `terrain_brick` v2 field shape. Stage 2 still cannot materialize the affected benchmark classes until the remaining production integrations and canonical contents exist.
 
 Still unresolved independently:
 
@@ -85,6 +95,7 @@ Still unresolved independently:
 - exact nested schemas for `BodyRegionStateV1`, `PerceivedFactV1`, and governance `RuleAst`;
 - active CrossDomainTransaction 10,000 persistent/reconstruction authority;
 - canonical SDF/material content for the 500,000 hot `TerrainBrickV1` records;
-- exact v2 field schemas/migrations for the four repaired partitions above.
+- production mixed-record v2 state/snapshot/recovery + target-kind validation for `spatial.terrain_geometry`;
+- exact v2 field schemas/migrations for `physical.occupancy`, `infrastructure.network_topology`, and `society.market_transaction`.
 
 `Qa04ReferenceWorldDependencyContractV1` remains the release gate until the implementation-specific blockers are actually removed. Reduced typed-empty roots and synthetic Ref targets remain prohibited.
