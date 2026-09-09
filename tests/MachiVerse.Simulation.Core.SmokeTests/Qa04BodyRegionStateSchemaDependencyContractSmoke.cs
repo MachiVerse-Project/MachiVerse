@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using MachiVerse.Simulation.Core.Domains.Resident;
 using MachiVerse.Simulation.Core.Performance;
 
 internal static class Qa04BodyRegionStateSchemaDependencyContractSmoke
@@ -8,49 +9,33 @@ internal static class Qa04BodyRegionStateSchemaDependencyContractSmoke
     {
         Qa04BodyRegionStateSchemaDependencyContractV1.ValidateCanonicalContract();
 
-        Require(Qa04BodyRegionStateSchemaDependencyContractV1.Blockers.Count == 7,
-            "QA-04 BodyRegionState schema dependency count drifted.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 9,
-            "BodyRegionState subdependencies must not change the reference-world blocker count.");
+        Require(Qa04BodyRegionStateSchemaDependencyContractV1.Blockers.Count == 0,
+            "Resolved BodyRegionState schema must have no remaining subdependency blockers.");
+        Require(Qa04BodyRegionStateSchemaDependencyContractV1.FailureCodes.Count == 0,
+            "Resolved BodyRegionState schema must expose no unresolved failure codes.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 8,
+            "Resolved BodyRegionState schema must remove exactly one reference-world blocker.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.All(blocker =>
+                blocker.DependencyId.Value != Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldDependencyId &&
+                blocker.FailureCode.Value != Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldFailureCode),
+            "Resolved BodyRegionState compatibility blocker must be absent from the world contract.");
 
-        var expected = new[]
-        {
-            ("body-region.schema.condition-representation", Qa04BodyRegionStateSchemaDependencyKindV1.ConditionRepresentation,
-                "qa04.body-region.condition-representation-undefined"),
-            ("body-region.schema.field-order", Qa04BodyRegionStateSchemaDependencyKindV1.FieldOrder,
-                "qa04.body-region.field-order-undefined"),
-            ("body-region.schema.field-set", Qa04BodyRegionStateSchemaDependencyKindV1.FieldSet,
-                "qa04.body-region.field-set-undefined"),
-            ("body-region.schema.optionality", Qa04BodyRegionStateSchemaDependencyKindV1.Optionality,
-                "qa04.body-region.optionality-undefined"),
-            ("body-region.schema.reference-closure", Qa04BodyRegionStateSchemaDependencyKindV1.ReferenceClosure,
-                "qa04.body-region.reference-closure-undefined"),
-            ("body-region.schema.region-vocabulary", Qa04BodyRegionStateSchemaDependencyKindV1.RegionVocabulary,
-                "qa04.body-region.region-vocabulary-undefined"),
-            ("body-region.schema.scalar-semantics", Qa04BodyRegionStateSchemaDependencyKindV1.ScalarSemantics,
-                "qa04.body-region.scalar-semantics-undefined"),
-        };
-
-        var actual = Qa04BodyRegionStateSchemaDependencyContractV1.Blockers
-            .Select(static blocker => (blocker.DependencyId.Value, blocker.Kind, blocker.FailureCode.Value))
-            .ToArray();
-        Require(actual.SequenceEqual(expected),
-            "QA-04 BodyRegionState schema dependency identity/kind/failure-code drifted.");
-
-        var parents = Qa04ReferenceWorldDependencyContractV1.Blockers
-            .Where(blocker => blocker.DependencyId.Value == Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldDependencyId)
-            .ToArray();
-        Require(parents.Length == 1 &&
-                parents[0].FailureCode.Value == Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldFailureCode,
-            "QA-04 BodyRegionState must remain represented by exactly one compatibility world blocker.");
-
-        var worldCodes = Qa04ReferenceWorldDependencyContractV1.FailureCodes
-            .Select(static code => code.Value)
-            .ToHashSet(StringComparer.Ordinal);
-        Require(Qa04BodyRegionStateSchemaDependencyContractV1.FailureCodes
-                .Select(static code => code.Value)
-                .All(code => !worldCodes.Contains(code)),
-            "BodyRegionState subdependency diagnostics must remain distinct from reference-world blocker codes.");
+        var genesis = Qa04BodyRegionStateSchemaDependencyContractV1.CreateCanonicalGenesis();
+        Require(genesis.Count == 7 && genesis.All(static value => value is ResidentBodyRegionStateNestedValueV1),
+            "QA-04 BodyRegionState genesis must contain all seven typed canonical region states.");
+        var regions = genesis.Cast<ResidentBodyRegionStateNestedValueV1>().ToArray();
+        Require(regions.Select(static region => region.RegionToken.Value)
+                .SequenceEqual(ResidentBodyRegionStateNestedValueV1.CanonicalRegions.Select(static token => token.Value), StringComparer.Ordinal),
+            "QA-04 BodyRegionState genesis must be in canonical region-token order.");
+        Require(regions.All(static region =>
+                region.IntegrityPpm == 1_000_000 &&
+                region.FunctionCapacityPpm == 1_000_000 &&
+                region.PainPpm == 0 &&
+                region.InjuryLoadPpm == 0 &&
+                region.DiseaseLoadPpm == 0 &&
+                region.ImpairmentPpm == 0 &&
+                region.RecoveryPpm == 1_000_000),
+            "QA-04 BodyRegionState genesis values drifted.");
     }
 
     private static void Require(bool condition, string message)
