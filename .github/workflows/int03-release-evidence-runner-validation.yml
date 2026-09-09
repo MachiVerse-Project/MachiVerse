@@ -75,18 +75,25 @@ jobs:
             echo "Expected untouched template to remain INCOMPLETE; evaluator exit=$evaluate_status" >&2
             exit 1
           fi
-      - name: Prove fixture refuses release execution class
+      - name: Prove runner rejects unready release adapter response
         shell: bash
         run: |
           set -euo pipefail
           adapter="$GITHUB_WORKSPACE/tests/MachiVerse.PerformanceAdapter.ContractFixture/bin/Release/net10.0/MachiVerse.PerformanceAdapter.ContractFixture"
           commit=1111111111111111111111111111111111111111
+          stderr="$RUNNER_TEMP/qa04-unready-release.stderr"
           set +e
           dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- \
-            run release "$commit" "$adapter" "$RUNNER_TEMP/qa04-plan" "$RUNNER_TEMP/qa04-fake-release"
+            run release "$commit" "$adapter" "$RUNNER_TEMP/qa04-plan" "$RUNNER_TEMP/qa04-fake-release" \
+            2>"$stderr"
           status=$?
           set -e
           if [[ "$status" == 0 ]]; then
-            echo "Contract fixture must never synthesize release evidence" >&2
+            echo "Unready adapter response was incorrectly accepted as release evidence" >&2
+            exit 1
+          fi
+          if ! grep -q "qa04.release.reference-world-not-materialized" "$stderr"; then
+            echo "Release run failed for an unexpected reason" >&2
+            cat "$stderr" >&2
             exit 1
           fi
