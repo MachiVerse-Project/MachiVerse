@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Performance;
+using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04AuthoritativeStepLoopInitializer
 {
@@ -12,6 +13,13 @@ internal static class Qa04AuthoritativeStepLoopInitializer
         var root = Path.Combine(Path.GetTempPath(), "machiverse-qa04-step-loop-" + Guid.NewGuid().ToString("N"));
         try
         {
+            var materialized = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(128);
+            var typedAuthorities = Qa04ReducedWorldTypedAuthorityV1.BindAll97(materialized);
+            Require(typedAuthorities.CanonicalAuthorities.Count == StandardDomainPartitionRegistry.StandardPartitionCount,
+                "Reduced authoritative loop must bind all 97 typed Domain roots before execution.");
+            Require(typedAuthorities.CanonicalAuthorities.Sum(static value => checked((long)value.ActualItemCount)) == 128,
+                "Reduced authoritative loop typed authority must contain only the 128 actual Resident records.");
+
             var result = await Qa04AuthoritativeStepLoopBridgeV1.RunReducedAsync(
                 workerCount: 4,
                 residentRecordCount: 128,
