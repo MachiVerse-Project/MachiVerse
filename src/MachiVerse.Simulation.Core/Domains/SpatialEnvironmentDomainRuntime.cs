@@ -72,12 +72,27 @@ public sealed class SpatialDomainRuntimeV1 : DeterministicDomainRuntimeV1
 
 public sealed class EnvironmentDomainRuntimeV1 : DeterministicDomainRuntimeV1
 {
+    private static readonly IReadOnlyList<DomainIntentCapabilityV1> Generation1EmittedCapabilities =
+        Array.AsReadOnly(new[]
+        {
+            new DomainIntentCapabilityV1(
+                new StableToken("environment"),
+                new StableToken("spatial"),
+                new StableToken("spatial.terrain_geometry"),
+                new StableToken("spatial.intent.geometry-deform")),
+        });
+
     public EnvironmentDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
         DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
         : base("environment", intentEvaluator, partitionCandidateEvaluator)
     {
     }
+
+    // This list is intentionally narrower than the Phase 4 future Intent catalog.
+    // It reflects the Environment -> Spatial geometry-deform path exercised by the
+    // current production runtime contract (SIM-07) and enforced by DomainRegistry.
+    public static IReadOnlyList<DomainIntentCapabilityV1> EmittedCapabilities => Generation1EmittedCapabilities;
 }
 
 public static class DomainOwnedPartitionCandidateFactoryV1
