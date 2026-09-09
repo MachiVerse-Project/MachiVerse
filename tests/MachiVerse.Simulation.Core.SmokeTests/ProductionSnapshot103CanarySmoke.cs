@@ -15,6 +15,73 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class ProductionSnapshot103CanarySmoke
 {
+    internal static void VerifyComposition()
+    {
+        var qa = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(1);
+        var config = new CoreConfigCoordinator().LoadStartup(
+            """
+            [meta]
+            format = "machiverse-config"
+            schema_version = "1.0"
+            component = "simulation-core"
+            """);
+        var registry = StandardDomainRegistryAuthorityV1.Generation1;
+        var detail = new DetailDirectoryV1(
+            Array.Empty<DetailRegionStateV1>(),
+            Array.Empty<DetailTransitionCandidateV1>());
+        var frozenState = BuildFrozenState(qa, config, registry, detail);
+
+        var resident = CreateResidentState(qa).BindSnapshotMaterial(frozenState);
+        var participation = ParticipationDomainStateV1.CreateEmpty().BindSnapshotMaterial(frozenState);
+        var physicalBuilt = PhysicalBuiltDomainStateV1.CreateEmpty().BindSnapshotMaterial(frozenState);
+        var spatial = SpatialDomainStateV1.CreateEmpty().BindSnapshotMaterial(frozenState);
+        var environment = EnvironmentDomainStateV1.CreateEmpty().BindSnapshotMaterial(frozenState);
+        var societyEconomy = SocietyEconomyDomainStateV1.CreateEmpty().BindSnapshotMaterial(frozenState);
+        var infrastructureInformation = InfrastructureInformationDomainStateV1.CreateEmpty().BindSnapshotMaterial(frozenState);
+        var governanceSecurity = GovernanceSecurityDomainStateV1.CreateEmpty().BindSnapshotMaterial(frozenState);
+
+        var providers = StandardDomainSnapshotOwnerCompositionV1.CreateAllProviders();
+        var authorities = StandardDomainSnapshotOwnerCompositionV1.CreateAuthoritySet(
+            frozenState,
+            resident,
+            participation,
+            physicalBuilt,
+            spatial,
+            environment,
+            societyEconomy,
+            infrastructureInformation,
+            governanceSecurity);
+        Require(authorities.CanonicalAuthorities.Count == StandardDomainPartitionRegistry.StandardPartitionCount,
+            "103-section composition must bind exactly 97 typed Domain authorities.");
+        Require(authorities.CanonicalAuthorities.Sum(static value => checked((long)value.ActualItemCount)) == 1,
+            "103-section composition must contain exactly one actual Domain record.");
+
+        var coreOwnerCut = CoreSnapshotOwnerMaterialCutV1.Create(
+            frozenState,
+            Array.Empty<DurableOperationStateV1>(),
+            Array.Empty<ScheduledOperationRefV1>(),
+            new IFrozenCoreSnapshotOwnerMaterialV1[]
+            {
+                FrozenDetailDirectorySnapshotOwnerV1.Freeze(frozenState.Header.Step, detail),
+                FrozenDomainRegistrySnapshotOwnerV1.Freeze(frozenState.Header.Step, registry),
+                FrozenCoreConfigSnapshotOwnerV1.Freeze(frozenState.Header.Step, config),
+            });
+        var sections = StandardSnapshotOwnerCompositionV1.CreateAll103(
+            coreOwnerCut,
+            authorities,
+            providers);
+        Require(sections.Count == SnapshotManifestValidation.StandardRequiredSectionCount && sections.Count == 103,
+            "Production composition must assemble exactly 103 canonical sections.");
+        Require(sections.Count(static value => StandardSnapshotSectionSetV1.IsCoreSection(value.SectionId)) == 6,
+            "Production composition must contain exactly six Core sections.");
+        Require(sections.Count(static value => StandardDomainPartitionRegistry.TryGet(value.SectionId, out _)) == 97,
+            "Production composition must contain exactly 97 Domain sections.");
+        var residentSection = sections.Single(static value => value.SectionId == ResidentIdentityLifecyclePayloadV1.PartitionId);
+        Require(residentSection.LogicalItemCount == 1 &&
+                CryptographicOperations.FixedTimeEquals(residentSection.LogicalContentDigest, qa.PartitionHeader.CanonicalDigest),
+            "Production composition must retain the actual Resident authority digest.");
+    }
+
     internal static async Task RunAsync()
     {
         var root = Path.Combine(Path.GetTempPath(), "machiverse-production-103-canary-" + Guid.NewGuid().ToString("N"));
