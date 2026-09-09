@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using MachiVerse.Simulation.Core.Persistence;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Domains.Participation;
 
@@ -59,6 +60,75 @@ public sealed class ParticipationDomainSnapshotMaterialV1
     public DomainPartitionSnapshotAuthorityV1<ParticipationDetailRequirementPayloadV1> DetailRequirement { get; }
     public IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> Authorities { get; }
     public IReadOnlyList<IDomainPartitionSnapshotReferenceSourceV1> ReferenceSources { get; }
+
+    /// <summary>
+    /// Binds five already-existing typed empty Participation partitions to the corresponding frozen
+    /// WorldState headers. This is intentionally not a header-to-material factory: every typed
+    /// DomainPartitionStateV1 root must be supplied by the domain runtime and must actually be empty.
+    /// </summary>
+    public static ParticipationDomainSnapshotMaterialV1 BindTypedEmpty(
+        WorldStateV1 frozenState,
+        DomainPartitionStateV1<ParticipationBindingPayloadV1> binding,
+        DomainPartitionStateV1<ParticipationAbsencePolicyPayloadV1> absencePolicy,
+        DomainPartitionStateV1<ParticipationControlModePayloadV1> controlMode,
+        DomainPartitionStateV1<ParticipationHistoryPayloadV1> history,
+        DomainPartitionStateV1<ParticipationDetailRequirementPayloadV1> detailRequirement)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        return new ParticipationDomainSnapshotMaterialV1(
+        [
+            BindEmpty(
+                frozenState,
+                binding,
+                ParticipationBindingPayloadV1.PartitionId,
+                static payload => payload.CanonicalDigest()),
+            BindEmpty(
+                frozenState,
+                absencePolicy,
+                ParticipationAbsencePolicyPayloadV1.PartitionId,
+                static payload => payload.CanonicalDigest()),
+            BindEmpty(
+                frozenState,
+                controlMode,
+                ParticipationControlModePayloadV1.PartitionId,
+                static payload => payload.CanonicalDigest()),
+            BindEmpty(
+                frozenState,
+                history,
+                ParticipationHistoryPayloadV1.PartitionId,
+                static payload => payload.CanonicalDigest()),
+            BindEmpty(
+                frozenState,
+                detailRequirement,
+                ParticipationDetailRequirementPayloadV1.PartitionId,
+                static payload => payload.CanonicalDigest()),
+        ]);
+    }
+
+    private static DomainPartitionSnapshotAuthorityV1<TPayload> BindEmpty<TPayload>(
+        WorldStateV1 frozenState,
+        DomainPartitionStateV1<TPayload> partition,
+        string expectedPartitionId,
+        Func<TPayload, byte[]> canonicalPayloadDigest)
+    {
+        ArgumentNullException.ThrowIfNull(partition);
+        ArgumentNullException.ThrowIfNull(canonicalPayloadDigest);
+        if (!string.Equals(partition.Identity.PartitionId.Value, expectedPartitionId, StringComparison.Ordinal))
+            throw new InvalidDataException($"participation.snapshot-material.empty-partition-identity:{expectedPartitionId}");
+        if (partition.ItemCount != 0)
+            throw new InvalidDataException($"participation.snapshot-material.empty-partition-nonempty:{expectedPartitionId}");
+
+        var frozenHeader = frozenState.Partitions.Get(expectedPartitionId).Header;
+        if (frozenHeader.ItemCount != 0)
+            throw new InvalidDataException($"participation.snapshot-material.empty-header-nonzero:{expectedPartitionId}");
+
+        // The authority constructor recomputes PartitionStateHeaderV1.CreateCanonical from the
+        // supplied typed partition and rejects any digest/revision/basis/detail mismatch.
+        return new DomainPartitionSnapshotAuthorityV1<TPayload>(
+            partition,
+            frozenHeader,
+            canonicalPayloadDigest);
+    }
 
     private static DomainPartitionSnapshotAuthorityV1<TPayload> Require<TPayload>(
         IReadOnlyDictionary<string, IDomainPartitionSnapshotAuthorityV1> byId,
