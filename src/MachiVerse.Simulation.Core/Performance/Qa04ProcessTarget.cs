@@ -48,6 +48,11 @@ public static class Qa04ProcessTargetV1
                     request.RecordCount,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "authoritative-step-loop-probe" => await Qa04AuthoritativeStepLoopBridgeV1.RunReducedAsync(
+                    request.WorkerCount,
+                    request.RecordCount,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 "running-snapshot-probe" => await Qa04RunningSnapshotBridgeV1.RunReducedAsync(
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
@@ -84,6 +89,7 @@ public static class Qa04ProcessTargetV1
             AuthoritativeStepStructuralBridgeAvailable = true,
             CoreSubstateTwoStepBridgeAvailable = true,
             DetailSubstateTwoStepBridgeAvailable = true,
+            ReducedAuthoritativeStepLoopAvailable = true,
             RunningSnapshotBridgeAvailable = true,
             ReferenceWorldMaterialized = false,
             AuthoritativeStepLoopAvailable = false,
@@ -257,6 +263,7 @@ public sealed class Qa04ProcessInspectionV1
     public bool AuthoritativeStepStructuralBridgeAvailable { get; set; }
     public bool CoreSubstateTwoStepBridgeAvailable { get; set; }
     public bool DetailSubstateTwoStepBridgeAvailable { get; set; }
+    public bool ReducedAuthoritativeStepLoopAvailable { get; set; }
     public bool RunningSnapshotBridgeAvailable { get; set; }
     public bool ReferenceWorldMaterialized { get; set; }
     public bool AuthoritativeStepLoopAvailable { get; set; }
