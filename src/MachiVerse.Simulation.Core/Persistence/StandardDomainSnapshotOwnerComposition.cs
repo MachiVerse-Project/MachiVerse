@@ -29,16 +29,18 @@ public static class StandardDomainSnapshotOwnerCompositionV1
         providers.AddRange(GovernanceSecurityDomainSnapshotProviderV1.CreateAll());
 
         var ordered = providers.OrderBy(static p => p.SectionId, StringComparer.Ordinal).ToArray();
-        if (ordered.Length != StandardDomainPartitionRegistry.StandardPartitionCount)
+        var expected = StandardDomainPartitionRegistry.Entries
+            .OrderBy(static identity => identity.PartitionId.Value, StringComparer.Ordinal)
+            .ToArray();
+        if (ordered.Length != StandardDomainPartitionRegistry.StandardPartitionCount || ordered.Length != expected.Length)
             throw new InvalidDataException("persistence.snapshot.standard-provider-count-not-97");
 
         for (var i = 0; i < ordered.Length; i++)
         {
-            var expected = StandardDomainPartitionRegistry.Entries[i];
             var provider = ordered[i] ?? throw new InvalidDataException("persistence.snapshot.standard-provider-null");
-            if (!string.Equals(provider.SectionId, expected.PartitionId.Value, StringComparison.Ordinal) ||
-                provider.SectionSchema != expected.PartitionSchema)
-                throw new InvalidDataException($"persistence.snapshot.standard-provider-set-mismatch:{expected.PartitionId.Value}");
+            if (!string.Equals(provider.SectionId, expected[i].PartitionId.Value, StringComparison.Ordinal) ||
+                provider.SectionSchema != expected[i].PartitionSchema)
+                throw new InvalidDataException($"persistence.snapshot.standard-provider-set-mismatch:{expected[i].PartitionId.Value}");
             if (i > 0 && string.Equals(ordered[i - 1].SectionId, provider.SectionId, StringComparison.Ordinal))
                 throw new InvalidDataException($"persistence.snapshot.standard-provider-duplicate:{provider.SectionId}");
         }
