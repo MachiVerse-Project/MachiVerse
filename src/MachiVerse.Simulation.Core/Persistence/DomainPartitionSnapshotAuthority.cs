@@ -200,7 +200,9 @@ public static class DomainPartitionSnapshotProductionProviderV1
         foreach (var identity in StandardDomainPartitionRegistry.Entries)
         {
             var authority = authorities.Get(identity.PartitionId.Value);
-            var provider = byId[identity.PartitionId.Value];
+            var provider = DomainSnapshotRecordSchemaMigrationProviderRegistryV1.Resolve(
+                authority,
+                byId[identity.PartitionId.Value]);
             var section = provider.Create(authority, references)
                 ?? throw new InvalidDataException($"persistence.snapshot.partition-provider-null:{identity.PartitionId.Value}");
             if (!string.Equals(section.SectionId, identity.PartitionId.Value, StringComparison.Ordinal) ||
@@ -227,7 +229,10 @@ public static class DomainPartitionSnapshotProductionProviderV1
         foreach (var identity in StandardDomainPartitionRegistry.Entries)
         {
             var authority = authorities.Get(identity.PartitionId.Value);
-            var verifier = byId[identity.PartitionId.Value].CreateSemanticVerifier(authority.Header, references)
+            var provider = DomainSnapshotRecordSchemaMigrationProviderRegistryV1.Resolve(
+                authority,
+                byId[identity.PartitionId.Value]);
+            var verifier = provider.CreateSemanticVerifier(authority.Header, references)
                 ?? throw new InvalidDataException($"persistence.snapshot.partition-verifier-null:{identity.PartitionId.Value}");
             if (!string.Equals(verifier.SectionId, identity.PartitionId.Value, StringComparison.Ordinal) ||
                 verifier.SectionSchema != identity.PartitionSchema)
