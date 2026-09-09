@@ -69,13 +69,13 @@ internal static class Qa04TerrainGeometryPayloadDigestV2Initializer
             revision: 7,
             basisStep: 4,
             detailLevel: DetailLevelV1.D1LocalAggregate,
-            SpatialTerrainGeometryPayloadCanonicalDigestV2.Compute);
+            payload => SpatialTerrainGeometryPayloadCanonicalDigestV2.Compute(payload));
         var repeated = PartitionStateHeaderV1.CreateCanonical(
             state.State,
             revision: 7,
             basisStep: 4,
             detailLevel: DetailLevelV1.D1LocalAggregate,
-            SpatialTerrainGeometryPayloadCanonicalDigestV2.Compute);
+            payload => SpatialTerrainGeometryPayloadCanonicalDigestV2.Compute(payload));
         var standard = StandardDomainPartitionRegistry.Get(SpatialTerrainGeometryRecordSchemaV2.PartitionId);
         Require(header.Schema == standard.PartitionSchema && header.ItemCount == 2,
             "terrain v2 record schema must not change the partition-header schema/count contract.");
