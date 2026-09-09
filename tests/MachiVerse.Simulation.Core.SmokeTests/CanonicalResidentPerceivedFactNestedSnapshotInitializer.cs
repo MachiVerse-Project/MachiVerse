@@ -50,7 +50,10 @@ internal static class CanonicalResidentPerceivedFactNestedSnapshotInitializer
             FieldName,
             encodedValue,
             registry);
-        Require(decodedValue is ResidentPerceivedFactNestedValueV1 decodedFirst && decodedFirst == first,
+        Require(decodedValue is ResidentPerceivedFactNestedValueV1,
+            "Perceived fact nested value must decode to the registered exact type.");
+        var decodedFirst = (ResidentPerceivedFactNestedValueV1)decodedValue;
+        Require(decodedFirst == first,
             "Perceived fact nested value must roundtrip exactly.");
         Require(decodedFirst.ToObservation() == firstObservation,
             "Perceived fact nested value must reconstruct the runtime observation losslessly.");
