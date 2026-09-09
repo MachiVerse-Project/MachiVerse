@@ -1,0 +1,131 @@
+using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Runtime;
+
+namespace MachiVerse.Simulation.Core.Performance;
+
+public enum Qa04CanonicalWorkloadDependencyKindV1 : byte
+{
+    OperationAuthorityBinding = 1,
+    TransactionCreationBinding = 2,
+    DetailTransitionBinding = 3,
+}
+
+public sealed record Qa04CanonicalWorkloadDependencyV1(
+    StableToken DependencyId,
+    Qa04CanonicalWorkloadDependencyKindV1 Kind,
+    StableToken FailureCode);
+
+/// <summary>
+/// Fail-closed audit of the remaining normative bindings required to turn the already-canonical
+/// perf.reference.v1 workload descriptors into production scheduler/domain/detail authority.
+///
+/// This contract is intentionally separate from Qa04ReferenceWorldDependencyContractV1: the world
+/// contract owns initial authoritative material, while this contract owns workload-to-runtime
+/// binding. It does not invent SameStepOrderKey fields, domain payloads, transaction participant
+/// material, or detail-transition semantics that are not fixed by the existing design.
+/// </summary>
+public static class Qa04CanonicalWorkloadDependencyContractV1
+{
+    private static readonly IReadOnlyList<Qa04CanonicalWorkloadDependencyV1> BlockersValue = Array.AsReadOnly(new[]
+    {
+        Blocker(
+            "workload.operation.authority-binding",
+            Qa04CanonicalWorkloadDependencyKindV1.OperationAuthorityBinding,
+            "qa04.workload.operation-authority-binding-undefined"),
+        Blocker(
+            "workload.transaction.creation-binding",
+            Qa04CanonicalWorkloadDependencyKindV1.TransactionCreationBinding,
+            "qa04.workload.transaction-creation-binding-undefined"),
+        Blocker(
+            "workload.detail-transition.request-binding",
+            Qa04CanonicalWorkloadDependencyKindV1.DetailTransitionBinding,
+            "qa04.workload.detail-transition-request-binding-undefined"),
+    }
+    .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
+    .ToArray());
+
+    public static IReadOnlyList<Qa04CanonicalWorkloadDependencyV1> Blockers => BlockersValue;
+
+    public static IReadOnlyList<StableToken> FailureCodes
+        => BlockersValue.Select(static blocker => blocker.FailureCode).ToArray();
+
+    public static void ValidateCanonicalContract()
+    {
+        Qa04ReferenceLoadV1.ValidateCanonicalContract();
+        Qa04ReferenceScenariosV1.ValidateCanonicalContract();
+
+        if (BlockersValue.Count != 3)
+            throw new InvalidDataException("qa04.workload.dependency-blocker-count-drift");
+        if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
+            throw new InvalidDataException("qa04.workload.dependency-blocker-id-duplicate");
+        if (BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
+            throw new InvalidDataException("qa04.workload.dependency-blocker-code-duplicate");
+        if (BlockersValue.Any(static blocker => !Enum.IsDefined(blocker.Kind)))
+            throw new InvalidDataException("qa04.workload.dependency-blocker-kind-invalid");
+
+        var ordered = BlockersValue.Select(static blocker => blocker.DependencyId.Value).ToArray();
+        if (!ordered.SequenceEqual(ordered.OrderBy(static value => value, StringComparer.Ordinal), StringComparer.Ordinal))
+            throw new InvalidDataException("qa04.workload.dependency-blocker-order");
+
+        ValidateOperationDescriptorBoundary();
+        ValidateTransactionKindBoundary();
+        ValidateDetailTransitionBoundary();
+    }
+
+    private static void ValidateOperationDescriptorBoundary()
+    {
+        var expectedFamilies = new[]
+        {
+            "participation-control-resident-action",
+            "physical-item-movement-work",
+            "society-market-payment-contract",
+            "infrastructure-service-delivery",
+            "governance-security",
+            "environment-spatial-admin-synthetic",
+        };
+        if (!Qa04ReferenceLoadV1.OperationFamilies.Select(static family => family.FamilyToken.Value)
+                .SequenceEqual(expectedFamilies, StringComparer.Ordinal))
+            throw new InvalidDataException("qa04.workload.operation-family-set-drift");
+
+        var steady = Qa04ReferenceLoadV1.OperationsForStep(1).ToArray();
+        if (steady.Length != 5_000 ||
+            steady.Any(static descriptor => descriptor.OperationId.IsZero || descriptor.PayloadDigest.Length != 32))
+            throw new InvalidDataException("qa04.workload.operation-descriptor-boundary-drift");
+    }
+
+    private static void ValidateTransactionKindBoundary()
+    {
+        var benchmarkKinds = Qa04ReferenceScenariosV1.TransactionKinds
+            .Select(static item => item.KindToken.Value)
+            .ToArray();
+        if (!benchmarkKinds.Contains("other-registered-transactions", StringComparer.Ordinal))
+            throw new InvalidDataException("qa04.workload.transaction-other-bucket-missing");
+
+        foreach (var kind in benchmarkKinds.Where(static value => value != "other-registered-transactions"))
+        {
+            var productionKind = new StableToken($"transaction.{kind}");
+            if (!CrossDomainTransactionKindRegistryV1.Contains(productionKind))
+                throw new InvalidDataException($"qa04.workload.transaction-kind-unregistered:{kind}");
+        }
+
+        if (CrossDomainTransactionKindRegistryV1.Contains(new StableToken("transaction.other-registered-transactions")))
+            throw new InvalidDataException("qa04.workload.transaction-other-bucket-must-require-explicit-allocation");
+    }
+
+    private static void ValidateDetailTransitionBoundary()
+    {
+        if (Qa04ReferenceScenariosV1.DetailTransitionBatches(299).Count != 0)
+            throw new InvalidDataException("qa04.workload.detail-transition-pre-cadence-drift");
+        var batches = Qa04ReferenceScenariosV1.DetailTransitionBatches(300);
+        if (batches.Count != 2 ||
+            batches.Single(static batch => batch.TransitionKind.Value == "promotion").CandidateRecordCount != 30_000 ||
+            batches.Single(static batch => batch.TransitionKind.Value == "demotion").CandidateRecordCount != 80_000)
+            throw new InvalidDataException("qa04.workload.detail-transition-descriptor-drift");
+    }
+
+    private static Qa04CanonicalWorkloadDependencyV1 Blocker(
+        string dependencyId,
+        Qa04CanonicalWorkloadDependencyKindV1 kind,
+        string failureCode)
+        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
+}
