@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 internal sealed class Qa04AdapterRequest
 {
@@ -13,7 +14,7 @@ internal sealed class Qa04AdapterRequest
     public JsonElement Profile { get; set; }
 }
 
-internal sealed class Qa04AdapterResponse
+internal sealed class Qa04AdapterResponse : IJsonOnDeserialized
 {
     public string SchemaVersion { get; set; } = "";
     public string ResponseKind { get; set; } = "";
@@ -22,9 +23,35 @@ internal sealed class Qa04AdapterResponse
     public string SourceCommit { get; set; } = "";
     public string Qa04ManifestSha256 { get; set; } = "";
     public string ProfileId { get; set; } = "";
+    public bool? ReferenceWorldMaterialized { get; set; }
+    public bool? ReleaseEvidenceCapable { get; set; }
+    public string[] BlockingFailureCodes { get; set; } = [];
     public bool Passed { get; set; }
     public string[] FailureCodes { get; set; } = [];
     public JsonElement Report { get; set; }
+
+    public void OnDeserialized()
+    {
+        if (ReferenceWorldMaterialized is null || ReleaseEvidenceCapable is null)
+            throw new InvalidDataException("QA-04 adapter response is missing explicit release-readiness fields.");
+        if (BlockingFailureCodes is null ||
+            BlockingFailureCodes.Any(string.IsNullOrWhiteSpace) ||
+            BlockingFailureCodes.Distinct(StringComparer.Ordinal).Count() != BlockingFailureCodes.Length)
+            throw new InvalidDataException("QA-04 adapter blockingFailureCodes are null, empty, or duplicated.");
+        if (ReleaseEvidenceCapable == true && ReferenceWorldMaterialized != true)
+            throw new InvalidDataException("QA-04 adapter cannot be release-evidence-capable before the reference world is materialized.");
+        if (ReleaseEvidenceCapable == true && BlockingFailureCodes.Length != 0)
+            throw new InvalidDataException("QA-04 adapter cannot be release-evidence-capable while blocking failures remain.");
+
+        if (!string.Equals(ExecutionClass, "release", StringComparison.Ordinal))
+            return;
+        if (ReferenceWorldMaterialized != true)
+            throw new InvalidDataException("qa04.release.reference-world-not-materialized");
+        if (ReleaseEvidenceCapable != true)
+            throw new InvalidDataException("qa04.release.adapter-not-release-evidence-capable");
+        if (BlockingFailureCodes.Length != 0)
+            throw new InvalidDataException("qa04.release.adapter-blocking-failures-present");
+    }
 }
 
 internal sealed class BenchmarkRunDescriptor
