@@ -99,7 +99,7 @@ internal static class CanonicalResidentBodyRegionNestedSnapshotInitializer
         for (var index = 0; index < regions.Length; index++)
         {
             Require(round.BodyRegionStates[index] is ResidentBodyRegionStateNestedValueV1 actual &&
-                    actual == regions[index],
+                    actual == (ResidentBodyRegionStateNestedValueV1)regions[index],
                 $"BodyRegionState round-trip mismatch at index {index}.");
         }
         Require(round.CanonicalDigest().SequenceEqual(payload.CanonicalDigest()),
