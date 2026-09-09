@@ -8,10 +8,19 @@ public sealed record SnapshotSectionSemanticVerificationV1(
     ulong LogicalItemCount,
     byte[] LogicalContentDigest);
 
+public sealed record SnapshotSectionSemanticVerificationContextV1(
+    IDomainRecordSchemaResolverV1? DomainReferences);
+
 public sealed record SnapshotSectionSemanticVerifierV1(
     string SectionId,
     SchemaRefV1 SectionSchema,
-    Func<IReadOnlyList<SnapshotSectionFragmentMaterialV1>, SnapshotSectionSemanticVerificationV1> Verify);
+    Func<IReadOnlyList<SnapshotSectionFragmentMaterialV1>, SnapshotSectionSemanticVerificationV1> Verify)
+{
+    public Func<
+        IReadOnlyList<SnapshotSectionFragmentMaterialV1>,
+        SnapshotSectionSemanticVerificationContextV1,
+        SnapshotSectionSemanticVerificationV1>? VerifyWithContext { get; init; }
+}
 
 public sealed class CanonicalSnapshotSemanticVerifierRegistryV1
 {
@@ -41,7 +50,9 @@ public sealed class CanonicalSnapshotSemanticVerifierRegistryV1
         _verifiers = map;
     }
 
-    public void VerifyAll(IReadOnlyList<CanonicalSnapshotSectionMaterialV1> sections)
+    public void VerifyAll(
+        IReadOnlyList<CanonicalSnapshotSectionMaterialV1> sections,
+        SnapshotSectionSemanticVerificationContextV1? context = null)
     {
         ArgumentNullException.ThrowIfNull(sections);
         if (sections.Count != SnapshotManifestValidation.StandardRequiredSectionCount)
@@ -54,8 +65,10 @@ public sealed class CanonicalSnapshotSemanticVerifierRegistryV1
             if (verifier.SectionSchema != section.SectionSchema)
                 throw new InvalidDataException($"persistence.snapshot.semantic-verifier-schema-mismatch:{section.SectionId}");
 
-            var verified = verifier.Verify(section.Fragments)
-                ?? throw new InvalidDataException($"persistence.snapshot.semantic-verifier-null-result:{section.SectionId}");
+            var verified = context is not null && verifier.VerifyWithContext is not null
+                ? verifier.VerifyWithContext(section.Fragments, context)
+                : verifier.Verify(section.Fragments);
+            verified ??= throw new InvalidDataException($"persistence.snapshot.semantic-verifier-null-result:{section.SectionId}");
             if (verified.LogicalContentDigest is null || verified.LogicalContentDigest.Length != 32)
                 throw new InvalidDataException($"persistence.snapshot.semantic-verifier-digest-invalid:{section.SectionId}");
             if (verified.LogicalItemCount != section.LogicalItemCount)
@@ -291,7 +304,10 @@ public static class CanonicalSnapshotStagingValidatorV1
             throw new InvalidDataException("persistence.snapshot.required-section-set-mismatch");
 
         var validated = CanonicalSnapshotSectionValidationV1.ValidateStandard(reassembled, frozenState);
-        semanticVerifiers.VerifyAll(validated);
+        var recoveredReferences = DomainSnapshotReferenceResolverV1.FromRecoveredSections(validated);
+        semanticVerifiers.VerifyAll(
+            validated,
+            new SnapshotSectionSemanticVerificationContextV1(recoveredReferences));
     }
 
     private static void ValidateGlobalFragmentOrder(IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments)
