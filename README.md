@@ -9,18 +9,18 @@
 <h1 align="center">MachiVerse</h1>
 
 <p align="center">
-  <strong>世界を、状態の集合ではなく、因果と歴史を持つ動的なシステムとしてシミュレーションする。</strong>
+  <strong>この街が、ここにある理由までシミュレーションしたい。</strong>
 </p>
 
 <p align="center">
-  「世界を作る」のではなく、<strong>「世界がそうなった理由」までシミュレーションする。</strong>
+  人、自然、社会、経済、都市、歴史。<br>
+  それぞれがつながって変化していく「生きている世界」を目指す、オープンソースの世界シミュレーションプロジェクトです。
 </p>
 
 <p align="center">
   <img alt="Status" src="https://img.shields.io/badge/Status-Alpha%201.0-orange">
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10.0-512BD4">
   <img alt="Open Source" src="https://img.shields.io/badge/Open%20Source-Apache%202.0-blue">
-  <img alt="Agent-based simulation" src="https://img.shields.io/badge/Agent--based-World%20Simulation-0F766E">
 </p>
 
 <p align="center">
@@ -35,287 +35,211 @@
 
 ---
 
-## 世界は、最初から完成していない。
+## もし、街に本当の歴史があったら？
 
-なぜ、この場所に街があるのか。
+ここに街があるのは、誰かが最初から置いたからじゃない。
 
-なぜ、この人はここで暮らしているのか。
+近くに水があったからかもしれない。
+土地が暮らしやすかったからかもしれない。
+人が集まり、仕事が生まれ、道ができたからかもしれない。
 
-なぜ、ある産業が栄え、別の場所は衰退したのか。
+そして、その街で暮らす人たちにも、それぞれの生活がある。
 
-なぜ、今の社会や文化がこの形になったのか。
+誰かが働く。
+誰かが物を運ぶ。
+誰かが引っ越してくる。
+誰かが新しいことを始める。
 
-**MachiVerse** は、それらを最初から用意された背景設定ではなく、**過去から積み重なった出来事と相互作用の結果として生み出すこと**を目指す、エージェントベースの大規模世界シミュレーションプロジェクトです。
+そんな小さな出来事が積み重なって、街や社会は少しずつ変わっていく。
 
-自然、人、社会、経済、都市、情報、歴史。
+**MachiVerseは、「完成した世界を用意する」のではなく、「世界が世界になっていく過程」をシミュレーションしたいプロジェクトです。**
 
-それぞれを独立した飾りとして置くのではなく、互いに影響し続ける一つの世界としてつなげていきます。
+<p align="center">
+  <strong>「世界を作る」のではなく、「世界がそうなった理由」までシミュレーションする。</strong>
+</p>
 
-```mermaid
-flowchart LR
-    N["地形・水・気候"] --> H["人が住む"]
-    H --> S["集落が生まれる"]
-    S --> D["需要が生まれる"]
-    D --> I["産業が育つ"]
-    I --> T["交通が生まれる"]
-    T --> M["人と物が移動する"]
-    M --> C["社会が変化する"]
-    C --> R["歴史として残る"]
-    R --> S
-```
+---
+
+## こんな世界を作りたい
+
+### 人が住み始める
+
+ある場所に水がある。
+土地がある。
+暮らしていけそうな環境がある。
+
+そこに人が住み始める。
+
+### 人が集まれば、必要なものが増える
+
+食べ物が必要になる。
+住む場所が必要になる。
+物を作る人、売る人、運ぶ人が必要になる。
+
+人の暮らしが、仕事や経済を生み出していく。
+
+### やがて、街になる
+
+人が行き来する場所には道ができる。
+物が集まる場所には市場ができるかもしれない。
+人が増えれば、組織や制度も必要になるかもしれない。
+
+最初は小さな集落だった場所が、長い時間の中で街へ変わっていく。
+
+### でも、ずっと同じではない
+
+資源が減るかもしれない。
+産業が変わるかもしれない。
+新しい交通路ができて、人の流れが変わるかもしれない。
+
+栄える街もあれば、静かになっていく街もある。
+
+そして、その変化が次の時代へ残っていく。
+
+**何十年、何百年と時間を進めた先に、「なぜこの世界は今こうなっているのか」をたどれる世界。**
+
+それが、MachiVerseが目指しているものです。
 
 > [!NOTE]
-> 上の図は、MachiVerseが重視する「因果がつながる世界」を分かりやすく表した概念図です。個々の因果関係を固定したゲームルールとして示すものではありません。
+> ここで紹介しているのはMachiVerseの長期的な世界像です。すべてが現在のAlpha 1.0で実装済みという意味ではありません。
 
 ---
 
-## MachiVerseが目指している世界
-
-### 現在には、歴史がある
-
-都市や集落、住民、自然環境を「最初からそこにある完成物」として扱いません。
-
-過去の状態と選択から現在が生まれ、現在の出来事が未来へ残っていく世界を目指します。
-
-### 人々は、背景ではなく世界の一部
-
-住民は世界を彩るだけのNPCではなく、それぞれが世界の中に存在するエージェントです。
-
-人の行動が家族、仕事、組織、経済、社会へ影響し、それらの変化が再び人の生活へ返ってくる世界を目指します。
-
-### 自然と人の営みを切り離さない
-
-地形、水、気候、資源、生態系などは単なる背景ではありません。
-
-人がどこに住み、何を生産し、どこへ移動し、どんな街が生まれるのか。その土台となる世界状態として扱います。
-
-### 都市だけが世界ではない
-
-都市、集落、農村、自然地域などが同じ世界の中に存在し、互いの需要や移動、環境、歴史によって関係していく世界を考えています。
-
-```mermaid
-flowchart TB
-    Nature["自然環境"] <--> Residents["住民"]
-    Residents <--> Society["社会・組織"]
-    Society <--> Economy["経済・産業"]
-    Economy <--> Infrastructure["建物・交通・インフラ"]
-    Infrastructure <--> Nature
-    Residents --> History["歴史"]
-    Society --> History
-    Economy --> History
-    Nature --> History
-    History --> Residents
-    History --> Society
-```
-
-> [!IMPORTANT]
-> このセクションは **MachiVerseが長期的に目指している世界像** です。すべてが現在のAlpha 1.0で実装済みという意味ではありません。
-
----
-
-## 世界の外から操るのではなく、世界の中へダイブする
+## そして、あなたもその世界へ
 
 MachiVerseでは、世界へ参加する利用者を **「ダイバー」** と呼びます。
 
-ダイバーは、世界を自由に編集する神のような存在ではありません。
+でも、世界の外から街を好きに作り替える存在ではありません。
 
-**すでにMachiVerseの世界で暮らしている一人の住民へ参加し、その人として世界の時間、社会、関係、出来事の中に存在する**ことを目指します。
+あなたが入るのは、**その世界ですでに暮らしている一人の住民**です。
 
-```mermaid
-flowchart LR
-    D["Diver / 利用者"] -->|"bind"| R["世界に存在する住民"]
-    W["MachiVerseの世界"] --> R
-    R --> A["行動・選択・関係"]
-    A --> W
-    W --> E["出来事・社会・環境の変化"]
-    E --> R
-```
+仕事があるかもしれない。
+家族や知り合いがいるかもしれない。
+誰かとの関係や、それまで生きてきた時間があるかもしれない。
 
-接続をやめても、その住民や世界そのものが消えるわけではありません。
+その人として、世界の中で行動していく。
 
-**あなたが見ていない間にも世界は続いている。**
+そして、あなたが接続を終えても、世界そのものが消えるわけではありません。
+
+<p align="center">
+  <strong>あなたが見ていない間も、世界は続いていく。</strong>
+</p>
 
 そんな体験を目指しています。
 
 ---
 
-## 「同じ世界」を、もう一度たどれるようにする
+## 世界は、いろいろなものがつながってできている
 
-MachiVerseでは、シミュレーションの**決定論**を重要な基本契約として扱います。
+MachiVerseでは、自然、住民、社会、経済、都市などを別々の背景設定として置くだけにはしたくありません。
 
-同じWorld Seed、同じシミュレーション設定、同じ受理された操作と適用条件からは、同じ論理的な世界結果へ収束することを目指します。
+たとえば、
 
-```mermaid
-flowchart LR
-    Seed["World Seed"] --> Sim["Simulation"]
-    Config["Simulation Config"] --> Sim
-    Ops["Accepted Operations"] --> Sim
-    Sim --> World["Logical World Outcome"]
+- 地形や水、気候が、人の住みやすさに影響する
+- 人が集まれば、需要や仕事が生まれる
+- 仕事や産業が、人や物の移動を増やす
+- 移動が増えれば、道や街の形が変わる
+- 街の変化が、そこで暮らす人の生活をまた変える
 
-    Seed2["同じ Seed"] --> Sim2["Replay / Recalculation"]
-    Config2["同じ Config"] --> Sim2
-    Ops2["同じ Operations"] --> Sim2
-    Sim2 --> World2["同じ Logical Outcome"]
-```
+そんなふうに、**一つの変化が別の変化につながっていく世界**を作っていきます。
 
-これは、世界の歴史を追跡し、再現し、検証できるシミュレーションを成立させるための重要な考え方です。
+世界の「今」だけでなく、そこへ至った過程も大切にします。
 
 ---
 
-# 現在の開発状況 — Alpha 1.0
+## ところで、これ本当に動いてるの？
 
-MachiVerseは、まだ完成した巨大世界を遊べる段階ではありません。
+まだ、巨大な世界を自由に遊べる段階ではありません。
 
-一方で、**構想や設計だけの段階でもありません。**
+でも、構想だけのプロジェクトでもありません。
 
-現在の `develop` には、Simulation Core / Gateway / General View / Administration View を実際に接続した、最初の再現可能な **Alpha 1.0 vertical slice** が入っています。
+現在の **Alpha 1.0** では、MachiVerseを動かすための最初の一周が、実際のコンポーネント同士で動いています。
 
 ```mermaid
 flowchart LR
-    Core["Simulation Core\n世界の正本"] <-->|"gRPC"| Gateway["Gateway\n外部接続・状態配信"]
-    Gateway <-->|"World / Operation"| General["General View\n一般利用者向け"]
-    Gateway <-->|"Health / Config"| Admin["Administration View\n運用者向け"]
+    A["画面から操作"] --> B["Gateway"]
+    B --> C["Simulation Core"]
+    C --> D["世界の状態が変わる"]
+    D --> B
+    B --> E["画面へ反映"]
 ```
 
-### Alpha 1.0で実際に動いているもの
+つまり、
 
-- Simulation Core ↔ Gateway の実gRPC接続
-- General View / Administration View の実ブラウザセッション
-- confirmed world の `FULL` / `DELTA` 配信
-- Diver の最小参加Operation
-- authoritative WorldState の更新とViewへの反映
-- View側predictionとconfirmed stateのreconciliation
-- Configの参照・変更と競合拒否
-- Core / Gateway の永続化、停止、再起動、recovery、resync
-- 不正・失効セッション等を拒否するfail-closed処理
+**世界を見る → 行動する → シミュレーションが受け取る → 世界が変わる → その結果が返ってくる**
 
-つまり現在は、
+という基礎ループが成立しています。
 
-**世界の状態 → 利用者の操作 → シミュレーション → 世界の変化 → 画面への反映**
+Alpha 1.0では、Simulation Core / Gateway / General View / Administration View が実際に接続され、WorldStateの更新、状態配信、永続化、再起動後のrecoveryなども確認できています。
 
-という、MachiVerseを成立させるための基礎ループが実コンポーネント間で動いています。
+技術的な詳細や起動方法は、一般向けREADMEから分離しています。
 
-> [!WARNING]
-> Alpha 1.0は完成版MachiVerseではありません。大規模Resident / economy / governance scenario、polished UI、都市・アセット・世界コンテンツ、production向け性能調整などは今後の開発領域です。
-
-[Alpha 1.0の技術詳細・起動方法を見る →](DEVELOPMENT.md)
+[Alpha 1.0を動かしてみる → DEVELOPMENT.md](DEVELOPMENT.md)
 
 ---
 
-## これから世界へ増えていくもの
+## これから増えていく世界
 
-MachiVerseの設計では、世界を構成する多くの領域を互いに独立した背景値ではなく、因果的につながるシミュレーション対象として考えています。
+MachiVerseでは、これから少しずつ「世界を世界らしくするもの」を増やしていきます。
 
-```mermaid
-mindmap
-  root((MachiVerse))
-    Nature
-      Terrain
-      Climate
-      Water
-      Ecosystem
-    Residents
-      Life
-      Knowledge
-      Memory
-      Emotion
-      Goals
-    Society
-      Family
-      Organization
-      Education
-      Work
-    Economy
-      Resources
-      Manufacturing
-      Logistics
-      Market
-      Finance
-    Civilization
-      Law
-      Administration
-      Politics
-      Culture
-    Built World
-      Buildings
-      Infrastructure
-      Transport
-    History
-      Information
-      Records
-      Events
-```
+| 領域 | 目指していること |
+| --- | --- |
+| **自然** | 地形、水、気候、生態系が暮らしへ影響する |
+| **住民** | 一人ひとりが生活し、知識や記憶、目的を持つ |
+| **社会** | 家族、仕事、組織、教育などの関係が生まれる |
+| **経済** | 資源、生産、物流、市場などがつながる |
+| **街** | 建物、交通、インフラが人の営みの結果として変わる |
+| **制度・文化** | 法、行政、政治、文化が社会の中で形づくられる |
+| **歴史** | 出来事が記録され、その影響が未来へ残る |
 
-これは「機能一覧を埋める」ための計画ではありません。
+これは単に「機能をたくさん追加する」という話ではありません。
 
-**自然が暮らしへ影響し、暮らしが社会を作り、社会が経済や都市を変え、その結果が自然や次の世代へ返っていく。**
+**それぞれが影響し合って、一つの世界として動くこと。**
 
-そうしたつながりを増やしながら、一つの世界として成立させていきます。
+そこを大事にしながら作っていきます。
 
-詳しい計画は [`ROADMAP.md`](ROADMAP.md) と [`docs/README.md`](docs/README.md) を参照してください。
+詳しい計画は [`ROADMAP.md`](ROADMAP.md) から確認できます。
 
 ---
 
 ## MachiVerseを覗いてみる
 
-興味の方向に合わせて、入口を選べます。
+気になるところからどうぞ。
 
 | 興味 | 入口 |
 | --- | --- |
-| 今後どう発展していくのか知りたい | [Roadmap](ROADMAP.md) |
-| Alpha 1.0を起動してみたい | [Development Guide](DEVELOPMENT.md) |
+| これから何を作るのか見たい | [Roadmap](ROADMAP.md) |
+| Alpha 1.0を動かしてみたい | [Development Guide](DEVELOPMENT.md) |
 | 世界シミュレーションの設計を読みたい | [Design Documents](docs/README.md) |
 | 開発に参加したい | [Contribution Guide](CONTRIBUTING.md) |
 | アイデアや質問を話したい | [GitHub Discussions](https://github.com/MachiVerse-Project/MachiVerse/discussions) |
-| プロジェクトのWebサイトを見たい | [machiverse.app](https://machiverse.app) |
+| Webサイトを見たい | [machiverse.app](https://machiverse.app) |
+
+---
+
+## 一緒に作る
+
+MachiVerseはオープンソースで開発しています。
+
+コードを書く人だけが参加者ではありません。
+
+実装、設計、検証、UI、可視化、ドキュメント、アイデア、質問。
+
+いろいろな形でプロジェクトに関われます。
+
+開発へ参加する場合は、まず [`CONTRIBUTING.md`](CONTRIBUTING.md) をご覧ください。
 
 ---
 
 ## Developers
 
-MachiVerseはオープンソースで開発しています。
+開発者向け情報は [`DEVELOPMENT.md`](DEVELOPMENT.md) にまとめています。
 
-主要な実装技術は **C# / .NET 10**。General Viewでは **Blazor WebAssembly + three.js** を使用し、コンポーネント間はversioned Protocol / schemaを境界として設計しています。
+MachiVerseの主要技術は **C# / .NET 10** です。General Viewでは **Blazor WebAssembly + three.js** を使用しています。
 
-技術情報はトップREADMEから分離しました。
-
-- [`DEVELOPMENT.md`](DEVELOPMENT.md) — Alpha 1.0、Quick Start、コンポーネント、開発者向け情報
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — Issue / Pull Request / Discussion、開発参加ルール
-- [`docs/README.md`](docs/README.md) — Requirements / Architecture / Protocol / World Simulation設計
-- [`AGENTS.md`](AGENTS.md) — リポジトリ開発ルール
+より詳しい設計は [`docs/README.md`](docs/README.md)、リポジトリの開発ルールは [`AGENTS.md`](AGENTS.md) を参照してください。
 
 ---
-
-## Contributing
-
-コードを書く人だけが参加者ではありません。
-
-実装、設計、検証、可視化、UI、ドキュメント、アイデア、質問など、さまざまな形での参加を歓迎します。
-
-具体的な実装対象として整理できる内容はIssueへ、まだアイデア段階の話や設計議論、質問はGitHub Discussionsへどうぞ。
-
-[Contribution Guideを読む →](CONTRIBUTING.md)
-
-[GitHub Discussionsへ →](https://github.com/MachiVerse-Project/MachiVerse/discussions)
-
----
-
-<p align="center">
-  <img src="assets/images/icons/Icon%20%28Resize%20middle%29.png" alt="MachiVerse icon" width="88">
-</p>
-
-<p align="center">
-  <strong>世界が生まれ、変わり、歴史になる。</strong><br>
-  MachiVerseは、その過程そのものをシミュレーションする世界を目指しています。
-</p>
-
-<p align="center">
-  <a href="https://machiverse.app">Website</a>
-  ・
-  <a href="https://github.com/MachiVerse-Project/MachiVerse/discussions">Discussions</a>
-  ・
-  <a href="ROADMAP.md">Roadmap</a>
-</p>
 
 ## License
 
