@@ -93,19 +93,43 @@ internal static class CanonicalSnapshotStage2Smoke
         Require(decoded.Records[0].Payload["lineage_generation"] is uint generation && generation == records[0].Payload.LineageGeneration,
             "Domain payload UInt32 field must preserve its exact scalar family.");
 
-        var badType = new Dictionary<string, object?>(StandardResidentPayload(records[0].Payload), StringComparer.Ordinal)
-        {
-            ["lineage_generation"] = (ulong)records[0].Payload.LineageGeneration,
-        };
+        var provider = new DomainPartitionSnapshotSectionProviderV1<Qa04ResidentIdentityLifecyclePayloadV1>(
+            partitionId,
+            static payload => StandardResidentPayload(payload),
+            static payload => ResidentFromStandardPayload(payload),
+            static payload => payload.CanonicalDigest());
+        var section = provider.Create(authority);
+        Require(section.SectionId == partitionId &&
+                section.LogicalItemCount == 1 &&
+                section.LogicalContentDigest.SequenceEqual(resident.PartitionHeader.CanonicalDigest) &&
+                section.Fragments.Count == 1,
+            "Domain section provider must emit actual one-record material with frozen canonical digest.");
+        var semantic = provider.CreateSemanticVerifier(resident.PartitionHeader).Verify(section.Fragments);
+        Require(semantic.LogicalItemCount == 1 &&
+                semantic.LogicalContentDigest.SequenceEqual(resident.PartitionHeader.CanonicalDigest),
+            "Domain section recovery verifier must reconstruct material and recompute the frozen canonical digest.");
+
+        var badType = StandardResidentPayload(records[0].Payload)
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+        badType["lineage_generation"] = (ulong)records[0].Payload.LineageGeneration;
         ExpectInvalid(
             "P4-05 payload scalar kind substitution",
             () => _ = DomainPartitionSnapshotWireCodecV1.EncodePayload(partitionId, badType));
 
-        var missingRequired = new Dictionary<string, object?>(StandardResidentPayload(records[0].Payload), StringComparer.Ordinal);
+        var missingRequired = StandardResidentPayload(records[0].Payload)
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
         missingRequired.Remove("lifecycle");
         ExpectInvalid(
             "P4-05 required payload field omission",
             () => _ = DomainPartitionSnapshotWireCodecV1.EncodePayload(partitionId, missingRequired));
+
+        var tamperedFragment = section.Fragments[0] with
+        {
+            FirstRecordId = Enumerable.Repeat((byte)0x7f, 16).ToArray(),
+        };
+        ExpectInvalid(
+            "outer fragment record range vs decoded records",
+            () => _ = provider.CreateSemanticVerifier(resident.PartitionHeader).Verify(new[] { tamperedFragment }));
     }
 
     private static IReadOnlyDictionary<string, object?> StandardResidentPayload(Qa04ResidentIdentityLifecyclePayloadV1 payload)
@@ -121,6 +145,19 @@ internal static class CanonicalSnapshotStage2Smoke
         if (payload.BirthStep is { } birthStep) values["birth_step"] = birthStep;
         if (payload.DeathStep is { } deathStep) values["death_step"] = deathStep;
         return values;
+    }
+
+    private static Qa04ResidentIdentityLifecyclePayloadV1 ResidentFromStandardPayload(
+        IReadOnlyDictionary<string, object?> payload)
+    {
+        return new Qa04ResidentIdentityLifecyclePayloadV1(
+            (OpaqueId128)payload["resident_id"]!,
+            new StableToken((string)payload["lifecycle"]!),
+            payload.TryGetValue("birth_step", out var birth) ? (ulong?)birth : null,
+            payload.TryGetValue("death_step", out var death) ? (ulong?)death : null,
+            (IReadOnlyList<PartitionRecordRefV1>)payload["parent_refs"]!,
+            (uint)payload["lineage_generation"]!,
+            new StableToken((string)payload["profile_token"]!));
     }
 
     private static async Task VerifyProductionZstdChunkPathAsync()
