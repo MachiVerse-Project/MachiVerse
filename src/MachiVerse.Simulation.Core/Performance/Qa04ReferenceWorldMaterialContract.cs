@@ -5,9 +5,12 @@ namespace MachiVerse.Simulation.Core.Performance;
 public enum Qa04ReferenceMaterialBindingStateV1 : byte
 {
     ProductionMaterializerAvailable = 1,
-    BlockedByNormativeAuthority = 2,
-    BlockedByNormativeMapping = 3,
-    BlockedByNormativePayload = 4,
+    BlockedByAuthorityTarget = 2,
+    BlockedByPartitionMapping = 3,
+    BlockedByNestedPayloadSchema = 4,
+    BlockedByPersistentAuthority = 5,
+    BlockedByRecordSchema = 6,
+    BlockedByCanonicalMaterial = 7,
 }
 
 public sealed record Qa04ReferenceMaterialBindingV1(
@@ -24,9 +27,9 @@ public sealed record Qa04ReferenceMaterialBindingV1(
 /// <summary>
 /// Machine-readable audit of perf.reference.v1 initial-world classes against the actual production
 /// authority model. This registry describes whether a production materializer can be implemented
-/// without inventing a P4-05 partition mapping, reference target, payload schema, or persistent
-/// authority. It is intentionally fail-closed and is not itself evidence that a world instance has
-/// been materialized.
+/// without inventing a partition mapping, record/nested schema, persistent authority, reference
+/// target, or canonical material rule. It is intentionally fail-closed and is not itself evidence
+/// that a world instance has been materialized.
 /// </summary>
 public static class Qa04ReferenceWorldMaterialContractV1
 {
@@ -37,43 +40,53 @@ public static class Qa04ReferenceWorldMaterialContractV1
             Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount,
             "resident.identity_lifecycle"),
 
-        BlockedAuthority(
+        Blocked(
             "physical.d0-presence",
             500_000,
             "physical.presence",
+            Qa04ReferenceMaterialBindingStateV1.BlockedByRecordSchema,
             "qa04.material.physical-presence-shape-authority-undefined"),
 
-        BlockedMapping(
+        Blocked(
             "environment.d0-cell-cohort",
             1_000_000,
+            null,
+            Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping,
             "qa04.material.environment-d0-partition-mapping-undefined"),
 
-        BlockedMapping(
+        Blocked(
             "environment.d1-aggregate",
             250_000,
+            null,
+            Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping,
             "qa04.material.environment-d1-partition-mapping-undefined"),
 
-        BlockedMapping(
+        Blocked(
             "society-governance.active-record",
             2_000_000,
+            null,
+            Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping,
             "qa04.material.society-governance-partition-mapping-undefined"),
 
-        BlockedAuthority(
+        Blocked(
             "infrastructure.active-record",
             500_000,
             null,
+            Qa04ReferenceMaterialBindingStateV1.BlockedByRecordSchema,
             "qa04.material.infrastructure-node-edge-authority-undefined"),
 
-        BlockedAuthority(
+        Blocked(
             "spatial.hot-terrain-brick",
             500_000,
             "spatial.terrain_geometry",
+            Qa04ReferenceMaterialBindingStateV1.BlockedByCanonicalMaterial,
             "qa04.material.terrain-brick-authority-undefined"),
 
-        BlockedAuthority(
+        Blocked(
             "transaction.active-cross-domain",
             Qa04ReferenceScenariosV1.ActiveCrossDomainTransactionTarget,
             null,
+            Qa04ReferenceMaterialBindingStateV1.BlockedByPersistentAuthority,
             "qa04.material.cross-domain-transaction-authority-undefined"),
     });
 
@@ -97,6 +110,7 @@ public static class Qa04ReferenceWorldMaterialContractV1
     {
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
 
         if (BindingsValue.Count != Qa04ReferenceLoadV1.RecordClasses.Count)
             throw new InvalidDataException("qa04.material.binding-count-mismatch");
@@ -115,11 +129,15 @@ public static class Qa04ReferenceWorldMaterialContractV1
                 if (binding.PrimaryPartitionId is null || binding.BlockingFailureCode is not null)
                     throw new InvalidDataException("qa04.material.available-binding-invalid");
             }
-            else if (binding.BlockingFailureCode is null)
+            else
             {
-                throw new InvalidDataException("qa04.material.blocked-binding-missing-failure-code");
+                ValidateBlockedBinding(binding);
             }
         }
+
+        var blockedCodes = BlockingFailureCodes;
+        if (blockedCodes.Distinct().Count() != blockedCodes.Count)
+            throw new InvalidDataException("qa04.material.blocked-binding-failure-code-duplicate");
 
         var resident = Get(new StableToken("resident.persistent-identity"));
         if (!resident.ProductionMaterializerAvailable ||
@@ -138,6 +156,33 @@ public static class Qa04ReferenceWorldMaterialContractV1
             throw new InvalidDataException(firstBlocked.BlockingFailureCode!.Value.Value);
     }
 
+    private static void ValidateBlockedBinding(Qa04ReferenceMaterialBindingV1 binding)
+    {
+        var failureCode = binding.BlockingFailureCode
+            ?? throw new InvalidDataException("qa04.material.blocked-binding-missing-failure-code");
+        var dependency = Qa04ReferenceWorldDependencyContractV1.Blockers
+            .SingleOrDefault(blocker => blocker.FailureCode == failureCode)
+            ?? throw new InvalidDataException($"qa04.material.blocked-binding-dependency-missing:{binding.ClassToken.Value}");
+        var expectedState = dependency.Kind switch
+        {
+            Qa04ReferenceDependencyBlockerKindV1.AuthorityTarget
+                => Qa04ReferenceMaterialBindingStateV1.BlockedByAuthorityTarget,
+            Qa04ReferenceDependencyBlockerKindV1.PartitionMapping
+                => Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping,
+            Qa04ReferenceDependencyBlockerKindV1.PersistentAuthority
+                => Qa04ReferenceMaterialBindingStateV1.BlockedByPersistentAuthority,
+            Qa04ReferenceDependencyBlockerKindV1.NestedPayloadSchema
+                => Qa04ReferenceMaterialBindingStateV1.BlockedByNestedPayloadSchema,
+            Qa04ReferenceDependencyBlockerKindV1.RecordSchema
+                => Qa04ReferenceMaterialBindingStateV1.BlockedByRecordSchema,
+            Qa04ReferenceDependencyBlockerKindV1.CanonicalMaterial
+                => Qa04ReferenceMaterialBindingStateV1.BlockedByCanonicalMaterial,
+            _ => throw new InvalidDataException("qa04.material.blocked-binding-dependency-kind-invalid"),
+        };
+        if (binding.State != expectedState)
+            throw new InvalidDataException($"qa04.material.blocked-binding-kind-drift:{binding.ClassToken.Value}");
+    }
+
     private static Qa04ReferenceMaterialBindingV1 Available(
         string classToken,
         ulong count,
@@ -149,26 +194,20 @@ public static class Qa04ReferenceWorldMaterialContractV1
             new StableToken(partitionId),
             null);
 
-    private static Qa04ReferenceMaterialBindingV1 BlockedAuthority(
+    private static Qa04ReferenceMaterialBindingV1 Blocked(
         string classToken,
         ulong count,
         string? partitionId,
+        Qa04ReferenceMaterialBindingStateV1 state,
         string failureCode)
-        => new(
+    {
+        if (state == Qa04ReferenceMaterialBindingStateV1.ProductionMaterializerAvailable)
+            throw new ArgumentException("Blocked binding cannot use the available state.", nameof(state));
+        return new Qa04ReferenceMaterialBindingV1(
             new StableToken(classToken),
             count,
-            Qa04ReferenceMaterialBindingStateV1.BlockedByNormativeAuthority,
+            state,
             partitionId is null ? null : new StableToken(partitionId),
             new StableToken(failureCode));
-
-    private static Qa04ReferenceMaterialBindingV1 BlockedMapping(
-        string classToken,
-        ulong count,
-        string failureCode)
-        => new(
-            new StableToken(classToken),
-            count,
-            Qa04ReferenceMaterialBindingStateV1.BlockedByNormativeMapping,
-            null,
-            new StableToken(failureCode));
+    }
 }
