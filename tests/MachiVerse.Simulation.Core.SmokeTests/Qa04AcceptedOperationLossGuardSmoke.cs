@@ -8,6 +8,17 @@ internal static class Qa04AcceptedOperationLossGuardSmoke
     [ModuleInitializer]
     internal static void Run()
     {
+        var canonicalDescriptors = Qa04ReferenceLoadV1.OperationsForStep(1).ToArray();
+        var canonicalExpectations = Qa04AcceptedOperationLossGuardV1.FromCanonicalDescriptors(canonicalDescriptors);
+        Require(canonicalDescriptors.Length == 5_000 && canonicalExpectations.Count == 5_000,
+            "QA-04 steady 5,000 Operation descriptors must map one-to-one into accepted-loss expectations.");
+        Require(canonicalExpectations.Select(static item => item.OperationId).Distinct().Count() == 5_000,
+            "QA-04 accepted-loss expectations must preserve canonical OperationId uniqueness.");
+        Require(canonicalExpectations.Zip(canonicalDescriptors).All(static pair =>
+                pair.First.OperationId == pair.Second.OperationId &&
+                pair.First.PayloadDigest.SequenceEqual(pair.Second.PayloadDigest)),
+            "QA-04 accepted-loss expectations must preserve canonical OperationId/payload digest exactly.");
+
         var operationA = OpaqueId128.Parse("0000000000000000000000000000aa01");
         var operationB = OpaqueId128.Parse("0000000000000000000000000000aa02");
         var digestA = Enumerable.Repeat((byte)0x11, 32).ToArray();
