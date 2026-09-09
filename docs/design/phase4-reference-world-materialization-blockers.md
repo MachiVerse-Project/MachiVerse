@@ -92,16 +92,25 @@ P4-04 の runtime algorithm type だけから field layout、canonical ordering�
 
 ## Environment D0 / D1
 
-P4-05 は 13 semantic partitions を持つが、benchmark class は aggregate count だけを定義している。
+P4-06 `perf.reference.v1` は次だけを canonical input として固定する。
+
+- `environment.d0-cell-cohort` = 1,000,000
+- `environment.d1-aggregate` = 250,000
+- D0/D1 detail class
+- deterministic identity / tile distribution
+- precipitation、surface-flow、hazard、ecosystem、contaminant の load selector
+
+Phase 3 Environment design と P4-05 は、13 semantic partitions と各 partition の意味・payload を固定する。
+
+しかし両仕様を結ぶ次の rule は存在しない。
 
 - D0 1,000,000 descriptor が atmosphere / weather / soil / ecosystem 等のどれへ何件 materialize されるか
 - 1 descriptor が単一 record なのか複数 coupled record なのか
 - D1 250,000 の exact owner split
-- canonical initial payload values
+- D0/D1 の canonical initial payload values
+- coupled Environment record 間の initial Ref closure
 
-が未確定。
-
-件数を都合のよい partition へ割り振らない。
+したがって benchmark count/detail だけから partition split を導出してはならない。`qa04.material.environment-d0-partition-mapping-undefined` と `qa04.material.environment-d1-partition-mapping-undefined` は維持する。
 
 ## Society / Governance 2,000,000
 
@@ -137,15 +146,70 @@ QA-04 は 10,000 deterministic descriptor と transaction mix を持つ。
 
 ## nested payload schema
 
-次の exact nested field schema は依然未定義。
+### 解消済み: `resident.perception.perceived_facts`
 
-- `resident.body_health.body_region_states : ordered list<BodyRegionStateV1>`
-- `resident.perception.perceived_facts : ordered list<PerceivedFactV1>`
-- `governance.law_rule.rule_ast : RuleAst`
+既存 runtime authority `ResidentPerceptionObservationV1` を exact source として、`domain.resident.perceived-fact / 1.0` の nested schema / codec / runtime reconstruction を固定済み。
 
-Phase 3 は conceptual state、P4-05 は top-level field 名と collection order までを示すが、nested record の exact field set / scalar kind / optionality / wire order は固定していない。
+- fact identity
+- resident / subject identity
+- proposition
+- source delivery
+- confidence
+- perceived step
+- fact-id canonical order
+- standard payload wire roundtrip / semantic digest
 
-Snapshot codec は CLR reflection、JSON、ad-hoc protobuf から推測せず、non-empty 値を fail-closed のまま扱う。
+CLR reflection / JSON fallback は使用しない。
+
+### 解消済み: `governance.law_rule` Rule AST
+
+既存 runtime authority `LawPredicateNodeV1` / `LawEffectV1` を exact source として次を固定済み。
+
+```text
+domain.governance.rule-predicate-ast / 1.0
+domain.governance.rule-effect-ast / 1.0
+```
+
+predicate は runtime の8 fieldを lossless に保持し、`children` に限って同一 schema への explicit self-recursion を許可する。他 nested schema の再帰は引き続き fail-closed。
+
+runtime AST -> nested wire -> runtime AST、decode->encode canonicality、full `governance.law_rule` payload、production provider/recovery semantic rehash を smoke で確認済み。
+
+### 未解消: `resident.body_health.body_region_states`
+
+P3 Resident design は粗い身体部位・負傷・疾病・障害・回復等を扱える conceptual body/health state を要求するが、`BodyRegionStateV1` の exact field set は固定していない。
+
+P4-05 が固定するのは:
+
+```text
+body_region_states : ordered list<BodyRegionStateV1>
+```
+
+と region token canonical order までであり、次は未定義。
+
+- region record の exact fields
+- scalar kinds / units
+- required / optional
+- injury/disease との nested-vs-Ref 境界
+- capability / integrity / pain 等を region record に持つか
+- canonical wire field order
+
+runtime の `ResidentHealthStateV1(HealthCapacity, Pain, Stress, Fatigue)` は whole-resident state であり、これを body-region state とみなす根拠はない。
+
+そのため `qa04.material.body-region-state-schema-undefined` は維持する。
+
+## dependency contract checkpoint
+
+exact nested schema 2件の解消により、`Qa04ReferenceWorldDependencyContractV1` の unresolved blocker は **9件**。
+
+- Physical shape authority
+- Environment D0 mapping
+- Environment D1 mapping
+- Society/Governance decomposition
+- Market authority
+- Infrastructure node/edge authority
+- Terrain canonical material gate
+- active CrossDomainTransaction persistent authority
+- BodyRegionState nested schema
 
 ## 完了条件
 
