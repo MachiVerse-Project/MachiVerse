@@ -85,7 +85,7 @@ internal static class StandardDomainSnapshotOwnerCompositionSmoke
         }
     }
 
-    private static ResidentDomainStateV1 CreateResidentState(Qa04ResidentIdentityLifecycleMaterializationV1 qa)
+    private static ResidentDomainStateV1 CreateResidentState(Qa04ResidentIdentityMaterializationV1 qa)
     {
         var source = qa.Partition.RecordsCanonical.Single();
         var payload = new ResidentIdentityLifecyclePayloadV1(
