@@ -19,21 +19,21 @@ internal static class ParticipationSnapshotMaterialSmoke
     private static void VerifyTypedEmptyMaterial()
     {
         var frozen = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(1).WorldState;
-        var binding = Empty<ParticipationBindingPayloadV1>(ParticipationBindingPayloadV1.PartitionId);
-        var absencePolicy = Empty<ParticipationAbsencePolicyPayloadV1>(ParticipationAbsencePolicyPayloadV1.PartitionId);
-        var controlMode = Empty<ParticipationControlModePayloadV1>(ParticipationControlModePayloadV1.PartitionId);
-        var history = Empty<ParticipationHistoryPayloadV1>(ParticipationHistoryPayloadV1.PartitionId);
-        var detailRequirement = Empty<ParticipationDetailRequirementPayloadV1>(ParticipationDetailRequirementPayloadV1.PartitionId);
-
-        var material = ParticipationDomainSnapshotMaterialV1.BindTypedEmpty(
+        var state = ParticipationDomainStateV1.CreateEmpty();
+        var material = state.BindSnapshotMaterial(frozen);
+        var typedEmpty = ParticipationDomainSnapshotMaterialV1.BindTypedEmpty(
             frozen,
-            binding,
-            absencePolicy,
-            controlMode,
-            history,
-            detailRequirement);
+            state.Binding,
+            state.AbsencePolicy,
+            state.ControlMode,
+            state.History,
+            state.DetailRequirement);
+
         Require(material.Authorities.Count == 5 && material.Authorities.All(static authority => authority.ActualItemCount == 0),
-            "Participation typed empty material must bind all five actual partition roots.");
+            "Participation runtime state must bind all five typed empty actual partition roots.");
+        Require(typedEmpty.Authorities.Select(static authority => authority.PartitionId.Value)
+                .SequenceEqual(material.Authorities.Select(static authority => authority.PartitionId.Value)),
+            "Typed-empty guard must bind the same runtime-owned Participation roots.");
 
         var providers = ParticipationDomainSnapshotProviderV1.CreateAll()
             .ToDictionary(static provider => provider.SectionId, StringComparer.Ordinal);
@@ -76,11 +76,11 @@ internal static class ParticipationSnapshotMaterialSmoke
             "nonempty partition cannot be bound as typed empty material",
             () => _ = ParticipationDomainSnapshotMaterialV1.BindTypedEmpty(
                 frozen,
-                binding,
+                state.Binding,
                 nonempty,
-                controlMode,
-                history,
-                detailRequirement));
+                state.ControlMode,
+                state.History,
+                state.DetailRequirement));
     }
 
     private static void VerifyAbsencePolicyActualMaterial()
@@ -139,11 +139,6 @@ internal static class ParticipationSnapshotMaterialSmoke
                 restoredPayload.CanonicalDigest().SequenceEqual(payload.CanonicalDigest()),
             "Participation nested payload semantic digest did not round-trip canonically.");
     }
-
-    private static DomainPartitionStateV1<TPayload> Empty<TPayload>(string partitionId)
-        => new(
-            StandardDomainPartitionRegistry.Get(partitionId),
-            Array.Empty<DomainRecordEnvelopeV1<TPayload>>());
 
     private static void ExpectInvalid(string name, Action action)
     {
