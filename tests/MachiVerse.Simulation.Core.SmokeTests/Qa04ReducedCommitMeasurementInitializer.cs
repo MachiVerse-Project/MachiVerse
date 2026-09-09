@@ -22,7 +22,7 @@ internal static class Qa04ReducedCommitMeasurementInitializer
                 "Instrumented QA-04 reduced loop must observe exactly one SQLite COMMIT sample per Step.");
             Require(proof.EveryReducedStepHasSqliteCommitSample,
                 "Instrumented QA-04 reduced loop COMMIT metric coverage is incomplete.");
-            Require(proof.Measurement.SqliteCommitDuration is { Minimum: >= TimeSpan.Zero },
+            Require(proof.Measurement.SqliteCommitDuration is { } commitSummary && commitSummary.Minimum >= TimeSpan.Zero,
                 "Instrumented QA-04 reduced loop must expose a non-negative COMMIT duration summary.");
         }
         finally
