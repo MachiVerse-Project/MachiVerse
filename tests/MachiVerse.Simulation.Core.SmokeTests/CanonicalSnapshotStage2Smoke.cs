@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Persistence;
@@ -6,10 +5,7 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class CanonicalSnapshotStage2Smoke
 {
-    [ModuleInitializer]
-    internal static void Initialize() => RunAsync().GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         VerifyActualPartitionAuthorityBinding();
         await VerifyProductionZstdChunkPathAsync();
