@@ -188,6 +188,8 @@ public static class StandardDomainNestedSnapshotSchemaV1
 
 public static class StandardDomainNestedSnapshotCodecRegistryV1
 {
+    public static DomainNestedSnapshotCodecRegistryV1 Default { get; } = Create();
+
     public static DomainNestedSnapshotCodecRegistryV1 Create()
         => new(new IDomainNestedSnapshotCodecV1[]
         {
