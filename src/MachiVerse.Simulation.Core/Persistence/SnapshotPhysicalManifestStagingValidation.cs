@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
 
