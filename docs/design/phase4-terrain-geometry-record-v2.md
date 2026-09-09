@@ -1,6 +1,6 @@
 # Phase 4 spatial.terrain_geometry record schema v2
 
-Status: Decided / standalone schema + wire implemented / production activation pending  
+Status: Decided / standalone schema + wire + target-kind closure implemented / production activation pending  
 Tracking: #240  
 Implementation: Draft PR #265  
 Applies to: `domain.spatial.terrain_geometry.record` **2.0**
@@ -9,7 +9,7 @@ Applies to: `domain.spatial.terrain_geometry.record` **2.0**
 
 `spatial.terrain_geometry` v1 contains the terrain-root record defined by P4-05, while P4-04 independently defines authoritative `TerrainBrickV1` SBO-SDF state. `perf.reference.v1` requires 500,000 hot terrain bricks and the v1 root contains a required `root_brick_ref`, so both root and brick records must exist under the same existing Spatial authority without introducing a 98th partition.
 
-This document freezes the exact v2 record contract and its lossless standalone wire. It does **not** activate v2 in `StandardDomainPartitionRegistry`, populate the canonical 500,000 brick contents, or mark the QA-04 reference world materialized.
+This document freezes the exact v2 record contract, its lossless standalone wire, and the semantic closure that requires every root to resolve to an actual brick arm. It does **not** activate v2 in `StandardDomainPartitionRegistry`, populate the canonical 500,000 brick contents, or mark the QA-04 reference world materialized.
 
 ## 2. Schema identity
 
@@ -20,7 +20,7 @@ v1 = domain.spatial.terrain_geometry.record / 1.0
 v2 = domain.spatial.terrain_geometry.record / 2.0
 ```
 
-The standard runtime registry remains v1 until the partition-wide migration, mixed-record state container, production snapshot/recovery integration, semantic target-kind validation, and canonical benchmark material are complete.
+The standard runtime registry remains v1 until the partition-wide migration, mixed-record state container, production snapshot/recovery integration, and canonical benchmark material are complete.
 
 ## 3. Common record envelope
 
@@ -159,9 +159,23 @@ Decoder rules are fail-closed:
 
 The codec intentionally does not modify the production v1 `DomainPartitionSnapshotWireCodecV1`. It provides the exact lossless material contract needed before production partition migration can be implemented safely.
 
-## 8. Migration boundary
+## 8. Semantic target-kind closure
 
-### 8.1 v1 root -> v2 root
+`SpatialTerrainGeometryRecordSetV2` holds v2 records in canonical `record_id` byte order and validates every `terrain_root.root_brick_ref` against the actual record set.
+
+A valid root target must satisfy all of the following:
+
+1. target partition is exactly `spatial.terrain_geometry`;
+2. target record id exists in the same v2 record set;
+3. target payload arm is exactly `terrain_brick`.
+
+Missing targets fail with `spatial.terrain-v2.root-brick-missing`; an existing non-brick target fails with `spatial.terrain-v2.root-brick-kind`. Therefore a root can no longer pass semantic closure merely because some arbitrary record with the referenced id exists.
+
+This is the standalone target-kind contract. Production recovered-reference integration still has to invoke equivalent validation against the recovered v2 partition before the QA-04 material gate can be removed.
+
+## 9. Migration boundary
+
+### 9.1 v1 root -> v2 root
 
 Deterministic recipe:
 
@@ -174,7 +188,7 @@ Deterministic recipe:
 
 No benchmark-specific value is fabricated by migration.
 
-### 8.2 `TerrainBrickV1` -> v2 brick
+### 9.2 `TerrainBrickV1` -> v2 brick
 
 Deterministic mapping:
 
@@ -183,15 +197,15 @@ Deterministic mapping:
 3. caller supplies the common record lifecycle/detail/lineage metadata from authoritative creation context;
 4. copy `level`, `cell_origin`, `sample_spacing_mm`, all 729 SDF samples, and all 512 material ids exactly.
 
-## 9. What remains blocked
+## 10. What remains blocked
 
-This schema decision removes the **terrain v2 field-shape ambiguity**, but does not make the canonical terrain class materialized.
+This schema decision removes the **terrain v2 field-shape ambiguity**, and the standalone record set removes target-kind ambiguity. The canonical terrain class is still not materially populated.
 
 Still required before the QA-04 blocker can be removed:
 
 - integrate v2 mixed-record support into the production partition state/snapshot/recovery path;
 - migrate the actual terrain-root authority to v2;
-- add recovered Ref target-kind validation so `root_brick_ref` must resolve to a `terrain_brick` arm, not merely any record in the partition;
+- invoke equivalent target-kind validation against recovered production v2 records;
 - define the canonical `perf.reference.v1` SDF/material contents for all 500,000 hot bricks;
 - materialize those records from the fixed benchmark seed/context;
 - include the resulting authority in the full exact-97 / exact-103 canonical proof.
