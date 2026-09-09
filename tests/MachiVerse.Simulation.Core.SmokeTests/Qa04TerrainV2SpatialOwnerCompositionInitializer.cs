@@ -66,7 +66,7 @@ internal static class Qa04TerrainV2SpatialOwnerCompositionInitializer
             governance);
         Require(exact97.CanonicalAuthorities.Count == StandardDomainPartitionRegistry.StandardPartitionCount,
             "Eight owner materials including Spatial v2 must compose to exact-97 authorities.");
-        Require(exact97.CanonicalAuthorities.Sum(static authority => authority.ActualItemCount) == 2UL,
+        Require(exact97.CanonicalAuthorities.Sum(static authority => checked((long)authority.ActualItemCount)) == 2,
             "Owner composition fixture must contain only one Resident record and one Terrain v2 canary record.");
         Require(exact97.Get(terrainId) is SpatialTerrainGeometrySnapshotAuthorityV2,
             "Exact-97 owner composition must retain the specialized Terrain v2 authority.");
