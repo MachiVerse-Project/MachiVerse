@@ -130,6 +130,10 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "resident.body_health",
             "body_region_states",
             "qa04.material.body-region-state-schema-undefined");
+        RequireUnscoped(
+            "transaction.active-cross-domain.persistent-authority",
+            Qa04ReferenceDependencyBlockerKindV1.PersistentAuthority,
+            "qa04.material.cross-domain-transaction-authority-undefined");
     }
 
     private static void Require(
@@ -144,6 +148,20 @@ public static class Qa04ReferenceWorldDependencyContractV1
         if (blocker.Kind != kind ||
             blocker.PartitionId?.Value != partitionId ||
             !string.Equals(blocker.FieldName, fieldName, StringComparison.Ordinal) ||
+            blocker.FailureCode.Value != failureCode)
+            throw new InvalidDataException($"qa04.material.dependency-blocker-drift:{dependencyId}");
+    }
+
+    private static void RequireUnscoped(
+        string dependencyId,
+        Qa04ReferenceDependencyBlockerKindV1 kind,
+        string failureCode)
+    {
+        var blocker = BlockersValue.SingleOrDefault(value => value.DependencyId.Value == dependencyId)
+            ?? throw new InvalidDataException($"qa04.material.dependency-blocker-missing:{dependencyId}");
+        if (blocker.Kind != kind ||
+            blocker.PartitionId is not null ||
+            blocker.FieldName is not null ||
             blocker.FailureCode.Value != failureCode)
             throw new InvalidDataException($"qa04.material.dependency-blocker-drift:{dependencyId}");
     }
