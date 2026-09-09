@@ -1,3 +1,4 @@
+using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Environment;
 using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
@@ -15,11 +16,12 @@ public sealed record Qa04AlgorithmIterationBudgetReceiptV1(
     uint ResidentGoapExpandedNodes);
 
 /// <summary>
-/// P4-06 が固定する標準 algorithm semantic budget と production runtime 定数の drift を
+/// P4-06 が固定する標準 algorithm semantic budget と production runtime の drift を
 /// fail-closed に検出する。
 ///
-/// wall-clock pressure に応じた hidden iteration reduction を許可しないための静的契約であり、
-/// 実 benchmark run が各 solver を実際に通過したことを証明する execution coverage evidence ではない。
+/// wall-clock pressure に応じた hidden iteration reduction を許可しないため、固定定数に加えて
+/// standard Power/Water Jacobi wrapper が実際に32反復を要求することも deterministic fixture で確認する。
+/// ただし実 benchmark run が各 solver path を通過したことを証明する execution coverage evidence ではない。
 /// </summary>
 public static class Qa04AlgorithmIterationBudgetGuardV1
 {
@@ -48,6 +50,8 @@ public static class Qa04AlgorithmIterationBudgetGuardV1
         if (ResidentGoapPlannerV1.MaxExpandedNodes != ExpectedResidentGoapExpandedNodes)
             throw new InvalidDataException("qa04.algorithm.goap-expansion-budget-drift");
 
+        ValidateStandardInfrastructureJacobiWrappers();
+
         return new Qa04AlgorithmIterationBudgetReceiptV1(
             DeterministicGjkV1.MaxIterations,
             DeterministicEpaV1.MaxIterations,
@@ -56,5 +60,19 @@ public static class Qa04AlgorithmIterationBudgetGuardV1
             GroundwaterJacobiV1.StandardIterations,
             DeterministicJacobiNetworkV1.MaxIterations,
             ResidentGoapPlannerV1.MaxExpandedNodes);
+    }
+
+    private static void ValidateStandardInfrastructureJacobiWrappers()
+    {
+        var node = new JacobiNetworkNodeV1(
+            OpaqueId128.Parse("0000000000000000000000000000ab01"),
+            FixedQ32_32.One,
+            FixedQ32_32.One);
+        var coefficients = Array.Empty<JacobiNetworkCoefficientV1>();
+        var power = PowerNetworkJacobiV1.Solve([node], coefficients);
+        var water = WaterNetworkJacobiV1.Solve([node], coefficients);
+        if (power.Iterations != ExpectedInfrastructureJacobiIterations ||
+            water.Iterations != ExpectedInfrastructureJacobiIterations)
+            throw new InvalidDataException("qa04.algorithm.infrastructure-standard-wrapper-iteration-drift");
     }
 }
