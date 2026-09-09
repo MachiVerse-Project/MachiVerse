@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Participation;
+using MachiVerse.Simulation.Core.Domains.ResidentParticipation;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
@@ -184,6 +185,19 @@ public static class StandardDomainNestedSnapshotSchemaV1
             new DomainPayloadFieldRuleV1("priority", DomainPayloadFieldKindV1.Int32, Optional: false),
             new DomainPayloadFieldRuleV1("rule_id", DomainPayloadFieldKindV1.Token, Optional: false),
         }));
+
+    public static DomainNestedSnapshotSchemaDescriptorV1 ResidentPerceivedFact { get; } = new(
+        new SchemaRefV1("domain.resident.perceived-fact"),
+        Array.AsReadOnly(new[]
+        {
+            new DomainPayloadFieldRuleV1("fact_id", DomainPayloadFieldKindV1.Id128, Optional: false),
+            new DomainPayloadFieldRuleV1("resident_id", DomainPayloadFieldKindV1.Id128, Optional: false),
+            new DomainPayloadFieldRuleV1("subject_id", DomainPayloadFieldKindV1.Id128, Optional: false),
+            new DomainPayloadFieldRuleV1("proposition", DomainPayloadFieldKindV1.Token, Optional: false),
+            new DomainPayloadFieldRuleV1("source_delivery_id", DomainPayloadFieldKindV1.Id128, Optional: false),
+            new DomainPayloadFieldRuleV1("confidence_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
+            new DomainPayloadFieldRuleV1("perceived_step", DomainPayloadFieldKindV1.Step, Optional: false),
+        }));
 }
 
 public static class StandardDomainNestedSnapshotCodecRegistryV1
@@ -210,5 +224,28 @@ public static class StandardDomainNestedSnapshotCodecRegistryV1
                     var priority = left.Priority.CompareTo(right.Priority);
                     return priority != 0 ? priority : string.CompareOrdinal(left.RuleId.Value, right.RuleId.Value);
                 }),
+            new DomainNestedSnapshotCodecV1<ResidentPerceivedFactNestedValueV1>(
+                "resident.perception",
+                "perceived_facts",
+                StandardDomainNestedSnapshotSchemaV1.ResidentPerceivedFact,
+                static value => new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["fact_id"] = value.FactId,
+                    ["resident_id"] = value.ResidentId,
+                    ["subject_id"] = value.SubjectId,
+                    ["proposition"] = value.Proposition.Value,
+                    ["source_delivery_id"] = value.SourceDeliveryId,
+                    ["confidence_ppm"] = value.ConfidencePpm,
+                    ["perceived_step"] = value.PerceivedStep,
+                },
+                static fields => new ResidentPerceivedFactNestedValueV1(
+                    (OpaqueId128)fields["fact_id"]!,
+                    (OpaqueId128)fields["resident_id"]!,
+                    (OpaqueId128)fields["subject_id"]!,
+                    new StableToken((string)fields["proposition"]!),
+                    (OpaqueId128)fields["source_delivery_id"]!,
+                    (uint)fields["confidence_ppm"]!,
+                    (ulong)fields["perceived_step"]!),
+                static (left, right) => left.FactId.CompareTo(right.FactId)),
         });
 }
