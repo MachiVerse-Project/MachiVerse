@@ -20,7 +20,7 @@ internal static class Qa04CrossDomainTransactionPersistentAuthorityDependencyCon
             ("cross-domain-transaction.persistence.authority-owner", Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.AuthorityOwner,
                 "qa04.cross-domain-transaction.authority-owner-undefined"),
             ("cross-domain-transaction.persistence.benchmark-turnover-binding", Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.BenchmarkTurnoverBinding,
-                "qa04.cross-domain-transaction.benchmark-turnover-binding-undefined"),
+                "qa04.transaction.benchmark-turnover-binding-undefined"),
             ("cross-domain-transaction.persistence.detail-guard-binding", Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.DetailGuardBinding,
                 "qa04.cross-domain-transaction.detail-guard-binding-undefined"),
             ("cross-domain-transaction.persistence.history-commit-binding", Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.HistoryCommitBinding,
