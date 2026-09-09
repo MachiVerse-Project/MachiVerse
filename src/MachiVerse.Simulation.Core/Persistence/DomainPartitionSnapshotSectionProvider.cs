@@ -8,6 +8,8 @@ namespace MachiVerse.Simulation.Core.Persistence;
 /// Production provider for one standard Domain partition schema. The provider serializes only
 /// actual DomainPartitionStateV1 material, fragments at record boundaries, and verifies recovery
 /// by rebuilding the semantic partition and recomputing PartitionStateHeaderV1.CreateCanonical.
+/// When an all-97 reference resolver is supplied, production and recovery both run the full P4-05
+/// payload/reference/schema validation against actual record material.
 /// </summary>
 public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomainPartitionSnapshotSectionProviderV1
 {
@@ -16,6 +18,7 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
     private readonly Func<IReadOnlyDictionary<string, object?>, TPayload> _fromStandardPayload;
     private readonly Func<TPayload, byte[]> _canonicalPayloadDigest;
     private readonly DomainNestedSnapshotCodecRegistryV1? _nestedCodecs;
+    private readonly StandardDomainPayloadCodecValidatorV1 _semanticValidator = new();
 
     public DomainPartitionSnapshotSectionProviderV1(
         string partitionId,
@@ -38,7 +41,9 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
     public string SectionId => _identity.PartitionId.Value;
     public SchemaRefV1 SectionSchema => _identity.PartitionSchema;
 
-    public CanonicalSnapshotSectionMaterialV1 Create(IDomainPartitionSnapshotAuthorityV1 authority)
+    public CanonicalSnapshotSectionMaterialV1 Create(
+        IDomainPartitionSnapshotAuthorityV1 authority,
+        IDomainRecordSchemaResolverV1? references = null)
     {
         ArgumentNullException.ThrowIfNull(authority);
         if (authority is not DomainPartitionSnapshotAuthorityV1<TPayload> typed)
@@ -47,7 +52,7 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
         if (typed.Identity != _identity)
             throw new InvalidDataException($"persistence.snapshot.partition-provider-identity-mismatch:{SectionId}");
 
-        var fragments = BuildFragments(typed);
+        var fragments = BuildFragments(typed, references);
         var section = new CanonicalSnapshotSectionMaterialV1(
             SectionId,
             SectionSchema,
@@ -61,7 +66,9 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
         return section;
     }
 
-    public SnapshotSectionSemanticVerifierV1 CreateSemanticVerifier(PartitionStateHeaderV1 expectedHeader)
+    public SnapshotSectionSemanticVerifierV1 CreateSemanticVerifier(
+        PartitionStateHeaderV1 expectedHeader,
+        IDomainRecordSchemaResolverV1? references = null)
     {
         ArgumentNullException.ThrowIfNull(expectedHeader);
         RequireExpectedHeaderIdentity(expectedHeader);
@@ -69,11 +76,12 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
         return new SnapshotSectionSemanticVerifierV1(
             SectionId,
             SectionSchema,
-            fragments => VerifyRecoveredFragments(frozen, fragments));
+            fragments => VerifyRecoveredFragments(frozen, fragments, references));
     }
 
     private IReadOnlyList<SnapshotSectionFragmentMaterialV1> BuildFragments(
-        DomainPartitionSnapshotAuthorityV1<TPayload> authority)
+        DomainPartitionSnapshotAuthorityV1<TPayload> authority,
+        IDomainRecordSchemaResolverV1? references)
     {
         var records = authority.Partition.RecordsCanonical.ToArray();
         if (records.Length == 0)
@@ -81,7 +89,7 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             var payload = DomainPartitionSnapshotWireCodecV1.EncodeFragment(
                 authority,
                 Array.Empty<DomainRecordEnvelopeV1<TPayload>>(),
-                _toStandardPayload,
+                value => ToValidatedStandardPayload(value, references),
                 _nestedCodecs);
             if (payload.Length > CanonicalSnapshotSectionValidationV1.HardMaxUncompressedBytes)
                 throw new InvalidDataException("persistence.snapshot-item-too-large");
@@ -112,7 +120,7 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             var recordBytes = DomainPartitionSnapshotWireCodecV1.EncodeRecord(
                 SectionId,
                 record,
-                _toStandardPayload,
+                value => ToValidatedStandardPayload(value, references),
                 _nestedCodecs);
             var recordWireSize = LengthDelimitedFieldSize(2, recordBytes.Length);
             if (checked(baseWireSize + recordWireSize) > CanonicalSnapshotSectionValidationV1.HardMaxUncompressedBytes)
@@ -141,7 +149,7 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             var payload = DomainPartitionSnapshotWireCodecV1.EncodeFragment(
                 authority,
                 group,
-                _toStandardPayload,
+                value => ToValidatedStandardPayload(value, references),
                 _nestedCodecs);
             if (payload.Length > CanonicalSnapshotSectionValidationV1.HardMaxUncompressedBytes)
                 throw new InvalidDataException("persistence.snapshot-item-too-large");
@@ -159,7 +167,8 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
 
     private SnapshotSectionSemanticVerificationV1 VerifyRecoveredFragments(
         PartitionStateHeaderV1 expectedHeader,
-        IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments)
+        IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments,
+        IDomainRecordSchemaResolverV1? references)
     {
         ArgumentNullException.ThrowIfNull(fragments);
         if (fragments.Count == 0)
@@ -205,6 +214,9 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
                 if (previousRecord is { } previous && previous.CompareTo(material.RecordId) >= 0)
                     throw new InvalidDataException($"persistence.snapshot.fragment-record-order:{SectionId}");
                 previousRecord = material.RecordId;
+
+                if (references is not null)
+                    _semanticValidator.Validate(SectionId, material.Payload, references);
 
                 TPayload payload;
                 try
@@ -259,6 +271,17 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
         return new SnapshotSectionSemanticVerificationV1(
             recomputed.ItemCount,
             recomputed.CanonicalDigest.ToArray());
+    }
+
+    private IReadOnlyDictionary<string, object?> ToValidatedStandardPayload(
+        TPayload payload,
+        IDomainRecordSchemaResolverV1? references)
+    {
+        var standard = _toStandardPayload(payload)
+            ?? throw new InvalidDataException($"persistence.snapshot.partition-payload-standard-null:{SectionId}");
+        if (references is not null)
+            _semanticValidator.Validate(SectionId, standard, references);
+        return standard;
     }
 
     private void ValidateCreatedSection(CanonicalSnapshotSectionMaterialV1 section)
