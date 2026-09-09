@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Participation;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
@@ -183,4 +184,29 @@ public static class StandardDomainNestedSnapshotSchemaV1
             new DomainPayloadFieldRuleV1("priority", DomainPayloadFieldKindV1.Int32, Optional: false),
             new DomainPayloadFieldRuleV1("rule_id", DomainPayloadFieldKindV1.Token, Optional: false),
         }));
+}
+
+public static class StandardDomainNestedSnapshotCodecRegistryV1
+{
+    public static DomainNestedSnapshotCodecRegistryV1 Create()
+        => new(new IDomainNestedSnapshotCodecV1[]
+        {
+            new DomainNestedSnapshotCodecV1<ParticipationPolicyRuleV1>(
+                "participation.absence_policy",
+                "priority_rules",
+                StandardDomainNestedSnapshotSchemaV1.ParticipationPolicyRule,
+                static value => new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["priority"] = value.Priority,
+                    ["rule_id"] = value.RuleId.Value,
+                },
+                static fields => new ParticipationPolicyRuleV1(
+                    (int)fields["priority"]!,
+                    new StableToken((string)fields["rule_id"]!)),
+                static (left, right) =>
+                {
+                    var priority = left.Priority.CompareTo(right.Priority);
+                    return priority != 0 ? priority : string.CompareOrdinal(left.RuleId.Value, right.RuleId.Value);
+                }),
+        });
 }
