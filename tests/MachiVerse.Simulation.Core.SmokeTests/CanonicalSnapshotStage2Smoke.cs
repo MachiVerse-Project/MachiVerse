@@ -10,6 +10,7 @@ internal static class CanonicalSnapshotStage2Smoke
     {
         VerifyActualPartitionAuthorityBinding();
         VerifyDomainWireRoundTrip();
+        VerifyNestedWireRegistryRoundTrip();
         VerifyLogicalManifestWireRoundTrip();
         await VerifyProductionZstdChunkPathAsync();
     }
@@ -131,6 +132,63 @@ internal static class CanonicalSnapshotStage2Smoke
         ExpectInvalid(
             "outer fragment record range vs decoded records",
             () => _ = provider.CreateSemanticVerifier(resident.PartitionHeader).Verify(new[] { tamperedFragment }));
+    }
+
+    private static void VerifyNestedWireRegistryRoundTrip()
+    {
+        var codec = new DomainNestedSnapshotCodecV1<ParticipationPolicyRuleProbe>(
+            "participation.absence_policy",
+            "priority_rules",
+            StandardDomainNestedSnapshotSchemaV1.ParticipationPolicyRule,
+            static value => new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["priority"] = value.Priority,
+                ["rule_id"] = value.RuleId,
+            },
+            static fields => new ParticipationPolicyRuleProbe(
+                (int)fields["priority"]!,
+                (string)fields["rule_id"]!),
+            static (left, right) =>
+            {
+                var priority = left.Priority.CompareTo(right.Priority);
+                return priority != 0 ? priority : string.CompareOrdinal(left.RuleId, right.RuleId);
+            });
+        var registry = new DomainNestedSnapshotCodecRegistryV1(new IDomainNestedSnapshotCodecV1[] { codec });
+        ICanonicalDomainNestedValueV1[] source =
+        [
+            new ParticipationPolicyRuleProbe(-10, "safety"),
+            new ParticipationPolicyRuleProbe(20, "routine"),
+        ];
+        var encoded = DomainNestedSnapshotWireCodecV1.EncodeList(
+            "participation.absence_policy",
+            "priority_rules",
+            source,
+            registry);
+        var decoded = DomainNestedSnapshotWireCodecV1.DecodeList(
+            "participation.absence_policy",
+            "priority_rules",
+            encoded,
+            registry);
+
+        Require(decoded.Count == 2 &&
+                decoded[0] is ParticipationPolicyRuleProbe first && first.Priority == -10 && first.RuleId == "safety" &&
+                decoded[1] is ParticipationPolicyRuleProbe second && second.Priority == 20 && second.RuleId == "routine",
+            "Explicit nested Snapshot codec must preserve registered participation policy rule fields.");
+
+        ExpectInvalid(
+            "nested ordered list semantic order",
+            () => _ = DomainNestedSnapshotWireCodecV1.EncodeList(
+                "participation.absence_policy",
+                "priority_rules",
+                source.Reverse().ToArray(),
+                registry));
+        ExpectInvalid(
+            "nested codec unavailable",
+            () => _ = DomainNestedSnapshotWireCodecV1.EncodeList(
+                "participation.absence_policy",
+                "priority_rules",
+                source,
+                new DomainNestedSnapshotCodecRegistryV1(Array.Empty<IDomainNestedSnapshotCodecV1>())));
     }
 
     private static void VerifyLogicalManifestWireRoundTrip()
@@ -326,5 +384,13 @@ internal static class CanonicalSnapshotStage2Smoke
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private sealed record ParticipationPolicyRuleProbe(int Priority, string RuleId) : ICanonicalDomainNestedValueV1
+    {
+        public void ValidateCanonical()
+        {
+            _ = new StableToken(RuleId);
+        }
     }
 }
