@@ -258,6 +258,7 @@ SnapshotManifestSmoke.Run();
 await PersistenceSnapshotSmoke.RunAsync();
 await PersistenceMigrationSmoke.RunAsync();
 await PortableWorldExportSmoke.RunAsync();
+await CanonicalSnapshotStage2Smoke.RunAsync();
 Qa04ReferenceLoadSmoke.Run();
 await Qa04RuntimeTargetSmoke.RunAsync();
 await Qa04CoreSubstateAuthoritySmoke.RunAsync();
