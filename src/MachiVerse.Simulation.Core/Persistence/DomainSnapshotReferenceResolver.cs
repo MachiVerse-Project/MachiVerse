@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -6,7 +7,8 @@ namespace MachiVerse.Simulation.Core.Persistence;
 
 /// <summary>
 /// Untyped actual-record source used to build the frozen Snapshot reference index. Implementations
-/// must enumerate real DomainPartitionStateV1 records; header counts are not accepted as material.
+/// must enumerate real DomainPartitionStateV1 records or structurally decoded Snapshot records;
+/// header counts alone are not accepted as material.
 /// </summary>
 public interface IDomainPartitionSnapshotReferenceSourceV1
 {
@@ -38,6 +40,116 @@ public sealed class DomainPartitionSnapshotReferenceSourceV1<TPayload> : IDomain
     public SchemaRefV1 RecordSchema => Authority.Identity.RecordSchema;
     public ulong ActualItemCount => Authority.ActualItemCount;
     public IReadOnlyList<OpaqueId128> RecordIdsCanonical { get; }
+}
+
+/// <summary>
+/// Structure-only recovered source for one Domain section. It validates fragment/header/range/order
+/// and decodes record identities without requiring the cross-partition reference resolver yet.
+/// Full payload semantic/reference validation runs in the second recovery phase.
+/// </summary>
+public sealed class DomainSnapshotRecoveredReferenceSourceV1 : IDomainPartitionSnapshotReferenceSourceV1
+{
+    public DomainSnapshotRecoveredReferenceSourceV1(
+        string partitionId,
+        IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
+    {
+        ArgumentNullException.ThrowIfNull(fragments);
+        var identity = StandardDomainPartitionRegistry.Get(partitionId);
+        if (fragments.Count == 0)
+            throw new InvalidDataException($"persistence.snapshot.recovered-reference-fragment-missing:{partitionId}");
+
+        var codecs = nestedCodecs ?? StandardDomainNestedSnapshotCodecRegistryV1.Default;
+        var ids = new List<OpaqueId128>();
+        PartitionStateHeaderV1? repeatedHeader = null;
+        OpaqueId128? previous = null;
+        ulong total = 0;
+
+        for (var i = 0; i < fragments.Count; i++)
+        {
+            var fragment = fragments[i] ?? throw new InvalidDataException($"persistence.snapshot.recovered-reference-fragment-null:{partitionId}");
+            if (!string.Equals(fragment.SectionId, partitionId, StringComparison.Ordinal) ||
+                fragment.FragmentIndex != checked((uint)i) ||
+                fragment.FragmentCount != checked((uint)fragments.Count))
+                throw new InvalidDataException($"persistence.snapshot.recovered-reference-fragment-shape:{partitionId}");
+
+            var decoded = DomainPartitionSnapshotWireCodecV1.DecodeFragment(
+                partitionId,
+                fragment.FragmentPayload,
+                codecs);
+            if (repeatedHeader is null)
+                repeatedHeader = decoded.Header;
+            else
+                RequireSameHeader(repeatedHeader, decoded.Header, partitionId);
+
+            if (decoded.Records.Count != checked((int)fragment.ItemCount))
+                throw new InvalidDataException($"persistence.snapshot.recovered-reference-item-count:{partitionId}");
+
+            if (decoded.Records.Count == 0)
+            {
+                if (fragment.FirstRecordId is not null || fragment.LastRecordId is not null)
+                    throw new InvalidDataException($"persistence.snapshot.recovered-reference-range-empty:{partitionId}");
+            }
+            else
+            {
+                var first = decoded.Records[0].RecordId.ToBytes();
+                var last = decoded.Records[^1].RecordId.ToBytes();
+                if (fragment.FirstRecordId is null || fragment.LastRecordId is null ||
+                    !first.AsSpan().SequenceEqual(fragment.FirstRecordId) ||
+                    !last.AsSpan().SequenceEqual(fragment.LastRecordId))
+                    throw new InvalidDataException($"persistence.snapshot.recovered-reference-range:{partitionId}");
+            }
+
+            foreach (var record in decoded.Records)
+            {
+                if (record.RecordSchema != identity.RecordSchema)
+                    throw new InvalidDataException($"persistence.snapshot.recovered-reference-schema:{partitionId}");
+                if (previous is { } prior && prior.CompareTo(record.RecordId) >= 0)
+                    throw new InvalidDataException($"persistence.snapshot.recovered-reference-order:{partitionId}");
+                previous = record.RecordId;
+                ids.Add(record.RecordId);
+            }
+            total = checked(total + fragment.ItemCount);
+        }
+
+        Header = repeatedHeader
+            ?? throw new InvalidDataException($"persistence.snapshot.recovered-reference-header-missing:{partitionId}");
+        if (Header.PartitionId != identity.PartitionId ||
+            Header.OwnerDomain != identity.OwnerDomain ||
+            Header.Schema != identity.PartitionSchema)
+            throw new InvalidDataException($"persistence.snapshot.recovered-reference-header-identity:{partitionId}");
+        if (total != Header.ItemCount || total != checked((ulong)ids.Count))
+            throw new InvalidDataException($"persistence.snapshot.recovered-reference-total-count:{partitionId}");
+        if (Header.ItemCount == 0 && fragments.Count != 1)
+            throw new InvalidDataException($"persistence.snapshot.recovered-reference-empty-fragment-count:{partitionId}");
+
+        PartitionId = identity.PartitionId;
+        RecordSchema = identity.RecordSchema;
+        ActualItemCount = total;
+        RecordIdsCanonical = Array.AsReadOnly(ids.ToArray());
+    }
+
+    public StableToken PartitionId { get; }
+    public SchemaRefV1 RecordSchema { get; }
+    public ulong ActualItemCount { get; }
+    public IReadOnlyList<OpaqueId128> RecordIdsCanonical { get; }
+    public PartitionStateHeaderV1 Header { get; }
+
+    private static void RequireSameHeader(
+        PartitionStateHeaderV1 expected,
+        PartitionStateHeaderV1 actual,
+        string partitionId)
+    {
+        if (expected.PartitionId != actual.PartitionId ||
+            expected.OwnerDomain != actual.OwnerDomain ||
+            expected.Schema != actual.Schema ||
+            expected.Revision != actual.Revision ||
+            expected.BasisStep != actual.BasisStep ||
+            expected.DetailLevel != actual.DetailLevel ||
+            expected.ItemCount != actual.ItemCount ||
+            !CryptographicOperations.FixedTimeEquals(expected.CanonicalDigest, actual.CanonicalDigest))
+            throw new InvalidDataException($"persistence.snapshot.recovered-reference-header-mismatch:{partitionId}");
+    }
 }
 
 /// <summary>
@@ -97,4 +209,38 @@ public sealed class DomainSnapshotReferenceResolverV1 : IDomainRecordSchemaResol
 
     public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
         => _records.TryGetValue((reference.PartitionId.Value, reference.RecordId), out schema);
+
+    public static DomainSnapshotReferenceResolverV1 FromRecoveredSections(
+        IEnumerable<CanonicalSnapshotSectionMaterialV1> sections,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
+    {
+        ArgumentNullException.ThrowIfNull(sections);
+        var byId = new Dictionary<string, CanonicalSnapshotSectionMaterialV1>(StringComparer.Ordinal);
+        foreach (var section in sections)
+        {
+            ArgumentNullException.ThrowIfNull(section);
+            if (!byId.TryAdd(section.SectionId, section))
+                throw new InvalidDataException($"persistence.snapshot.recovered-reference-section-duplicate:{section.SectionId}");
+        }
+
+        var sources = new List<IDomainPartitionSnapshotReferenceSourceV1>(StandardDomainPartitionRegistry.StandardPartitionCount);
+        foreach (var identity in StandardDomainPartitionRegistry.Entries)
+        {
+            if (!byId.TryGetValue(identity.PartitionId.Value, out var section))
+                throw new InvalidDataException($"persistence.snapshot.recovered-reference-section-missing:{identity.PartitionId.Value}");
+            if (section.SectionSchema != identity.PartitionSchema)
+                throw new InvalidDataException($"persistence.snapshot.recovered-reference-section-schema:{identity.PartitionId.Value}");
+
+            var source = new DomainSnapshotRecoveredReferenceSourceV1(
+                identity.PartitionId.Value,
+                section.Fragments,
+                nestedCodecs);
+            if (source.ActualItemCount != section.LogicalItemCount ||
+                !CryptographicOperations.FixedTimeEquals(source.Header.CanonicalDigest, section.LogicalContentDigest))
+                throw new InvalidDataException($"persistence.snapshot.recovered-reference-section-authority:{identity.PartitionId.Value}");
+            sources.Add(source);
+        }
+
+        return new DomainSnapshotReferenceResolverV1(sources);
+    }
 }
