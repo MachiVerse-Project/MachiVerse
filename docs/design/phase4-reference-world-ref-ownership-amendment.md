@@ -1,6 +1,6 @@
 # Phase 4 QA-04 reference-world Ref ownership amendment
 
-Status: Decided normative amendment / partial implementation  
+Status: Decided normative amendment / Terrain production migration path implemented / other repaired schemas pending  
 Tracking: #240  
 Implementation: Draft PR #265  
 Applies to: `perf.reference.v1`
@@ -47,15 +47,29 @@ The exact lossless v2 shape arm still needs to freeze the canonical fields for S
 
 P4-01 assigns natural terrain solid/void geometry authority to `spatial`, and P4-04 already defines `TerrainBrickV1` as SBO-SDF algorithm state. The root record and brick records therefore belong to the same `spatial.terrain_geometry` authority family.
 
-The exact v2 record shape is now frozen in `phase4-terrain-geometry-record-v2.md` and implemented by `SpatialTerrainGeometryRecordSchemaV2` plus the standalone fail-closed `SpatialTerrainGeometryRecordWireCodecV2`:
+The exact v2 record shape is frozen in `phase4-terrain-geometry-record-v2.md` and implemented by the Terrain v2 record/state/wire contracts:
 
 - `terrain_root` is a lossless v1-root arm with explicit `record_kind`;
 - `terrain_brick` maps `TerrainBrickV1.brick_id -> record_id` and `TerrainBrickV1.revision -> record revision`;
 - the brick payload preserves `level`, `SpatialCellKeyV1`, spacing, all 729 SDF samples, and all 512 material ids;
-- valid standalone v2 material is canonical under decode -> encode;
-- the current production standard registry intentionally remains at v1.
+- valid v2 material is canonical under decode -> encode;
+- local root references are resolved to an actual `terrain_brick` arm;
+- semantic payload digests and partition-header rehash bind the mixed record material.
 
-This removes the **terrain field-schema ambiguity**, but it does not define the canonical `perf.reference.v1` contents of the 500,000 hot bricks or activate mixed-record v2 in production Snapshot/recovery. Benchmark SDF/material sample generation and production v2 integration therefore remain unresolved materialization work.
+The production migration boundary is frozen separately in `phase4-terrain-v2-production-migration.md`. It now provides:
+
+- an explicit `1.0 -> 2.0` record-schema migration registry entry and no wildcard future-version acceptance;
+- exact-97 authority-set compatibility limited to registered record-schema migrations;
+- actual-schema preservation in production/recovered all-97 reference resolvers;
+- cross-partition Ref schema validation against the explicit migration registry;
+- authority-driven selection of `SpatialTerrainGeometrySnapshotSectionProviderV2` while callers retain the normal 97-provider set;
+- Terrain v2 structural recovery in Phase 1;
+- Terrain v2 semantic reconstruction/target-kind closure/partition rehash in Phase 2;
+- an exact-97 production canary containing 96 standard-v1 authorities plus one registered Terrain-v2 authority.
+
+`StandardDomainPartitionRegistry` intentionally remains at record schema v1 during this migration canary; production persistence selects the registered v2 path from actual authority schema rather than globally mutating the standard registry.
+
+This removes Terrain ownership, field-schema, mixed-record state, wire, provider-selection, reference-schema, and recovery-path ambiguity. It still does **not** define the canonical `perf.reference.v1` contents of the 500,000 hot bricks. Benchmark SDF/material sample generation and actual canonical materialization therefore remain unresolved.
 
 ### 4.3 Network node/edge -> `infrastructure.network_topology`
 
@@ -80,13 +94,13 @@ The four affected v1 schemas are not extended by adding optional fields and pret
 5. deterministic v1 -> v2 migration only where an exact recipe exists;
 6. recovery rejection of unknown arm/version and preservation of serialized schema identity.
 
-For `spatial.terrain_geometry`, items 1-3 and the lossless standalone migration/wire basis are now implemented. Item 4 and production partition-wide migration/recovery activation remain pending.
+For `spatial.terrain_geometry`, all six items now have an implemented migration/recovery path. That statement means the persistence machinery can represent and recover exact Terrain v2 records; it does not mean the canonical 500,000 benchmark records or their values have been defined.
 
-The standard runtime registry remains at v1 until each production migration is implemented and validated. A standalone v2 schema/codec must not silently flip a production partition to v2.
+For the other three repaired record families, the standard runtime/persistence path remains v1 until their exact v2 contracts and migrations are frozen and validated. A future standalone v2 schema/codec must not silently flip a production partition to v2.
 
 ## 6. Remaining blockers
 
-This decision removes ambiguity about **which existing partition owns each orphan target**. The Terrain slice additionally removes ambiguity about the exact `terrain_root` / `terrain_brick` v2 field shape. Stage 2 still cannot materialize the affected benchmark classes until the remaining production integrations and canonical contents exist.
+This decision removes ambiguity about **which existing partition owns each orphan target**. The Terrain slice additionally removes ambiguity about the exact `terrain_root` / `terrain_brick` v2 shape and the version-aware production Snapshot/recovery path. Stage 2 still cannot materialize the affected benchmark classes until canonical contents and the other repaired schemas exist.
 
 Still unresolved independently:
 
@@ -94,8 +108,8 @@ Still unresolved independently:
 - Society/Governance 2,000,000 decomposition across the 33 owner partitions;
 - exact nested schemas for `BodyRegionStateV1`, `PerceivedFactV1`, and governance `RuleAst`;
 - active CrossDomainTransaction 10,000 persistent/reconstruction authority;
-- canonical SDF/material content for the 500,000 hot `TerrainBrickV1` records;
-- production mixed-record v2 state/snapshot/recovery + target-kind validation for `spatial.terrain_geometry`;
+- canonical SDF/material content and fixed-seed materialization for the 500,000 hot `TerrainBrickV1` records;
+- canonical Terrain root/scope/connectivity/material closure for the full `perf.reference.v1` world;
 - exact v2 field schemas/migrations for `physical.occupancy`, `infrastructure.network_topology`, and `society.market_transaction`.
 
-`Qa04ReferenceWorldDependencyContractV1` remains the release gate until the implementation-specific blockers are actually removed. Reduced typed-empty roots and synthetic Ref targets remain prohibited.
+`Qa04ReferenceWorldDependencyContractV1` remains the release gate until the implementation-specific blockers are actually removed. Reduced typed-empty roots and synthetic Ref targets remain prohibited as benchmark evidence.
