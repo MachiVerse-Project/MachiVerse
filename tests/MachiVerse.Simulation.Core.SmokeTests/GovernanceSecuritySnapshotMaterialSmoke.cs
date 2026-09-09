@@ -231,11 +231,11 @@ internal static class GovernanceSecuritySnapshotMaterialSmoke
             1,
             100,
             DetailLevelV1.D0Entity,
-            value => value.CanonicalDigest(resolver));
+            static value => value.CanonicalDigest());
         var authority = new DomainPartitionSnapshotAuthorityV1<GovernanceLawRulePayloadV1>(
             partition,
             header,
-            value => value.CanonicalDigest(resolver));
+            static value => value.CanonicalDigest());
         var provider = GovernanceSecurityDomainSnapshotProviderV1.CreateAll()
             .Single(x => x.SectionId == GovernanceLawRulePayloadV1.PartitionId);
         var section = provider.Create(authority, resolver);
