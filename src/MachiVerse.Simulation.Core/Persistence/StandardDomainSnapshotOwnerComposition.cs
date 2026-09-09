@@ -13,6 +13,8 @@ namespace MachiVerse.Simulation.Core.Persistence;
 /// <summary>
 /// Production composition boundary for the eight standard Domain owners. This only composes typed
 /// owner material already supplied by the runtimes; it never creates partition material from headers.
+/// Registered record-schema migrations may provide an owner-specific material generation while the
+/// standard provider list and exact 97-partition boundary remain unchanged.
 /// </summary>
 public static class StandardDomainSnapshotOwnerCompositionV1
 {
@@ -57,17 +59,59 @@ public static class StandardDomainSnapshotOwnerCompositionV1
         SocietyEconomyDomainSnapshotMaterialV1 societyEconomy,
         InfrastructureInformationDomainSnapshotMaterialV1 infrastructureInformation,
         GovernanceSecurityDomainSnapshotMaterialV1 governanceSecurity)
+        => CreateAuthoritySetCore(
+            frozenState,
+            resident?.Authorities,
+            participation?.Authorities,
+            physicalBuilt?.Authorities,
+            spatial?.Authorities,
+            environment?.Authorities,
+            societyEconomy?.Authorities,
+            infrastructureInformation?.Authorities,
+            governanceSecurity?.Authorities);
+
+    public static DomainPartitionSnapshotAuthoritySetV1 CreateAuthoritySet(
+        WorldStateV1 frozenState,
+        ResidentDomainSnapshotMaterialV1 resident,
+        ParticipationDomainSnapshotMaterialV1 participation,
+        PhysicalBuiltDomainSnapshotMaterialV1 physicalBuilt,
+        SpatialDomainSnapshotMaterialV2 spatial,
+        EnvironmentDomainSnapshotMaterialV1 environment,
+        SocietyEconomyDomainSnapshotMaterialV1 societyEconomy,
+        InfrastructureInformationDomainSnapshotMaterialV1 infrastructureInformation,
+        GovernanceSecurityDomainSnapshotMaterialV1 governanceSecurity)
+        => CreateAuthoritySetCore(
+            frozenState,
+            resident?.Authorities,
+            participation?.Authorities,
+            physicalBuilt?.Authorities,
+            spatial?.Authorities,
+            environment?.Authorities,
+            societyEconomy?.Authorities,
+            infrastructureInformation?.Authorities,
+            governanceSecurity?.Authorities);
+
+    private static DomainPartitionSnapshotAuthoritySetV1 CreateAuthoritySetCore(
+        WorldStateV1 frozenState,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1>? resident,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1>? participation,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1>? physicalBuilt,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1>? spatial,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1>? environment,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1>? societyEconomy,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1>? infrastructureInformation,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1>? governanceSecurity)
     {
         ArgumentNullException.ThrowIfNull(frozenState);
         var authorities = new List<IDomainPartitionSnapshotAuthorityV1>(StandardDomainPartitionRegistry.StandardPartitionCount);
-        Add(authorities, resident?.Authorities, nameof(resident));
-        Add(authorities, participation?.Authorities, nameof(participation));
-        Add(authorities, physicalBuilt?.Authorities, nameof(physicalBuilt));
-        Add(authorities, spatial?.Authorities, nameof(spatial));
-        Add(authorities, environment?.Authorities, nameof(environment));
-        Add(authorities, societyEconomy?.Authorities, nameof(societyEconomy));
-        Add(authorities, infrastructureInformation?.Authorities, nameof(infrastructureInformation));
-        Add(authorities, governanceSecurity?.Authorities, nameof(governanceSecurity));
+        Add(authorities, resident, nameof(resident));
+        Add(authorities, participation, nameof(participation));
+        Add(authorities, physicalBuilt, nameof(physicalBuilt));
+        Add(authorities, spatial, nameof(spatial));
+        Add(authorities, environment, nameof(environment));
+        Add(authorities, societyEconomy, nameof(societyEconomy));
+        Add(authorities, infrastructureInformation, nameof(infrastructureInformation));
+        Add(authorities, governanceSecurity, nameof(governanceSecurity));
         return new DomainPartitionSnapshotAuthoritySetV1(frozenState, authorities);
     }
 
