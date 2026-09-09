@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
@@ -12,7 +13,14 @@ internal static class RunningCanonicalSnapshotCommitSmoke
         try
         {
             var worldId = OpaqueId128.Parse("000000000000000000000000000000a1");
-            var configDigest = SHA256.HashData("running-canonical-snapshot-config"u8);
+            var config = new CoreConfigCoordinator().LoadStartup(
+                """
+                [meta]
+                format = "machiverse-config"
+                schema_version = "1.0"
+                component = "simulation-core"
+                """);
+            var configDigest = config.Digest;
             var worldSeed = new WorldSeed256(SHA256.HashData("running-canonical-snapshot-seed"u8));
             var state = CreateState(worldId, worldSeed, configDigest, 0, null);
             var paths = PersistenceLayout.Resolve(root, worldId, 1);
@@ -23,7 +31,7 @@ internal static class RunningCanonicalSnapshotCommitSmoke
             var continuity = HistoryIntegrity.ComputeGenesisContinuityToken(worldId, genesis.RecordDigest);
             await using var store = await SqlitePersistenceStore.OpenOrCreateAsync(paths);
             await store.InitializeWorldMetadataAsync(
-                new WorldPersistenceMetadataSeed(worldId, 1, worldSeed, continuity, 1, configDigest, 1),
+                new WorldPersistenceMetadataSeed(worldId, 1, worldSeed, continuity, config.Generation, configDigest, 1),
                 genesis);
 
             for (ulong step = 0; step < 30; step++)
@@ -40,40 +48,35 @@ internal static class RunningCanonicalSnapshotCommitSmoke
             Require(state.Header.Step == 31, "Canonical running snapshot fixture did not advance to State(31).");
 
             var physical = SnapshotPhysicalStaging.Prepare(paths, cut.SnapshotId);
-            var descriptors = await CanonicalSnapshotPhysicalDrainV1.StageUncompressedAsync(
+            var zstd = new ZstdSnapshotChunkCompressionCodecV1();
+            var staged = await CanonicalSnapshotProductionManifestDrainV1.StageRunningCutAsync(
+                cut,
                 physical,
                 fixture.Materials,
-                cut.FrozenState);
-            Require(descriptors.Count > 0, "Canonical running snapshot produced no physical chunks.");
-
-            var manifestBytes = cut.SnapshotId.ToBytes()
-                .Concat(U64Be.Encode(cut.SnapshotStep))
-                .Concat(U64Be.Encode((ulong)descriptors.Count))
-                .ToArray();
-            await SnapshotPhysicalStaging.WriteManifestDurablyAsync(physical, manifestBytes);
-            var snapshotDigest = HashSuite.DomainHash("mv.snapshot.v1", writer =>
-            {
-                writer.WriteMapStart(3);
-                writer.WriteUnsigned(0); writer.WriteBytes(cut.SnapshotId.ToBytes());
-                writer.WriteUnsigned(1); writer.WriteUnsigned(cut.SnapshotStep);
-                writer.WriteUnsigned(2); writer.WriteBytes(cut.FrozenState.Diagnostic.StateDigest);
-            });
-            var manifestDigest = SHA256.HashData(manifestBytes);
+                config,
+                worldSeed,
+                zstdCodec: zstd);
+            Require(staged.Chunks.Count > 0, "Canonical running snapshot produced no physical chunks.");
+            Require(File.Exists(physical.StagingManifestPath), "Canonical production drain did not write manifest.pb.");
 
             var committed = await coordinator.CommitCanonicalDrainedAsync(
                 cut,
                 store,
                 paths,
                 physical,
-                snapshotDigest,
-                manifestDigest,
+                staged.SnapshotDigest,
+                staged.PhysicalManifestDigest,
                 fixture.Materials,
-                fixture.Verifiers);
+                fixture.Verifiers,
+                CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders(zstd));
 
             Require(committed.SnapshotStep == 30, "Canonical running snapshot committed the wrong frozen Step.");
             var candidates = await store.ListSnapshotCandidatesNewestFirstAsync();
             Require(candidates.Count == 1 && candidates[0].SnapshotId == cut.SnapshotId && candidates[0].SnapshotStep == 30,
                 "Canonical running snapshot was not cataloged as the frozen recovery candidate.");
+            Require(candidates[0].SnapshotDigest.SequenceEqual(staged.SnapshotDigest) &&
+                    candidates[0].PhysicalManifestDigest.SequenceEqual(staged.PhysicalManifestDigest),
+                "Snapshot catalog must persist exactly the validated manifest authorities.");
             var recovery = await store.ReadRecoveryHeadAsync();
             Require(recovery.FinalizedStep == 31 && CryptographicOperations.FixedTimeEquals(recovery.ContinuityToken, continuity),
                 "Canonical snapshot commit moved the later recovery head backward.");
