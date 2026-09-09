@@ -66,11 +66,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "body_region_states",
             "qa04.material.body-region-state-schema-undefined"),
         NestedPayloadSchema(
-            "resident.perception.perceived-facts-schema",
-            "resident.perception",
-            "perceived_facts",
-            "qa04.material.perceived-fact-schema-undefined"),
-        NestedPayloadSchema(
             "governance.law-rule.rule-ast-schema",
             "governance.law_rule",
             "rule_ast",
@@ -86,7 +81,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
 
     public static void ValidateCanonicalContract()
     {
-        if (BlockersValue.Count != 11)
+        if (BlockersValue.Count != 10)
             throw new InvalidDataException("qa04.material.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.material.dependency-blocker-id-duplicate");
