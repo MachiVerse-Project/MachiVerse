@@ -191,14 +191,12 @@ public sealed record ResidentPsychologyPayloadV1(
         ("values", Values));
     public byte[] CanonicalDigest() => ResidentPayloadFields.Digest(PartitionId, ToStandardPayload());
     public static ResidentPsychologyPayloadV1 FromStandardPayload(IReadOnlyDictionary<string, object?> values) => new(
+        ResidentPayloadFields.Required<PartitionRecordRefV1>(values, PartitionId, "resident_ref"),
         ResidentPayloadFields.Required<IReadOnlyList<KeyValuePair<string, uint>>>(values, PartitionId, "emotion_vector"),
         ResidentPayloadFields.Required<uint>(values, PartitionId, "stress_ppm"),
         ResidentPayloadFields.Required<IReadOnlyList<KeyValuePair<string, uint>>>(values, PartitionId, "traits"),
         ResidentPayloadFields.Required<IReadOnlyList<KeyValuePair<string, int>>>(values, PartitionId, "preferences"),
-        ResidentPayloadFields.Required<IReadOnlyList<KeyValuePair<string, int>>>(values, PartitionId, "values"))
-    {
-        ResidentRef = ResidentPayloadFields.Required<PartitionRecordRefV1>(values, PartitionId, "resident_ref")
-    };
+        ResidentPayloadFields.Required<IReadOnlyList<KeyValuePair<string, int>>>(values, PartitionId, "values"));
 }
 
 public sealed record ResidentGoalPlanPayloadV1(
