@@ -53,6 +53,59 @@ internal sealed class Qa04AdapterResponse : IJsonOnDeserialized
         if (blockers.Length != 0)
             throw new InvalidDataException("qa04.release.adapter-blocking-failures-present");
     }
+
+    internal static void VerifyReleaseReadinessContract()
+    {
+        new Qa04AdapterResponse
+        {
+            ExecutionClass = "contract-smoke",
+            ReferenceWorldMaterialized = false,
+            ReleaseEvidenceCapable = false,
+            BlockingFailureCodes = ["qa04.fixture.synthetic-not-release-capable"],
+        }.OnDeserialized();
+
+        new Qa04AdapterResponse
+        {
+            ExecutionClass = "release",
+            ReferenceWorldMaterialized = true,
+            ReleaseEvidenceCapable = true,
+            BlockingFailureCodes = [],
+        }.OnDeserialized();
+
+        var unreadyRejected = false;
+        try
+        {
+            new Qa04AdapterResponse
+            {
+                ExecutionClass = "release",
+                ReferenceWorldMaterialized = false,
+                ReleaseEvidenceCapable = false,
+                BlockingFailureCodes = ["qa04.target.reference-world-not-materialized"],
+            }.OnDeserialized();
+        }
+        catch (InvalidDataException ex) when (ex.Message == "qa04.release.reference-world-not-materialized")
+        {
+            unreadyRejected = true;
+        }
+        if (!unreadyRejected)
+            throw new InvalidDataException("QA-04 release-readiness self-test failed to reject an unmaterialized reference world.");
+
+        var missingRejected = false;
+        try
+        {
+            new Qa04AdapterResponse
+            {
+                ExecutionClass = "contract-smoke",
+                BlockingFailureCodes = [],
+            }.OnDeserialized();
+        }
+        catch (InvalidDataException ex) when (ex.Message.Contains("release-readiness fields", StringComparison.Ordinal))
+        {
+            missingRejected = true;
+        }
+        if (!missingRejected)
+            throw new InvalidDataException("QA-04 release-readiness self-test failed to reject missing readiness fields.");
+    }
 }
 
 internal sealed class BenchmarkRunDescriptor
