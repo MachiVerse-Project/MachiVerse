@@ -15,6 +15,7 @@ machine-readable gate は `Qa04ReferenceWorldDependencyContractV1` を正とし�
 - Ref owner が決定済みでも、target record schema が未定義なら record を捏造しない。
 - synthetic smoke の値を canonical benchmark genesis に昇格しない。
 - `CrossDomainTransactionCandidateV1` は `IsAuthoritative == false` のため durable authority とみなさない。
+- P4-05 common `DomainRecordEnvelopeV1` の initial record revision は `1` と既に固定済み。個別 blocker で共通 record revision を再判断しない。
 - `referenceWorldMaterialized=true` は以下の判断と actual materialization が完了するまで禁止。
 
 ## 1. Physical collision shape
@@ -24,6 +25,7 @@ machine-readable gate は `Qa04ReferenceWorldDependencyContractV1` を正とし�
 - `physical.presence.shape_ref` の owner は `physical.occupancy / collision_shape`。
 - runtime には Sphere / Capsule / OrientedBox / ConvexPolytope の形状表現がある。
 - ownership amendment は TriangleMeshStatic と permitted SDF reference form も考慮対象としている。
+- common Domain record initial revision = 1。
 
 ### 決定が必要
 
@@ -35,7 +37,7 @@ machine-readable gate は `Qa04ReferenceWorldDependencyContractV1` を正とし�
 - canonical field order
 - TriangleMeshStatic の vertex/index authority
 - permitted SDF reference の target schema / closure
-- initial revision / lineage rule
+- lineage rule / arm-specific payload revision semantics if any
 
 ### 決定後の実装
 
@@ -82,13 +84,14 @@ schema 2.0 -> codec -> runtime lossless projection -> materializer -> Ref closur
 - Society/Economy 16 partitions + Governance/Security 17 partitions = 33 partitions。
 - aggregate active-record target = 2,000,000。
 - market load には 100 scopes × 10,000 active orders = 1,000,000 orders の別契約が存在する。
+- common Domain record initial revision = 1。
 
 ### 決定が必要
 
 - 2,000,000 の 33 partitions への exact decomposition
 - market 1,000,000 orders が 2,000,000 の内数か外数か
 - class ごとの detail level
-- genesis record identity / revision / initial values
+- genesis record identity / initial values / lineage
 - coupled Ref closure
 
 ## 5. Market record schema
@@ -138,7 +141,9 @@ schema 2.0 -> codec -> runtime lossless projection -> materializer -> Ref closur
 - hot brick count = 500,000。
 - D0 sample spacing = 250 mm。
 - brick は SDF[729] / surface material[512]。
-- `Qa04TerrainBrickDescriptorMaterializerV1` は descriptor ID と supplied `TerrainBrickV1` を厳密に binding する。
+- common Domain record initial revision = 1。
+- `Qa04TerrainBrickDescriptorMaterializerV1` は descriptor ID / D0 spacing / initial record revision=1 と supplied `TerrainBrickV1` を厳密に binding する。
+- unresolved Terrain content は `Qa04TerrainCanonicalContentDependencyContractV1` で7 subdependenciesへ分解済み。これは world blocker 9件を増やさない。
 
 ### 決定が必要
 
@@ -149,7 +154,9 @@ schema 2.0 -> codec -> runtime lossless projection -> materializer -> Ref closur
 - root / scope count and identity
 - root brick / octree topology
 - `connectivity_refs`
-- initial revision / lineage
+- `terrain_root.geometry_revision` と root/brick `lineage_ref` の genesis semantics
+
+詳細は `phase4-alpha11-terrain-canonical-content-bindings.md` を正とする。
 
 synthetic smoke valuesは canonical material にしない。
 
