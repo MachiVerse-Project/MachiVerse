@@ -14,6 +14,7 @@ internal static class ParticipationSnapshotMaterialSmoke
     {
         VerifyTypedEmptyMaterial();
         VerifyAbsencePolicyActualMaterial();
+        VerifyRecoveredCrossPartitionReferenceValidation();
     }
 
     private static void VerifyTypedEmptyMaterial()
@@ -140,6 +141,75 @@ internal static class ParticipationSnapshotMaterialSmoke
             "Participation nested payload semantic digest did not round-trip canonically.");
     }
 
+    private static void VerifyRecoveredCrossPartitionReferenceValidation()
+    {
+        var residentRef = new PartitionRecordRefV1(
+            "resident.identity_lifecycle",
+            OpaqueId128.Parse("0000000000000000000000000003b001"));
+        var identity = StandardDomainPartitionRegistry.Get(ParticipationBindingPayloadV1.PartitionId);
+        var payload = new ParticipationBindingPayloadV1(
+            OpaqueId128.Parse("0000000000000000000000000003b101"),
+            OpaqueId128.Parse("0000000000000000000000000003b102"),
+            residentRef,
+            new StableToken("active"),
+            EffectiveFrom: 0,
+            EndedStep: null,
+            BindingGeneration: 1,
+            AbsencePolicyRef: null,
+            CausalityRefs: Array.Empty<PartitionRecordRefV1>());
+        var record = new DomainRecordEnvelopeV1<ParticipationBindingPayloadV1>(
+            OpaqueId128.Parse("0000000000000000000000000003b103"),
+            identity.RecordSchema,
+            revision: 1,
+            createdStep: 0,
+            retiredStep: null,
+            detailLevel: DetailLevelV1.D0Entity,
+            lineageRef: null,
+            payload);
+        var partition = new DomainPartitionStateV1<ParticipationBindingPayloadV1>(identity, [record]);
+        var header = PartitionStateHeaderV1.CreateCanonical(
+            partition,
+            revision: 1,
+            basisStep: 0,
+            detailLevel: DetailLevelV1.D0Entity,
+            static value => value.CanonicalDigest());
+        var authority = new DomainPartitionSnapshotAuthorityV1<ParticipationBindingPayloadV1>(
+            partition,
+            header,
+            static value => value.CanonicalDigest());
+        var provider = ParticipationDomainSnapshotProviderV1.CreateAll()
+            .Single(static value => value.SectionId == ParticipationBindingPayloadV1.PartitionId);
+
+        // Phase 1 is structure-only and therefore does not require the target partition yet.
+        var section = provider.Create(authority);
+        var recoveredSource = new DomainSnapshotRecoveredReferenceSourceV1(
+            ParticipationBindingPayloadV1.PartitionId,
+            section.Fragments);
+        Require(recoveredSource.ActualItemCount == 1 &&
+                recoveredSource.RecordIdsCanonical.Single() == record.RecordId,
+            "Recovered reference pre-pass must preserve actual binding record identity.");
+
+        var validResolver = new Resolver([residentRef]);
+        var verifier = provider.CreateSemanticVerifier(header);
+        Require(verifier.VerifyWithContext is not null,
+            "Domain semantic verifier must expose recovered-reference context validation.");
+        var recovered = verifier.VerifyWithContext!(
+            section.Fragments,
+            new SnapshotSectionSemanticVerificationContextV1(validResolver));
+        Require(recovered.LogicalItemCount == 1 && recovered.LogicalContentDigest.SequenceEqual(header.CanonicalDigest),
+            "Recovered cross-partition reference must validate against the recovered resolver.");
+
+        ExpectInvalid(
+            "production provider rejects missing cross-partition target",
+            () => _ = provider.Create(authority, new Resolver(Array.Empty<PartitionRecordRefV1>())));
+        ExpectInvalid(
+            "recovery semantic phase rejects missing cross-partition target",
+            () => _ = verifier.VerifyWithContext!(
+                section.Fragments,
+                new SnapshotSectionSemanticVerificationContextV1(
+                    new Resolver(Array.Empty<PartitionRecordRefV1>()))));
+    }
+
     private static void ExpectInvalid(string name, Action action)
     {
         try
@@ -156,5 +226,23 @@ internal static class ParticipationSnapshotMaterialSmoke
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private sealed class Resolver(IEnumerable<PartitionRecordRefV1> existing) : IDomainRecordSchemaResolverV1
+    {
+        private readonly HashSet<PartitionRecordRefV1> _existing = existing.ToHashSet();
+
+        public bool Exists(PartitionRecordRefV1 reference) => _existing.Contains(reference);
+
+        public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
+        {
+            if (!_existing.Contains(reference))
+            {
+                schema = default;
+                return false;
+            }
+            schema = StandardDomainPartitionRegistry.Get(reference.PartitionId.Value).RecordSchema;
+            return true;
+        }
     }
 }
