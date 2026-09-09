@@ -45,39 +45,94 @@ INVALID
 
 `COMMITTED` は candidate status に存在しない。
 
+`Sim13CrossDomainTransactionSmoke` も全17 transaction kindについて `success.IsAuthoritative == false` と crash-before-commit boundary を検証している。`Sim13StepCandidateTransactionSmoke` は transaction candidate を `StepCandidateV1` の commit barrier に束縛するが、それ自体を persistent state へ昇格させない。
+
 P4-01 でも、candidate phase は `COMMITTED` を持たず、commit 済み fact は history/event 側で表すと定義されている。
 
 したがって、QA-04 10,000 件を `CrossDomainTransactionCandidateV1` の配列として Snapshot に保存することはできない。
+
+## production SQLite authority の実コード監査
+
+### initial schema
+
+`SqlitePersistenceStore.CreateInitialSchemaAsync` が作る authority table は次である。
+
+```text
+persistence_meta
+history_record
+operation_state
+scheduled_operation
+simulation_config_state
+core_operational_state
+snapshot_catalog
+```
+
+active CrossDomainTransaction を保持する table は存在しない。
+
+### Step transition commit
+
+`SqlitePersistenceStore.PersistTransitionCommitAsync` の durable input は次だけである。
+
+```text
+effectiveStep
+resultingStep
+resultingStateContinuityToken
+activeConfigGeneration
+activeConfigDigest
+HistoryRecordMaterial history
+IReadOnlyCollection<TerminalOperationCommit> terminalOperations
+```
+
+この API は `CrossDomainTransactionCandidateV1`、prepare state、participant progress、transaction lifecycle record を受け取らない。
+
+同一 SQLite transaction 内で行う authoritative mutation は:
+
+1. `history_record` append
+2. terminal Operation の `operation_state` 更新
+3. `scheduled_operation` から terminal Operation を削除
+4. `persistence_meta` の history/finalized-step/continuity/config head 更新
+
+であり、active CrossDomainTransaction row の insert/update はない。
+
+`Sim13DurableAtomicitySmoke` も invalid transaction が Step commit barrier で止まり、`IStepTransitionDurabilityV1.CommitAsync` に到達しないことを確認する smoke である。これは atomic commit boundary の証明であって、active transaction persistence の証明ではない。
 
 ## 現在の transition history が保持する情報
 
 production SQLite transition path は `HistoryRecordMaterial` を `transition.committed.v1` として append する。
 
-現行 `AlphaSingleGatewayRuntime` の normalized transition payload は次だけを保持する。
-
-```text
-{
-  finalized_step_before_commit,
-  terminal_operation_ids[]
-}
-```
+現行 `AlphaSingleGatewayRuntime` の normalized transition payload は finalized Step と terminal Operation 群を中心とする transition fact であり、active CrossDomainTransaction lifecycle の authoritative snapshot ではない。
 
 `SqlitePersistenceStore.PersistTransitionCommitAsync` は history record と terminal Operation state を同一 SQLite transaction で commit し、state continuity token を更新する。
 
-しかし、この transition history には active CrossDomainTransaction の次の semantic state が含まれない。
+しかし、この transition history / SQLite authority には active CrossDomainTransaction の次の semantic state が含まれない。
 
 - `transaction_id`
 - `transaction_kind`
 - participant domain / partition
 - participant intent ids
 - required participant flag
-- participant outcome
+- participant outcome/progress
 - candidate effect digest
 - required invariant set / invariant result
 - active lifecycle state
 - active transaction の開始 Step / 更新 Step /終了条件
 
 したがって、現行 `transition.committed.v1` の履歴だけから QA-04 の 10,000 active transaction authority を exact に再構成することはできない。
+
+## production recovery の実コード監査
+
+`AlphaSingleGatewayRuntime.CreateAsync` の restart path は SQLite head を読み、master/session authority と durable Operation/Participation state を復元して `WorldStateV1` を構築する。
+
+現在の recovery path には:
+
+- active CrossDomainTransaction row の scan
+- transaction lifecycle history replay
+- PREPARED/DECIDED/participant-progress state の reconstruction
+- Snapshot cut と history anchor を用いた active-set reconstruction
+
+のいずれも存在しない。
+
+つまり「commit barrier が durable である」ことと「active CrossDomainTransaction が restart 後も authoritative に復元できる」ことは別であり、前者から後者を推論してはならない。
 
 ## event/history について確定していること
 
@@ -144,6 +199,7 @@ qa04.material.cross-domain-transaction-authority-undefined
 - `CrossDomainTransactionCandidateV1` を authoritative Snapshot material として保存する
 - QA-04 descriptor だけを item_count 10,000 として計上する
 - transition history に無い participant/status を reconstruction 時に補う
+- terminal Operation/history fact を active transaction lifecycle と読み替える
 - synthetic active transaction state を release evidence として使用する
 
 ## Alpha 1.1 への影響
