@@ -63,6 +63,17 @@ SDF semantics:
 
 Canonical array order and Terrain v2 wire/schema/recovery are already implemented.
 
+### Terrain conceptual authority
+
+Phase 3 already establishes:
+
+- `SpatialScope` as domain-neutral 3D scope identity;
+- `TerrainGeometryState` with terrain scope, geometry revision, source lineage, exposed surface classes and connectivity;
+- stable identity may be retained across geometry revisions;
+- terrain mutation lifecycle `PLANNED_MUTATION -> VALIDATED -> APPLIED -> ACTIVE_REVISION`.
+
+However, these conceptual fields do not define the benchmark genesis identities, token vocabulary, concrete connectivity graph, or payload values. In particular, no exact `exposed_surface_classes` token set was found, so implementation must not substitute material/geology labels by convention.
+
 ### Terrain v2 production path
 
 Implemented:
@@ -145,11 +156,11 @@ Failure code:
 
 `qa04.terrain.root-scope-identity-undefined`
 
-正本化が必要:
+`scope_ref` が domain-neutral `SpatialScope` semantics を指すことは概念上固定済みだが、`perf.reference.v1` の具体 identity/assignment は未固定。正本化が必要:
 
 - Terrain root record count
 - root record identity derivation
-- `scope_ref` owner/identity
+- benchmark scope record identity / owner record binding
 - 500,000 hot bricks の root/scope assignment
 
 ### 3.6 root topology / connectivity
@@ -177,7 +188,7 @@ Failure code:
 common record envelope の initial `revision = 1` と `created_step = 0` は canonical descriptor materializer 側で固定できる。残る正本判断は:
 
 - `terrain_root.geometry_revision` の genesis value / record revisionとの関係
-- root/brick `lineage_ref` の genesis semantics
+- root/brick `lineage_ref` と Phase 3 `source_lineage` の benchmark genesis semantics
 - detail promotion/demotionで新規 Terrain recordを作る場合の lineage relation
 
 である。
