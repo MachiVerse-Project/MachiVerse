@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
 using MachiVerse.Simulation.Core.Domains.Participation;
 using MachiVerse.Simulation.Core.Domains.ResidentParticipation;
 using MachiVerse.Simulation.Core.WorldState;
@@ -20,6 +21,7 @@ public interface IDomainNestedSnapshotCodecV1
     string ParentPartitionId { get; }
     string ParentFieldName { get; }
     DomainNestedSnapshotSchemaDescriptorV1 Descriptor { get; }
+    bool AllowsSelfRecursion { get; }
     bool CanEncode(ICanonicalDomainNestedValueV1 value);
     IReadOnlyDictionary<string, object?> ToStandardFields(ICanonicalDomainNestedValueV1 value);
     ICanonicalDomainNestedValueV1 FromStandardFields(IReadOnlyDictionary<string, object?> fields);
@@ -39,7 +41,8 @@ public sealed class DomainNestedSnapshotCodecV1<TNested> : IDomainNestedSnapshot
         DomainNestedSnapshotSchemaDescriptorV1 descriptor,
         Func<TNested, IReadOnlyDictionary<string, object?>> toStandardFields,
         Func<IReadOnlyDictionary<string, object?>, TNested> fromStandardFields,
-        Comparison<TNested> compareCanonical)
+        Comparison<TNested> compareCanonical,
+        bool allowsSelfRecursion = false)
     {
         ParentPartitionId = new StableToken(parentPartitionId).Value;
         ParentFieldName = parentFieldName ?? throw new ArgumentNullException(nameof(parentFieldName));
@@ -47,11 +50,13 @@ public sealed class DomainNestedSnapshotCodecV1<TNested> : IDomainNestedSnapshot
         _toStandardFields = toStandardFields ?? throw new ArgumentNullException(nameof(toStandardFields));
         _fromStandardFields = fromStandardFields ?? throw new ArgumentNullException(nameof(fromStandardFields));
         _compareCanonical = compareCanonical ?? throw new ArgumentNullException(nameof(compareCanonical));
+        AllowsSelfRecursion = allowsSelfRecursion;
     }
 
     public string ParentPartitionId { get; }
     public string ParentFieldName { get; }
     public DomainNestedSnapshotSchemaDescriptorV1 Descriptor { get; }
+    public bool AllowsSelfRecursion { get; }
 
     public bool CanEncode(ICanonicalDomainNestedValueV1 value) => value is TNested;
 
@@ -167,12 +172,16 @@ public sealed class DomainNestedSnapshotCodecRegistryV1
             throw new InvalidDataException($"persistence.snapshot.nested-codec-field-set-empty:{descriptor.Schema.SchemaId.Value}");
 
         var names = new HashSet<string>(StringComparer.Ordinal);
+        var hasRecursiveField = false;
         foreach (var field in descriptor.Fields)
         {
             ArgumentNullException.ThrowIfNull(field);
             if (string.IsNullOrWhiteSpace(field.Name) || !names.Add(field.Name))
                 throw new InvalidDataException($"persistence.snapshot.nested-codec-field-duplicate:{descriptor.Schema.SchemaId.Value}");
+            hasRecursiveField |= field.Kind is DomainPayloadFieldKindV1.OrderedNestedList or DomainPayloadFieldKindV1.RuleAst;
         }
+        if (hasRecursiveField && !codec.AllowsSelfRecursion)
+            throw new InvalidDataException($"persistence.snapshot.nested-recursive-codec-unavailable:{descriptor.Schema.SchemaId.Value}");
     }
 }
 
@@ -197,6 +206,28 @@ public static class StandardDomainNestedSnapshotSchemaV1
             new DomainPayloadFieldRuleV1("source_delivery_id", DomainPayloadFieldKindV1.Id128, Optional: false),
             new DomainPayloadFieldRuleV1("confidence_ppm", DomainPayloadFieldKindV1.Ratio, Optional: false),
             new DomainPayloadFieldRuleV1("perceived_step", DomainPayloadFieldKindV1.Step, Optional: false),
+        }));
+
+    public static DomainNestedSnapshotSchemaDescriptorV1 GovernanceRulePredicateAst { get; } = new(
+        new SchemaRefV1("domain.governance.rule-predicate-ast"),
+        Array.AsReadOnly(new[]
+        {
+            new DomainPayloadFieldRuleV1("kind", DomainPayloadFieldKindV1.UInt8, Optional: false),
+            new DomainPayloadFieldRuleV1("children", DomainPayloadFieldKindV1.OrderedNestedList, Optional: false),
+            new DomainPayloadFieldRuleV1("key", DomainPayloadFieldKindV1.Token, Optional: true),
+            new DomainPayloadFieldRuleV1("token_value", DomainPayloadFieldKindV1.Token, Optional: true),
+            new DomainPayloadFieldRuleV1("minimum", DomainPayloadFieldKindV1.Int64, Optional: true),
+            new DomainPayloadFieldRuleV1("maximum", DomainPayloadFieldKindV1.Int64, Optional: true),
+            new DomainPayloadFieldRuleV1("from_step", DomainPayloadFieldKindV1.Step, Optional: true),
+            new DomainPayloadFieldRuleV1("until_step", DomainPayloadFieldKindV1.Step, Optional: true),
+        }));
+
+    public static DomainNestedSnapshotSchemaDescriptorV1 GovernanceRuleEffectAst { get; } = new(
+        new SchemaRefV1("domain.governance.rule-effect-ast"),
+        Array.AsReadOnly(new[]
+        {
+            new DomainPayloadFieldRuleV1("kind", DomainPayloadFieldKindV1.UInt8, Optional: false),
+            new DomainPayloadFieldRuleV1("effect_token", DomainPayloadFieldKindV1.Token, Optional: false),
         }));
 }
 
@@ -247,5 +278,75 @@ public static class StandardDomainNestedSnapshotCodecRegistryV1
                     (uint)fields["confidence_ppm"]!,
                     (ulong)fields["perceived_step"]!),
                 static (left, right) => left.FactId.CompareTo(right.FactId)),
+            new DomainNestedSnapshotCodecV1<GovernanceRulePredicateAstNestedValueV1>(
+                "governance.law_rule",
+                "predicate_ast",
+                StandardDomainNestedSnapshotSchemaV1.GovernanceRulePredicateAst,
+                static value => PredicateFields(value),
+                static fields => PredicateFromFields(fields),
+                static (left, right) => GovernanceRulePredicateAstNestedValueV1.CompareCanonical(left, right),
+                allowsSelfRecursion: true),
+            new DomainNestedSnapshotCodecV1<GovernanceRuleEffectAstNestedValueV1>(
+                "governance.law_rule",
+                "effect_ast",
+                StandardDomainNestedSnapshotSchemaV1.GovernanceRuleEffectAst,
+                static value => new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["kind"] = (byte)value.Effect.Kind,
+                    ["effect_token"] = value.Effect.EffectToken.Value,
+                },
+                static fields => new GovernanceRuleEffectAstNestedValueV1(
+                    new LawEffectV1(
+                        (LawEffectKindV1)(byte)fields["kind"]!,
+                        new StableToken((string)fields["effect_token"]!))),
+                static (left, right) => GovernanceRuleEffectAstNestedValueV1.CompareCanonical(left, right)),
         });
+
+    private static IReadOnlyDictionary<string, object?> PredicateFields(
+        GovernanceRulePredicateAstNestedValueV1 value)
+    {
+        var node = value.Node;
+        var fields = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["kind"] = (byte)node.Kind,
+            ["children"] = Array.AsReadOnly(
+                node.Children
+                    .Select(static child => (ICanonicalDomainNestedValueV1)GovernanceRulePredicateAstNestedValueV1.FromRuntime(child))
+                    .ToArray()),
+        };
+        if (node.Key is { } key) fields["key"] = key.Value;
+        if (node.TokenValue is { } token) fields["token_value"] = token.Value;
+        if (node.Minimum is { } minimum) fields["minimum"] = minimum;
+        if (node.Maximum is { } maximum) fields["maximum"] = maximum;
+        if (node.FromStep is { } fromStep) fields["from_step"] = fromStep;
+        if (node.UntilStep is { } untilStep) fields["until_step"] = untilStep;
+        return fields;
+    }
+
+    private static GovernanceRulePredicateAstNestedValueV1 PredicateFromFields(
+        IReadOnlyDictionary<string, object?> fields)
+    {
+        var children = (IReadOnlyList<ICanonicalDomainNestedValueV1>)fields["children"]!;
+        var runtimeChildren = children.Select(static child =>
+                child is GovernanceRulePredicateAstNestedValueV1 predicate
+                    ? predicate.Node
+                    : throw new InvalidDataException("persistence.snapshot.governance-law-predicate-child-type"))
+            .ToArray();
+        return new GovernanceRulePredicateAstNestedValueV1(
+            new LawPredicateNodeV1(
+                (LawPredicateNodeKindV1)(byte)fields["kind"]!,
+                Array.AsReadOnly(runtimeChildren),
+                OptionalToken(fields, "key"),
+                OptionalToken(fields, "token_value"),
+                Optional<long>(fields, "minimum"),
+                Optional<long>(fields, "maximum"),
+                Optional<ulong>(fields, "from_step"),
+                Optional<ulong>(fields, "until_step")));
+    }
+
+    private static StableToken? OptionalToken(IReadOnlyDictionary<string, object?> fields, string name)
+        => fields.TryGetValue(name, out var value) && value is string token ? new StableToken(token) : null;
+
+    private static T? Optional<T>(IReadOnlyDictionary<string, object?> fields, string name) where T : struct
+        => fields.TryGetValue(name, out var value) && value is T typed ? typed : null;
 }
