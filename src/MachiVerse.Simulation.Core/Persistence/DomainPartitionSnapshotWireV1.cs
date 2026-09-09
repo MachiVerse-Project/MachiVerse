@@ -22,7 +22,9 @@ public sealed record DomainPartitionSnapshotFragmentDecodedV1(
 /// <summary>
 /// Exact P4-04/INT-03 protobuf wire codec for standard Domain partition fragments.
 /// Top-level payload field numbers are the 1-based P4-05 descriptor ordinal.
-/// Nested values remain fail-closed until an explicit registered nested codec exists.
+/// Unknown fields, duplicate singular fields, type substitutions, and non-canonical
+/// top-level payload field order fail closed. Nested values remain unavailable until
+/// their explicit owner codec is registered.
 /// </summary>
 public static class DomainPartitionSnapshotWireCodecV1
 {
@@ -31,9 +33,9 @@ public static class DomainPartitionSnapshotWireCodecV1
         ArgumentNullException.ThrowIfNull(header);
         var identity = StandardDomainPartitionRegistry.Get(header.PartitionId.Value);
         if (header.OwnerDomain != identity.OwnerDomain || header.Schema != identity.PartitionSchema)
-            throw new InvalidDataException($"persistence.snapshot.partition-header-identity-mismatch:{header.PartitionId.Value}");
+            throw WireError($"partition-header-identity-mismatch:{header.PartitionId.Value}");
         if (header.CanonicalDigest.Length != 32)
-            throw new InvalidDataException("persistence.snapshot.partition-header-digest-length");
+            throw WireError("partition-header-digest-length");
 
         return Proto.Encode(stream =>
         {
@@ -146,6 +148,7 @@ public static class DomainPartitionSnapshotWireCodecV1
             uint fieldNumber = 0;
             byte[]? valueBytes = null;
             var seen = new HashSet<int>();
+
             while (!entryReader.End)
             {
                 var (entryField, entryWire) = entryReader.ReadTag();
@@ -244,7 +247,9 @@ public static class DomainPartitionSnapshotWireCodecV1
 
         if (recordIdBytes is null || schemaId is null || schemaVersion is null || revision == 0 || payloadBytes is null)
             throw WireError($"record-required-field:{partitionId}");
-        if (recordIdBytes.Length != 16 || detail > 3) throw WireError($"record-shape:{partitionId}");
+        if (recordIdBytes.Length != 16 || detail > 3)
+            throw WireError($"record-shape:{partitionId}");
+
         var recordId = OpaqueId128.FromBytes(recordIdBytes);
         if (recordId.IsZero) throw WireError($"record-id-zero:{partitionId}");
         if (new StableToken(schemaId) != identity.RecordSchema.SchemaId || schemaVersion.Value != identity.RecordSchema.Version)
@@ -345,7 +350,8 @@ public static class DomainPartitionSnapshotWireCodecV1
     }
 
     private static byte[] EncodeValue(string partitionId, DomainPayloadFieldRuleV1 rule, object value)
-        => Proto.Encode(stream =>
+    {
+        return Proto.Encode(stream =>
         {
             switch (rule.Kind)
             {
@@ -356,10 +362,12 @@ public static class DomainPartitionSnapshotWireCodecV1
                     Proto.WriteMessage(stream, 2, EncodeRefList((IReadOnlyList<PartitionRecordRefV1>)value));
                     break;
                 case DomainPayloadFieldKindV1.Id128:
+                {
                     var id = (OpaqueId128)value;
                     if (id.IsZero) throw WireError($"payload-id-zero:{partitionId}:{rule.Name}");
                     Proto.WriteBytes(stream, 3, id.ToBytes());
                     break;
+                }
                 case DomainPayloadFieldKindV1.Token:
                     Proto.WriteString(stream, 4, new StableToken((string)value).Value);
                     break;
@@ -399,10 +407,12 @@ public static class DomainPartitionSnapshotWireCodecV1
                     Proto.WriteBool(stream, 10, (bool)value);
                     break;
                 case DomainPayloadFieldKindV1.Digest:
+                {
                     var digest = (byte[])value;
                     if (digest.Length != 32) throw WireError($"payload-digest-length:{partitionId}:{rule.Name}");
                     Proto.WriteBytes(stream, 11, digest);
                     break;
+                }
                 case DomainPayloadFieldKindV1.Vec3:
                     Proto.WriteMessage(stream, 12, EncodeVec3((Vec3Int64V1)value));
                     break;
@@ -425,38 +435,101 @@ public static class DomainPartitionSnapshotWireCodecV1
                     throw new InvalidOperationException($"Unhandled payload kind: {rule.Kind}");
             }
         });
+    }
 
     private static object DecodeValue(string partitionId, DomainPayloadFieldRuleV1 rule, ReadOnlySpan<byte> encoded)
     {
         var reader = new Proto.Reader(encoded);
         object? result = null;
         var arm = 0;
+
         while (!reader.End)
         {
             var (field, wire) = reader.ReadTag();
             if (arm != 0) throw WireError($"payload-value-multiple-arms:{partitionId}:{rule.Name}");
             arm = field;
-            result = field switch
+            switch (field)
             {
-                1 => ReadMessage(ref reader, wire, DecodeRef),
-                2 => ReadMessage(ref reader, wire, DecodeRefList),
-                3 => ReadId128(ref reader, wire, partitionId, rule.Name),
-                4 => ReadToken(ref reader, wire),
-                5 => ReadMessage(ref reader, wire, DecodeTokenList),
-                6 => ReadUInt32(ref reader, wire),
-                7 => ReadUInt64(ref reader, wire),
-                8 => ReadSInt32(ref reader, wire),
-                9 => ReadSInt64(ref reader, wire),
-                10 => ReadBool(ref reader, wire),
-                11 => ReadDigest(ref reader, wire, partitionId, rule.Name),
-                12 => ReadMessage(ref reader, wire, DecodeVec3),
-                13 => ReadMessage(ref reader, wire, DecodeQuat),
-                14 => ReadMessage(ref reader, wire, DecodeByteMap),
-                15 => ReadMessage(ref reader, wire, DecodeUIntMap),
-                16 => ReadMessage(ref reader, wire, DecodeIntMap),
-                17 or 18 => throw WireError($"nested-codec-unavailable:{partitionId}:{rule.Name}"),
-                _ => throw WireError($"payload-value-unknown-arm:{partitionId}:{rule.Name}"),
-            };
+                case 1:
+                    reader.RequireWire(wire, 2);
+                    result = DecodeRef(reader.ReadBytes());
+                    break;
+                case 2:
+                    reader.RequireWire(wire, 2);
+                    result = DecodeRefList(reader.ReadBytes());
+                    break;
+                case 3:
+                {
+                    reader.RequireWire(wire, 2);
+                    var bytes = reader.ReadBytes();
+                    if (bytes.Length != 16) throw WireError($"payload-id-length:{partitionId}:{rule.Name}");
+                    var id = OpaqueId128.FromBytes(bytes);
+                    if (id.IsZero) throw WireError($"payload-id-zero:{partitionId}:{rule.Name}");
+                    result = id;
+                    break;
+                }
+                case 4:
+                    reader.RequireWire(wire, 2);
+                    result = new StableToken(reader.ReadString()).Value;
+                    break;
+                case 5:
+                    reader.RequireWire(wire, 2);
+                    result = DecodeTokenList(reader.ReadBytes());
+                    break;
+                case 6:
+                    reader.RequireWire(wire, 0);
+                    result = reader.ReadUInt32();
+                    break;
+                case 7:
+                    reader.RequireWire(wire, 0);
+                    result = reader.ReadVarUInt64();
+                    break;
+                case 8:
+                    reader.RequireWire(wire, 0);
+                    result = reader.ReadSInt32();
+                    break;
+                case 9:
+                    reader.RequireWire(wire, 0);
+                    result = reader.ReadSInt64();
+                    break;
+                case 10:
+                    reader.RequireWire(wire, 0);
+                    result = reader.ReadBool();
+                    break;
+                case 11:
+                {
+                    reader.RequireWire(wire, 2);
+                    var digest = reader.ReadBytes();
+                    if (digest.Length != 32) throw WireError($"payload-digest-length:{partitionId}:{rule.Name}");
+                    result = digest;
+                    break;
+                }
+                case 12:
+                    reader.RequireWire(wire, 2);
+                    result = DecodeVec3(reader.ReadBytes());
+                    break;
+                case 13:
+                    reader.RequireWire(wire, 2);
+                    result = DecodeQuat(reader.ReadBytes());
+                    break;
+                case 14:
+                    reader.RequireWire(wire, 2);
+                    result = DecodeByteMap(reader.ReadBytes());
+                    break;
+                case 15:
+                    reader.RequireWire(wire, 2);
+                    result = DecodeUIntMap(reader.ReadBytes());
+                    break;
+                case 16:
+                    reader.RequireWire(wire, 2);
+                    result = DecodeIntMap(reader.ReadBytes());
+                    break;
+                case 17:
+                case 18:
+                    throw WireError($"nested-codec-unavailable:{partitionId}:{rule.Name}");
+                default:
+                    throw WireError($"payload-value-unknown-arm:{partitionId}:{rule.Name}");
+            }
         }
 
         if (result is null) throw WireError($"payload-value-missing:{partitionId}:{rule.Name}");
@@ -464,8 +537,13 @@ public static class DomainPartitionSnapshotWireCodecV1
         return NormalizeDecodedScalar(rule.Kind, result, partitionId, rule.Name);
     }
 
-    private static object NormalizeDecodedScalar(DomainPayloadFieldKindV1 kind, object value, string partitionId, string field)
-        => kind switch
+    private static object NormalizeDecodedScalar(
+        DomainPayloadFieldKindV1 kind,
+        object value,
+        string partitionId,
+        string field)
+    {
+        return kind switch
         {
             DomainPayloadFieldKindV1.UInt8 when value is uint u && u <= byte.MaxValue => (byte)u,
             DomainPayloadFieldKindV1.UInt16 when value is uint u && u <= ushort.MaxValue => (ushort)u,
@@ -473,6 +551,7 @@ public static class DomainPartitionSnapshotWireCodecV1
             DomainPayloadFieldKindV1.UInt16 => throw WireError($"payload-uint16-range:{partitionId}:{field}"),
             _ => value,
         };
+    }
 
     private static void RequireArm(string partitionId, DomainPayloadFieldRuleV1 rule, int arm)
     {
@@ -502,11 +581,13 @@ public static class DomainPartitionSnapshotWireCodecV1
     }
 
     private static byte[] EncodeSchemaVersion(SchemaVersionV1 version)
-        => Proto.Encode(stream =>
+    {
+        return Proto.Encode(stream =>
         {
             if (version.Major != 0) Proto.WriteUInt32(stream, 1, version.Major);
             if (version.Minor != 0) Proto.WriteUInt32(stream, 2, version.Minor);
         });
+    }
 
     private static SchemaVersionV1 DecodeSchemaVersion(ReadOnlySpan<byte> encoded)
     {
@@ -528,20 +609,24 @@ public static class DomainPartitionSnapshotWireCodecV1
     }
 
     private static byte[] EncodeRef(PartitionRecordRefV1 value)
-        => Proto.Encode(stream =>
+    {
+        return Proto.Encode(stream =>
         {
             Proto.WriteString(stream, 1, value.PartitionId.Value);
             Proto.WriteBytes(stream, 2, value.RecordId.ToBytes());
         });
+    }
 
     private static PartitionRecordRefV1 DecodeRef(ReadOnlySpan<byte> encoded)
     {
         var reader = new Proto.Reader(encoded);
         string? partition = null;
         byte[]? id = null;
+        var seen = new HashSet<int>();
         while (!reader.End)
         {
             var (field, wire) = reader.ReadTag();
+            if (!seen.Add(field)) throw WireError("ref-duplicate-field");
             if (field == 1) { reader.RequireWire(wire, 2); partition = reader.ReadString(); }
             else if (field == 2) { reader.RequireWire(wire, 2); id = reader.ReadBytes(); }
             else throw WireError("ref-unknown-field");
@@ -553,10 +638,12 @@ public static class DomainPartitionSnapshotWireCodecV1
     }
 
     private static byte[] EncodeRefList(IReadOnlyList<PartitionRecordRefV1> values)
-        => Proto.Encode(stream =>
+    {
+        return Proto.Encode(stream =>
         {
             foreach (var value in values) Proto.WriteMessage(stream, 1, EncodeRef(value));
         });
+    }
 
     private static IReadOnlyList<PartitionRecordRefV1> DecodeRefList(ReadOnlySpan<byte> encoded)
     {
@@ -573,10 +660,12 @@ public static class DomainPartitionSnapshotWireCodecV1
     }
 
     private static byte[] EncodeTokenList(IReadOnlyList<string> values)
-        => Proto.Encode(stream =>
+    {
+        return Proto.Encode(stream =>
         {
             foreach (var value in values) Proto.WriteString(stream, 1, new StableToken(value).Value);
         });
+    }
 
     private static IReadOnlyList<string> DecodeTokenList(ReadOnlySpan<byte> encoded)
     {
@@ -593,20 +682,24 @@ public static class DomainPartitionSnapshotWireCodecV1
     }
 
     private static byte[] EncodeVec3(Vec3Int64V1 value)
-        => Proto.Encode(stream =>
+    {
+        return Proto.Encode(stream =>
         {
             if (value.X != 0) Proto.WriteSInt64(stream, 1, value.X);
             if (value.Y != 0) Proto.WriteSInt64(stream, 2, value.Y);
             if (value.Z != 0) Proto.WriteSInt64(stream, 3, value.Z);
         });
+    }
 
     private static Vec3Int64V1 DecodeVec3(ReadOnlySpan<byte> encoded)
     {
         var reader = new Proto.Reader(encoded);
         long x = 0, y = 0, z = 0;
+        var seen = new HashSet<int>();
         while (!reader.End)
         {
             var (field, wire) = reader.ReadTag();
+            if (!seen.Add(field)) throw WireError("vec3-duplicate-field");
             reader.RequireWire(wire, 0);
             if (field == 1) x = reader.ReadSInt64();
             else if (field == 2) y = reader.ReadSInt64();
@@ -617,21 +710,25 @@ public static class DomainPartitionSnapshotWireCodecV1
     }
 
     private static byte[] EncodeQuat(QuaternionQ30V1 value)
-        => Proto.Encode(stream =>
+    {
+        return Proto.Encode(stream =>
         {
             if (value.X != 0) Proto.WriteSInt32(stream, 1, value.X);
             if (value.Y != 0) Proto.WriteSInt32(stream, 2, value.Y);
             if (value.Z != 0) Proto.WriteSInt32(stream, 3, value.Z);
             if (value.W != 0) Proto.WriteSInt32(stream, 4, value.W);
         });
+    }
 
     private static QuaternionQ30V1 DecodeQuat(ReadOnlySpan<byte> encoded)
     {
         var reader = new Proto.Reader(encoded);
         int x = 0, y = 0, z = 0, w = 0;
+        var seen = new HashSet<int>();
         while (!reader.End)
         {
             var (field, wire) = reader.ReadTag();
+            if (!seen.Add(field)) throw WireError("quat-duplicate-field");
             reader.RequireWire(wire, 0);
             if (field == 1) x = reader.ReadSInt32();
             else if (field == 2) y = reader.ReadSInt32();
@@ -642,14 +739,18 @@ public static class DomainPartitionSnapshotWireCodecV1
         return new QuaternionQ30V1(x, y, z, w);
     }
 
-    private static byte[] EncodeMap<T>(IReadOnlyList<KeyValuePair<string, T>> values, Action<Stream, T> writeValue)
-        => Proto.Encode(stream =>
+    private static byte[] EncodeMap<T>(
+        IReadOnlyList<KeyValuePair<string, T>> values,
+        Action<Stream, T> writeValue)
+    {
+        return Proto.Encode(stream =>
         {
             string? previous = null;
             foreach (var pair in values)
             {
                 var key = new StableToken(pair.Key).Value;
-                if (previous is not null && string.CompareOrdinal(previous, key) >= 0) throw WireError("map-key-order");
+                if (previous is not null && string.CompareOrdinal(previous, key) >= 0)
+                    throw WireError("map-key-order");
                 previous = key;
                 var entry = Proto.Encode(entryStream =>
                 {
@@ -659,14 +760,17 @@ public static class DomainPartitionSnapshotWireCodecV1
                 Proto.WriteMessage(stream, 1, entry);
             }
         });
+    }
 
     private static IReadOnlyList<KeyValuePair<string, byte>> DecodeByteMap(ReadOnlySpan<byte> encoded)
-        => DecodeMap(encoded, static reader =>
+    {
+        return DecodeMap(encoded, static reader =>
         {
             var value = reader.ReadUInt32();
             if (value > byte.MaxValue) throw WireError("map-byte-range");
             return (byte)value;
         });
+    }
 
     private static IReadOnlyList<KeyValuePair<string, uint>> DecodeUIntMap(ReadOnlySpan<byte> encoded)
         => DecodeMap(encoded, static reader => reader.ReadUInt32());
@@ -674,11 +778,14 @@ public static class DomainPartitionSnapshotWireCodecV1
     private static IReadOnlyList<KeyValuePair<string, int>> DecodeIntMap(ReadOnlySpan<byte> encoded)
         => DecodeMap(encoded, static reader => reader.ReadSInt32());
 
-    private static IReadOnlyList<KeyValuePair<string, T>> DecodeMap<T>(ReadOnlySpan<byte> encoded, Func<Proto.ReaderBox, T> readValue)
+    private static IReadOnlyList<KeyValuePair<string, T>> DecodeMap<T>(
+        ReadOnlySpan<byte> encoded,
+        Func<Proto.ReaderBox, T> readValue)
     {
         var reader = new Proto.Reader(encoded);
         var values = new List<KeyValuePair<string, T>>();
         string? previous = null;
+
         while (!reader.End)
         {
             var (field, wire) = reader.ReadTag();
@@ -686,11 +793,14 @@ public static class DomainPartitionSnapshotWireCodecV1
             reader.RequireWire(wire, 2);
             var box = new Proto.ReaderBox(reader.ReadBytes());
             string? key = null;
-            T? value = default;
+            T value = default!;
             var valueSeen = false;
+            var seen = new HashSet<int>();
+
             while (!box.End)
             {
                 var (entryField, entryWire) = box.ReadTag();
+                if (!seen.Add(entryField)) throw WireError("map-entry-duplicate-field");
                 if (entryField == 1)
                 {
                     box.RequireWire(entryWire, 2);
@@ -702,50 +812,20 @@ public static class DomainPartitionSnapshotWireCodecV1
                     value = readValue(box);
                     valueSeen = true;
                 }
-                else throw WireError("map-entry-unknown-field");
+                else
+                {
+                    throw WireError("map-entry-unknown-field");
+                }
             }
+
             if (key is null || !valueSeen) throw WireError("map-entry-required-field");
-            if (previous is not null && string.CompareOrdinal(previous, key) >= 0) throw WireError("map-key-order");
+            if (previous is not null && string.CompareOrdinal(previous, key) >= 0)
+                throw WireError("map-key-order");
             previous = key;
-            values.Add(new KeyValuePair<string, T>(key, value!));
+            values.Add(new KeyValuePair<string, T>(key, value));
         }
+
         return Array.AsReadOnly(values.ToArray());
-    }
-
-    private static object ReadMessage(ref Proto.Reader reader, int wire, Func<ReadOnlySpan<byte>, object> decode)
-    {
-        reader.RequireWire(wire, 2);
-        return decode(reader.ReadBytes());
-    }
-
-    private static OpaqueId128 ReadId128(ref Proto.Reader reader, int wire, string partitionId, string field)
-    {
-        reader.RequireWire(wire, 2);
-        var bytes = reader.ReadBytes();
-        if (bytes.Length != 16) throw WireError($"payload-id-length:{partitionId}:{field}");
-        var value = OpaqueId128.FromBytes(bytes);
-        if (value.IsZero) throw WireError($"payload-id-zero:{partitionId}:{field}");
-        return value;
-    }
-
-    private static string ReadToken(ref Proto.Reader reader, int wire)
-    {
-        reader.RequireWire(wire, 2);
-        return new StableToken(reader.ReadString()).Value;
-    }
-
-    private static uint ReadUInt32(ref Proto.Reader reader, int wire) { reader.RequireWire(wire, 0); return reader.ReadUInt32(); }
-    private static ulong ReadUInt64(ref Proto.Reader reader, int wire) { reader.RequireWire(wire, 0); return reader.ReadVarUInt64(); }
-    private static int ReadSInt32(ref Proto.Reader reader, int wire) { reader.RequireWire(wire, 0); return reader.ReadSInt32(); }
-    private static long ReadSInt64(ref Proto.Reader reader, int wire) { reader.RequireWire(wire, 0); return reader.ReadSInt64(); }
-    private static bool ReadBool(ref Proto.Reader reader, int wire) { reader.RequireWire(wire, 0); return reader.ReadBool(); }
-
-    private static byte[] ReadDigest(ref Proto.Reader reader, int wire, string partitionId, string field)
-    {
-        reader.RequireWire(wire, 2);
-        var value = reader.ReadBytes();
-        if (value.Length != 32) throw WireError($"payload-digest-length:{partitionId}:{field}");
-        return value;
     }
 
     private static InvalidDataException WireError(string suffix)
@@ -760,21 +840,52 @@ public static class DomainPartitionSnapshotWireCodecV1
             return stream.ToArray();
         }
 
-        public static void WriteMessage(Stream stream, int field, ReadOnlySpan<byte> value) => WriteBytes(stream, field, value);
-        public static void WriteString(Stream stream, int field, string value) => WriteBytes(stream, field, Encoding.UTF8.GetBytes(value));
+        public static void WriteMessage(Stream stream, int field, ReadOnlySpan<byte> value)
+            => WriteBytes(stream, field, value);
+
+        public static void WriteString(Stream stream, int field, string value)
+            => WriteBytes(stream, field, Encoding.UTF8.GetBytes(value));
+
         public static void WriteBytes(Stream stream, int field, ReadOnlySpan<byte> value)
         {
             WriteTag(stream, field, 2);
             WriteVarUInt64(stream, checked((ulong)value.Length));
             stream.Write(value);
         }
-        public static void WriteUInt32(Stream stream, int field, uint value) { WriteTag(stream, field, 0); WriteVarUInt64(stream, value); }
-        public static void WriteUInt64(Stream stream, int field, ulong value) { WriteTag(stream, field, 0); WriteVarUInt64(stream, value); }
-        public static void WriteSInt32(Stream stream, int field, int value) { WriteTag(stream, field, 0); WriteVarUInt64(stream, ZigZag32(value)); }
-        public static void WriteSInt64(Stream stream, int field, long value) { WriteTag(stream, field, 0); WriteVarUInt64(stream, ZigZag64(value)); }
-        public static void WriteBool(Stream stream, int field, bool value) { WriteTag(stream, field, 0); WriteVarUInt64(stream, value ? 1UL : 0UL); }
 
-        private static void WriteTag(Stream stream, int field, int wire) => WriteVarUInt64(stream, ((ulong)field << 3) | (uint)wire);
+        public static void WriteUInt32(Stream stream, int field, uint value)
+        {
+            WriteTag(stream, field, 0);
+            WriteVarUInt64(stream, value);
+        }
+
+        public static void WriteUInt64(Stream stream, int field, ulong value)
+        {
+            WriteTag(stream, field, 0);
+            WriteVarUInt64(stream, value);
+        }
+
+        public static void WriteSInt32(Stream stream, int field, int value)
+        {
+            WriteTag(stream, field, 0);
+            WriteVarUInt64(stream, ZigZag32(value));
+        }
+
+        public static void WriteSInt64(Stream stream, int field, long value)
+        {
+            WriteTag(stream, field, 0);
+            WriteVarUInt64(stream, ZigZag64(value));
+        }
+
+        public static void WriteBool(Stream stream, int field, bool value)
+        {
+            WriteTag(stream, field, 0);
+            WriteVarUInt64(stream, value ? 1UL : 0UL);
+        }
+
+        private static void WriteTag(Stream stream, int field, int wire)
+            => WriteVarUInt64(stream, ((ulong)field << 3) | (uint)wire);
+
         private static void WriteVarUInt64(Stream stream, ulong value)
         {
             while (value >= 0x80)
@@ -784,24 +895,32 @@ public static class DomainPartitionSnapshotWireCodecV1
             }
             stream.WriteByte((byte)value);
         }
-        private static uint ZigZag32(int value) => unchecked((uint)((value << 1) ^ (value >> 31)));
-        private static ulong ZigZag64(long value) => unchecked((ulong)((value << 1) ^ (value >> 63)));
+
+        private static uint ZigZag32(int value)
+            => unchecked((uint)((value << 1) ^ (value >> 31)));
+
+        private static ulong ZigZag64(long value)
+            => unchecked((ulong)((value << 1) ^ (value >> 63)));
 
         public ref struct Reader
         {
             private ReadOnlySpan<byte> _remaining;
+
             public Reader(ReadOnlySpan<byte> encoded) => _remaining = encoded;
             public bool End => _remaining.IsEmpty;
+
             public (int Field, int Wire) ReadTag()
             {
                 var tag = ReadVarUInt64();
                 if (tag == 0) throw WireError("tag-zero");
                 return (checked((int)(tag >> 3)), checked((int)(tag & 7)));
             }
+
             public void RequireWire(int actual, int expected)
             {
                 if (actual != expected) throw WireError("wire-type");
             }
+
             public ulong ReadVarUInt64()
             {
                 ulong value = 0;
@@ -815,96 +934,124 @@ public static class DomainPartitionSnapshotWireCodecV1
                 }
                 throw WireError("varint-overflow");
             }
+
             public uint ReadUInt32()
             {
                 var value = ReadVarUInt64();
                 if (value > uint.MaxValue) throw WireError("uint32-overflow");
                 return (uint)value;
             }
+
             public int ReadSInt32()
             {
                 var value = ReadUInt32();
                 return unchecked((int)(value >> 1) ^ -((int)value & 1));
             }
+
             public long ReadSInt64()
             {
                 var value = ReadVarUInt64();
                 return unchecked((long)(value >> 1) ^ -((long)value & 1L));
             }
+
             public bool ReadBool()
             {
                 var value = ReadVarUInt64();
                 if (value > 1) throw WireError("bool-range");
                 return value == 1;
             }
+
             public byte[] ReadBytes()
             {
                 var length = ReadVarUInt64();
-                if (length > int.MaxValue || (ulong)_remaining.Length < length) throw WireError("truncated-bytes");
+                if (length > int.MaxValue || (ulong)_remaining.Length < length)
+                    throw WireError("truncated-bytes");
                 var result = _remaining[..(int)length].ToArray();
                 _remaining = _remaining[(int)length..];
                 return result;
             }
+
             public string ReadString()
             {
                 var bytes = ReadBytes();
-                try { return new UTF8Encoding(false, true).GetString(bytes); }
-                catch (DecoderFallbackException ex) { throw new InvalidDataException("persistence.snapshot.domain-wire:utf8", ex); }
+                try
+                {
+                    return new UTF8Encoding(false, true).GetString(bytes);
+                }
+                catch (DecoderFallbackException ex)
+                {
+                    throw new InvalidDataException("persistence.snapshot.domain-wire:utf8", ex);
+                }
             }
         }
 
         public sealed class ReaderBox
         {
-            private byte[] _remaining;
+            private readonly byte[] _bytes;
             private int _offset;
-            public ReaderBox(byte[] encoded) => _remaining = encoded;
-            public bool End => _offset >= _remaining.Length;
+
+            public ReaderBox(byte[] encoded) => _bytes = encoded;
+            public bool End => _offset >= _bytes.Length;
+
             public (int Field, int Wire) ReadTag()
             {
                 var tag = ReadVarUInt64();
                 if (tag == 0) throw WireError("tag-zero");
                 return (checked((int)(tag >> 3)), checked((int)(tag & 7)));
             }
+
             public void RequireWire(int actual, int expected)
             {
                 if (actual != expected) throw WireError("wire-type");
             }
+
             public ulong ReadVarUInt64()
             {
                 ulong value = 0;
                 for (var shift = 0; shift < 64; shift += 7)
                 {
-                    if (_offset >= _remaining.Length) throw WireError("truncated-varint");
-                    var current = _remaining[_offset++];
+                    if (_offset >= _bytes.Length) throw WireError("truncated-varint");
+                    var current = _bytes[_offset++];
                     value |= (ulong)(current & 0x7f) << shift;
                     if ((current & 0x80) == 0) return value;
                 }
                 throw WireError("varint-overflow");
             }
+
             public uint ReadUInt32()
             {
                 var value = ReadVarUInt64();
                 if (value > uint.MaxValue) throw WireError("uint32-overflow");
                 return (uint)value;
             }
+
             public int ReadSInt32()
             {
                 var value = ReadUInt32();
                 return unchecked((int)(value >> 1) ^ -((int)value & 1));
             }
+
             public byte[] ReadBytes()
             {
                 var length = ReadVarUInt64();
-                if (length > int.MaxValue || _remaining.Length - _offset < (int)length) throw WireError("truncated-bytes");
-                var result = _remaining.AsSpan(_offset, (int)length).ToArray();
+                if (length > int.MaxValue || _bytes.Length - _offset < (int)length)
+                    throw WireError("truncated-bytes");
+                var result = _bytes.AsSpan(_offset, (int)length).ToArray();
                 _offset += (int)length;
                 return result;
             }
+
             public string ReadString()
             {
                 var bytes = ReadBytes();
-                try { return new UTF8Encoding(false, true).GetString(bytes); }
-                catch (DecoderFallbackException ex) { throw new InvalidDataException("persistence.snapshot.domain-wire:utf8", ex); }
+                try
+                {
+                    return new UTF8Encoding(false, true).GetString(bytes);
+                }
+                catch (DecoderFallbackException ex)
+                {
+                    throw new InvalidDataException("persistence.snapshot.domain-wire:utf8", ex);
+                }
             }
         }
     }
