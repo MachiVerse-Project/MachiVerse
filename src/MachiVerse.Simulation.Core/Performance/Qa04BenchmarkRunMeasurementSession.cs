@@ -8,27 +8,31 @@ namespace MachiVerse.Simulation.Core.Performance;
 /// Harness-only wall-time session for one sequential perf.reference.v1 process run. The caller
 /// executes every authoritative finalizing Step through this session in finalized-Step order.
 /// Warm-up/cooldown Steps are executed but never sampled. Measurement Step duration is timed around
-/// the supplied authoritative Step delegate; process working-set observation occurs only after the
-/// successful Step has finished and therefore cannot alter the measured Step duration.
+/// the supplied authoritative Step delegate; process working-set and GC observations occur only
+/// outside the measured Step body and cannot alter world-authoritative behavior.
 /// </summary>
 public sealed class Qa04BenchmarkRunMeasurementSessionV1
 {
     private readonly Qa04BenchmarkMetricCollectorV1 _collector;
     private readonly Func<long> _workingSetBytes;
+    private readonly Qa04GcPauseSamplerV1 _gcPauseSampler;
     private ulong _lastFinalizedStep;
     private long? _measurementStartTimestamp;
     private int _stepInFlight;
 
     public Qa04BenchmarkRunMeasurementSessionV1(
         Qa04BenchmarkMetricCollectorV1? collector = null,
-        Func<long>? workingSetBytes = null)
+        Func<long>? workingSetBytes = null,
+        Qa04GcPauseSamplerV1? gcPauseSampler = null)
     {
         _collector = collector ?? new Qa04BenchmarkMetricCollectorV1();
         _workingSetBytes = workingSetBytes ?? ReadCurrentProcessWorkingSetBytes;
+        _gcPauseSampler = gcPauseSampler ?? new Qa04GcPauseSamplerV1(_collector);
     }
 
     public Qa04BenchmarkMetricCollectorV1 Collector => _collector;
     public ulong LastFinalizedStep => _lastFinalizedStep;
+    public Qa04GcPauseTelemetrySnapshotV1 GcPauseTelemetry => _gcPauseSampler.Snapshot();
 
     public async Task ExecuteFinalizingStepAsync(
         ulong resultingFinalizedStep,
@@ -47,6 +51,9 @@ public sealed class Qa04BenchmarkRunMeasurementSessionV1
 
             cancellationToken.ThrowIfCancellationRequested();
             var collect = Qa04MeasurementPhaseContractV1.ShouldCollectPerformanceSample(resultingFinalizedStep);
+            if (collect && _measurementStartTimestamp is null)
+                _gcPauseSampler.BeginMeasurement();
+
             var stepStarted = Stopwatch.GetTimestamp();
             if (collect && _measurementStartTimestamp is null)
                 _measurementStartTimestamp = stepStarted;
@@ -64,6 +71,7 @@ public sealed class Qa04BenchmarkRunMeasurementSessionV1
                 Stopwatch.GetElapsedTime(measurementStart, stepFinished),
                 Stopwatch.GetElapsedTime(stepStarted, stepFinished));
             _collector.RecordCoreWorkingSetBytes(_workingSetBytes());
+            _gcPauseSampler.SampleCompletedCollections();
         }
         finally
         {
