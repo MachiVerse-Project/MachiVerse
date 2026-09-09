@@ -59,6 +59,9 @@ jobs:
           assert inspect['initialResidentLifecycle'] == 'alive', inspect
           assert inspect['authoritativeStepStructuralBridgeAvailable'] is True, inspect
           assert inspect['coreSubstateTwoStepBridgeAvailable'] is True, inspect
+          assert inspect['detailSubstateTwoStepBridgeAvailable'] is True, inspect
+          assert inspect['reducedAuthoritativeStepLoopAvailable'] is True, inspect
+          assert inspect['runningSnapshotBridgeAvailable'] is True, inspect
           assert inspect['referenceWorldMaterialized'] is False, inspect
           assert inspect['authoritativeStepLoopAvailable'] is False, inspect
           assert inspect['releaseEvidenceCapable'] is False, inspect
@@ -192,6 +195,56 @@ jobs:
           assert result['releaseEvidenceCapable'] is False, result
           assert 'qa04.target.core-substate-mutation-application-not-assembled' not in result['blockingFailureCodes'], result
           assert 'qa04.target.detail-substate-mutation-application-not-assembled' in result['blockingFailureCodes'], result
+          PY
+      - name: Prove reduced authoritative loop survives 30 consecutive SQLite COMMIT Steps
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          persistence="$RUNNER_TEMP/qa04-authoritative-loop-persistence"
+          request=$(python3 - "$persistence" <<'PY'
+          import json, sys
+          print(json.dumps({
+              'schemaVersion':'1.0',
+              'command':'authoritative-step-loop-probe',
+              'workerCount':4,
+              'recordCount':128,
+              'persistenceRoot':sys.argv[1],
+          }, separators=(',', ':')))
+          PY
+          )
+          printf '%s\n' "$request" | "$core" qa04-target > "$RUNNER_TEMP/core-authoritative-loop.json"
+          python3 - "$RUNNER_TEMP/core-authoritative-loop.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['basisStep'] == 0, result
+          assert result['stepCount'] == 30 and result['finalResultingStep'] == 30, result
+          assert result['workerCount'] == 4 and result['residentRecordCount'] == 128, result
+          assert result['totalDomainOutputCount'] == 240, result
+          assert result['totalPartitionCandidateCount'] == 30, result
+          assert result['candidatePublishableBeforeCommitObserved'] is False, result
+          assert result['preparedStatePublishableBeforeCommitObserved'] is False, result
+          for key in (
+              'allDurableReceiptsPublishable',
+              'allResultingWorldStatesPublishable',
+              'allStateChainsValid',
+              'schedulerReopenedEachStep',
+              'realSqliteCommitObservedThroughLoop',
+              'reducedAuthoritativeStepLoopAvailable',
+          ):
+              assert result[key] is True, (key, result)
+          assert result['finalResidentPartitionRevision'] == 31, result
+          assert result['finalResidentPartitionBasisStep'] == 30, result
+          assert result['basisStateDigest'] != result['finalStateDigest'], result
+          for key in ('basisStateDigest','finalStateDigest','finalContinuityToken'):
+              digest = result[key]
+              assert len(digest) == 64 and set(digest) != {'0'}, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['authoritativeStepLoopAvailable'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
+          assert 'qa04.target.reference-world-other-partitions-not-materialized' in result['blockingFailureCodes'], result
+          assert 'qa04.target.authoritative-full-step-loop-not-assembled' in result['blockingFailureCodes'], result
           PY
       - name: Prove external adapter reaches Core and fails closed
         shell: bash
