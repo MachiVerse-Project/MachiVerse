@@ -124,6 +124,12 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "spatial.terrain_geometry",
             "root_brick_ref",
             "qa04.material.terrain-brick-authority-undefined");
+        Require(
+            "resident.body-health.body-region-states-schema",
+            Qa04ReferenceDependencyBlockerKindV1.NestedPayloadSchema,
+            "resident.body_health",
+            "body_region_states",
+            "qa04.material.body-region-state-schema-undefined");
     }
 
     private static void Require(
