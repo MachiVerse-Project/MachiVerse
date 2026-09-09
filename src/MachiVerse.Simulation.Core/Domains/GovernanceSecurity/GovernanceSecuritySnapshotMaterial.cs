@@ -24,23 +24,23 @@ public sealed class GovernanceSecurityDomainStateV1
         DomainPartitionStateV1<GovernanceBorderControlPayloadV1> borderControl,
         DomainPartitionStateV1<GovernanceLineagePayloadV1> lineage)
     {
-        Polity = R(polity, GovernancePolityPayloadV1.PartitionId);
-        Institution = R(institution, GovernanceInstitutionPayloadV1.PartitionId);
-        LawRule = R(lawRule, GovernanceLawRulePayloadV1.PartitionId);
-        Jurisdiction = R(jurisdiction, GovernanceJurisdictionPayloadV1.PartitionId);
-        TerritorialClaim = R(territorialClaim, GovernanceTerritorialClaimPayloadV1.PartitionId);
-        EffectiveControl = R(effectiveControl, GovernanceEffectiveControlPayloadV1.PartitionId);
-        PublicAuthority = R(publicAuthority, GovernancePublicAuthorityPayloadV1.PartitionId);
-        TaxFiscal = R(taxFiscal, GovernanceTaxFiscalPayloadV1.PartitionId);
-        PermissionLicense = R(permissionLicense, GovernancePermissionLicensePayloadV1.PartitionId);
-        Diplomacy = R(diplomacy, GovernanceDiplomacyPayloadV1.PartitionId);
-        SecurityIncident = R(securityIncident, GovernanceSecurityIncidentPayloadV1.PartitionId);
-        Investigation = R(investigation, GovernanceInvestigationPayloadV1.PartitionId);
-        JudicialCase = R(judicialCase, GovernanceJudicialCasePayloadV1.PartitionId);
-        Enforcement = R(enforcement, GovernanceEnforcementPayloadV1.PartitionId);
-        MilitaryAuthority = R(militaryAuthority, GovernanceMilitaryAuthorityPayloadV1.PartitionId);
-        BorderControl = R(borderControl, GovernanceBorderControlPayloadV1.PartitionId);
-        Lineage = R(lineage, GovernanceLineagePayloadV1.PartitionId);
+        Polity = RequireIdentity(polity, GovernancePolityPayloadV1.PartitionId);
+        Institution = RequireIdentity(institution, GovernanceInstitutionPayloadV1.PartitionId);
+        LawRule = RequireIdentity(lawRule, GovernanceLawRulePayloadV1.PartitionId);
+        Jurisdiction = RequireIdentity(jurisdiction, GovernanceJurisdictionPayloadV1.PartitionId);
+        TerritorialClaim = RequireIdentity(territorialClaim, GovernanceTerritorialClaimPayloadV1.PartitionId);
+        EffectiveControl = RequireIdentity(effectiveControl, GovernanceEffectiveControlPayloadV1.PartitionId);
+        PublicAuthority = RequireIdentity(publicAuthority, GovernancePublicAuthorityPayloadV1.PartitionId);
+        TaxFiscal = RequireIdentity(taxFiscal, GovernanceTaxFiscalPayloadV1.PartitionId);
+        PermissionLicense = RequireIdentity(permissionLicense, GovernancePermissionLicensePayloadV1.PartitionId);
+        Diplomacy = RequireIdentity(diplomacy, GovernanceDiplomacyPayloadV1.PartitionId);
+        SecurityIncident = RequireIdentity(securityIncident, GovernanceSecurityIncidentPayloadV1.PartitionId);
+        Investigation = RequireIdentity(investigation, GovernanceInvestigationPayloadV1.PartitionId);
+        JudicialCase = RequireIdentity(judicialCase, GovernanceJudicialCasePayloadV1.PartitionId);
+        Enforcement = RequireIdentity(enforcement, GovernanceEnforcementPayloadV1.PartitionId);
+        MilitaryAuthority = RequireIdentity(militaryAuthority, GovernanceMilitaryAuthorityPayloadV1.PartitionId);
+        BorderControl = RequireIdentity(borderControl, GovernanceBorderControlPayloadV1.PartitionId);
+        Lineage = RequireIdentity(lineage, GovernanceLineagePayloadV1.PartitionId);
     }
 
     public DomainPartitionStateV1<GovernancePolityPayloadV1> Polity { get; }
@@ -61,49 +61,150 @@ public sealed class GovernanceSecurityDomainStateV1
     public DomainPartitionStateV1<GovernanceBorderControlPayloadV1> BorderControl { get; }
     public DomainPartitionStateV1<GovernanceLineagePayloadV1> Lineage { get; }
 
-    public static GovernanceSecurityDomainStateV1 CreateEmpty() => new(
-        E<GovernancePolityPayloadV1>(GovernancePolityPayloadV1.PartitionId), E<GovernanceInstitutionPayloadV1>(GovernanceInstitutionPayloadV1.PartitionId),
-        E<GovernanceLawRulePayloadV1>(GovernanceLawRulePayloadV1.PartitionId), E<GovernanceJurisdictionPayloadV1>(GovernanceJurisdictionPayloadV1.PartitionId),
-        E<GovernanceTerritorialClaimPayloadV1>(GovernanceTerritorialClaimPayloadV1.PartitionId), E<GovernanceEffectiveControlPayloadV1>(GovernanceEffectiveControlPayloadV1.PartitionId),
-        E<GovernancePublicAuthorityPayloadV1>(GovernancePublicAuthorityPayloadV1.PartitionId), E<GovernanceTaxFiscalPayloadV1>(GovernanceTaxFiscalPayloadV1.PartitionId),
-        E<GovernancePermissionLicensePayloadV1>(GovernancePermissionLicensePayloadV1.PartitionId), E<GovernanceDiplomacyPayloadV1>(GovernanceDiplomacyPayloadV1.PartitionId),
-        E<GovernanceSecurityIncidentPayloadV1>(GovernanceSecurityIncidentPayloadV1.PartitionId), E<GovernanceInvestigationPayloadV1>(GovernanceInvestigationPayloadV1.PartitionId),
-        E<GovernanceJudicialCasePayloadV1>(GovernanceJudicialCasePayloadV1.PartitionId), E<GovernanceEnforcementPayloadV1>(GovernanceEnforcementPayloadV1.PartitionId),
-        E<GovernanceMilitaryAuthorityPayloadV1>(GovernanceMilitaryAuthorityPayloadV1.PartitionId), E<GovernanceBorderControlPayloadV1>(GovernanceBorderControlPayloadV1.PartitionId),
-        E<GovernanceLineagePayloadV1>(GovernanceLineagePayloadV1.PartitionId));
+    public static GovernanceSecurityDomainStateV1 CreateEmpty()
+        => new(
+            Empty<GovernancePolityPayloadV1>(GovernancePolityPayloadV1.PartitionId),
+            Empty<GovernanceInstitutionPayloadV1>(GovernanceInstitutionPayloadV1.PartitionId),
+            Empty<GovernanceLawRulePayloadV1>(GovernanceLawRulePayloadV1.PartitionId),
+            Empty<GovernanceJurisdictionPayloadV1>(GovernanceJurisdictionPayloadV1.PartitionId),
+            Empty<GovernanceTerritorialClaimPayloadV1>(GovernanceTerritorialClaimPayloadV1.PartitionId),
+            Empty<GovernanceEffectiveControlPayloadV1>(GovernanceEffectiveControlPayloadV1.PartitionId),
+            Empty<GovernancePublicAuthorityPayloadV1>(GovernancePublicAuthorityPayloadV1.PartitionId),
+            Empty<GovernanceTaxFiscalPayloadV1>(GovernanceTaxFiscalPayloadV1.PartitionId),
+            Empty<GovernancePermissionLicensePayloadV1>(GovernancePermissionLicensePayloadV1.PartitionId),
+            Empty<GovernanceDiplomacyPayloadV1>(GovernanceDiplomacyPayloadV1.PartitionId),
+            Empty<GovernanceSecurityIncidentPayloadV1>(GovernanceSecurityIncidentPayloadV1.PartitionId),
+            Empty<GovernanceInvestigationPayloadV1>(GovernanceInvestigationPayloadV1.PartitionId),
+            Empty<GovernanceJudicialCasePayloadV1>(GovernanceJudicialCasePayloadV1.PartitionId),
+            Empty<GovernanceEnforcementPayloadV1>(GovernanceEnforcementPayloadV1.PartitionId),
+            Empty<GovernanceMilitaryAuthorityPayloadV1>(GovernanceMilitaryAuthorityPayloadV1.PartitionId),
+            Empty<GovernanceBorderControlPayloadV1>(GovernanceBorderControlPayloadV1.PartitionId),
+            Empty<GovernanceLineagePayloadV1>(GovernanceLineagePayloadV1.PartitionId));
 
-    public GovernanceSecurityDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState) => GovernanceSecurityDomainSnapshotMaterialV1.Bind(frozenState, this);
-    private static DomainPartitionStateV1<T> E<T>(string id) => new(StandardDomainPartitionRegistry.Get(id), Array.Empty<DomainRecordEnvelopeV1<T>>());
-    private static DomainPartitionStateV1<T> R<T>(DomainPartitionStateV1<T> p, string id) { ArgumentNullException.ThrowIfNull(p); if (p.Identity != StandardDomainPartitionRegistry.Get(id)) throw new InvalidDataException($"governance.runtime-state.partition-identity:{id}"); return p; }
+    public GovernanceSecurityDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState)
+        => GovernanceSecurityDomainSnapshotMaterialV1.Bind(frozenState, this);
+
+    private static DomainPartitionStateV1<TPayload> Empty<TPayload>(string partitionId)
+        => new(StandardDomainPartitionRegistry.Get(partitionId), Array.Empty<DomainRecordEnvelopeV1<TPayload>>());
+
+    private static DomainPartitionStateV1<TPayload> RequireIdentity<TPayload>(
+        DomainPartitionStateV1<TPayload> partition,
+        string partitionId)
+    {
+        ArgumentNullException.ThrowIfNull(partition);
+        if (partition.Identity != StandardDomainPartitionRegistry.Get(partitionId))
+            throw new InvalidDataException($"governance.runtime-state.partition-identity:{partitionId}");
+        return partition;
+    }
 }
 
 public sealed class GovernanceSecurityDomainSnapshotMaterialV1
 {
     private GovernanceSecurityDomainSnapshotMaterialV1(IEnumerable<IDomainPartitionSnapshotAuthorityV1> authorities)
     {
-        var a = authorities?.ToArray() ?? throw new ArgumentNullException(nameof(authorities));
-        if (a.Length != 17) throw new InvalidDataException("governance.snapshot-material.authority-count");
-        foreach (var x in a) { ArgumentNullException.ThrowIfNull(x); x.VerifyBoundAuthority(); if (x.Identity.OwnerDomain.Value != "governance_security") throw new InvalidDataException($"governance.snapshot-material.foreign-owner:{x.PartitionId.Value}"); }
-        Authorities = Array.AsReadOnly(a.OrderBy(x => x.PartitionId.Value, StringComparer.Ordinal).ToArray());
+        var materialized = authorities?.ToArray() ?? throw new ArgumentNullException(nameof(authorities));
+        if (materialized.Length != 17)
+            throw new InvalidDataException("governance.snapshot-material.authority-count");
+
+        var byId = new Dictionary<string, IDomainPartitionSnapshotAuthorityV1>(StringComparer.Ordinal);
+        foreach (var authority in materialized)
+        {
+            ArgumentNullException.ThrowIfNull(authority);
+            authority.VerifyBoundAuthority();
+            if (!string.Equals(authority.Identity.OwnerDomain.Value, "governance_security", StringComparison.Ordinal))
+                throw new InvalidDataException($"governance.snapshot-material.foreign-owner:{authority.PartitionId.Value}");
+            if (!byId.TryAdd(authority.PartitionId.Value, authority))
+                throw new InvalidDataException($"governance.snapshot-material.duplicate:{authority.PartitionId.Value}");
+        }
+
+        Polity = Require<GovernancePolityPayloadV1>(byId, GovernancePolityPayloadV1.PartitionId);
+        Institution = Require<GovernanceInstitutionPayloadV1>(byId, GovernanceInstitutionPayloadV1.PartitionId);
+        LawRule = Require<GovernanceLawRulePayloadV1>(byId, GovernanceLawRulePayloadV1.PartitionId);
+        Jurisdiction = Require<GovernanceJurisdictionPayloadV1>(byId, GovernanceJurisdictionPayloadV1.PartitionId);
+        TerritorialClaim = Require<GovernanceTerritorialClaimPayloadV1>(byId, GovernanceTerritorialClaimPayloadV1.PartitionId);
+        EffectiveControl = Require<GovernanceEffectiveControlPayloadV1>(byId, GovernanceEffectiveControlPayloadV1.PartitionId);
+        PublicAuthority = Require<GovernancePublicAuthorityPayloadV1>(byId, GovernancePublicAuthorityPayloadV1.PartitionId);
+        TaxFiscal = Require<GovernanceTaxFiscalPayloadV1>(byId, GovernanceTaxFiscalPayloadV1.PartitionId);
+        PermissionLicense = Require<GovernancePermissionLicensePayloadV1>(byId, GovernancePermissionLicensePayloadV1.PartitionId);
+        Diplomacy = Require<GovernanceDiplomacyPayloadV1>(byId, GovernanceDiplomacyPayloadV1.PartitionId);
+        SecurityIncident = Require<GovernanceSecurityIncidentPayloadV1>(byId, GovernanceSecurityIncidentPayloadV1.PartitionId);
+        Investigation = Require<GovernanceInvestigationPayloadV1>(byId, GovernanceInvestigationPayloadV1.PartitionId);
+        JudicialCase = Require<GovernanceJudicialCasePayloadV1>(byId, GovernanceJudicialCasePayloadV1.PartitionId);
+        Enforcement = Require<GovernanceEnforcementPayloadV1>(byId, GovernanceEnforcementPayloadV1.PartitionId);
+        MilitaryAuthority = Require<GovernanceMilitaryAuthorityPayloadV1>(byId, GovernanceMilitaryAuthorityPayloadV1.PartitionId);
+        BorderControl = Require<GovernanceBorderControlPayloadV1>(byId, GovernanceBorderControlPayloadV1.PartitionId);
+        Lineage = Require<GovernanceLineagePayloadV1>(byId, GovernanceLineagePayloadV1.PartitionId);
+        Authorities = Array.AsReadOnly(materialized.OrderBy(static value => value.PartitionId.Value, StringComparer.Ordinal).ToArray());
     }
+
+    public DomainPartitionSnapshotAuthorityV1<GovernancePolityPayloadV1> Polity { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceInstitutionPayloadV1> Institution { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceLawRulePayloadV1> LawRule { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceJurisdictionPayloadV1> Jurisdiction { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceTerritorialClaimPayloadV1> TerritorialClaim { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceEffectiveControlPayloadV1> EffectiveControl { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernancePublicAuthorityPayloadV1> PublicAuthority { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceTaxFiscalPayloadV1> TaxFiscal { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernancePermissionLicensePayloadV1> PermissionLicense { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceDiplomacyPayloadV1> Diplomacy { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceSecurityIncidentPayloadV1> SecurityIncident { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceInvestigationPayloadV1> Investigation { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceJudicialCasePayloadV1> JudicialCase { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceEnforcementPayloadV1> Enforcement { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceMilitaryAuthorityPayloadV1> MilitaryAuthority { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceBorderControlPayloadV1> BorderControl { get; }
+    public DomainPartitionSnapshotAuthorityV1<GovernanceLineagePayloadV1> Lineage { get; }
     public IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> Authorities { get; }
 
-    public static GovernanceSecurityDomainSnapshotMaterialV1 Bind(WorldStateV1 frozen, GovernanceSecurityDomainStateV1 s)
+    public static GovernanceSecurityDomainSnapshotMaterialV1 Bind(
+        WorldStateV1 frozenState,
+        GovernanceSecurityDomainStateV1 state)
     {
-        ArgumentNullException.ThrowIfNull(frozen); ArgumentNullException.ThrowIfNull(s);
-        return new GovernanceSecurityDomainSnapshotMaterialV1(new IDomainPartitionSnapshotAuthorityV1[]
-        {
-            B(frozen,s.Polity,GovernancePolityPayloadV1.PartitionId,x=>x.CanonicalDigest()), B(frozen,s.Institution,GovernanceInstitutionPayloadV1.PartitionId,x=>x.CanonicalDigest()),
-            B(frozen,s.LawRule,GovernanceLawRulePayloadV1.PartitionId,x=>x.CanonicalDigest()), B(frozen,s.Jurisdiction,GovernanceJurisdictionPayloadV1.PartitionId,x=>x.CanonicalDigest()),
-            B(frozen,s.TerritorialClaim,GovernanceTerritorialClaimPayloadV1.PartitionId,x=>x.CanonicalDigest()), B(frozen,s.EffectiveControl,GovernanceEffectiveControlPayloadV1.PartitionId,x=>x.CanonicalDigest()),
-            B(frozen,s.PublicAuthority,GovernancePublicAuthorityPayloadV1.PartitionId,x=>x.CanonicalDigest()), B(frozen,s.TaxFiscal,GovernanceTaxFiscalPayloadV1.PartitionId,x=>x.CanonicalDigest()),
-            B(frozen,s.PermissionLicense,GovernancePermissionLicensePayloadV1.PartitionId,x=>x.CanonicalDigest()), B(frozen,s.Diplomacy,GovernanceDiplomacyPayloadV1.PartitionId,x=>x.CanonicalDigest()),
-            B(frozen,s.SecurityIncident,GovernanceSecurityIncidentPayloadV1.PartitionId,x=>x.CanonicalDigest()), B(frozen,s.Investigation,GovernanceInvestigationPayloadV1.PartitionId,x=>x.CanonicalDigest()),
-            B(frozen,s.JudicialCase,GovernanceJudicialCasePayloadV1.PartitionId,x=>x.CanonicalDigest()), B(frozen,s.Enforcement,GovernanceEnforcementPayloadV1.PartitionId,x=>x.CanonicalDigest()),
-            B(frozen,s.MilitaryAuthority,GovernanceMilitaryAuthorityPayloadV1.PartitionId,x=>x.CanonicalDigest()), B(frozen,s.BorderControl,GovernanceBorderControlPayloadV1.PartitionId,x=>x.CanonicalDigest()),
-            B(frozen,s.Lineage,GovernanceLineagePayloadV1.PartitionId,x=>x.CanonicalDigest())
-        });
+        ArgumentNullException.ThrowIfNull(frozenState);
+        ArgumentNullException.ThrowIfNull(state);
+        return new GovernanceSecurityDomainSnapshotMaterialV1(
+        [
+            Bind(frozenState, state.Polity, GovernancePolityPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.Institution, GovernanceInstitutionPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.LawRule, GovernanceLawRulePayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.Jurisdiction, GovernanceJurisdictionPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.TerritorialClaim, GovernanceTerritorialClaimPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.EffectiveControl, GovernanceEffectiveControlPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.PublicAuthority, GovernancePublicAuthorityPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.TaxFiscal, GovernanceTaxFiscalPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.PermissionLicense, GovernancePermissionLicensePayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.Diplomacy, GovernanceDiplomacyPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.SecurityIncident, GovernanceSecurityIncidentPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.Investigation, GovernanceInvestigationPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.JudicialCase, GovernanceJudicialCasePayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.Enforcement, GovernanceEnforcementPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.MilitaryAuthority, GovernanceMilitaryAuthorityPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.BorderControl, GovernanceBorderControlPayloadV1.PartitionId, static value => value.CanonicalDigest()),
+            Bind(frozenState, state.Lineage, GovernanceLineagePayloadV1.PartitionId, static value => value.CanonicalDigest()),
+        ]);
     }
-    private static DomainPartitionSnapshotAuthorityV1<T> B<T>(WorldStateV1 f, DomainPartitionStateV1<T> p, string id, Func<T,byte[]> d)
-        => new(p, f.Partitions.Get(id).Header, d);
+
+    private static DomainPartitionSnapshotAuthorityV1<TPayload> Bind<TPayload>(
+        WorldStateV1 frozenState,
+        DomainPartitionStateV1<TPayload> partition,
+        string partitionId,
+        Func<TPayload, byte[]> digest)
+    {
+        if (partition.Identity != StandardDomainPartitionRegistry.Get(partitionId))
+            throw new InvalidDataException($"governance.snapshot-material.partition-identity:{partitionId}");
+        return new DomainPartitionSnapshotAuthorityV1<TPayload>(
+            partition,
+            frozenState.Partitions.Get(partitionId).Header,
+            digest);
+    }
+
+    private static DomainPartitionSnapshotAuthorityV1<TPayload> Require<TPayload>(
+        IReadOnlyDictionary<string, IDomainPartitionSnapshotAuthorityV1> byId,
+        string partitionId)
+    {
+        if (!byId.TryGetValue(partitionId, out var authority))
+            throw new InvalidDataException($"governance.snapshot-material.missing:{partitionId}");
+        return authority as DomainPartitionSnapshotAuthorityV1<TPayload>
+            ?? throw new InvalidDataException($"governance.snapshot-material.payload-type:{partitionId}");
+    }
 }
