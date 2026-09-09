@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Resident;
+using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
@@ -15,24 +16,9 @@ public sealed record Qa04ResidentIdentityLifecyclePayloadV1(
     StableToken ProfileToken)
 {
     public byte[] CanonicalDigest()
-        => HashSuite.DomainHash("mv.qa04-resident-identity-lifecycle-payload.v1", writer =>
-        {
-            writer.WriteMapStart(7);
-            writer.WriteUnsigned(0); writer.WriteBytes(ResidentId.ToBytes());
-            writer.WriteUnsigned(1); writer.WriteAsciiText(Lifecycle.Value);
-            writer.WriteUnsigned(2); WriteOptionalStep(writer, BirthStep);
-            writer.WriteUnsigned(3); WriteOptionalStep(writer, DeathStep);
-            writer.WriteUnsigned(4);
-            writer.WriteArrayStart((ulong)ParentRefs.Count);
-            foreach (var parent in ParentRefs)
-            {
-                writer.WriteArrayStart(2);
-                writer.WriteAsciiText(parent.PartitionId.Value);
-                writer.WriteBytes(parent.RecordId.ToBytes());
-            }
-            writer.WriteUnsigned(5); writer.WriteUnsigned(LineageGeneration);
-            writer.WriteUnsigned(6); writer.WriteAsciiText(ProfileToken.Value);
-        });
+        => StandardDomainPayloadCanonicalDigestV1.Compute(
+            "resident.identity_lifecycle",
+            ToStandardPayload());
 
     internal IReadOnlyDictionary<string, object?> ToStandardPayload()
     {
@@ -47,19 +33,6 @@ public sealed record Qa04ResidentIdentityLifecyclePayloadV1(
         if (BirthStep is { } birthStep) payload["birth_step"] = birthStep;
         if (DeathStep is { } deathStep) payload["death_step"] = deathStep;
         return payload;
-    }
-
-    private static void WriteOptionalStep(MvDcborWriter writer, ulong? step)
-    {
-        if (step is { } value)
-        {
-            writer.WriteArrayStart(1);
-            writer.WriteUnsigned(value);
-        }
-        else
-        {
-            writer.WriteArrayStart(0);
-        }
     }
 }
 
