@@ -15,17 +15,20 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
     private readonly Func<TPayload, IReadOnlyDictionary<string, object?>> _toStandardPayload;
     private readonly Func<IReadOnlyDictionary<string, object?>, TPayload> _fromStandardPayload;
     private readonly Func<TPayload, byte[]> _canonicalPayloadDigest;
+    private readonly DomainNestedSnapshotCodecRegistryV1? _nestedCodecs;
 
     public DomainPartitionSnapshotSectionProviderV1(
         string partitionId,
         Func<TPayload, IReadOnlyDictionary<string, object?>> toStandardPayload,
         Func<IReadOnlyDictionary<string, object?>, TPayload> fromStandardPayload,
-        Func<TPayload, byte[]> canonicalPayloadDigest)
+        Func<TPayload, byte[]> canonicalPayloadDigest,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs = null)
     {
         _identity = StandardDomainPartitionRegistry.Get(partitionId);
         _toStandardPayload = toStandardPayload ?? throw new ArgumentNullException(nameof(toStandardPayload));
         _fromStandardPayload = fromStandardPayload ?? throw new ArgumentNullException(nameof(fromStandardPayload));
         _canonicalPayloadDigest = canonicalPayloadDigest ?? throw new ArgumentNullException(nameof(canonicalPayloadDigest));
+        _nestedCodecs = nestedCodecs;
 
         var descriptor = StandardDomainPayloadSchemaRegistry.Get(partitionId);
         if (descriptor.RecordSchema != _identity.RecordSchema)
@@ -78,7 +81,8 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             var payload = DomainPartitionSnapshotWireCodecV1.EncodeFragment(
                 authority,
                 Array.Empty<DomainRecordEnvelopeV1<TPayload>>(),
-                _toStandardPayload);
+                _toStandardPayload,
+                _nestedCodecs);
             if (payload.Length > CanonicalSnapshotSectionValidationV1.HardMaxUncompressedBytes)
                 throw new InvalidDataException("persistence.snapshot-item-too-large");
             return Array.AsReadOnly(new[]
@@ -108,7 +112,8 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             var recordBytes = DomainPartitionSnapshotWireCodecV1.EncodeRecord(
                 SectionId,
                 record,
-                _toStandardPayload);
+                _toStandardPayload,
+                _nestedCodecs);
             var recordWireSize = LengthDelimitedFieldSize(2, recordBytes.Length);
             if (checked(baseWireSize + recordWireSize) > CanonicalSnapshotSectionValidationV1.HardMaxUncompressedBytes)
                 throw new InvalidDataException("persistence.snapshot-item-too-large");
@@ -136,7 +141,8 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             var payload = DomainPartitionSnapshotWireCodecV1.EncodeFragment(
                 authority,
                 group,
-                _toStandardPayload);
+                _toStandardPayload,
+                _nestedCodecs);
             if (payload.Length > CanonicalSnapshotSectionValidationV1.HardMaxUncompressedBytes)
                 throw new InvalidDataException("persistence.snapshot-item-too-large");
             fragments[i] = new SnapshotSectionFragmentMaterialV1(
@@ -171,7 +177,10 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
                 fragment.FragmentCount != checked((uint)fragments.Count))
                 throw new InvalidDataException($"persistence.snapshot-fragment-invalid:{SectionId}");
 
-            var decoded = DomainPartitionSnapshotWireCodecV1.DecodeFragment(SectionId, fragment.FragmentPayload);
+            var decoded = DomainPartitionSnapshotWireCodecV1.DecodeFragment(
+                SectionId,
+                fragment.FragmentPayload,
+                _nestedCodecs);
             RequireSameHeader(expectedHeader, decoded.Header);
             if (decoded.Records.Count != checked((int)fragment.ItemCount))
                 throw new InvalidDataException($"persistence.snapshot.fragment-item-count-mismatch:{SectionId}");
