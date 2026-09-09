@@ -48,7 +48,7 @@ public static class Qa04ProcessTargetV1
                     request.RecordCount,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
-                "authoritative-step-loop-probe" => await Qa04AuthoritativeStepLoopBridgeV1.RunReducedAsync(
+                "authoritative-step-loop-probe" => await ProbeAuthoritativeStepLoopAsync(
                     request.WorkerCount,
                     request.RecordCount,
                     request.PersistenceRoot,
@@ -132,6 +132,21 @@ public static class Qa04ProcessTargetV1
                 "qa04.target.authoritative-step-loop-not-assembled",
             ],
         };
+    }
+
+    private static async Task<Qa04AuthoritativeStepLoopProbeV1> ProbeAuthoritativeStepLoopAsync(
+        int workerCount,
+        ulong recordCount,
+        string persistenceRoot,
+        CancellationToken cancellationToken)
+    {
+        var materialized = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(recordCount);
+        _ = Qa04ReducedWorldTypedAuthorityV1.BindAll97(materialized);
+        return await Qa04AuthoritativeStepLoopBridgeV1.RunReducedAsync(
+            workerCount,
+            recordCount,
+            persistenceRoot,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<Qa04ProcessWorkerProbeV1> ProbeWorkerAsync(
