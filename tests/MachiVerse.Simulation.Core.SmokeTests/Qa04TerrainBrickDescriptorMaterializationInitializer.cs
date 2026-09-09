@@ -16,6 +16,8 @@ internal static class Qa04TerrainBrickDescriptorMaterializationInitializer
             "QA-04 Terrain descriptor count must remain exactly 500,000.");
         Require(Qa04TerrainBrickDescriptorMaterializerV1.D0SampleSpacingMm == 250,
             "QA-04 D0 Terrain spacing must remain 250 mm.");
+        Require(Qa04TerrainBrickDescriptorMaterializerV1.InitialRecordRevision == 1,
+            "QA-04 Terrain genesis record revision must follow the common Domain initial revision contract.");
 
         // この source は境界検証専用の synthetic fixture。canonical benchmark Terrain ではない。
         var materialized = Qa04TerrainBrickDescriptorMaterializerV1.Materialize(
@@ -31,7 +33,9 @@ internal static class Qa04TerrainBrickDescriptorMaterializationInitializer
             var descriptor = Qa04ReferenceLoadV1.Record(TerrainClass, ordinal);
             Require(materialized.Partition.RecordSet.TryGet(descriptor.RecordId, out var record) && record is not null,
                 "Terrain descriptor record id must be preserved in v2 material.");
-            Require(record!.Payload is SpatialTerrainBrickPayloadV2 brick &&
+            Require(record!.Revision == Qa04TerrainBrickDescriptorMaterializerV1.InitialRecordRevision,
+                "Terrain descriptor material must preserve canonical initial record revision.");
+            Require(record.Payload is SpatialTerrainBrickPayloadV2 brick &&
                     brick.SampleSpacingMm == Qa04TerrainBrickDescriptorMaterializerV1.D0SampleSpacingMm,
                 "Terrain descriptor material must preserve the exact D0 brick arm/spacing.");
         }
@@ -46,11 +50,17 @@ internal static class Qa04TerrainBrickDescriptorMaterializationInitializer
                 new SyntheticContentSource(sampleSpacingMm: 1_000),
                 recordCount: 1),
             "qa04.materialization.terrain-d0-spacing-mismatch");
+        RequireThrows(
+            () => Qa04TerrainBrickDescriptorMaterializerV1.Materialize(
+                new SyntheticContentSource(revision: 2),
+                recordCount: 1),
+            "qa04.materialization.terrain-initial-revision-mismatch");
     }
 
     private sealed class SyntheticContentSource(
         bool wrongRecordId = false,
-        uint sampleSpacingMm = Qa04TerrainBrickDescriptorMaterializerV1.D0SampleSpacingMm)
+        uint sampleSpacingMm = Qa04TerrainBrickDescriptorMaterializerV1.D0SampleSpacingMm,
+        ulong revision = Qa04TerrainBrickDescriptorMaterializerV1.InitialRecordRevision)
         : IQa04TerrainBrickContentSourceV1
     {
         public TerrainBrickV1 CreateBrick(Qa04ReferenceRecordV1 descriptor)
@@ -72,7 +82,7 @@ internal static class Qa04TerrainBrickDescriptorMaterializationInitializer
                 sampleSpacingMm,
                 Enumerable.Repeat(checked((int)descriptor.Ordinal + 1), TerrainBrickV1.SdfSampleCount),
                 Enumerable.Repeat(checked((ushort)(descriptor.Ordinal + 1)), TerrainBrickV1.SurfaceMaterialCount),
-                revision: 1);
+                revision);
         }
     }
 
