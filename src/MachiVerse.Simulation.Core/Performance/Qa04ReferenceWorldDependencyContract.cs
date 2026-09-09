@@ -21,10 +21,9 @@ public sealed record Qa04ReferenceDependencyBlockerV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Exact fail-closed list of unresolved normative dependencies that prevent perf.reference.v1 from
-/// becoming authoritative material. These are not implementation TODO placeholders: each entry is
-/// a missing benchmark-to-partition mapping, persistent authority, exact nested/record schema, or
-/// canonical material rule that cannot be inferred safely from CLR shape or benchmark counts.
+/// Exact fail-closed list of implementation dependencies that still prevent perf.reference.v1 from
+/// becoming authoritative material. Normative design may already exist; each entry remains until
+/// its production schema/mapping/authority/material path and recovery proof are implemented.
 /// </summary>
 public static class Qa04ReferenceWorldDependencyContractV1
 {
@@ -62,11 +61,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
         PersistentAuthority(
             "transaction.active-cross-domain.persistent-authority",
             "qa04.material.cross-domain-transaction-authority-undefined"),
-        NestedPayloadSchema(
-            "resident.body-health.body-region-states-schema",
-            "resident.body_health",
-            "body_region_states",
-            "qa04.material.body-region-state-schema-undefined"),
     }
     .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
     .ToArray());
@@ -78,7 +72,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
 
     public static void ValidateCanonicalContract()
     {
-        if (BlockersValue.Count != 9)
+        if (BlockersValue.Count != 8)
             throw new InvalidDataException("qa04.material.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.material.dependency-blocker-id-duplicate");
@@ -124,12 +118,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "spatial.terrain_geometry",
             "root_brick_ref",
             "qa04.material.terrain-brick-authority-undefined");
-        Require(
-            "resident.body-health.body-region-states-schema",
-            Qa04ReferenceDependencyBlockerKindV1.NestedPayloadSchema,
-            "resident.body_health",
-            "body_region_states",
-            "qa04.material.body-region-state-schema-undefined");
         RequireUnscoped(
             "transaction.active-cross-domain.persistent-authority",
             Qa04ReferenceDependencyBlockerKindV1.PersistentAuthority,
