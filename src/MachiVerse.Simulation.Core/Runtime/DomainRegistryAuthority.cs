@@ -80,13 +80,13 @@ public sealed class DomainRegistryStateV1
         var array = domains.ToArray();
         if (array.Length != 8)
             throw new InvalidDataException("domain-registry.standard-domain-count-mismatch");
+        if (array.Select(static value => value.DomainToken).Distinct().Count() != array.Length)
+            throw new InvalidDataException("domain-registry.duplicate-domain");
         for (var i = 1; i < array.Length; i++)
         {
             if (string.CompareOrdinal(array[i - 1].DomainToken.Value, array[i].DomainToken.Value) >= 0)
                 throw new InvalidDataException("domain-registry.domain-order-noncanonical");
         }
-        if (array.Select(static value => value.DomainToken).Distinct().Count() != array.Length)
-            throw new InvalidDataException("domain-registry.duplicate-domain");
 
         RegistryGeneration = registryGeneration;
         Domains = Array.AsReadOnly(array);
@@ -161,7 +161,19 @@ public sealed class DomainRegistryStateV1
                 throw new InvalidDataException("domain-registry.unknown-dependency-domain-token");
         }
 
-        var allOwned = new HashSet<StableToken>();
+        var ownerships = Domains
+            .SelectMany(static descriptor => descriptor.OwnedPartitions.Select(partition => (descriptor.DomainToken, Partition: partition)))
+            .ToArray();
+        if (ownerships.GroupBy(static value => value.Partition).Any(static group => group.Count() != 1))
+            throw new InvalidDataException("domain-registry.duplicate-partition-owner");
+        if (ownerships.Length != StandardDomainPartitionRegistry.StandardPartitionCount)
+            throw new InvalidDataException("domain-registry.missing-partition-owner");
+        var standardPartitions = StandardDomainPartitionRegistry.Entries
+            .Select(static entry => entry.PartitionId)
+            .ToHashSet();
+        if (!ownerships.Select(static value => value.Partition).ToHashSet().SetEquals(standardPartitions))
+            throw new InvalidDataException("domain-registry.missing-partition-owner");
+
         foreach (var descriptor in Domains)
         {
             var expectedPartitions = StandardDomainPartitionRegistry.Entries
@@ -178,12 +190,8 @@ public sealed class DomainRegistryStateV1
             {
                 if (descriptor.OwnedPartitions[i] != expectedPartitions[i].PartitionId)
                     throw new InvalidDataException("domain-registry.partition-owner-mismatch");
-                if (!allOwned.Add(descriptor.OwnedPartitions[i]))
-                    throw new InvalidDataException("domain-registry.duplicate-partition-owner");
             }
         }
-        if (allOwned.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
-            throw new InvalidDataException("domain-registry.missing-partition-owner");
     }
 
     private byte[] ComputeCanonicalDigest()
