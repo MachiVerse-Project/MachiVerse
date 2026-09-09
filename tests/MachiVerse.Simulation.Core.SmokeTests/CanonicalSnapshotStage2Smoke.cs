@@ -10,6 +10,7 @@ internal static class CanonicalSnapshotStage2Smoke
     {
         VerifyActualPartitionAuthorityBinding();
         VerifyDomainWireRoundTrip();
+        VerifyLogicalManifestWireRoundTrip();
         await VerifyProductionZstdChunkPathAsync();
     }
 
@@ -132,6 +133,78 @@ internal static class CanonicalSnapshotStage2Smoke
             () => _ = provider.CreateSemanticVerifier(resident.PartitionHeader).Verify(new[] { tamperedFragment }));
     }
 
+    private static void VerifyLogicalManifestWireRoundTrip()
+    {
+        var sections = StandardSnapshotSectionSetV1.SectionIds
+            .Select((sectionId, index) => new LogicalSnapshotSection(
+                sectionId,
+                "snapshot.section-fixture",
+                SchemaMajor: 1,
+                SchemaMinor: 0,
+                LogicalItemCount: 0,
+                LogicalContentDigest: HashByte((byte)((index % 250) + 1)),
+                Required: true))
+            .ToArray();
+        var requiredDomains = StandardDomainPartitionRegistry.Entries
+            .Select(static entry => entry.OwnerDomain.Value)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static value => value, StringComparer.Ordinal)
+            .ToArray();
+
+        var draft = new LogicalSnapshotManifest(
+            PersistenceSchemaMajor: 1,
+            PersistenceSchemaMinor: 0,
+            WorldId: OpaqueId128.Parse("00000000000000000000000000019001"),
+            SnapshotId: OpaqueId128.Parse("00000000000000000000000000019002"),
+            SnapshotStep: 42,
+            HistoryAnchorSequence: 7,
+            HistoryAnchorDigest: HashByte(0x41),
+            StateContinuityToken: HashByte(0x42),
+            WorldSeed: HashByte(0x43),
+            SimulationConfigGeneration: 3,
+            SimulationConfigDigest: HashByte(0x44),
+            MasterGeneration: 2,
+            RequiredDomains: Array.AsReadOnly(requiredDomains),
+            Sections: Array.AsReadOnly(sections),
+            SnapshotDigest: new byte[32]);
+        var manifest = LogicalSnapshotManifestWireCodecV1.WithComputedSnapshotDigest(draft);
+        var encoded = LogicalSnapshotManifestWireCodecV1.Encode(manifest);
+        var decoded = LogicalSnapshotManifestWireCodecV1.Decode(encoded);
+
+        Require(decoded.WorldId == manifest.WorldId &&
+                decoded.SnapshotId == manifest.SnapshotId &&
+                decoded.SnapshotStep == manifest.SnapshotStep &&
+                decoded.Sections.Count == SnapshotManifestValidation.StandardRequiredSectionCount &&
+                decoded.SnapshotDigest.SequenceEqual(manifest.SnapshotDigest),
+            "Logical manifest protobuf round-trip must preserve the semantic Snapshot authority.");
+        Require(LogicalSnapshotManifestWireCodecV1.ComputeSnapshotDigest(decoded).SequenceEqual(manifest.SnapshotDigest),
+            "Decoded logical manifest must recompute the exact mv.snapshot.v1 semantic digest.");
+
+        var tampered = encoded.ToArray();
+        tampered[^1] ^= 0x01;
+        ExpectInvalid(
+            "logical manifest SnapshotDigest tamper",
+            () => _ = LogicalSnapshotManifestWireCodecV1.Decode(tampered));
+
+        var addonDraft = draft with
+        {
+            RequiredAddons = new[]
+            {
+                new RequiredAddonSnapshotMetadataV1(
+                    "addon.stage2-probe",
+                    "addon.stage2-metadata",
+                    1,
+                    0,
+                    new byte[] { 1, 2, 3, 4 },
+                    HashByte(0x55)),
+            },
+        };
+        var addonManifest = LogicalSnapshotManifestWireCodecV1.WithComputedSnapshotDigest(addonDraft);
+        ExpectInvalid(
+            "required addon without registered metadata codec",
+            () => _ = LogicalSnapshotManifestWireCodecV1.Encode(addonManifest));
+    }
+
     private static IReadOnlyDictionary<string, object?> StandardResidentPayload(Qa04ResidentIdentityLifecyclePayloadV1 payload)
     {
         var values = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -239,6 +312,8 @@ internal static class CanonicalSnapshotStage2Smoke
             Directory.Delete(root, recursive: true);
         }
     }
+
+    private static byte[] HashByte(byte value) => Enumerable.Repeat(value, 32).ToArray();
 
     private static void ExpectInvalid(string name, Action action)
     {
