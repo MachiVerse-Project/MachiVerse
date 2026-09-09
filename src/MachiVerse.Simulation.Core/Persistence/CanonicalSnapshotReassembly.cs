@@ -225,7 +225,11 @@ public static class CanonicalSnapshotStagingValidatorV1
         CanonicalSnapshotSemanticVerifierRegistryV1 semanticVerifiers,
         WorldStateV1? frozenState = null,
         IEnumerable<ISnapshotChunkCompressionDecoderV1>? compressionDecoders = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RunningSnapshotCutV1? expectedCut = null,
+        ReadOnlyMemory<byte> expectedSnapshotDigest = default,
+        ReadOnlyMemory<byte> expectedPhysicalManifestDigest = default,
+        RequiredAddonSnapshotMetadataCodecRegistryV1? addonCodecs = null)
     {
         ArgumentNullException.ThrowIfNull(physical);
         ArgumentNullException.ThrowIfNull(expectedSections);
@@ -236,22 +240,35 @@ public static class CanonicalSnapshotStagingValidatorV1
             throw new InvalidDataException("persistence.snapshot-chunks-missing");
 
         var expected = CanonicalSnapshotSectionValidationV1.ValidateStandard(expectedSections, frozenState);
-        var files = Directory.GetFiles(physical.StagingChunksDirectory)
-            .OrderBy(static path => Path.GetFileName(path), StringComparer.Ordinal)
-            .ToArray();
-        if (files.Length == 0)
-            throw new InvalidDataException("persistence.snapshot.no-physical-chunks");
+        var manifest = await SnapshotPhysicalManifestStagingValidationV1.ValidateAsync(
+            physical,
+            addonCodecs,
+            cancellationToken).ConfigureAwait(false);
+        SnapshotPhysicalManifestStagingValidationV1.RequireExpectedAuthority(
+            manifest,
+            expected,
+            frozenState,
+            expectedCut,
+            expectedSnapshotDigest,
+            expectedPhysicalManifestDigest);
 
         var fragments = new List<SnapshotSectionFragmentMaterialV1>();
-        for (var i = 0; i < files.Length; i++)
+        for (var i = 0; i < manifest.Chunks.Count; i++)
         {
-            var expectedName = Path.GetFileName(SnapshotChunkFile.RelativePath((uint)i));
-            if (!string.Equals(Path.GetFileName(files[i]), expectedName, StringComparison.Ordinal))
-                throw new InvalidDataException("persistence.snapshot.chunk-index-gap");
+            cancellationToken.ThrowIfCancellationRequested();
+            var descriptor = manifest.Chunks[i];
+            var path = Path.Combine(
+                physical.StagingDirectory,
+                descriptor.RelativePath.Replace('/', Path.DirectorySeparatorChar));
             var decoded = await CanonicalSnapshotChunkFileV1.ReadValidatedAsync(
-                files[i],
+                path,
                 compressionDecoders,
                 cancellationToken).ConfigureAwait(false);
+            if (decoded.Payload.Fragments.Count == 0)
+                throw new InvalidDataException($"persistence.snapshot.manifest-chunk-empty:{descriptor.ChunkIndex}");
+            if (!string.Equals(decoded.Payload.Fragments[0].SectionId, descriptor.FirstSectionId, StringComparison.Ordinal) ||
+                !string.Equals(decoded.Payload.Fragments[^1].SectionId, descriptor.LastSectionId, StringComparison.Ordinal))
+                throw new InvalidDataException($"persistence.snapshot.manifest-chunk-section-range-mismatch:{descriptor.ChunkIndex}");
             fragments.AddRange(decoded.Payload.Fragments);
         }
 
@@ -333,7 +350,8 @@ public static class RunningSnapshotCanonicalDrainExtensionsV1
         IEnumerable<CanonicalSnapshotSectionMaterialV1> expectedSections,
         CanonicalSnapshotSemanticVerifierRegistryV1 semanticVerifiers,
         IEnumerable<ISnapshotChunkCompressionDecoderV1>? compressionDecoders = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RequiredAddonSnapshotMetadataCodecRegistryV1? addonCodecs = null)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(cut);
@@ -351,7 +369,11 @@ public static class RunningSnapshotCanonicalDrainExtensionsV1
                 semanticVerifiers,
                 cut.FrozenState,
                 compressionDecoders,
-                token),
+                token,
+                cut,
+                snapshotDigest,
+                physicalManifestDigest,
+                addonCodecs),
             cancellationToken);
     }
 }
