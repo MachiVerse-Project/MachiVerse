@@ -46,7 +46,7 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         Blocker(
             "cross-domain-transaction.persistence.benchmark-turnover-binding",
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.BenchmarkTurnoverBinding,
-            "qa04.cross-domain-transaction.benchmark-turnover-binding-undefined"),
+            "qa04.transaction.benchmark-turnover-binding-undefined"),
         Blocker(
             "cross-domain-transaction.persistence.detail-guard-binding",
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.DetailGuardBinding,
