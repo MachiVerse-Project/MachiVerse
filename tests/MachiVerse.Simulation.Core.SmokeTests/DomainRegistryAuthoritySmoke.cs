@@ -39,13 +39,13 @@ internal static class DomainRegistryAuthoritySmoke
 
         ExpectInvalid("duplicate domain", () =>
         {
-            var domains = registry.Domains.Select(Clone).ToArray();
+            var domains = registry.Domains.Select(static source => Clone(source)).ToArray();
             domains[^1] = Clone(domains[^1], domainToken: domains[^2].DomainToken);
             _ = new DomainRegistryStateV1(1, domains);
         });
         ExpectInvalid("duplicate partition owner", () =>
         {
-            var domains = registry.Domains.Select(Clone).ToArray();
+            var domains = registry.Domains.Select(static source => Clone(source)).ToArray();
             var targetIndex = Array.FindIndex(domains, static value => value.DomainToken.Value == "environment");
             var foreign = registry.Get(new StableToken("governance_security")).OwnedPartitions[0];
             var owned = domains[targetIndex].OwnedPartitions.Append(foreign)
@@ -56,26 +56,26 @@ internal static class DomainRegistryAuthoritySmoke
         });
         ExpectInvalid("missing partition owner", () =>
         {
-            var domains = registry.Domains.Select(Clone).ToArray();
+            var domains = registry.Domains.Select(static source => Clone(source)).ToArray();
             var targetIndex = Array.FindIndex(domains, static value => value.DomainToken.Value == "environment");
             domains[targetIndex] = Clone(domains[targetIndex], ownedPartitions: domains[targetIndex].OwnedPartitions.Skip(1).ToArray());
             _ = new DomainRegistryStateV1(1, domains);
         });
         ExpectInvalid("unknown domain token", () =>
         {
-            var domains = registry.Domains.Select(Clone).ToArray();
+            var domains = registry.Domains.Select(static source => Clone(source)).ToArray();
             domains[^1] = Clone(domains[^1], domainToken: new StableToken("zz_unknown"));
             _ = new DomainRegistryStateV1(1, domains);
         });
         ExpectInvalid("generation mismatch", () => _ = new DomainRegistryStateV1(2, registry.Domains));
         ExpectInvalid("noncanonical ordering", () =>
         {
-            var domains = registry.Domains.Select(Clone).ToArray();
+            var domains = registry.Domains.Select(static source => Clone(source)).ToArray();
             (domains[0], domains[1]) = (domains[1], domains[0]);
             _ = new DomainRegistryStateV1(1, domains);
         });
 
-        var staleDomains = registry.Domains.Select(Clone).ToArray();
+        var staleDomains = registry.Domains.Select(static source => Clone(source)).ToArray();
         var staleIndex = Array.FindIndex(staleDomains, static value => value.DomainToken.Value == "environment");
         staleDomains[staleIndex] = Clone(
             staleDomains[staleIndex],
