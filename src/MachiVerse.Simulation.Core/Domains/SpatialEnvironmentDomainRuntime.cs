@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Environment;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
@@ -98,9 +99,22 @@ public sealed class EnvironmentDomainRuntimeV1 : DeterministicDomainRuntimeV1
 
     public EnvironmentDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
-        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null,
+        EnvironmentDomainStateV1? state = null)
         : base("environment", intentEvaluator, partitionCandidateEvaluator)
     {
+        State = state;
+    }
+
+    public EnvironmentDomainStateV1? State { get; }
+
+    public EnvironmentDomainStateV1 RequireState()
+        => State ?? throw new InvalidDataException("environment.runtime-state.unavailable");
+
+    public EnvironmentDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        return RequireState().BindSnapshotMaterial(frozenState);
     }
 
     // This list is intentionally narrower than the Phase 4 future Intent catalog.
