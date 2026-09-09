@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Sim04PayloadValidationSmoke
@@ -79,6 +80,14 @@ internal static class Sim04PayloadValidationSmoke
             ["hygiene_ppm"] = 600_000u,
         };
         validator.Validate("resident.physiology", physiology, resolver);
+
+        // Snapshot wire parsing/serialization validates the reference shape and canonical order
+        // without pretending that one partition-local codec owns the all-97 existence index.
+        new StandardDomainPayloadValidatorV1().Validate("resident.physiology", physiology);
+        var physiologyWire = DomainPartitionSnapshotWireCodecV1.EncodePayload("resident.physiology", physiology);
+        var physiologyDecoded = DomainPartitionSnapshotWireCodecV1.DecodePayload("resident.physiology", physiologyWire);
+        if (physiologyDecoded["resident_ref"] is not PartitionRecordRefV1 decodedResident || decodedResident != resident)
+            throw new InvalidOperationException("Snapshot payload wire must preserve a structurally valid Ref before all-97 reference validation.");
 
         var missing = new Dictionary<string, object?>(physiology, StringComparer.Ordinal);
         missing.Remove("hygiene_ppm");
