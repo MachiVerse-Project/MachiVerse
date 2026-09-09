@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 190" role="img" aria-labelledby="title desc">
+  <title id="title">MachiVerse Official Logo</title>
+  <desc id="desc">Official MachiVerse logo based on the project social preview: a white-to-cyan geometric M with a four-point star and the MachiVerse wordmark.</desc>
+  <defs>
+    <linearGradient id="mv-gradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="48%" stop-color="#f7fbff"/>
+      <stop offset="100%" stop-color="#20c7f4"/>
+    </linearGradient>
+    <linearGradient id="v-gradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="42%" stop-color="#e8f8ff"/>
+      <stop offset="100%" stop-color="#16bff1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Geometric M mark -->
+  <path d="M64 118 V43 L143 103 L206 43 V118"
+        fill="none"
+        stroke="url(#mv-gradient)"
+        stroke-width="28"
+        stroke-linecap="square"
+        stroke-linejoin="miter"/>
+
+  <!-- Four-point sparkle -->
+  <path d="M252 62 C255 78 262 85 278 89 C262 93 255 100 252 116 C249 100 242 93 226 89 C242 85 249 78 252 62 Z"
+        fill="#ffffff"/>
+
+  <!-- Wordmark -->
+  <g font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="43" letter-spacing="1.4">
+    <text x="15" y="176" fill="#ffffff">Machi</text>
+    <text x="134" y="176" fill="url(#v-gradient)">V</text>
+    <text x="164" y="176" fill="#ffffff">erse</text>
+  </g>
+</svg>
