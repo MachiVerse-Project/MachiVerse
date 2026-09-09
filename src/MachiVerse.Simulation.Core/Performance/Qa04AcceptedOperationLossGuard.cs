@@ -46,6 +46,20 @@ public static class Qa04AcceptedOperationLossGuardV1
             .ToArray());
     }
 
+    /// <summary>
+    /// production SQLite の canonical operation_state 一覧を読み、同じ fail-closed guard を適用する。
+    /// Snapshot/recovery の代替ではなく、durable operation authority の観測境界としてのみ使用する。
+    /// </summary>
+    public static async Task<Qa04AcceptedOperationLossGuardReceiptV1> ValidateStoreAsync(
+        IEnumerable<Qa04AcceptedOperationExpectationV1> acceptedExpectations,
+        SqlitePersistenceStore store,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        var durableStates = await store.ListOperationStatesCanonicalAsync(cancellationToken).ConfigureAwait(false);
+        return Validate(acceptedExpectations, durableStates);
+    }
+
     public static Qa04AcceptedOperationLossGuardReceiptV1 Validate(
         IEnumerable<Qa04AcceptedOperationExpectationV1> acceptedExpectations,
         IEnumerable<DurableOperationStateV1> durableStates)
