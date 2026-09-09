@@ -1,4 +1,6 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Resident;
+using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
@@ -20,13 +22,8 @@ public sealed record Qa04BodyRegionStateSchemaDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// resident.body_health.body_region_states の exact nested schema を確定するために残っている
-/// 正本依存を fail-closed で列挙する。
-///
-/// この契約は Qa04ReferenceWorldDependencyContractV1 の NestedPayloadSchema blocker 1件の
-/// 下位診断契約であり、reference-world blocker 数や互換 failure code を変更しない。
-/// Phase 3 の概念的な身体・健康 semantics や whole-resident の ResidentHealthStateV1 から、
-/// BodyRegionStateV1 の field を推測して schema 化してはならない。
+/// BodyRegionStateV1 の旧未決定7項目を、実装済みの exact nested schema に対する回帰 guard として保持する。
+/// Blockers は0件であり、schema field/order/scalar/optionality/vocabulary/reference boundary の drift を検出する。
 /// </summary>
 public static class Qa04BodyRegionStateSchemaDependencyContractV1
 {
@@ -35,64 +32,39 @@ public static class Qa04BodyRegionStateSchemaDependencyContractV1
     public const string ParentPartitionId = "resident.body_health";
     public const string ParentFieldName = "body_region_states";
 
-    private static readonly IReadOnlyList<Qa04BodyRegionStateSchemaDependencyV1> BlockersValue = Array.AsReadOnly(new[]
-    {
-        Blocker(
-            "body-region.schema.condition-representation",
-            Qa04BodyRegionStateSchemaDependencyKindV1.ConditionRepresentation,
-            "qa04.body-region.condition-representation-undefined"),
-        Blocker(
-            "body-region.schema.field-order",
-            Qa04BodyRegionStateSchemaDependencyKindV1.FieldOrder,
-            "qa04.body-region.field-order-undefined"),
-        Blocker(
-            "body-region.schema.field-set",
-            Qa04BodyRegionStateSchemaDependencyKindV1.FieldSet,
-            "qa04.body-region.field-set-undefined"),
-        Blocker(
-            "body-region.schema.optionality",
-            Qa04BodyRegionStateSchemaDependencyKindV1.Optionality,
-            "qa04.body-region.optionality-undefined"),
-        Blocker(
-            "body-region.schema.reference-closure",
-            Qa04BodyRegionStateSchemaDependencyKindV1.ReferenceClosure,
-            "qa04.body-region.reference-closure-undefined"),
-        Blocker(
-            "body-region.schema.region-vocabulary",
-            Qa04BodyRegionStateSchemaDependencyKindV1.RegionVocabulary,
-            "qa04.body-region.region-vocabulary-undefined"),
-        Blocker(
-            "body-region.schema.scalar-semantics",
-            Qa04BodyRegionStateSchemaDependencyKindV1.ScalarSemantics,
-            "qa04.body-region.scalar-semantics-undefined"),
-    }
-    .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-    .ToArray());
+    private static readonly IReadOnlyList<Qa04BodyRegionStateSchemaDependencyV1> BlockersValue =
+        Array.Empty<Qa04BodyRegionStateSchemaDependencyV1>();
 
     public static IReadOnlyList<Qa04BodyRegionStateSchemaDependencyV1> Blockers => BlockersValue;
-
-    public static IReadOnlyList<StableToken> FailureCodes
-        => BlockersValue.Select(static blocker => blocker.FailureCode).ToArray();
+    public static IReadOnlyList<StableToken> FailureCodes => Array.Empty<StableToken>();
 
     public static void ValidateCanonicalContract()
     {
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
-
-        if (BlockersValue.Count != 7)
-            throw new InvalidDataException("qa04.body-region.dependency-blocker-count-drift");
-        if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.body-region.dependency-blocker-id-duplicate");
-        if (BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.body-region.dependency-blocker-code-duplicate");
-        if (BlockersValue.Any(static blocker => !Enum.IsDefined(blocker.Kind)))
-            throw new InvalidDataException("qa04.body-region.dependency-blocker-kind-invalid");
-
-        var ordered = BlockersValue.Select(static blocker => blocker.DependencyId.Value).ToArray();
-        if (!ordered.SequenceEqual(ordered.OrderBy(static value => value, StringComparer.Ordinal), StringComparer.Ordinal))
-            throw new InvalidDataException("qa04.body-region.dependency-blocker-order");
-
         ValidateParentPayloadBoundary();
-        ValidateParentWorldBlocker();
+        ValidateNestedSchema();
+        ValidateVocabularyAndGenesis();
+        ValidateParentWorldBlockerRemoved();
+    }
+
+    public static IReadOnlyList<ICanonicalDomainNestedValueV1> CreateCanonicalGenesis()
+    {
+        var values = ResidentBodyRegionStateNestedValueV1.CanonicalRegions
+            .Select(static region => (ICanonicalDomainNestedValueV1)new ResidentBodyRegionStateNestedValueV1(
+                region,
+                IntegrityPpm: 1_000_000,
+                FunctionCapacityPpm: 1_000_000,
+                PainPpm: 0,
+                InjuryLoadPpm: 0,
+                DiseaseLoadPpm: 0,
+                ImpairmentPpm: 0,
+                RecoveryPpm: 1_000_000))
+            .ToArray();
+        StandardDomainNestedSnapshotCodecRegistryV1.Default.ValidateOrderedList(
+            ParentPartitionId,
+            ParentFieldName,
+            values);
+        return Array.AsReadOnly(values);
     }
 
     private static void ValidateParentPayloadBoundary()
@@ -111,33 +83,71 @@ public static class Qa04BodyRegionStateSchemaDependencyContractV1
         var actual = descriptor.Fields
             .Select(static field => (field.Name, field.Kind, field.Optional))
             .ToArray();
-
         if (!actual.SequenceEqual(expected))
             throw new InvalidDataException("qa04.body-region.parent-payload-boundary-drift");
     }
 
-    private static void ValidateParentWorldBlocker()
+    private static void ValidateNestedSchema()
     {
-        var parent = Qa04ReferenceWorldDependencyContractV1.Blockers.SingleOrDefault(
-            static blocker => blocker.DependencyId.Value == ParentWorldDependencyId)
-            ?? throw new InvalidDataException("qa04.body-region.parent-world-blocker-missing");
+        var codec = StandardDomainNestedSnapshotCodecRegistryV1.Default.GetForBinding(ParentPartitionId, ParentFieldName);
+        var descriptor = codec.Descriptor;
+        if (descriptor.Schema.SchemaId.Value != "domain.resident.body-region-state" ||
+            descriptor.Schema.Version.Major != 1 || descriptor.Schema.Version.Minor != 0)
+            throw new InvalidDataException("qa04.body-region.schema-id-version-drift");
 
-        if (parent.Kind != Qa04ReferenceDependencyBlockerKindV1.NestedPayloadSchema ||
-            parent.PartitionId?.Value != ParentPartitionId ||
-            !string.Equals(parent.FieldName, ParentFieldName, StringComparison.Ordinal) ||
-            parent.FailureCode.Value != ParentWorldFailureCode)
-            throw new InvalidDataException("qa04.body-region.parent-world-blocker-drift");
-
-        var worldCodes = Qa04ReferenceWorldDependencyContractV1.FailureCodes
-            .Select(static code => code.Value)
-            .ToHashSet(StringComparer.Ordinal);
-        if (FailureCodes.Any(code => worldCodes.Contains(code.Value)))
-            throw new InvalidDataException("qa04.body-region.subdependency-code-collides-with-world-blocker");
+        var expected = new[]
+        {
+            ("region_token", DomainPayloadFieldKindV1.Token, false),
+            ("integrity_ppm", DomainPayloadFieldKindV1.Ratio, false),
+            ("function_capacity_ppm", DomainPayloadFieldKindV1.Ratio, false),
+            ("pain_ppm", DomainPayloadFieldKindV1.Ratio, false),
+            ("injury_load_ppm", DomainPayloadFieldKindV1.Ratio, false),
+            ("disease_load_ppm", DomainPayloadFieldKindV1.Ratio, false),
+            ("impairment_ppm", DomainPayloadFieldKindV1.Ratio, false),
+            ("recovery_ppm", DomainPayloadFieldKindV1.Ratio, false),
+        };
+        var actual = descriptor.Fields.Select(static field => (field.Name, field.Kind, field.Optional)).ToArray();
+        if (!actual.SequenceEqual(expected))
+            throw new InvalidDataException("qa04.body-region.nested-schema-drift");
+        if (descriptor.Fields.Any(static field => field.Kind is DomainPayloadFieldKindV1.Ref or DomainPayloadFieldKindV1.RefList))
+            throw new InvalidDataException("qa04.body-region.reference-boundary-drift");
     }
 
-    private static Qa04BodyRegionStateSchemaDependencyV1 Blocker(
-        string dependencyId,
-        Qa04BodyRegionStateSchemaDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
+    private static void ValidateVocabularyAndGenesis()
+    {
+        var expectedRegions = new[]
+        {
+            "body.arm.left",
+            "body.arm.right",
+            "body.head",
+            "body.leg.left",
+            "body.leg.right",
+            "body.systemic",
+            "body.torso",
+        };
+        if (!ResidentBodyRegionStateNestedValueV1.CanonicalRegions
+                .Select(static token => token.Value)
+                .SequenceEqual(expectedRegions, StringComparer.Ordinal))
+            throw new InvalidDataException("qa04.body-region.region-vocabulary-drift");
+
+        var genesis = CreateCanonicalGenesis();
+        if (genesis.Count != 7 || genesis.Any(static value =>
+                value is not ResidentBodyRegionStateNestedValueV1 region ||
+                region.IntegrityPpm != 1_000_000 ||
+                region.FunctionCapacityPpm != 1_000_000 ||
+                region.PainPpm != 0 ||
+                region.InjuryLoadPpm != 0 ||
+                region.DiseaseLoadPpm != 0 ||
+                region.ImpairmentPpm != 0 ||
+                region.RecoveryPpm != 1_000_000))
+            throw new InvalidDataException("qa04.body-region.genesis-drift");
+    }
+
+    private static void ValidateParentWorldBlockerRemoved()
+    {
+        if (Qa04ReferenceWorldDependencyContractV1.Blockers.Any(
+                static blocker => blocker.DependencyId.Value == ParentWorldDependencyId ||
+                                  blocker.FailureCode.Value == ParentWorldFailureCode))
+            throw new InvalidDataException("qa04.body-region.parent-world-blocker-still-present");
+    }
 }
