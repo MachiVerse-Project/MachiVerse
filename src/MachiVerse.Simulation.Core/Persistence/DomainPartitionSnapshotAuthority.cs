@@ -8,13 +8,12 @@ namespace MachiVerse.Simulation.Core.Persistence;
 /// <summary>
 /// Untyped production authority boundary for a frozen authoritative domain partition.
 /// A snapshot provider must consume this material rather than trusting WorldState header counts/digests.
+/// The authority also exposes the actual canonical record-id set used to build the all-97 reference resolver.
 /// </summary>
-public interface IDomainPartitionSnapshotAuthorityV1
+public interface IDomainPartitionSnapshotAuthorityV1 : IDomainPartitionSnapshotReferenceSourceV1
 {
-    StableToken PartitionId { get; }
     DomainPartitionIdentityV1 Identity { get; }
     PartitionStateHeaderV1 Header { get; }
-    ulong ActualItemCount { get; }
     void VerifyBoundAuthority();
 }
 
@@ -30,6 +29,10 @@ public sealed class DomainPartitionSnapshotAuthorityV1<TPayload> : IDomainPartit
         Partition = partition ?? throw new ArgumentNullException(nameof(partition));
         Header = header ?? throw new ArgumentNullException(nameof(header));
         _canonicalPayloadDigest = canonicalPayloadDigest ?? throw new ArgumentNullException(nameof(canonicalPayloadDigest));
+        var recordIds = Partition.RecordsCanonical.Select(static record => record.RecordId).ToArray();
+        if (checked((ulong)recordIds.Length) != Partition.ItemCount)
+            throw new InvalidDataException($"persistence.snapshot.partition-authority-record-count:{Partition.Identity.PartitionId.Value}");
+        RecordIdsCanonical = Array.AsReadOnly(recordIds);
         VerifyBoundAuthority();
     }
 
@@ -38,6 +41,8 @@ public sealed class DomainPartitionSnapshotAuthorityV1<TPayload> : IDomainPartit
     public DomainPartitionIdentityV1 Identity => Partition.Identity;
     public PartitionStateHeaderV1 Header { get; }
     public ulong ActualItemCount => Partition.ItemCount;
+    public SchemaRefV1 RecordSchema => Identity.RecordSchema;
+    public IReadOnlyList<OpaqueId128> RecordIdsCanonical { get; }
 
     public void VerifyBoundAuthority()
     {
@@ -52,6 +57,18 @@ public sealed class DomainPartitionSnapshotAuthorityV1<TPayload> : IDomainPartit
         }
         if (Header.ItemCount != Partition.ItemCount)
             throw new InvalidDataException($"persistence.snapshot.partition-header-item-count-mismatch:{PartitionId.Value}");
+        if (ActualItemCount != checked((ulong)RecordIdsCanonical.Count))
+            throw new InvalidDataException($"persistence.snapshot.partition-authority-record-count:{PartitionId.Value}");
+
+        OpaqueId128? previous = null;
+        foreach (var recordId in RecordIdsCanonical)
+        {
+            if (recordId.IsZero)
+                throw new InvalidDataException($"persistence.snapshot.partition-authority-record-zero:{PartitionId.Value}");
+            if (previous is { } prior && prior.CompareTo(recordId) >= 0)
+                throw new InvalidDataException($"persistence.snapshot.partition-authority-record-order:{PartitionId.Value}");
+            previous = recordId;
+        }
 
         var recomputed = PartitionStateHeaderV1.CreateCanonical(
             Partition,
@@ -149,15 +166,19 @@ public sealed class DomainPartitionSnapshotAuthoritySetV1
 }
 
 /// <summary>
-/// Schema-owner provider seam for the 97 domain sections. Concrete providers are intentionally not
-/// fabricated until P4-04 defines the exact PartitionStateHeaderWireV1 / DomainRecordSnapshotV1 wire.
+/// Schema-owner provider seam for the 97 domain sections. Structural-only standalone calls may omit
+/// references; exact-97 production composition always supplies the resolver built from actual records.
 /// </summary>
 public interface IDomainPartitionSnapshotSectionProviderV1
 {
     string SectionId { get; }
     SchemaRefV1 SectionSchema { get; }
-    CanonicalSnapshotSectionMaterialV1 Create(IDomainPartitionSnapshotAuthorityV1 authority);
-    SnapshotSectionSemanticVerifierV1 CreateSemanticVerifier(PartitionStateHeaderV1 expectedHeader);
+    CanonicalSnapshotSectionMaterialV1 Create(
+        IDomainPartitionSnapshotAuthorityV1 authority,
+        IDomainRecordSchemaResolverV1? references = null);
+    SnapshotSectionSemanticVerifierV1 CreateSemanticVerifier(
+        PartitionStateHeaderV1 expectedHeader,
+        IDomainRecordSchemaResolverV1? references = null);
 }
 
 public static class DomainPartitionSnapshotProductionProviderV1
@@ -169,12 +190,13 @@ public static class DomainPartitionSnapshotProductionProviderV1
         ArgumentNullException.ThrowIfNull(authorities);
         ArgumentNullException.ThrowIfNull(providers);
         var byId = ValidateProviderSet(providers);
+        var references = new DomainSnapshotReferenceResolverV1(authorities.CanonicalAuthorities);
         var sections = new List<CanonicalSnapshotSectionMaterialV1>(StandardDomainPartitionRegistry.StandardPartitionCount);
         foreach (var identity in StandardDomainPartitionRegistry.Entries)
         {
             var authority = authorities.Get(identity.PartitionId.Value);
             var provider = byId[identity.PartitionId.Value];
-            var section = provider.Create(authority)
+            var section = provider.Create(authority, references)
                 ?? throw new InvalidDataException($"persistence.snapshot.partition-provider-null:{identity.PartitionId.Value}");
             if (!string.Equals(section.SectionId, identity.PartitionId.Value, StringComparison.Ordinal) ||
                 section.SectionSchema != identity.PartitionSchema)
@@ -195,11 +217,12 @@ public static class DomainPartitionSnapshotProductionProviderV1
         ArgumentNullException.ThrowIfNull(coreVerifiers);
         ArgumentNullException.ThrowIfNull(authorities);
         var byId = ValidateProviderSet(providers);
+        var references = new DomainSnapshotReferenceResolverV1(authorities.CanonicalAuthorities);
         var verifiers = coreVerifiers.ToList();
         foreach (var identity in StandardDomainPartitionRegistry.Entries)
         {
             var authority = authorities.Get(identity.PartitionId.Value);
-            var verifier = byId[identity.PartitionId.Value].CreateSemanticVerifier(authority.Header)
+            var verifier = byId[identity.PartitionId.Value].CreateSemanticVerifier(authority.Header, references)
                 ?? throw new InvalidDataException($"persistence.snapshot.partition-verifier-null:{identity.PartitionId.Value}");
             if (!string.Equals(verifier.SectionId, identity.PartitionId.Value, StringComparison.Ordinal) ||
                 verifier.SectionSchema != identity.PartitionSchema)
