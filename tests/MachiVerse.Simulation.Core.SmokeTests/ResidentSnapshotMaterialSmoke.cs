@@ -127,15 +127,17 @@ internal static class ResidentSnapshotMaterialSmoke
             SensoryCapacityPpm: 1_000_000,
             BasisStep: 10);
 
-        ExpectInvalid(
-            "resident body-region nested schema must remain unavailable until normatively defined",
-            () => _ = DomainPartitionSnapshotWireCodecV1.EncodePayload(
+        var bodyWire = DomainPartitionSnapshotWireCodecV1.EncodePayload(
+            ResidentBodyHealthPayloadV1.PartitionId,
+            bodyHealth.ToStandardPayload(),
+            StandardDomainNestedSnapshotCodecRegistryV1.Default);
+        var bodyRound = ResidentBodyHealthPayloadV1.FromStandardPayload(
+            DomainPartitionSnapshotWireCodecV1.DecodePayload(
                 ResidentBodyHealthPayloadV1.PartitionId,
-                bodyHealth.ToStandardPayload(),
+                bodyWire,
                 StandardDomainNestedSnapshotCodecRegistryV1.Default));
-        ExpectInvalid(
-            "resident body-region semantic digest must not guess an undefined nested schema",
-            () => _ = bodyHealth.CanonicalDigest());
+        Require(bodyRound.BodyRegionStates.Count == 0 && bodyHealth.CanonicalDigest().Length == 32,
+            "Resolved body-region nested schema must allow canonical empty-list payload wire/digest.");
 
         var perceptionWire = DomainPartitionSnapshotWireCodecV1.EncodePayload(
             ResidentPerceptionPayloadV1.PartitionId,
@@ -156,18 +158,5 @@ internal static class ResidentSnapshotMaterialSmoke
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
-    }
-
-    private static void ExpectInvalid(string name, Action action)
-    {
-        try
-        {
-            action();
-        }
-        catch (InvalidDataException)
-        {
-            return;
-        }
-        throw new InvalidOperationException($"Expected rejection: {name}.");
     }
 }
