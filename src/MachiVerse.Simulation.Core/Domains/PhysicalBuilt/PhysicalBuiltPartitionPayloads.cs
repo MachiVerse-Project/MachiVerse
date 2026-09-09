@@ -1,6 +1,7 @@
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
+using QuaternionQ30V1 = MachiVerse.Simulation.Core.WorldState.QuaternionQ30V1;
 
 namespace MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 
