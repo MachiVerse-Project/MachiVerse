@@ -119,7 +119,6 @@ public sealed class DomainNestedSnapshotCodecRegistryV1
 
     public IDomainNestedSnapshotCodecV1 GetForSchema(SchemaRefV1 schema)
     {
-        ArgumentNullException.ThrowIfNull(schema);
         var key = (schema.SchemaId.Value, schema.Version.Major, schema.Version.Minor);
         return _bySchema.TryGetValue(key, out var codec)
             ? codec
