@@ -60,7 +60,7 @@ internal static class CanonicalSnapshotNegativeInvariantInitializer
                 authority,
                 reversed,
                 static payload => payload.ToStandardPayload()),
-            "persistence.snapshot-wire.fragment-record-order:");
+            "persistence.snapshot.domain-wire:fragment-record-order:");
     }
 
     private static void VerifyPhysicalMappingContinuationAndNegativeCases()
