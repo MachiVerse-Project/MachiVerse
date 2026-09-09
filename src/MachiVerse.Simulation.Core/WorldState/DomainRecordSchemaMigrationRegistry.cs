@@ -1,3 +1,5 @@
+using MachiVerse.Simulation.Core.Determinism;
+
 namespace MachiVerse.Simulation.Core.WorldState;
 
 public sealed record DomainRecordSchemaMigrationRegistrationV1(
