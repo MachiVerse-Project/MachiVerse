@@ -14,6 +14,8 @@ public interface IPersistenceCommitMetricSinkV1
 
 public sealed partial class SqlitePersistenceStore
 {
+    private static readonly AsyncLocal<IPersistenceCommitMetricSinkV1?> AmbientCommitMetricSink = new();
+
     private IPersistenceCommitMetricSinkV1? _commitMetricSink;
     private long _commitMetricObserverFailureCount;
 
@@ -26,9 +28,31 @@ public sealed partial class SqlitePersistenceStore
             throw new InvalidOperationException("persistence.commit-metric-sink-already-attached");
     }
 
+    /// <summary>
+    /// Installs a diagnostics-only sink for stores opened inside the current async control flow.
+    /// This is intended for benchmark/process probes that do not own the store instance directly.
+    /// The previous ambient sink is restored when the returned scope is disposed.
+    /// </summary>
+    public static IDisposable PushAmbientCommitMetricSink(IPersistenceCommitMetricSinkV1 sink)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        var previous = AmbientCommitMetricSink.Value;
+        AmbientCommitMetricSink.Value = sink;
+        return new AmbientCommitMetricScope(previous);
+    }
+
     private void ObserveSuccessfulCommit(TimeSpan elapsed)
     {
-        var sink = Volatile.Read(ref _commitMetricSink);
+        var attached = Volatile.Read(ref _commitMetricSink);
+        var ambient = AmbientCommitMetricSink.Value;
+
+        ObserveOne(attached, elapsed);
+        if (ambient is not null && !ReferenceEquals(ambient, attached))
+            ObserveOne(ambient, elapsed);
+    }
+
+    private void ObserveOne(IPersistenceCommitMetricSinkV1? sink, TimeSpan elapsed)
+    {
         if (sink is null) return;
 
         try
@@ -40,6 +64,19 @@ public sealed partial class SqlitePersistenceStore
             // A metric sink is diagnostics-only. A successful durable COMMIT must not be converted
             // into an apparent transition failure because observability code failed after COMMIT.
             Interlocked.Increment(ref _commitMetricObserverFailureCount);
+        }
+    }
+
+    private sealed class AmbientCommitMetricScope(IPersistenceCommitMetricSinkV1? previous) : IDisposable
+    {
+        private IPersistenceCommitMetricSinkV1? _previous = previous;
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            AmbientCommitMetricSink.Value = _previous;
+            _previous = null;
         }
     }
 }
