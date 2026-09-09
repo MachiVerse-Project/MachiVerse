@@ -95,9 +95,7 @@ The descriptor materializer requires exact descriptor/brick identity, D0 spacing
 
 ### 3.1 descriptor -> `SpatialCellKeyV1` mapping
 
-Failure code:
-
-`qa04.terrain.cell-origin-mapping-undefined`
+Failure code: `qa04.terrain.cell-origin-mapping-undefined`
 
 正本化が必要:
 
@@ -110,9 +108,7 @@ Failure code:
 
 ### 3.2 SDF[729] generation
 
-Failure code:
-
-`qa04.terrain.sdf-generation-undefined`
+Failure code: `qa04.terrain.sdf-generation-undefined`
 
 正本化が必要:
 
@@ -126,9 +122,7 @@ Synthetic smoke の平面、定数、ordinal-derived sample を benchmark genesi
 
 ### 3.3 surface material[512] generation
 
-Failure code:
-
-`qa04.terrain.surface-material-generation-undefined`
+Failure code: `qa04.terrain.surface-material-generation-undefined`
 
 正本化が必要:
 
@@ -139,9 +133,7 @@ Failure code:
 
 ### 3.4 surface class vocabulary
 
-Failure code:
-
-`qa04.terrain.surface-class-tokens-undefined`
+Failure code: `qa04.terrain.surface-class-tokens-undefined`
 
 `terrain_root.surface_classes` を canonical にするため、少なくとも:
 
@@ -154,9 +146,7 @@ Failure code:
 
 ### 3.5 root / scope identity
 
-Failure code:
-
-`qa04.terrain.root-scope-identity-undefined`
+Failure code: `qa04.terrain.root-scope-identity-undefined`
 
 `scope_ref` が domain-neutral `SpatialScope` semantics を指すことは概念上固定済みだが、`perf.reference.v1` の具体 identity/assignment は未固定。正本化が必要:
 
@@ -167,9 +157,7 @@ Failure code:
 
 ### 3.6 root topology / connectivity
 
-Failure code:
-
-`qa04.terrain.root-topology-connectivity-undefined`
+Failure code: `qa04.terrain.root-topology-connectivity-undefined`
 
 正本化が必要:
 
@@ -183,17 +171,13 @@ P4-04 の child-index/traversal ruleだけから benchmark topologyそのもの�
 
 ### 3.7 geometry revision / lineage
 
-Failure code:
-
-`qa04.terrain.geometry-revision-lineage-undefined`
+Failure code: `qa04.terrain.geometry-revision-lineage-undefined`
 
 common record envelope の initial `revision = 1` と `created_step = 0` は canonical descriptor materializer 側で固定できる。残る正本判断は:
 
 - `terrain_root.geometry_revision` の genesis value / record revisionとの関係
 - root/brick `lineage_ref` と Phase 3 `source_lineage` の benchmark genesis semantics
 - detail promotion/demotionで新規 Terrain recordを作る場合の lineage relation
-
-である。
 
 共通 record revision と payload-level geometry revision を同一値と仮定しない。また `lineage_ref` が optional であることだけから genesis の canonical valueを `NONE` と決めない。
 
@@ -209,15 +193,11 @@ common record envelope の initial `revision = 1` と `created_step = 0` は can
 
 新しい7 failure codesは診断用 subdependency code であり、reference-world `FailureCodes` へ追加しない。
 
-したがって:
-
 ```text
 reference-world blockers = 9
 Terrain top-level world blockers = 1
 Terrain canonical-content subdependencies = 7
 ```
-
-を維持する。
 
 ## 5. Terrain top-level blockerを解消できる条件
 
@@ -231,10 +211,4 @@ Terrain canonical-content subdependencies = 7
 6. normal exact-97 owner composition に入る。
 7. exact-103 Snapshot -> compression/chunk/staging -> recovery -> semantic rehash が actual canonical materialで一致する。
 
-この時点までは:
-
-- `referenceWorldMaterialized=false`
-- `authoritativeStepLoopAvailable=false`
-- Terrain canonical benchmark material incomplete
-
-を維持する。
+この時点までは `referenceWorldMaterialized=false`、`authoritativeStepLoopAvailable=false`、Terrain canonical benchmark material incomplete を維持する。
