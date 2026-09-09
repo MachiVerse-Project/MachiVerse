@@ -43,6 +43,7 @@ public abstract class DeterministicDomainRuntimeV1 : IDomainRuntimeV1
             ?? throw new InvalidDataException("domain-runtime.intent-evaluator-null");
         if (intents.Any(intent => intent.SourceDomain != DomainToken || intent.BasisStep != context.FrozenInput.BasisStep))
             throw new InvalidDataException("domain-runtime.intent-source-mismatch");
+        StandardDomainRegistryAuthorityV1.Generation1.RequireAuthorizedEmissions(intents);
 
         IReadOnlyList<PartitionCandidateV1> localPartitionCandidates = Array.Empty<PartitionCandidateV1>();
         if (_partitionCandidateEvaluator is not null)
