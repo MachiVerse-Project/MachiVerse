@@ -30,6 +30,19 @@ machine-readable mirror は `Qa04TerrainCanonicalContentDependencyContractV1`。
 
 `Qa04ReferenceLoadV1.PositionWithinTile` supplies deterministic normalized X/Y benchmark distribution input, but there is no normative rule that maps this pair to Terrain `SpatialCellKeyV1(X,Y,Z)` or authoritative physical coordinates. A 2D normalized position must therefore not be promoted to a 3D Terrain cell mapping by implementation convention.
 
+### Common Domain record envelope
+
+P4-05 `DomainRecordEnvelopeV1` の共通契約は:
+
+- initial record revision = **1**
+- authoritative field changeごとに +1
+- no-op では revision を増加させない
+- revision wrap 禁止
+
+を既に固定している。
+
+そのため `Qa04TerrainBrickDescriptorMaterializerV1` は canonical Terrain genesis brickについて `Revision == 1` を強制する。`revision > 0` だけを満たす synthetic content source は canonical descriptor binding として受理しない。
+
 ### SBO-SDF representation
 
 `TerrainBrickV1` is fixed as:
@@ -63,7 +76,7 @@ Implemented:
 - actual serialized record-schema preservation
 - `Qa04TerrainBrickDescriptorMaterializerV1`
 
-The descriptor materializer requires exact descriptor/brick identity and D0 spacing but intentionally accepts cell origin, SDF, surface material, and revision only from an explicit content source. Supplying 500,000 records therefore proves descriptor coverage only; it does not prove canonical Terrain.
+The descriptor materializer requires exact descriptor/brick identity, D0 spacing, and common initial record revision. It intentionally accepts cell origin, SDF, surface material, and the remaining content semantics only from an explicit content source. Supplying 500,000 records therefore proves descriptor coverage only; it does not prove canonical Terrain.
 
 ## 3. 未解決の canonical content dependencies
 
@@ -155,20 +168,21 @@ Failure code:
 
 P4-04 の child-index/traversal ruleだけから benchmark topologyそのものは推測しない。
 
-### 3.7 initial revision / lineage
+### 3.7 geometry revision / lineage
 
 Failure code:
 
-`qa04.terrain.revision-lineage-undefined`
+`qa04.terrain.geometry-revision-lineage-undefined`
 
-正本化が必要:
+common record envelope の initial `revision = 1` と `created_step = 0` は canonical descriptor materializer 側で固定できる。残る正本判断は:
 
-- initial brick/root revision
-- geometry revision relation
-- creation/basis step relation
-- promotion/demotion lineage rule required by genesis material
+- `terrain_root.geometry_revision` の genesis value / record revisionとの関係
+- root/brick `lineage_ref` の genesis semantics
+- detail promotion/demotionで新規 Terrain recordを作る場合の lineage relation
 
-`revision > 0` という runtime validationだけから canonical initial revisionを選ばない。
+である。
+
+共通 record revision と payload-level geometry revision を同一値と仮定しない。また `lineage_ref` が optional であることだけから genesis の canonical valueを `NONE` と決めない。
 
 ## 4. 上位 blocker との関係
 
