@@ -99,7 +99,7 @@ public static class Qa04RunningSnapshotMeasurementExtensionsV1
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(collector);
 
-        return MeasureSuccessfulCutAsync(
+        return MeasureSnapshotCowBarrierAsync(
             collector,
             token => coordinator.TryFreezeIfDueAsync(finalizedState, store, token),
             cancellationToken);
@@ -119,7 +119,7 @@ public static class Qa04RunningSnapshotMeasurementExtensionsV1
         ArgumentNullException.ThrowIfNull(supplementalOwnerMaterial);
         ArgumentNullException.ThrowIfNull(collector);
 
-        return MeasureSuccessfulCutAsync(
+        return MeasureSnapshotCowBarrierAsync(
             collector,
             token => coordinator.TryFreezeWithCoreOwnerMaterialIfDueAsync(
                 finalizedState,
@@ -129,7 +129,11 @@ public static class Qa04RunningSnapshotMeasurementExtensionsV1
             cancellationToken);
     }
 
-    internal static async Task<T?> MeasureSuccessfulMaterializationAsync<T>(
+    /// <summary>
+    /// Generic harness seam for a caller-held COW/freeze barrier. Successful non-null materialization
+    /// records one sample; null and exception paths never fabricate a successful barrier sample.
+    /// </summary>
+    public static async Task<T?> MeasureSnapshotCowBarrierAsync<T>(
         Qa04BenchmarkMetricCollectorV1 collector,
         Func<CancellationToken, Task<T?>> materialize,
         CancellationToken cancellationToken = default)
@@ -143,17 +147,5 @@ public static class Qa04RunningSnapshotMeasurementExtensionsV1
         if (result is not null)
             collector.RecordSnapshotCowBarrier(Stopwatch.GetElapsedTime(started));
         return result;
-    }
-
-    private static async Task<RunningSnapshotCutV1?> MeasureSuccessfulCutAsync(
-        Qa04BenchmarkMetricCollectorV1 collector,
-        Func<CancellationToken, Task<RunningSnapshotCutV1?>> freeze,
-        CancellationToken cancellationToken)
-    {
-        var started = Stopwatch.GetTimestamp();
-        var cut = await freeze(cancellationToken).ConfigureAwait(false);
-        if (cut is not null)
-            collector.RecordSnapshotCowBarrier(Stopwatch.GetElapsedTime(started));
-        return cut;
     }
 }
