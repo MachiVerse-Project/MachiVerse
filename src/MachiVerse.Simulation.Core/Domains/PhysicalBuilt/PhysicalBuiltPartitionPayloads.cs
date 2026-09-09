@@ -1,7 +1,6 @@
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
-using QuaternionQ30V1 = MachiVerse.Simulation.Core.WorldState.QuaternionQ30V1;
 
 namespace MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 
@@ -14,7 +13,7 @@ public sealed record PhysicalPresencePayloadV1(
     PartitionRecordRefV1 SubjectRef,
     PartitionRecordRefV1 FrameRef,
     Vec3Int64V1 Position,
-    QuaternionQ30V1 Orientation,
+    global::MachiVerse.Simulation.Core.WorldState.QuaternionQ30V1 Orientation,
     Vec3Int64V1 LinearVelocity,
     Vec3Int64V1 AngularRateUradPerSecond,
     PartitionRecordRefV1 ShapeRef,
@@ -45,7 +44,7 @@ public sealed record PhysicalPresencePayloadV1(
             PhysicalBuiltPayloadFields.Required<PartitionRecordRefV1>(values, PartitionId, "subject_ref"),
             PhysicalBuiltPayloadFields.Required<PartitionRecordRefV1>(values, PartitionId, "frame_ref"),
             PhysicalBuiltPayloadFields.Required<Vec3Int64V1>(values, PartitionId, "position"),
-            PhysicalBuiltPayloadFields.Required<QuaternionQ30V1>(values, PartitionId, "orientation"),
+            PhysicalBuiltPayloadFields.Required<global::MachiVerse.Simulation.Core.WorldState.QuaternionQ30V1>(values, PartitionId, "orientation"),
             PhysicalBuiltPayloadFields.Required<Vec3Int64V1>(values, PartitionId, "linear_velocity"),
             PhysicalBuiltPayloadFields.Required<Vec3Int64V1>(values, PartitionId, "angular_rate_urad_s"),
             PhysicalBuiltPayloadFields.Required<PartitionRecordRefV1>(values, PartitionId, "shape_ref"),
