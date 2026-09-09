@@ -65,11 +65,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "resident.body_health",
             "body_region_states",
             "qa04.material.body-region-state-schema-undefined"),
-        NestedPayloadSchema(
-            "governance.law-rule.rule-ast-schema",
-            "governance.law_rule",
-            "rule_ast",
-            "qa04.material.rule-ast-schema-undefined"),
     }
     .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
     .ToArray());
@@ -81,7 +76,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
 
     public static void ValidateCanonicalContract()
     {
-        if (BlockersValue.Count != 10)
+        if (BlockersValue.Count != 9)
             throw new InvalidDataException("qa04.material.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.material.dependency-blocker-id-duplicate");
