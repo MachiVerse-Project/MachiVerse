@@ -159,6 +159,9 @@ public sealed class DomainRegistryStateV1
             if (descriptor.StateReadDependencies.Any(value => !standardDomains.Contains(value)) ||
                 descriptor.SameStepDependencies.Any(value => !standardDomains.Contains(value)))
                 throw new InvalidDataException("domain-registry.unknown-dependency-domain-token");
+            if (descriptor.StateReadDependencies.Contains(descriptor.DomainToken) ||
+                descriptor.SameStepDependencies.Contains(descriptor.DomainToken))
+                throw new InvalidDataException("domain-registry.self-dependency");
         }
 
         var ownerships = Domains
@@ -242,11 +245,83 @@ public static class StandardDomainRuntimeCapabilityRegistryV1
 {
     private static readonly IReadOnlyList<DomainIntentCapabilityV1> Generation1Capabilities = BuildGeneration1IntentCapabilities();
 
+    private static readonly IReadOnlyDictionary<string, SchemaRefV1> Generation1DomainSchemas =
+        new ReadOnlyDictionary<string, SchemaRefV1>(new Dictionary<string, SchemaRefV1>(StringComparer.Ordinal)
+        {
+            ["environment"] = new("domain.environment.runtime"),
+            ["governance_security"] = new("domain.governance_security.runtime"),
+            ["infrastructure_information"] = new("domain.infrastructure_information.runtime"),
+            ["participation"] = new("domain.participation.runtime"),
+            ["physical_built"] = new("domain.physical_built.runtime"),
+            ["resident"] = new("domain.resident.runtime"),
+            ["society_economy"] = new("domain.society_economy.runtime"),
+            ["spatial"] = new("domain.spatial.runtime"),
+        });
+
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<StableToken>> Generation1StateReads =
+        new ReadOnlyDictionary<string, IReadOnlyList<StableToken>>(
+            new Dictionary<string, IReadOnlyList<StableToken>>(StringComparer.Ordinal)
+            {
+                ["environment"] = Tokens("governance_security", "infrastructure_information", "physical_built", "resident", "society_economy", "spatial"),
+                ["governance_security"] = Tokens("society_economy"),
+                ["infrastructure_information"] = Tokens("environment", "governance_security", "physical_built"),
+                ["participation"] = Tokens("resident"),
+                ["physical_built"] = Tokens("environment", "spatial"),
+                ["resident"] = Tokens("environment", "physical_built"),
+                ["society_economy"] = Tokens("governance_security"),
+                ["spatial"] = Tokens(),
+            });
+
+    private static readonly IReadOnlyList<DomainSameStepDependencyV1> Generation1SameStep =
+        Array.AsReadOnly(new[]
+        {
+            // Phase 3 explicitly requires Participation control context before Resident action.
+            new DomainSameStepDependencyV1(new StableToken("participation"), new StableToken("resident")),
+        });
+
+    private static readonly IReadOnlyList<StableToken> NoGeneration1DomainEvents = Array.Empty<StableToken>();
+    private static readonly IReadOnlyList<StableToken> NoGeneration1DomainInvariants = Array.Empty<StableToken>();
+
     public static IReadOnlyList<DomainIntentCapabilityV1> Generation1IntentCapabilities => Generation1Capabilities;
+    public static IReadOnlyList<DomainSameStepDependencyV1> Generation1SameStepDependencies => Generation1SameStep;
+
+    public static SchemaRefV1 GetGeneration1DomainSchema(StableToken domain)
+        => Generation1DomainSchemas.TryGetValue(domain.Value, out var schema)
+            ? schema
+            : throw new InvalidDataException("domain-registry.unknown-domain-token");
+
+    public static IReadOnlyList<StableToken> GetGeneration1StateReadDependencies(StableToken domain)
+        => Generation1StateReads.TryGetValue(domain.Value, out var dependencies)
+            ? dependencies
+            : throw new InvalidDataException("domain-registry.unknown-domain-token");
+
+    public static IReadOnlyList<StableToken> GetGeneration1SameStepDependencies(StableToken consumerDomain)
+        => Array.AsReadOnly(Generation1SameStep
+            .Where(value => value.ConsumerDomain == consumerDomain)
+            .Select(static value => value.ProducerDomain)
+            .OrderBy(static value => value.Value, StringComparer.Ordinal)
+            .ToArray());
+
+    public static IReadOnlyList<StableToken> GetGeneration1EmittedEventKinds(StableToken domain)
+    {
+        _ = GetGeneration1DomainSchema(domain);
+        // DomainCandidateOutputV1 has no DomainEvent channel in generation 1. Registering the
+        // Phase 4 future event catalog here would claim a runtime capability that does not exist.
+        return NoGeneration1DomainEvents;
+    }
+
+    public static IReadOnlyList<StableToken> GetGeneration1InvariantIds(StableToken domain)
+    {
+        _ = GetGeneration1DomainSchema(domain);
+        // Domain runtime output does not emit stable InvariantResultV1 IDs in generation 1.
+        // CrossDomainTransaction invariants are Core transaction authority, not domain emissions.
+        return NoGeneration1DomainInvariants;
+    }
 
     private static IReadOnlyList<DomainIntentCapabilityV1> BuildGeneration1IntentCapabilities()
     {
-        var values = PhysicalBuiltCrossDomainIntentFactoryV1.EmittedCapabilities
+        var values = EnvironmentDomainRuntimeV1.EmittedCapabilities
+            .Concat(PhysicalBuiltCrossDomainIntentFactoryV1.EmittedCapabilities)
             .Concat(ResidentPhysicalIntentFactoryV1.EmittedCapabilities)
             .OrderBy(static value => value.SourceDomain.Value, StringComparer.Ordinal)
             .ThenBy(static value => value.TargetDomain.Value, StringComparer.Ordinal)
@@ -258,6 +333,11 @@ public static class StandardDomainRuntimeCapabilityRegistryV1
             throw new InvalidDataException("domain-registry.duplicate-intent-capability");
         return Array.AsReadOnly(values);
     }
+
+    private static IReadOnlyList<StableToken> Tokens(params string[] values)
+        => Array.AsReadOnly(values.Select(static value => new StableToken(value))
+            .OrderBy(static value => value.Value, StringComparer.Ordinal)
+            .ToArray());
 }
 
 public static class StandardDomainRegistryAuthorityV1
@@ -279,15 +359,24 @@ public static class StandardDomainRegistryAuthorityV1
 
     private static DomainRegistryStateV1 CreateGeneration1()
     {
-        var plan = StandardDomainExecutionPlanV1.Create();
-        var domains = plan.Entries
-            .Select(static entry => entry.DomainToken)
-            .OrderBy(static token => token.Value, StringComparer.Ordinal)
+        var grouped = StandardDomainPartitionRegistry.Entries
+            .GroupBy(static entry => entry.OwnerDomain)
+            .Select(static group => new
+            {
+                Domain = group.Key,
+                Rank = group.First().OwnerDomainRank,
+                Partitions = group.Select(static entry => entry.PartitionId)
+                    .OrderBy(static value => value.Value, StringComparer.Ordinal)
+                    .ToArray(),
+            })
+            .OrderBy(static value => value.Domain.Value, StringComparer.Ordinal)
             .ToArray();
-        var descriptors = domains.Select(domain =>
+        if (grouped.Length != 8 || grouped.Sum(static value => value.Partitions.Length) != StandardDomainPartitionRegistry.StandardPartitionCount)
+            throw new InvalidDataException("domain-registry.standard-structure-mismatch");
+
+        var descriptors = grouped.Select(group =>
         {
-            var planEntry = plan.Entries.Single(entry => entry.DomainToken == domain);
-            var stateReads = domains.Where(value => value != domain).ToArray();
+            var domain = group.Domain;
             var emitted = StandardDomainRuntimeCapabilityRegistryV1.Generation1IntentCapabilities
                 .Where(value => value.SourceDomain == domain)
                 .Select(static value => value.IntentKind)
@@ -302,15 +391,15 @@ public static class StandardDomainRegistryAuthorityV1
                 .ToArray();
             return new DomainRuntimeDescriptorV1(
                 domain,
-                planEntry.DomainRank,
-                new SchemaRefV1($"domain.{domain.Value}.runtime"),
-                planEntry.OwnedPartitions,
-                stateReads,
-                planEntry.SameStepDependencies,
+                group.Rank,
+                StandardDomainRuntimeCapabilityRegistryV1.GetGeneration1DomainSchema(domain),
+                group.Partitions,
+                StandardDomainRuntimeCapabilityRegistryV1.GetGeneration1StateReadDependencies(domain),
+                StandardDomainRuntimeCapabilityRegistryV1.GetGeneration1SameStepDependencies(domain),
                 accepted,
                 emitted,
-                Array.Empty<StableToken>(),
-                Array.Empty<StableToken>());
+                StandardDomainRuntimeCapabilityRegistryV1.GetGeneration1EmittedEventKinds(domain),
+                StandardDomainRuntimeCapabilityRegistryV1.GetGeneration1InvariantIds(domain));
         }).ToArray();
         return new DomainRegistryStateV1(DomainRegistryStateV1.StandardGeneration1, descriptors);
     }
