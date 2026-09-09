@@ -26,13 +26,19 @@ internal static class Program
 
             if (string.Equals(args[0], "run", StringComparison.Ordinal) && args.Length == 6)
             {
+                var planDirectory = Path.GetFullPath(args[4]);
+                var outputDirectory = Path.GetFullPath(args[5]);
                 var result = await ReleaseEvidenceRunner.RunAsync(
                     root,
                     args[1],
                     args[2],
                     Path.GetFullPath(args[3]),
-                    Path.GetFullPath(args[4]),
-                    Path.GetFullPath(args[5]));
+                    planDirectory,
+                    outputDirectory);
+                Qa04DeterminismEvidenceVerifier.VerifyAndBind(
+                    planDirectory,
+                    outputDirectory,
+                    args[2]);
                 return result;
             }
 
