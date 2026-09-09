@@ -43,6 +43,7 @@ internal static class Program
     private static Response Benchmark(Request request)
     {
         var run = request.Run ?? throw new InvalidDataException("benchmark-run requires run descriptor.");
+        var finalStateDigest = new string('c', 64);
         return NewResponse(request, "performance-benchmark-report-v1", new
         {
             benchmark_profile_id = "perf.reference.v1",
@@ -63,7 +64,15 @@ internal static class Program
             persistence_commit_p99_ms = 6.0,
             snapshot_summary = new { cow_barrier_p95_ms = 4.0 },
             publication_summary = new { },
-            final_state_digest = new string('c', 64),
+            final_state_digest = finalStateDigest,
+            determinism_evidence = new
+            {
+                final_state_digest = finalStateDigest,
+                transition_committed_digest = new string('d', 64),
+                operation_terminal_semantic_digest = new string('e', 64),
+                config_history_digest = new string('f', 64),
+                promotion_deferral_order_digest = new string('1', 64),
+            },
             accepted_operation_loss = 0,
             hidden_solver_iteration_reduction = false,
             failure_codes = Array.Empty<string>(),
