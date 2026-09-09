@@ -25,6 +25,7 @@ internal static class ReleaseEvidenceRunnerVerification
         if (boundary > limit || regression <= limit)
             throw new InvalidDataException("worker16 median-p95 acceptance boundary self-test failed.");
 
+        Qa04AdapterResponse.VerifyReleaseReadinessContract();
         Qa04DeterminismEvidenceVerifier.VerifyContract();
 
         var soak = root.GetProperty("soakProfile");
@@ -41,6 +42,7 @@ internal static class ReleaseEvidenceRunnerVerification
         Console.WriteLine("INT-03 release evidence runner contract verification PASS");
         Console.WriteLine($"QA-04 manifest SHA-256: {digest}");
         Console.WriteLine("Adapter boundary: external JSONL process only; no production component assembly reference.");
+        Console.WriteLine("Release adapter responses require explicit materialization/readiness evidence.");
         Console.WriteLine("Contract-smoke output is never release-eligible.");
     }
 
