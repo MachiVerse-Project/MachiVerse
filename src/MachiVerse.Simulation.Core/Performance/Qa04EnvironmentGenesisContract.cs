@@ -52,7 +52,10 @@ public static class Qa04EnvironmentGenesisContractV1
             AtmosphereGasPpbValue[1].Key != "perf.gas-b" || AtmosphereGasPpbValue[1].Value != 210_000_000u ||
             AtmosphereGasPpbValue[2].Key != "perf.gas-c" || AtmosphereGasPpbValue[2].Value != 10_000_000u)
             throw new InvalidDataException("qa04.environment.genesis-gas-map-drift");
-        if (AtmosphereGasPpbValue.Sum(static pair => (ulong)pair.Value) != 1_000_000_000UL)
+        var gasTotal = AtmosphereGasPpbValue.Aggregate(
+            0UL,
+            static (total, pair) => checked(total + pair.Value));
+        if (gasTotal != 1_000_000_000UL)
             throw new InvalidDataException("qa04.environment.genesis-gas-map-total");
     }
 }
