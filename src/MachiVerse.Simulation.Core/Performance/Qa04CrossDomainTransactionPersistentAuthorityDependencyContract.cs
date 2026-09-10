@@ -21,10 +21,10 @@ public sealed record Qa04CrossDomainTransactionPersistentAuthorityDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Remaining implementation dependencies beneath the single reference-world persistent-authority
-/// blocker. Persistent logical state/lifecycle semantics, exact benchmark genesis/turnover, the
-/// SQLite durable owner, transition-history atomic commit binding, canonical Snapshot authority,
-/// and physical Snapshot recovery are implemented. Canonical detail-region guard binding remains.
+/// Cross-domain transaction persistent authority is fully implemented: logical state/lifecycle,
+/// benchmark genesis/turnover, SQLite durable ownership, transition-history atomic commit binding,
+/// canonical Snapshot /2.0 authority, physical recovery, and TileScope-backed detail-guard binding.
+/// Workload transaction creation remains a separate canonical workload dependency.
 /// </summary>
 public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1
 {
@@ -33,15 +33,8 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
     public const string WorkloadCreationDependencyId = "workload.transaction.creation-binding";
     public const string WorkloadCreationFailureCode = "qa04.workload.transaction-creation-binding-undefined";
 
-    private static readonly IReadOnlyList<Qa04CrossDomainTransactionPersistentAuthorityDependencyV1> BlockersValue = Array.AsReadOnly(new[]
-    {
-        Blocker(
-            "cross-domain-transaction.persistence.detail-guard-binding",
-            Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.DetailGuardBinding,
-            "qa04.cross-domain-transaction.detail-guard-binding-undefined"),
-    }
-    .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-    .ToArray());
+    private static readonly IReadOnlyList<Qa04CrossDomainTransactionPersistentAuthorityDependencyV1> BlockersValue =
+        Array.Empty<Qa04CrossDomainTransactionPersistentAuthorityDependencyV1>();
 
     public static IReadOnlyList<Qa04CrossDomainTransactionPersistentAuthorityDependencyV1> Blockers => BlockersValue;
 
@@ -54,25 +47,16 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         Qa04CanonicalWorkloadDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 1)
+        if (BlockersValue.Count != 0)
             throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-count-drift");
-        if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-id-duplicate");
-        if (BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-code-duplicate");
-        if (BlockersValue.Any(static blocker => !Enum.IsDefined(blocker.Kind)))
-            throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-kind-invalid");
-
-        var ordered = BlockersValue.Select(static blocker => blocker.DependencyId.Value).ToArray();
-        if (!ordered.SequenceEqual(ordered.OrderBy(static value => value, StringComparer.Ordinal), StringComparer.Ordinal))
-            throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-order");
 
         ValidateEstablishedRuntimeBoundary();
         ValidateImplementedPersistentStateBoundary();
         ValidateImplementedBenchmarkTurnoverBoundary();
         ValidateImplementedDurableOwnerAndHistoryBoundary();
         ValidateImplementedSnapshotAndRecoveryBoundary();
-        ValidateParentWorldBlocker();
+        ValidateImplementedDetailGuardBoundary();
+        ValidateParentWorldBlockerReleased();
         ValidateSeparateWorkloadBlocker();
     }
 
@@ -131,23 +115,18 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
             throw new InvalidDataException("qa04.cross-domain-transaction.implemented-snapshot-recovery-dependency-retained");
     }
 
-    private static void ValidateParentWorldBlocker()
+    private static void ValidateImplementedDetailGuardBoundary()
     {
-        var parent = Qa04ReferenceWorldDependencyContractV1.Blockers.SingleOrDefault(
-            static blocker => blocker.DependencyId.Value == ParentWorldDependencyId)
-            ?? throw new InvalidDataException("qa04.cross-domain-transaction.parent-world-blocker-missing");
+        if (FailureCodes.Any(static code => code.Value == "qa04.cross-domain-transaction.detail-guard-binding-undefined"))
+            throw new InvalidDataException("qa04.cross-domain-transaction.implemented-detail-guard-dependency-retained");
+    }
 
-        if (parent.Kind != Qa04ReferenceDependencyBlockerKindV1.PersistentAuthority ||
-            parent.PartitionId is not null ||
-            parent.FieldName is not null ||
-            parent.FailureCode.Value != ParentWorldFailureCode)
-            throw new InvalidDataException("qa04.cross-domain-transaction.parent-world-blocker-drift");
-
-        var worldCodes = Qa04ReferenceWorldDependencyContractV1.FailureCodes
-            .Select(static code => code.Value)
-            .ToHashSet(StringComparer.Ordinal);
-        if (FailureCodes.Any(code => worldCodes.Contains(code.Value)))
-            throw new InvalidDataException("qa04.cross-domain-transaction.subdependency-code-collides-with-world-blocker");
+    private static void ValidateParentWorldBlockerReleased()
+    {
+        if (Qa04ReferenceWorldDependencyContractV1.Blockers.Any(static blocker =>
+                blocker.DependencyId.Value == ParentWorldDependencyId ||
+                blocker.FailureCode.Value == ParentWorldFailureCode))
+            throw new InvalidDataException("qa04.cross-domain-transaction.parent-world-blocker-retained");
     }
 
     private static void ValidateSeparateWorkloadBlocker()
@@ -161,10 +140,4 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         if (FailureCodes.Any(code => code.Value == WorkloadCreationFailureCode))
             throw new InvalidDataException("qa04.cross-domain-transaction.persistence-workload-code-collision");
     }
-
-    private static Qa04CrossDomainTransactionPersistentAuthorityDependencyV1 Blocker(
-        string dependencyId,
-        Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 }
