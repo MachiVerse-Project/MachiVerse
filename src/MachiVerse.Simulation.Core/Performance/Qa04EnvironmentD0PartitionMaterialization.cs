@@ -7,7 +7,7 @@ namespace MachiVerse.Simulation.Core.Performance;
 /// Production envelope/partition materializer for one canonical Environment D0 slice. Canonical
 /// descriptor identity and genesis envelope are owned here; partition-specific payload values and
 /// cross-partition Ref targets remain explicit owner inputs until their authority materializers are
-/// connected. This prevents synthetic scope ids or lineage targets from leaking into release state.
+/// connected. Regional spatial scope is resolved through the canonical Spatial TileScope authority.
 /// </summary>
 public static class Qa04EnvironmentD0PartitionMaterializerV1
 {
@@ -19,15 +19,18 @@ public static class Qa04EnvironmentD0PartitionMaterializerV1
     {
         Qa04EnvironmentReferenceDecompositionV1.ValidateCanonicalContract();
         Qa04EnvironmentGenesisContractV1.ValidateCanonicalContract();
+        Qa04SpatialTileScopeAuthorityV1.ValidateCanonicalContract();
         _ = StandardDomainPartitionRegistry.Get(SpatialScopePartitionId);
         if (InitialRecordRevision != 1 || InitialCreatedStep != 0)
             throw new InvalidDataException("qa04.environment.d0-genesis-envelope-drift");
     }
 
+    public static PartitionRecordRefV1 ResolveSpatialScope(Qa04EnvironmentD0BindingV1 binding)
+        => ResolveSpatialScope(binding, Qa04SpatialTileScopeAuthorityV1.ScopeRef);
+
     /// <summary>
-    /// Resolves the descriptor's canonical regional tile into its owning Spatial scope authority.
-    /// The scope RecordId is deliberately supplied by Spatial; Environment only validates the target
-    /// partition, non-zero identity, and descriptor tile range.
+    /// Resolver overload retained for explicit negative/fixture testing. Production callers should
+    /// use the canonical overload above.
     /// </summary>
     public static PartitionRecordRefV1 ResolveSpatialScope(
         Qa04EnvironmentD0BindingV1 binding,
