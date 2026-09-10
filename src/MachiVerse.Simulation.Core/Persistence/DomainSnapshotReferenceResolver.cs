@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
+using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -243,6 +244,7 @@ public sealed class DomainSnapshotReferenceResolverV1 : IDomainRecordSchemaResol
             {
                 DomainSnapshotRecoveredReferenceSourceV1 v1 => v1.Header,
                 PhysicalOccupancyRecoveredReferenceSourceV2 physicalV2 => physicalV2.Header,
+                SocietyMarketTransactionRecoveredReferenceSourceV2 marketV2 => marketV2.Header,
                 SpatialTerrainGeometryRecoveredReferenceSourceV2 terrainV2 => terrainV2.Header,
                 _ => throw new InvalidDataException($"persistence.snapshot.recovered-reference-source-type:{identity.PartitionId.Value}"),
             };
@@ -270,6 +272,9 @@ public sealed class DomainSnapshotReferenceResolverV1 : IDomainRecordSchemaResol
 
         if (string.Equals(identity.PartitionId.Value, PhysicalOccupancyRecordSchemaV2.PartitionId, StringComparison.Ordinal))
             return CreatePhysicalOccupancyRecoveredSource(identity, section, nestedCodecs);
+
+        if (string.Equals(identity.PartitionId.Value, SocietyMarketTransactionRecordSchemaV2.PartitionId, StringComparison.Ordinal))
+            return CreateMarketRecoveredSource(identity, section, nestedCodecs);
 
         if (string.Equals(identity.PartitionId.Value, SpatialTerrainGeometryRecordSchemaV2.PartitionId, StringComparison.Ordinal))
             return CreateTerrainRecoveredSource(identity, section, nestedCodecs);
@@ -306,6 +311,36 @@ public sealed class DomainSnapshotReferenceResolverV1 : IDomainRecordSchemaResol
         {
             throw new InvalidDataException(
                 "persistence.snapshot.recovered-reference-physical-occupancy-schema-unrecognized",
+                new AggregateException(v2Failure, v1Failure));
+        }
+    }
+
+    private static IDomainPartitionSnapshotReferenceSourceV1 CreateMarketRecoveredSource(
+        DomainPartitionIdentityV1 identity,
+        CanonicalSnapshotSectionMaterialV1 section,
+        DomainNestedSnapshotCodecRegistryV1? nestedCodecs)
+    {
+        InvalidDataException? v2Failure = null;
+        try
+        {
+            return new SocietyMarketTransactionRecoveredReferenceSourceV2(section.Fragments);
+        }
+        catch (InvalidDataException ex)
+        {
+            v2Failure = ex;
+        }
+
+        try
+        {
+            return new DomainSnapshotRecoveredReferenceSourceV1(
+                identity.PartitionId.Value,
+                section.Fragments,
+                nestedCodecs);
+        }
+        catch (InvalidDataException v1Failure)
+        {
+            throw new InvalidDataException(
+                "persistence.snapshot.recovered-reference-market-schema-unrecognized",
                 new AggregateException(v2Failure, v1Failure));
         }
     }
