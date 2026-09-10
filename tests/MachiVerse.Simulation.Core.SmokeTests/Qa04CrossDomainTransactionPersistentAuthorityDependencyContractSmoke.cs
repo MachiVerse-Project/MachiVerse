@@ -8,7 +8,7 @@ internal static class Qa04CrossDomainTransactionPersistentAuthorityDependencyCon
     {
         Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1.ValidateCanonicalContract();
 
-        Require(Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1.Blockers.Count == 6,
+        Require(Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1.Blockers.Count == 5,
             "QA-04 CrossDomainTransaction persistent authority dependency count drifted.");
         Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 6,
             "CrossDomainTransaction persistent authority subdependencies must not change the reference-world blocker count.");
@@ -19,8 +19,6 @@ internal static class Qa04CrossDomainTransactionPersistentAuthorityDependencyCon
         {
             ("cross-domain-transaction.persistence.authority-owner", Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.AuthorityOwner,
                 "qa04.cross-domain-transaction.authority-owner-undefined"),
-            ("cross-domain-transaction.persistence.benchmark-turnover-binding", Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.BenchmarkTurnoverBinding,
-                "qa04.transaction.benchmark-turnover-binding-undefined"),
             ("cross-domain-transaction.persistence.detail-guard-binding", Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.DetailGuardBinding,
                 "qa04.cross-domain-transaction.detail-guard-binding-undefined"),
             ("cross-domain-transaction.persistence.history-commit-binding", Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.HistoryCommitBinding,
@@ -38,8 +36,9 @@ internal static class Qa04CrossDomainTransactionPersistentAuthorityDependencyCon
             "QA-04 CrossDomainTransaction persistent authority dependency identity/kind/failure-code drifted.");
         Require(Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1.FailureCodes.All(static code =>
                 code.Value is not "qa04.cross-domain-transaction.state-schema-undefined" and
-                    not "qa04.cross-domain-transaction.lifecycle-semantics-undefined"),
-            "Implemented persistent state/lifecycle dependencies must not remain blocked.");
+                    not "qa04.cross-domain-transaction.lifecycle-semantics-undefined" and
+                    not "qa04.transaction.benchmark-turnover-binding-undefined"),
+            "Implemented persistent state/lifecycle/turnover dependencies must not remain blocked.");
 
         var parents = Qa04ReferenceWorldDependencyContractV1.Blockers
             .Where(blocker => blocker.DependencyId.Value == Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1.ParentWorldDependencyId)
