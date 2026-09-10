@@ -30,9 +30,9 @@ internal static class Qa04TerrainCanonicalContentSourceSmoke
 
         Require(firstBrick.BrickId == first.RecordId && secondBrick.BrickId == sameTile.RecordId,
             "Terrain canonical content must preserve descriptor RecordId exactly.");
-        Require(firstBrick.Level == 0 && firstBrick.SampleSpacingMillimeters == 250 && firstBrick.Revision == 1,
+        Require(firstBrick.Level == 0 && firstBrick.SampleSpacingMm == 250 && firstBrick.Revision == 1,
             "Terrain canonical hot brick envelope drifted.");
-        Require(firstBrick.SdfMillimeters.Count == TerrainBrickV1.SdfSampleCount &&
+        Require(firstBrick.SdfMm.Count == TerrainBrickV1.SdfSampleCount &&
                 firstBrick.SurfaceMaterialIds.Count == TerrainBrickV1.SurfaceMaterialCount,
             "Terrain canonical hot brick sample cardinality drifted.");
         Require(firstBrick.SurfaceMaterialIds.All(static material => material <= Qa04TerrainCanonicalContentSourceV1.MaterialSediment),
@@ -40,14 +40,19 @@ internal static class Qa04TerrainCanonicalContentSourceSmoke
         Require(firstBrick.CellOrigin != secondBrick.CellOrigin,
             "Two canonical hot descriptors in one tile must not collide on cell origin.");
 
-        var materialized = Qa04TerrainBrickDescriptorMaterializerV1.MaterializeRecord(first, source);
-        Require(materialized.RecordId == first.RecordId &&
+        var materialization = Qa04TerrainBrickDescriptorMaterializerV1.Materialize(source, 1);
+        var materialized = materialization.Partition.RecordSet.RecordsCanonical.Single();
+        Require(materialization.MaterializedBrickCount == 1 &&
+                materialized.RecordId == first.RecordId &&
                 materialized.Revision == 1 &&
                 materialized.CreatedStep == 0 &&
                 materialized.RetiredStep is null &&
                 materialized.LineageRef is null &&
                 materialized.Payload.RecordKind == SpatialTerrainGeometryRecordSchemaV2.TerrainBrickKind &&
-                materialized.Payload.Brick.BrickId == first.RecordId,
+                materialized.Payload is SpatialTerrainBrickPayloadV2 payload &&
+                payload.SampleSpacingMm == 250 &&
+                payload.SdfMm.Count == TerrainBrickV1.SdfSampleCount &&
+                payload.SurfaceMaterialIds.Count == TerrainBrickV1.SurfaceMaterialCount,
             "Terrain canonical content must pass the production descriptor materializer without identity drift.");
     }
 
