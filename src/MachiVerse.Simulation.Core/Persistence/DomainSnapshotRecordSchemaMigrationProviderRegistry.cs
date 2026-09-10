@@ -1,3 +1,4 @@
+using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
 using MachiVerse.Simulation.Core.Domains.Spatial;
@@ -20,6 +21,10 @@ public static class DomainSnapshotRecordSchemaMigrationProviderRegistryV1
 {
     private static readonly DomainSnapshotRecordSchemaMigrationProviderRegistrationV1[] CanonicalEntries =
     [
+        Registration(
+            InfrastructureNetworkTopologyRecordSchemaV2.PartitionId,
+            InfrastructureNetworkTopologyRecordSchemaV2.RecordSchema,
+            static () => new InfrastructureNetworkTopologySnapshotSectionProviderV2()),
         Registration(
             PhysicalOccupancyRecordSchemaV2.PartitionId,
             PhysicalOccupancyRecordSchemaV2.RecordSchema,
