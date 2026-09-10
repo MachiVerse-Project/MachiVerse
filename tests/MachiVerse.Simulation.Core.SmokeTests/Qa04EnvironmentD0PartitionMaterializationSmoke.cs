@@ -29,20 +29,22 @@ internal static class Qa04EnvironmentD0PartitionMaterializationSmoke
 
         Require(partition.ItemCount == 2,
             "QA-04 Environment D0 atmosphere partition count drifted.");
-        var records = partition.Records.ToArray();
+        var records = partition.RecordsCanonical.ToArray();
         for (var index = 0; index < records.Length; index++)
         {
-            var descriptor = Qa04EnvironmentReferenceDecompositionV1.BindD0(
-                checked(slice.D0StartOrdinal + (ulong)index)).Descriptor;
-            var record = records[index];
-            Require(record.RecordId == descriptor.RecordId,
-                "Environment D0 materializer must preserve descriptor RecordId.");
-            Require(record.RecordSchema == StandardDomainPartitionRegistry.Get(EnvironmentAtmospherePayloadV1.PartitionId).RecordSchema,
+            Require(records[index].RecordSchema == StandardDomainPartitionRegistry.Get(EnvironmentAtmospherePayloadV1.PartitionId).RecordSchema,
                 "Environment D0 materializer must use owner record schema.");
-            Require(record.Revision == 1 && record.CreatedStep == 0 && record.RetiredStep is null &&
-                    record.DetailLevel == DetailLevelV1.D0Entity && record.LineageRef is null,
+            Require(records[index].Revision == 1 && records[index].CreatedStep == 0 && records[index].RetiredStep is null &&
+                    records[index].DetailLevel == DetailLevelV1.D0Entity && records[index].LineageRef is null,
                 "Environment D0 genesis envelope drifted.");
         }
+        var expectedIds = Enumerable.Range(0, records.Length)
+            .Select(index => Qa04EnvironmentReferenceDecompositionV1.BindD0(
+                checked(slice.D0StartOrdinal + (ulong)index)).Descriptor.RecordId)
+            .OrderBy(static id => id)
+            .ToArray();
+        Require(records.Select(static record => record.RecordId).SequenceEqual(expectedIds),
+            "Environment D0 partition must preserve descriptor identities in canonical RecordId order.");
     }
 
     private static void VerifyGroundwaterTopologyRefValidation()
