@@ -16,6 +16,13 @@ public sealed record RunningSnapshotCutV1(
     public ulong SnapshotStep => FrozenState.Header.Step;
 
     /// <summary>
+    /// Same-SQLite-read CrossDomainTransaction custody frozen with Operation/Scheduler state.
+    /// This remains raw durable-row material until core.operation-state /2.0 provider validation.
+    /// </summary>
+    public IReadOnlyList<DurableCrossDomainTransactionStateV1> CrossDomainTransactions { get; init; }
+        = Array.Empty<DurableCrossDomainTransactionStateV1>();
+
+    /// <summary>
     /// Present only when the strict owner-material freeze overload was used. The material remains
     /// runtime/schema-owner data; exact Core snapshot wire serialization is intentionally deferred
     /// until the P4-04 Core section payload amendment is authoritative.
@@ -137,6 +144,7 @@ public sealed class RunningSnapshotCoordinatorV1
             recovery.DurableOperations,
             recovery.ScheduledOperations)
         {
+            CrossDomainTransactions = recovery.CrossDomainTransactions,
             CoreOwnerMaterial = coreOwnerMaterial,
         };
 
@@ -177,8 +185,6 @@ public sealed class RunningSnapshotCoordinatorV1
 
         try
         {
-            // The snapshot anchor belongs to the frozen cut. The snapshot.committed history record,
-            // however, is appended to the history head that exists when background drain finishes.
             var currentAnchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
             if (currentAnchor.Sequence == ulong.MaxValue)
                 throw new OverflowException("HistorySequence cannot wrap.");
