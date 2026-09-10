@@ -5,29 +5,33 @@ namespace MachiVerse.Simulation.Core.Performance;
 
 /// <summary>
 /// Full perf.reference.v1 Environment D0 materialization evidence.
-/// This path intentionally materializes every canonical D0 record through the production payload
-/// authority and fail-closed reference resolver, then derives the canonical partition headers used
-/// by Snapshot authority. Reduced fixtures must not use this type as release evidence.
+/// Every canonical D0 record is materialized through production authority, all refs close through
+/// the fail-closed resolver, and all thirteen partitions survive Snapshot recovery semantic rehash.
 /// </summary>
 public sealed class Qa04EnvironmentCanonicalD0FullEvidenceV1
 {
     internal Qa04EnvironmentCanonicalD0FullEvidenceV1(
         Qa04EnvironmentD0DomainMaterializationV1 materialization,
-        IReadOnlyList<PartitionStateHeaderV1> partitionHeaders)
+        IReadOnlyList<PartitionStateHeaderV1> partitionHeaders,
+        int snapshotRecoveredPartitionCount)
     {
         Materialization = materialization ?? throw new ArgumentNullException(nameof(materialization));
         PartitionHeaders = partitionHeaders ?? throw new ArgumentNullException(nameof(partitionHeaders));
+        SnapshotRecoveredPartitionCount = snapshotRecoveredPartitionCount;
 
         if (!Materialization.FullCanonicalD0Materialized)
             throw new InvalidDataException("qa04.environment.d0-full-evidence-materialization-incomplete");
         if (PartitionHeaders.Count != Qa04EnvironmentReferenceDecompositionV1.Partitions.Count)
             throw new InvalidDataException("qa04.environment.d0-full-evidence-header-count");
+        if (SnapshotRecoveredPartitionCount != Qa04EnvironmentSnapshotRecoveryEvidenceV1.EnvironmentPartitionCount)
+            throw new InvalidDataException("qa04.environment.d0-full-evidence-recovery-count");
         if (PartitionHeaders.Any(static header => header.BasisStep != 0 || header.Revision != 1 || header.DetailLevel != DetailLevelV1.D0Entity))
             throw new InvalidDataException("qa04.environment.d0-full-evidence-header-envelope");
     }
 
     public Qa04EnvironmentD0DomainMaterializationV1 Materialization { get; }
     public IReadOnlyList<PartitionStateHeaderV1> PartitionHeaders { get; }
+    public int SnapshotRecoveredPartitionCount { get; }
 }
 
 public static class Qa04EnvironmentCanonicalD0FullEvidenceBuilderV1
@@ -78,9 +82,10 @@ public static class Qa04EnvironmentCanonicalD0FullEvidenceBuilderV1
         if (total != Qa04EnvironmentReferenceDecompositionV1.CanonicalD0Count)
             throw new InvalidDataException("qa04.environment.d0-full-evidence-header-total");
 
-        return new Qa04EnvironmentCanonicalD0FullEvidenceV1(
-            materialized,
-            Array.AsReadOnly(headers.OrderBy(static header => header.PartitionId.Value, StringComparer.Ordinal).ToArray()));
+        var orderedHeaders = Array.AsReadOnly(headers.OrderBy(static header => header.PartitionId.Value, StringComparer.Ordinal).ToArray());
+        var recovered = Qa04EnvironmentSnapshotRecoveryEvidenceV1.Verify(state, orderedHeaders, resolver);
+
+        return new Qa04EnvironmentCanonicalD0FullEvidenceV1(materialized, orderedHeaders, recovered);
     }
 
     private static PartitionStateHeaderV1 Header<TPayload>(
