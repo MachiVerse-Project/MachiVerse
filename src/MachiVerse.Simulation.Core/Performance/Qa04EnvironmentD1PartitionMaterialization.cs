@@ -6,7 +6,7 @@ namespace MachiVerse.Simulation.Core.Performance;
 /// Production envelope/partition materializer for canonical Environment D1 descriptors. Exact
 /// descriptor identity, same-partition four-source binding, schema, and genesis envelope are owned
 /// here. Aggregate payload construction remains explicit so unresolved lineage authority cannot be
-/// silently synthesized.
+/// silently synthesized. Regional spatial scope is canonical Spatial TileScope authority.
 /// </summary>
 public static class Qa04EnvironmentD1PartitionMaterializerV1
 {
@@ -18,15 +18,18 @@ public static class Qa04EnvironmentD1PartitionMaterializerV1
     {
         Qa04EnvironmentReferenceDecompositionV1.ValidateCanonicalContract();
         Qa04EnvironmentD1AggregationV1.ValidateCanonicalContract();
+        Qa04SpatialTileScopeAuthorityV1.ValidateCanonicalContract();
         _ = StandardDomainPartitionRegistry.Get(SpatialScopePartitionId);
         if (InitialRecordRevision != 1 || InitialCreatedStep != 0)
             throw new InvalidDataException("qa04.environment.d1-genesis-envelope-drift");
     }
 
+    public static PartitionRecordRefV1 ResolveSpatialScope(Qa04EnvironmentD1BindingV1 binding)
+        => ResolveSpatialScope(binding, Qa04SpatialTileScopeAuthorityV1.ScopeRef);
+
     /// <summary>
-    /// Resolves the D1 descriptor's own canonical regional tile through the same Spatial authority
-    /// seam used by D0. D1 does not derive scope by guessing from its four source records; the
-    /// perf.reference.v1 descriptor already owns the RegionalTileIndex deterministically.
+    /// Resolver overload retained for explicit negative/fixture testing. Production callers should
+    /// use the canonical overload above.
     /// </summary>
     public static PartitionRecordRefV1 ResolveSpatialScope(
         Qa04EnvironmentD1BindingV1 binding,
