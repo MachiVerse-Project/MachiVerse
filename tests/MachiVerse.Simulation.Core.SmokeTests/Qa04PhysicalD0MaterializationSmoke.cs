@@ -26,8 +26,9 @@ internal static class Qa04PhysicalD0MaterializationSmoke
             "Physical presence must preserve the canonical descriptor record id.");
         Require(material.CollisionShape.Payload is PhysicalSphereShapePayloadV2 sphere && sphere.RadiusMm == 300,
             "Physical ordinal 0 must materialize the canonical 300 mm sphere.");
-        Require(material.Occupancy.Payload is PhysicalOccupancyStatePayloadV2 occupancy,
+        Require(material.Occupancy.Payload is PhysicalOccupancyStatePayloadV2,
             "Physical D0 material must include an occupancy arm.");
+        var occupancy = (PhysicalOccupancyStatePayloadV2)material.Occupancy.Payload;
         Require(occupancy.AabbMin == new Vec3Int64V1(700, 1700, 2700) &&
                 occupancy.AabbMax == new Vec3Int64V1(1300, 2300, 3300),
             "Sphere occupancy AABB must be exact local bounds translated by presence position.");
