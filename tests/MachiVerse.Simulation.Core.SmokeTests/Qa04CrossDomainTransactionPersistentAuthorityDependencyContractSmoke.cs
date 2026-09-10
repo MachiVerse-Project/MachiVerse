@@ -10,7 +10,7 @@ internal static class Qa04CrossDomainTransactionPersistentAuthorityDependencyCon
 
         Require(Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1.Blockers.Count == 8,
             "QA-04 CrossDomainTransaction persistent authority dependency count drifted.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 9,
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 8,
             "CrossDomainTransaction persistent authority subdependencies must not change the reference-world blocker count.");
         Require(Qa04CanonicalWorkloadDependencyContractV1.Blockers.Count == 3,
             "CrossDomainTransaction persistent authority subdependencies must not change the workload blocker count.");
