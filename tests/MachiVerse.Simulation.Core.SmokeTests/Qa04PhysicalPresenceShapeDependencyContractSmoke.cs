@@ -7,8 +7,8 @@ internal static class Qa04PhysicalPresenceShapeDependencyContractSmoke
     internal static void Run()
     {
         Qa04PhysicalPresenceShapeDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 7,
-            "Resolved Physical shape dependency must leave exactly seven world blockers.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 6,
+            "Resolved Physical shape dependency must leave exactly six world blockers after Market release.");
         Require(Qa04ReferenceWorldDependencyContractV1.FailureCodes.All(
                 static code => code.Value != Qa04PhysicalPresenceShapeDependencyContractV1.ParentWorldFailureCode),
             "Resolved Physical shape failure code must remain absent from the world dependency contract.");
