@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
@@ -25,6 +26,46 @@ public static class StandardSnapshotOwnerCompositionV1
             coreSections,
             coreCut.BasisStep,
             coreCut.Header.ConfigGeneration);
+        return CombineAll103(coreSections, domainAuthorities, domainProviders);
+    }
+
+    public static IReadOnlyList<CanonicalSnapshotSectionMaterialV1> CreateAll103V2(
+        CoreSnapshotOwnerMaterialCutV1 coreCut,
+        IReadOnlyList<CrossDomainTransactionStateV1> transactions,
+        DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
+        IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders)
+    {
+        ArgumentNullException.ThrowIfNull(coreCut);
+        ArgumentNullException.ThrowIfNull(transactions);
+        ArgumentNullException.ThrowIfNull(domainAuthorities);
+        ArgumentNullException.ThrowIfNull(domainProviders);
+        RequireSameFrozenHeader(coreCut.Header, domainAuthorities.FrozenState.Header);
+
+        var coreSections = CoreSnapshotProductionSectionProviderV1.CreateAllSixV2(coreCut, transactions);
+        CoreSnapshotProductionSectionProviderV1.VerifyAllSixV2(
+            coreSections,
+            coreCut.BasisStep,
+            coreCut.Header.ConfigGeneration);
+        return CombineAll103(coreSections, domainAuthorities, domainProviders);
+    }
+
+    public static CanonicalSnapshotSemanticVerifierRegistryV1 CreateSemanticVerifierRegistry(
+        CoreSnapshotOwnerMaterialCutV1 coreCut,
+        DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
+        IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders)
+        => CreateSemanticVerifierRegistryInternal(coreCut, domainAuthorities, domainProviders, operationV2: false);
+
+    public static CanonicalSnapshotSemanticVerifierRegistryV1 CreateSemanticVerifierRegistryV2(
+        CoreSnapshotOwnerMaterialCutV1 coreCut,
+        DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
+        IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders)
+        => CreateSemanticVerifierRegistryInternal(coreCut, domainAuthorities, domainProviders, operationV2: true);
+
+    private static IReadOnlyList<CanonicalSnapshotSectionMaterialV1> CombineAll103(
+        IReadOnlyList<CanonicalSnapshotSectionMaterialV1> coreSections,
+        DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
+        IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders)
+    {
         var domainSections = DomainPartitionSnapshotProductionProviderV1.CreateAll97(
             domainAuthorities,
             domainProviders);
@@ -42,10 +83,11 @@ public static class StandardSnapshotOwnerCompositionV1
         return sections;
     }
 
-    public static CanonicalSnapshotSemanticVerifierRegistryV1 CreateSemanticVerifierRegistry(
+    private static CanonicalSnapshotSemanticVerifierRegistryV1 CreateSemanticVerifierRegistryInternal(
         CoreSnapshotOwnerMaterialCutV1 coreCut,
         DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
-        IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders)
+        IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders,
+        bool operationV2)
     {
         ArgumentNullException.ThrowIfNull(coreCut);
         ArgumentNullException.ThrowIfNull(domainAuthorities);
@@ -57,7 +99,9 @@ public static class StandardSnapshotOwnerCompositionV1
             CoreSnapshotSecondarySemanticVerifierV1.Config(coreCut.BasisStep, coreCut.Header.ConfigGeneration),
             CoreSnapshotSecondarySemanticVerifierV1.Detail(coreCut.BasisStep),
             CoreSnapshotDomainRegistrySemanticVerifierV1.Create(coreCut.BasisStep),
-            CoreSnapshotPrimarySemanticVerifierV1.Operation(coreCut.BasisStep),
+            operationV2
+                ? CoreOperationStateSnapshotSectionProviderV2.SemanticVerifier(coreCut.BasisStep)
+                : CoreSnapshotPrimarySemanticVerifierV1.Operation(coreCut.BasisStep),
             CoreSnapshotPrimarySemanticVerifierV1.Scheduler(coreCut.BasisStep),
             CoreSnapshotPrimarySemanticVerifierV1.WorldStateHeader(coreCut.BasisStep),
         };
