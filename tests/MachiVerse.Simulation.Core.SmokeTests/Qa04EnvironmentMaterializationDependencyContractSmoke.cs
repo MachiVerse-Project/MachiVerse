@@ -10,26 +10,12 @@ internal static class Qa04EnvironmentMaterializationDependencyContractSmoke
     {
         Qa04EnvironmentMaterializationDependencyContractV1.ValidateCanonicalContract();
 
-        Require(Qa04EnvironmentMaterializationDependencyContractV1.Blockers.Count == 2,
-            "QA-04 Environment materialization dependency count drifted.");
+        Require(Qa04EnvironmentMaterializationDependencyContractV1.Blockers.Count == 0,
+            "Implemented QA-04 Environment authority bindings must have no remaining subdependency blockers.");
+        Require(Qa04EnvironmentMaterializationDependencyContractV1.FailureCodes.Count == 0,
+            "Implemented QA-04 Environment authority bindings must expose no pending failure codes.");
         Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 5,
             "Environment subdependencies must not change the reference-world blocker count.");
-
-        var expected = new[]
-        {
-            ("environment.materialization.d0-lineage-subject-binding", Qa04EnvironmentMaterializationDependencyKindV1.LineageSubjectBinding,
-                "qa04.environment.d0-lineage-subject-binding-pending"),
-            ("environment.materialization.d1-lineage-subject-binding", Qa04EnvironmentMaterializationDependencyKindV1.LineageSubjectBinding,
-                "qa04.environment.d1-lineage-subject-binding-pending"),
-        };
-        var actual = Qa04EnvironmentMaterializationDependencyContractV1.Blockers
-            .Select(static blocker => (blocker.DependencyId.Value, blocker.Kind, blocker.FailureCode.Value))
-            .ToArray();
-        Require(actual.SequenceEqual(expected),
-            "QA-04 Environment materialization dependency identity/kind/failure-code drifted.");
-        Require(Qa04EnvironmentMaterializationDependencyContractV1.FailureCodes.All(static code =>
-                code.Value != "qa04.environment.tile-scope-authority-pending"),
-            "Implemented canonical TileScope authority must not remain an Environment dependency.");
 
         var binding = Qa04EnvironmentReferenceDecompositionV1.BindD1(0);
         var expectedTile = binding.Descriptor.RegionalTileIndex;
@@ -64,6 +50,19 @@ internal static class Qa04EnvironmentMaterializationDependencyContractSmoke
             rejected = true;
         }
         Require(rejected, "Environment D1 spatial scope binding must fail closed on a foreign target partition.");
+
+        var lineage = Qa04EnvironmentReferenceDecompositionV1.Get(Qa04EnvironmentLineageAuthorityV1.LineagePartitionId);
+        var lineageD0 = Qa04EnvironmentReferenceDecompositionV1.BindD0(lineage.D0StartOrdinal);
+        var lineageD1 = Qa04EnvironmentReferenceDecompositionV1.BindD1(lineage.D1StartOrdinal);
+        Require(Qa04EnvironmentLineageAuthorityV1.ResolveD0Subject(lineageD0).PartitionId.Value !=
+                Qa04EnvironmentLineageAuthorityV1.LineagePartitionId,
+            "Environment D0 lineage subject authority must target non-lineage material.");
+        Require(Qa04EnvironmentLineageAuthorityV1.ResolveD1Subject(lineageD1).PartitionId.Value !=
+                Qa04EnvironmentLineageAuthorityV1.LineagePartitionId,
+            "Environment D1 lineage subject authority must target non-lineage material.");
+        Require(Qa04EnvironmentLineageAuthorityV1.ResolveD1Parents(lineageD1).Count ==
+                Qa04EnvironmentLineageAuthorityV1.D1ParentCount,
+            "Environment D1 lineage authority must retain exact four-source provenance.");
 
         var d0 = Qa04ReferenceWorldDependencyContractV1.Blockers.Single(
             static blocker => blocker.DependencyId.Value == Qa04EnvironmentMaterializationDependencyContractV1.D0ParentWorldDependencyId);
