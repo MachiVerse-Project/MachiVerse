@@ -55,7 +55,8 @@ internal static class CrossDomainTransactionPersistentStateInitializer
                 active.Participants[0].DomainToken.Value == "resident" &&
                 active.Participants[0].CandidateEffectDigest.SequenceEqual(digest),
             "Persistent ACTIVE state must preserve candidate subjects/participant effect material.");
-        Require(active.CanonicalDigest().Length == 32 && active.CanonicalDigest().SequenceEqual(active.CanonicalDigest()),
+        var activeDigest = active.CanonicalDigest();
+        Require(activeDigest.Length == 32 && activeDigest.SequenceEqual(active.CanonicalDigest()),
             "Persistent transaction canonical digest must be stable and 32 bytes.");
 
         var committed = active.Commit(basisStep + 2);
@@ -65,9 +66,9 @@ internal static class CrossDomainTransactionPersistentStateInitializer
             "ACTIVE -> COMMITTED must preserve immutable identity and set terminal Step.");
         ExpectReject(() => committed.Commit(basisStep + 3), "terminal state must not be terminalized twice");
         ExpectReject(() => active.Commit(active.UpdatedStep), "terminalization must advance updated Step");
-
-        var stateSet = new CrossDomainTransactionStateSetV1([committed, active]);
-        ExpectReject(() => _ = stateSet, "duplicate transaction id must fail closed");
+        ExpectReject(
+            () => _ = new CrossDomainTransactionStateSetV1([committed, active]),
+            "duplicate transaction id must fail closed");
 
         var invalidCandidate = CrossDomainTransactionAssemblerV1.AssembleAndValidate(
             worldId,
