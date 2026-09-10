@@ -154,7 +154,7 @@ WHERE transaction_id=$transaction_id;
         var lifecycle = (TransactionLifecycleV1)lifecycleRaw;
         var created = U64Be.Decode((byte[])reader[2]);
         var updated = U64Be.Decode((byte[])reader[3]);
-        var terminal = reader.IsDBNull(4) ? null : U64Be.Decode((byte[])reader[4]);
+        ulong? terminal = reader.IsDBNull(4) ? null : U64Be.Decode((byte[])reader[4]);
         var wire = ((byte[])reader[5]).ToArray();
         var digest = ((byte[])reader[6]).ToArray();
         if (wire.Length == 0) throw new InvalidDataException("persistence.cross-domain-transaction-wire-empty");
