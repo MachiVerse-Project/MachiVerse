@@ -11,7 +11,7 @@ namespace MachiVerse.Simulation.Core.Performance;
 /// </summary>
 public static class Qa04SpatialTileScopeAuthorityV1
 {
-    public const ulong CanonicalScopeCount = 4_096;
+    public const int CanonicalScopeCount = 4_096;
     public const ulong InitialRevision = 1;
     public const uint InitialScopeFlags = 0;
 
@@ -55,25 +55,9 @@ public static class Qa04SpatialTileScopeAuthorityV1
     {
         ValidateCanonicalContract();
         ValidateTileIndex(tileIndex);
-
-        var identity = StandardDomainPartitionRegistry.Get(SpatialScopeRegistryPayloadV1.PartitionId);
-        return new DomainRecordEnvelopeV1<SpatialScopeRegistryPayloadV1>(
-            ScopeId(tileIndex),
-            identity.RecordSchema,
-            revision: InitialRevision,
-            createdStep: 0,
-            retiredStep: null,
-            detailLevel: DetailLevelV1.D2RegionalAggregate,
-            lineageRef: null,
-            payload: new SpatialScopeRegistryPayloadV1(
-                ScopeClass,
-                new PartitionRecordRefV1(
-                    SpatialTerrainGeometryRecordSchemaV2.PartitionId,
-                    Qa04TerrainRootMaterializerV1.RootId(tileIndex)),
-                ParentScope: null,
-                ActiveFrom: 0,
-                RetiredAt: null,
-                ScopeFlags: InitialScopeFlags));
+        return MaterializeTileValidated(
+            tileIndex,
+            StandardDomainPartitionRegistry.Get(SpatialScopeRegistryPayloadV1.PartitionId));
     }
 
     public static DomainPartitionStateV1<SpatialScopeRegistryPayloadV1> MaterializeCanonical()
