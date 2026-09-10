@@ -95,12 +95,7 @@ internal static class Qa04EnvironmentD0PartitionMaterializationSmoke
                 Qa04ReferenceGenesisValueSourceV1.SmallSignedValue(id, "wind_um_s.z")),
             VaporMassGram: checked((long)Qa04ReferenceGenesisValueSourceV1.PositiveCount(id, "vapor_mass_g")),
             LiquidMassGram: checked((long)Qa04ReferenceGenesisValueSourceV1.PositiveCount(id, "liquid_mass_g")),
-            Array.AsReadOnly(new[]
-            {
-                new KeyValuePair<string, uint>("perf.gas-a", 780_000_000u),
-                new KeyValuePair<string, uint>("perf.gas-b", 210_000_000u),
-                new KeyValuePair<string, uint>("perf.gas-c", 10_000_000u),
-            }));
+            Qa04EnvironmentGenesisContractV1.AtmosphereGasPpb);
     }
 
     private static EnvironmentGroundwaterPayloadV1 Groundwater(
