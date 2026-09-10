@@ -46,7 +46,7 @@ internal static class Qa04SpatialTileScopeAuthoritySmoke
         Qa04SpatialTileScopeAuthorityV1.ValidateTerrainReciprocalClosure(terrain);
 
         RequireThrows<ArgumentOutOfRangeException>(
-            static () => Qa04SpatialTileScopeAuthorityV1.ScopeId(Qa04ReferenceLoadV1.RegionalTileCount),
+            static () => Qa04SpatialTileScopeAuthorityV1.ScopeId(checked((ushort)Qa04ReferenceLoadV1.RegionalTileCount)),
             "QA-04 TileScope authority must reject tile indices outside the canonical lattice.");
     }
 
