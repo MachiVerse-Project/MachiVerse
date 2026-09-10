@@ -7,12 +7,22 @@ internal static class DomainRecordSchemaMigrationRegistryInitializer
     internal static void Initialize()
     {
         StandardDomainRecordSchemaMigrationRegistryV1.ValidateCanonicalContract();
-        Require(StandardDomainRecordSchemaMigrationRegistryV1.Entries.Count == 3,
-            "Only the exact Physical occupancy, Society market, and Terrain migrations may be registered at this checkpoint.");
+        Require(StandardDomainRecordSchemaMigrationRegistryV1.Entries.Count == 4,
+            "Only the exact Infrastructure topology, Physical occupancy, Society market, and Terrain migrations may be registered at this checkpoint.");
 
+        VerifyV1ToV2Migration("infrastructure.network_topology", "Infrastructure network topology");
         VerifyV1ToV2Migration("physical.occupancy", "Physical occupancy");
         VerifyV1ToV2Migration("society.market_transaction", "Society market transaction");
         VerifyV1ToV2Migration("spatial.terrain_geometry", "Terrain");
+
+        var infrastructure = StandardDomainPartitionRegistry.Get("infrastructure.network_topology");
+        var infrastructureMigration = StandardDomainRecordSchemaMigrationRegistryV1.Get(infrastructure.PartitionId.Value);
+        var migratedInfrastructureIdentity = infrastructure with { RecordSchema = infrastructureMigration.TargetRecordSchema };
+        Require(StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedPartitionIdentity(migratedInfrastructureIdentity),
+            "Infrastructure network topology identity with only the registered record-schema migration must be allowed.");
+        Require(!StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedPartitionIdentity(
+                migratedInfrastructureIdentity with { OwnerDomainRank = checked((ushort)(infrastructure.OwnerDomainRank + 1)) }),
+            "Infrastructure network topology migration compatibility must not relax non-schema partition identity fields.");
 
         var terrain = StandardDomainPartitionRegistry.Get("spatial.terrain_geometry");
         var terrainMigration = StandardDomainRecordSchemaMigrationRegistryV1.Get(terrain.PartitionId.Value);
