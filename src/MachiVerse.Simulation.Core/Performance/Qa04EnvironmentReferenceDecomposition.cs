@@ -29,7 +29,8 @@ public sealed record Qa04EnvironmentD1BindingV1(
 
 /// <summary>
 /// Exact Alpha 1.1 partition decomposition for the two Environment benchmark classes. This contract
-/// owns only ordinal-to-partition/source mapping. Payload genesis values and cross-partition Ref
+/// owns ordinal-to-partition/source mapping and the normative same-partition D0 topology used by
+/// groundwater, surface-water, and ocean genesis. Payload genesis values and cross-partition Ref
 /// material remain the responsibility of the Environment materializer.
 /// </summary>
 public static class Qa04EnvironmentReferenceDecompositionV1
@@ -58,6 +59,16 @@ public static class Qa04EnvironmentReferenceDecompositionV1
             Slice("environment.hazard",             980_000,10_000,       245_000,2_500),
             Slice("environment.environment_lineage",990_000,10_000,       247_500,2_500),
         });
+
+    private static readonly IReadOnlySet<string> NextRecordTopologyPartitions = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "environment.groundwater",
+        "environment.surface_water",
+        "environment.ocean",
+    };
+
+    private static readonly Lazy<IReadOnlyDictionary<string, IReadOnlyDictionary<OpaqueId128, PartitionRecordRefV1>>>
+        NextRecordTopology = new(BuildNextRecordTopology, LazyThreadSafetyMode.ExecutionAndPublication);
 
     public static IReadOnlyList<Qa04EnvironmentPartitionDecompositionV1> Partitions => PartitionsValue;
 
@@ -89,6 +100,13 @@ public static class Qa04EnvironmentReferenceDecompositionV1
             throw new InvalidDataException("qa04.environment.decomposition.total-count");
         if (PartitionsValue.Select(static x => x.PartitionId).Distinct().Count() != PartitionsValue.Count)
             throw new InvalidDataException("qa04.environment.decomposition.partition-duplicate");
+
+        foreach (var partitionId in NextRecordTopologyPartitions)
+        {
+            var slice = Get(partitionId);
+            if (slice.D0Count <= 1)
+                throw new InvalidDataException($"qa04.environment.decomposition.topology-requires-multiple-records:{partitionId}");
+        }
     }
 
     public static Qa04EnvironmentD0BindingV1 BindD0(ulong globalOrdinal)
@@ -117,9 +135,50 @@ public static class Qa04EnvironmentReferenceDecompositionV1
             Array.AsReadOnly(sources));
     }
 
+    /// <summary>
+    /// Returns the canonical same-partition successor for benchmark topology fields. Ordering is by
+    /// RecordId ascending, not descriptor ordinal. The final record wraps to the first record.
+    /// </summary>
+    public static PartitionRecordRefV1 NextD0RecordRef(string partitionId, OpaqueId128 currentRecordId)
+    {
+        if (!NextRecordTopologyPartitions.Contains(partitionId))
+            throw new ArgumentException($"Partition has no canonical next-record topology: {partitionId}", nameof(partitionId));
+        if (currentRecordId.IsZero)
+            throw new ArgumentException("currentRecordId ZERO is invalid.", nameof(currentRecordId));
+        if (!NextRecordTopology.Value[partitionId].TryGetValue(currentRecordId, out var next))
+            throw new KeyNotFoundException($"Record is not a canonical D0 member of {partitionId}: {currentRecordId}");
+        return next;
+    }
+
     public static Qa04EnvironmentPartitionDecompositionV1 Get(string partitionId)
         => PartitionsValue.SingleOrDefault(x => x.PartitionId.Value == partitionId)
             ?? throw new KeyNotFoundException($"Unknown QA-04 Environment partition: {partitionId}");
+
+    private static IReadOnlyDictionary<string, IReadOnlyDictionary<OpaqueId128, PartitionRecordRefV1>> BuildNextRecordTopology()
+    {
+        var result = new Dictionary<string, IReadOnlyDictionary<OpaqueId128, PartitionRecordRefV1>>(StringComparer.Ordinal);
+        foreach (var partitionId in NextRecordTopologyPartitions.OrderBy(static value => value, StringComparer.Ordinal))
+        {
+            var slice = Get(partitionId);
+            var ordered = Enumerable.Range(0, checked((int)slice.D0Count))
+                .Select(offset => Qa04ReferenceLoadV1.Record(D0ReferenceClass, checked(slice.D0StartOrdinal + (ulong)offset)).RecordId)
+                .OrderBy(static recordId => recordId)
+                .ToArray();
+            if (ordered.Length != checked((int)slice.D0Count) || ordered.Distinct().Count() != ordered.Length)
+                throw new InvalidDataException($"qa04.environment.decomposition.topology-record-id-drift:{partitionId}");
+
+            var nextByRecord = new Dictionary<OpaqueId128, PartitionRecordRefV1>(ordered.Length);
+            var partitionToken = new StableToken(partitionId);
+            for (var index = 0; index < ordered.Length; index++)
+            {
+                var current = ordered[index];
+                var next = ordered[(index + 1) % ordered.Length];
+                nextByRecord.Add(current, new PartitionRecordRefV1(partitionToken, next));
+            }
+            result.Add(partitionId, nextByRecord);
+        }
+        return result;
+    }
 
     private static Qa04EnvironmentPartitionDecompositionV1 FindD0(ulong ordinal)
         => PartitionsValue.First(slice => ordinal >= slice.D0StartOrdinal && ordinal < slice.D0EndExclusive);
