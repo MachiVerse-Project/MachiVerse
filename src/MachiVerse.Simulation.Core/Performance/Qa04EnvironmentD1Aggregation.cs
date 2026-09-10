@@ -108,6 +108,12 @@ public static class Qa04EnvironmentD1AggregationV1
         return checked(values.Max() + 1UL);
     }
 
+    public static int MaxStep(IReadOnlyList<int> values)
+    {
+        RequireFour(values);
+        return values.Max();
+    }
+
     public static ulong MaxStep(IReadOnlyList<ulong> values)
     {
         RequireFour(values);
