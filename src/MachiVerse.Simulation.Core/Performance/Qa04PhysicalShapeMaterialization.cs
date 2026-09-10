@@ -44,7 +44,14 @@ public static class Qa04PhysicalShapeMaterializerV1
     {
         ValidateCanonicalContract();
         ArgumentNullException.ThrowIfNull(terrainRootForTile);
+        return CreateShapeRecordValidated(physicalOrdinal, terrainRootForTile);
+    }
 
+    internal static PhysicalOccupancyRecordMaterialV2 CreateShapeRecordValidated(
+        ulong physicalOrdinal,
+        Func<ushort, PartitionRecordRefV1> terrainRootForTile)
+    {
+        ArgumentNullException.ThrowIfNull(terrainRootForTile);
         var descriptor = Qa04ReferenceLoadV1.Record(PhysicalReferenceClass, physicalOrdinal);
         var recordId = DerivedIdentity.DeriveEntityId(
             Qa04ReferenceLoadV1.WorldId,
@@ -68,9 +75,10 @@ public static class Qa04PhysicalShapeMaterializerV1
     public static IEnumerable<PhysicalOccupancyRecordMaterialV2> MaterializeCanonicalShapes(
         Func<ushort, PartitionRecordRefV1> terrainRootForTile)
     {
+        ValidateCanonicalContract();
         ArgumentNullException.ThrowIfNull(terrainRootForTile);
         for (ulong ordinal = 0; ordinal < CanonicalPhysicalCount; ordinal++)
-            yield return CreateShapeRecord(ordinal, terrainRootForTile);
+            yield return CreateShapeRecordValidated(ordinal, terrainRootForTile);
     }
 
     public static ulong ExpectedShapeCount(string shapeKind)
