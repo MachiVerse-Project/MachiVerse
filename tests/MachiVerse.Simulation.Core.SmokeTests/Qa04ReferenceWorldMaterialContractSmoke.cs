@@ -11,8 +11,8 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
 
         Require(Qa04ReferenceWorldMaterialContractV1.Bindings.Count == 8,
             "QA-04 material contract must cover all eight canonical reference classes.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 8,
-            "QA-04 dependency contract must remain a separate eight-blocker normative gate.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 7,
+            "QA-04 dependency contract must remain a separate seven-blocker normative gate.");
         Require(!Qa04ReferenceWorldMaterialContractV1.AllProductionMaterializersAvailable,
             "QA-04 reference world must remain fail-closed while material bindings are unresolved.");
 
@@ -23,7 +23,13 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
                 resident.BlockingFailureCode is null,
             "QA-04 Resident production material binding drifted.");
 
-        RequireState("physical.d0-presence", Qa04ReferenceMaterialBindingStateV1.BlockedByRecordSchema);
+        var physical = Qa04ReferenceWorldMaterialContractV1.Get(new StableToken("physical.d0-presence"));
+        Require(physical.ProductionMaterializerAvailable &&
+                physical.CanonicalCount == Qa04PhysicalD0MaterializerV1.CanonicalPhysicalCount &&
+                physical.PrimaryPartitionId?.Value == "physical.presence" &&
+                physical.BlockingFailureCode is null,
+            "QA-04 Physical D0 production material binding drifted.");
+
         RequireState("environment.d0-cell-cohort", Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping);
         RequireState("environment.d1-aggregate", Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping);
         RequireState("society-governance.active-record", Qa04ReferenceMaterialBindingStateV1.BlockedByPartitionMapping);
@@ -34,14 +40,13 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
         var blocked = Qa04ReferenceWorldMaterialContractV1.Bindings
             .Where(static binding => !binding.ProductionMaterializerAvailable)
             .ToArray();
-        Require(blocked.Length == 7,
+        Require(blocked.Length == 6,
             "QA-04 unresolved reference class count drifted.");
         Require(blocked.All(static binding => binding.BlockingFailureCode is not null),
             "QA-04 blocked material binding must expose a stable failure code.");
 
         var expectedBlockers = new[]
         {
-            "qa04.material.physical-presence-shape-authority-undefined",
             "qa04.material.environment-d0-partition-mapping-undefined",
             "qa04.material.environment-d1-partition-mapping-undefined",
             "qa04.material.society-governance-partition-mapping-undefined",
@@ -77,7 +82,7 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
             Qa04ReferenceWorldMaterialContractV1.RequireAllProductionMaterializersAvailable();
         }
         catch (InvalidDataException ex) when (
-            ex.Message == "qa04.material.physical-presence-shape-authority-undefined")
+            ex.Message == "qa04.material.environment-d0-partition-mapping-undefined")
         {
             rejected = true;
         }
