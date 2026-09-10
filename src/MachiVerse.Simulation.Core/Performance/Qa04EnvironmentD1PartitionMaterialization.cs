@@ -5,20 +5,42 @@ namespace MachiVerse.Simulation.Core.Performance;
 /// <summary>
 /// Production envelope/partition materializer for canonical Environment D1 descriptors. Exact
 /// descriptor identity, same-partition four-source binding, schema, and genesis envelope are owned
-/// here. Aggregate payload construction remains explicit so unresolved spatial-scope/lineage
-/// authority cannot be silently synthesized.
+/// here. Aggregate payload construction remains explicit so unresolved lineage authority cannot be
+/// silently synthesized.
 /// </summary>
 public static class Qa04EnvironmentD1PartitionMaterializerV1
 {
     public const ulong InitialRecordRevision = 1;
     public const ulong InitialCreatedStep = 0;
+    public const string SpatialScopePartitionId = Qa04EnvironmentD0PartitionMaterializerV1.SpatialScopePartitionId;
 
     public static void ValidateCanonicalContract()
     {
         Qa04EnvironmentReferenceDecompositionV1.ValidateCanonicalContract();
         Qa04EnvironmentD1AggregationV1.ValidateCanonicalContract();
+        _ = StandardDomainPartitionRegistry.Get(SpatialScopePartitionId);
         if (InitialRecordRevision != 1 || InitialCreatedStep != 0)
             throw new InvalidDataException("qa04.environment.d1-genesis-envelope-drift");
+    }
+
+    /// <summary>
+    /// Resolves the D1 descriptor's own canonical regional tile through the same Spatial authority
+    /// seam used by D0. D1 does not derive scope by guessing from its four source records; the
+    /// perf.reference.v1 descriptor already owns the RegionalTileIndex deterministically.
+    /// </summary>
+    public static PartitionRecordRefV1 ResolveSpatialScope(
+        Qa04EnvironmentD1BindingV1 binding,
+        Func<ushort, PartitionRecordRefV1> tileScopeForTile)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        ArgumentNullException.ThrowIfNull(tileScopeForTile);
+        if (binding.Descriptor.RegionalTileIndex >= Qa04ReferenceLoadV1.RegionalTileCount)
+            throw new InvalidDataException("qa04.environment.d1-regional-tile-range");
+
+        var scope = tileScopeForTile(binding.Descriptor.RegionalTileIndex);
+        if (scope.PartitionId.Value != SpatialScopePartitionId || scope.RecordId.IsZero)
+            throw new InvalidDataException("qa04.environment.d1-spatial-scope-ref-invalid");
+        return scope;
     }
 
     public static DomainPartitionStateV1<TPayload> MaterializeCanonicalPartition<TPayload>(
