@@ -22,7 +22,9 @@ public sealed class SocietyMarketTransactionSnapshotSectionProviderV2 : IDomainP
         if (authority is not SocietyMarketTransactionSnapshotAuthorityV2 market)
             throw new InvalidDataException("persistence.snapshot.society-market-v2-provider-authority-type");
         market.VerifyBoundAuthority();
-        foreach (var record in market.Partition.RecordSet.RecordsCanonical)
+        var records = market.Partition.RecordSet.RecordsCanonical;
+        SocietyMarketTransactionReferenceClosureV2.Validate(records);
+        foreach (var record in records)
             _ = SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(record.Payload, references);
 
         var fragments = BuildFragments(market);
@@ -174,6 +176,7 @@ public sealed class SocietyMarketTransactionSnapshotSectionProviderV2 : IDomainP
         if (expectedHeader.ItemCount == 0 && fragments.Count != 1)
             throw new InvalidDataException("persistence.snapshot.society-market-v2-empty-fragment-count");
 
+        SocietyMarketTransactionReferenceClosureV2.Validate(records);
         var partition = new SocietyMarketTransactionPartitionStateV2(records);
         var authority = new SocietyMarketTransactionSnapshotAuthorityV2(partition, expectedHeader);
         authority.VerifyBoundAuthority();
