@@ -69,7 +69,7 @@ internal static class InfrastructureNetworkTopologyV2Initializer
                 new[] { operatorRef },
                 new[] { scopeRef },
                 new StableToken("active"),
-                topologyRevision: 9));
+                TopologyRevision: 9));
         var migrated = InfrastructureNetworkTopologyRecordMaterialV2.MigrateLegacyNetwork(legacy);
         var migratedPayload = migrated.Payload as InfrastructureNetworkPayloadV2
             ?? throw new InvalidOperationException("Infrastructure v1 migration must produce network arm.");
