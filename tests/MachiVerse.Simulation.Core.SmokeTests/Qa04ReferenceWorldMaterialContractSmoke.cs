@@ -11,8 +11,8 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
 
         Require(Qa04ReferenceWorldMaterialContractV1.Bindings.Count == 8,
             "QA-04 material contract must cover all eight canonical reference classes.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 9,
-            "QA-04 dependency contract must remain a separate nine-blocker normative gate.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 8,
+            "QA-04 dependency contract must remain a separate eight-blocker normative gate.");
         Require(!Qa04ReferenceWorldMaterialContractV1.AllProductionMaterializersAvailable,
             "QA-04 reference world must remain fail-closed while material bindings are unresolved.");
 
@@ -67,7 +67,6 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
             .ToArray();
         Require(dependencyOnly.SequenceEqual(new[]
             {
-                "qa04.material.body-region-state-schema-undefined",
                 "qa04.material.market-ref-authority-undefined",
             }, StringComparer.Ordinal),
             "QA-04 dependency-only blockers must remain distinct from the eight top-level material classes.");
