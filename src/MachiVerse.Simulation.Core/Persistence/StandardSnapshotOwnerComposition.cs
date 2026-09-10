@@ -49,6 +49,30 @@ public static class StandardSnapshotOwnerCompositionV1
         return CombineAll103(coreSections, domainAuthorities, domainProviders);
     }
 
+    /// <summary>
+    /// Production v2 composition from the authoritative RunningSnapshot cut. Cross-domain
+    /// transactions are decoded from the same-SQLite-read durable rows captured by the freeze
+    /// boundary; callers cannot substitute an independent logical transaction list.
+    /// </summary>
+    public static IReadOnlyList<CanonicalSnapshotSectionMaterialV1> CreateAll103V2(
+        RunningSnapshotCutV1 runningCut,
+        DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
+        IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders)
+    {
+        ArgumentNullException.ThrowIfNull(runningCut);
+        ArgumentNullException.ThrowIfNull(domainAuthorities);
+        ArgumentNullException.ThrowIfNull(domainProviders);
+        var coreCut = runningCut.CoreOwnerMaterial
+            ?? throw new InvalidDataException("persistence.snapshot.operation-v2-core-owner-material-missing");
+        RequireSameFrozenHeader(coreCut.Header, runningCut.FrozenState.Header);
+        RequireSameFrozenHeader(coreCut.Header, domainAuthorities.FrozenState.Header);
+
+        var transactions = CoreOperationStateSnapshotCutV2.DecodeTransactions(
+            runningCut.CrossDomainTransactions,
+            runningCut.SnapshotStep);
+        return CreateAll103V2(coreCut, transactions, domainAuthorities, domainProviders);
+    }
+
     public static CanonicalSnapshotSemanticVerifierRegistryV1 CreateSemanticVerifierRegistry(
         CoreSnapshotOwnerMaterialCutV1 coreCut,
         DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
@@ -60,6 +84,18 @@ public static class StandardSnapshotOwnerCompositionV1
         DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
         IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders)
         => CreateSemanticVerifierRegistryInternal(coreCut, domainAuthorities, domainProviders, operationV2: true);
+
+    public static CanonicalSnapshotSemanticVerifierRegistryV1 CreateSemanticVerifierRegistryV2(
+        RunningSnapshotCutV1 runningCut,
+        DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
+        IEnumerable<IDomainPartitionSnapshotSectionProviderV1> domainProviders)
+    {
+        ArgumentNullException.ThrowIfNull(runningCut);
+        var coreCut = runningCut.CoreOwnerMaterial
+            ?? throw new InvalidDataException("persistence.snapshot.operation-v2-core-owner-material-missing");
+        RequireSameFrozenHeader(coreCut.Header, runningCut.FrozenState.Header);
+        return CreateSemanticVerifierRegistryV2(coreCut, domainAuthorities, domainProviders);
+    }
 
     private static IReadOnlyList<CanonicalSnapshotSectionMaterialV1> CombineAll103(
         IReadOnlyList<CanonicalSnapshotSectionMaterialV1> coreSections,
