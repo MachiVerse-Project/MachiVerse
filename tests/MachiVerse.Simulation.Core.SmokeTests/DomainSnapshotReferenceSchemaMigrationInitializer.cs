@@ -8,9 +8,32 @@ internal static class DomainSnapshotReferenceSchemaMigrationInitializer
     [ModuleInitializer]
     internal static void Initialize()
     {
+        VerifyResolverPreservesRegisteredPhysicalOccupancyV2();
         VerifyResolverPreservesRegisteredTerrainV2();
         VerifyResolverRejectsUnregisteredSchema();
         VerifyCrossPartitionReferenceValidationUsesMigrationRegistry();
+    }
+
+    private static void VerifyResolverPreservesRegisteredPhysicalOccupancyV2()
+    {
+        var occupancyId = Id("00000000000000000000000000025001");
+        var migration = StandardDomainRecordSchemaMigrationRegistryV1.Get("physical.occupancy");
+        var sources = StandardDomainPartitionRegistry.Entries
+            .Select(identity => (IDomainPartitionSnapshotReferenceSourceV1)new FakeSource(
+                identity.PartitionId,
+                identity.PartitionId.Value == "physical.occupancy"
+                    ? migration.TargetRecordSchema
+                    : identity.RecordSchema,
+                identity.PartitionId.Value == "physical.occupancy"
+                    ? new[] { occupancyId }
+                    : Array.Empty<OpaqueId128>()))
+            .ToArray();
+
+        var resolver = new DomainSnapshotReferenceResolverV1(sources);
+        var reference = new PartitionRecordRefV1("physical.occupancy", occupancyId);
+        Require(resolver.Exists(reference), "all-97 resolver must preserve migrated Physical occupancy record existence.");
+        Require(resolver.TryGetRecordSchema(reference, out var actual) && actual == migration.TargetRecordSchema,
+            "all-97 resolver must preserve the actual registered Physical occupancy v2 schema rather than rewriting it to v1.");
     }
 
     private static void VerifyResolverPreservesRegisteredTerrainV2()
