@@ -18,9 +18,8 @@ public sealed record Qa04EnvironmentMaterializationDependencyV1(
 /// <summary>
 /// Fail-closed implementation audit beneath the two Environment world blockers. Exact D0/D1
 /// partition decomposition, four-to-one source coverage, fixed vocabulary, topology, common
-/// genesis hash source, and descriptor-owned D0/D1 spatial-scope selection are implemented. The
-/// remaining entries are only authority bindings that cannot be inferred without inventing actual
-/// canonical target records.
+/// genesis hash source, descriptor-owned D0/D1 spatial-scope selection, and canonical TileScope
+/// authority are implemented. Only lineage subject bindings remain beneath these world blockers.
 /// </summary>
 public static class Qa04EnvironmentMaterializationDependencyContractV1
 {
@@ -39,10 +38,6 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
             "environment.materialization.d1-lineage-subject-binding",
             Qa04EnvironmentMaterializationDependencyKindV1.LineageSubjectBinding,
             "qa04.environment.d1-lineage-subject-binding-pending"),
-        Blocker(
-            "environment.materialization.tile-scope-authority",
-            Qa04EnvironmentMaterializationDependencyKindV1.SpatialScopeAuthority,
-            "qa04.environment.tile-scope-authority-pending"),
     }
     .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
     .ToArray());
@@ -57,8 +52,9 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
         Qa04EnvironmentReferenceDecompositionV1.ValidateCanonicalContract();
         Qa04EnvironmentD0PartitionMaterializerV1.ValidateCanonicalContract();
         Qa04EnvironmentD1PartitionMaterializerV1.ValidateCanonicalContract();
+        Qa04SpatialTileScopeAuthorityV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 3)
+        if (BlockersValue.Count != 2)
             throw new InvalidDataException("qa04.environment.materialization-dependency-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.environment.materialization-dependency-id-duplicate");
@@ -84,14 +80,16 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
         if (hash.Length != 32)
             throw new InvalidDataException("qa04.environment.materialization-genesis-source-drift");
 
+        var d0 = Qa04EnvironmentReferenceDecompositionV1.BindD0(0);
         var d1 = Qa04EnvironmentReferenceDecompositionV1.BindD1(0);
-        var probeScope = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(
-            d1,
-            tile => new PartitionRecordRefV1(
-                new StableToken(Qa04EnvironmentD1PartitionMaterializerV1.SpatialScopePartitionId),
-                Qa04ReferenceLoadV1.Record(new StableToken("resident.persistent-identity"), tile).RecordId));
-        if (probeScope.PartitionId.Value != Qa04EnvironmentD1PartitionMaterializerV1.SpatialScopePartitionId || probeScope.RecordId.IsZero)
-            throw new InvalidDataException("qa04.environment.d1-spatial-scope-binding-drift");
+        var d0Scope = Qa04EnvironmentD0PartitionMaterializerV1.ResolveSpatialScope(d0);
+        var d1Scope = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(d1);
+        if (d0Scope != Qa04SpatialTileScopeAuthorityV1.ScopeRef(d0.Descriptor.RegionalTileIndex) ||
+            d1Scope != Qa04SpatialTileScopeAuthorityV1.ScopeRef(d1.Descriptor.RegionalTileIndex))
+            throw new InvalidDataException("qa04.environment.canonical-tile-scope-binding-drift");
+
+        if (FailureCodes.Any(static code => code.Value == "qa04.environment.tile-scope-authority-pending"))
+            throw new InvalidDataException("qa04.environment.implemented-tile-scope-dependency-retained");
     }
 
     private static void RequireParent(string dependencyId, string failureCode)
