@@ -95,10 +95,10 @@ public sealed class Qa04TerrainCanonicalContentSourceV1 : IQa04TerrainBrickConte
         var centerYmm = checked((long)globalBrickY * D0BrickWidthMm + D0BrickWidthMm / 2);
         var brickZ = FloorDiv(HeightMm(centerXmm, centerYmm), D0BrickWidthMm);
         return new SpatialCellKeyV1(
-            level: 0,
-            X: checked(globalBrickX * TerrainBrickV1.CellsPerAxis),
-            Y: checked(globalBrickY * TerrainBrickV1.CellsPerAxis),
-            Z: checked((int)(brickZ * TerrainBrickV1.CellsPerAxis)));
+            0,
+            checked(globalBrickX * TerrainBrickV1.CellsPerAxis),
+            checked(globalBrickY * TerrainBrickV1.CellsPerAxis),
+            checked((int)(brickZ * TerrainBrickV1.CellsPerAxis)));
     }
 
     public static int HeightMm(long xMm, long yMm)
