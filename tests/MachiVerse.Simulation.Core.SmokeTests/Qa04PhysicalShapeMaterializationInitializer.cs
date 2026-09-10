@@ -45,6 +45,46 @@ internal static class Qa04PhysicalShapeMaterializationInitializer
             "QA-04 physical shape must use occupancy schema v2.");
         Require(first.DetailLevel == DetailLevelV1.D0Entity && first.Revision == 1 && first.CreatedStep == 0,
             "QA-04 physical shape genesis envelope drifted.");
+
+        VerifyCanonicalFiveHundredThousandShapeStream();
+    }
+
+    private static void VerifyCanonicalFiveHundredThousandShapeStream()
+    {
+        ulong total = 0;
+        ulong spheres = 0;
+        ulong capsules = 0;
+        ulong boxes = 0;
+        ulong convexes = 0;
+        ulong meshes = 0;
+        ulong terrain = 0;
+
+        foreach (var record in Qa04PhysicalShapeMaterializerV1.MaterializeCanonicalShapes(TerrainRoot))
+        {
+            Require(record.RecordSchema == PhysicalOccupancyRecordSchemaV2.RecordSchema,
+                "Every canonical Physical shape must use occupancy schema v2.");
+            Require(record.DetailLevel == DetailLevelV1.D0Entity && record.Revision == 1 && record.CreatedStep == 0,
+                "Every canonical Physical shape must retain the genesis record envelope.");
+            var shape = record.Payload as PhysicalCollisionShapePayloadV2
+                ?? throw new InvalidOperationException("Canonical Physical shape stream emitted a non-shape payload.");
+            switch (shape.ShapeKind)
+            {
+                case PhysicalOccupancyRecordSchemaV2.SphereShapeKind: spheres++; break;
+                case PhysicalOccupancyRecordSchemaV2.CapsuleShapeKind: capsules++; break;
+                case PhysicalOccupancyRecordSchemaV2.OrientedBoxShapeKind: boxes++; break;
+                case PhysicalOccupancyRecordSchemaV2.ConvexPolytopeShapeKind: convexes++; break;
+                case PhysicalOccupancyRecordSchemaV2.TriangleMeshStaticShapeKind: meshes++; break;
+                case PhysicalOccupancyRecordSchemaV2.TerrainSdfRefShapeKind: terrain++; break;
+                default: throw new InvalidOperationException($"Unexpected canonical Physical shape kind: {shape.ShapeKind}");
+            }
+            total++;
+        }
+
+        Require(total == Qa04PhysicalShapeMaterializerV1.CanonicalPhysicalCount,
+            "Canonical Physical shape stream must materialize exactly 500,000 records.");
+        Require(spheres == 250_000 && capsules == 100_000 && boxes == 100_000 &&
+                convexes == 40_000 && meshes == 5_000 && terrain == 5_000,
+            "Canonical 500,000 Physical shape stream must preserve the exact shape mix.");
     }
 
     private static void VerifyKind(ulong ordinal, string expected)
