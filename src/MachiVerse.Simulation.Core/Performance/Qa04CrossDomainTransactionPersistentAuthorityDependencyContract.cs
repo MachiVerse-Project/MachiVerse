@@ -21,14 +21,10 @@ public sealed record Qa04CrossDomainTransactionPersistentAuthorityDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// perf.reference.v1 の steady active CrossDomainTransaction 10,000件を、Step を跨ぐ
-/// authoritative state として保持・Snapshot・recovery するために残っている正本依存を列挙する。
-///
-/// CrossDomainTransactionCandidateV1 は StepCandidate 内の非 authoritative candidate であり、
-/// valid candidate や transition commit の存在だけを persistent active-set authority とみなしてはならない。
-/// この契約は Qa04ReferenceWorldDependencyContractV1 の PersistentAuthority blocker 1件の
-/// 下位診断契約であり、reference-world blocker 数や互換 failure code は変更しない。
-/// workload 側の transaction creation binding とも別契約として扱う。
+/// Remaining implementation dependencies beneath the single reference-world persistent-authority
+/// blocker. The persistent logical state schema and lifecycle transition semantics are implemented
+/// by CrossDomainTransactionStateV1; this contract therefore tracks only the still-missing durable
+/// owner/Snapshot/history/recovery/detail-guard/benchmark bindings.
 /// </summary>
 public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1
 {
@@ -56,10 +52,6 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.HistoryCommitBinding,
             "qa04.cross-domain-transaction.history-commit-binding-undefined"),
         Blocker(
-            "cross-domain-transaction.persistence.lifecycle-semantics",
-            Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.LifecycleSemantics,
-            "qa04.cross-domain-transaction.lifecycle-semantics-undefined"),
-        Blocker(
             "cross-domain-transaction.persistence.recovery-reconstruction",
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.RecoveryReconstruction,
             "qa04.cross-domain-transaction.recovery-reconstruction-undefined"),
@@ -67,10 +59,6 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
             "cross-domain-transaction.persistence.snapshot-authority",
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.SnapshotAuthority,
             "qa04.cross-domain-transaction.snapshot-authority-undefined"),
-        Blocker(
-            "cross-domain-transaction.persistence.state-schema",
-            Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.StateSchema,
-            "qa04.cross-domain-transaction.state-schema-undefined"),
     }
     .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
     .ToArray());
@@ -86,7 +74,7 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         Qa04CanonicalWorkloadDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 8)
+        if (BlockersValue.Count != 6)
             throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-id-duplicate");
@@ -100,6 +88,7 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
             throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-order");
 
         ValidateEstablishedRuntimeBoundary();
+        ValidateImplementedPersistentStateBoundary();
         ValidateParentWorldBlocker();
         ValidateSeparateWorkloadBlocker();
     }
@@ -118,6 +107,18 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         var first = Qa04ReferenceScenariosV1.ActiveTransaction(0);
         if (first.TransactionId.IsZero || first.SubjectIds.Count != 2 || first.SubjectIds.Any(static id => id.IsZero))
             throw new InvalidDataException("qa04.cross-domain-transaction.reference-descriptor-drift");
+    }
+
+    private static void ValidateImplementedPersistentStateBoundary()
+    {
+        if (!Enum.IsDefined(TransactionLifecycleV1.Active) ||
+            !Enum.IsDefined(TransactionLifecycleV1.Committed) ||
+            !Enum.IsDefined(TransactionLifecycleV1.Aborted))
+            throw new InvalidDataException("qa04.cross-domain-transaction.lifecycle-state-drift");
+        if (FailureCodes.Any(static code =>
+                code.Value is "qa04.cross-domain-transaction.state-schema-undefined" or
+                    "qa04.cross-domain-transaction.lifecycle-semantics-undefined"))
+            throw new InvalidDataException("qa04.cross-domain-transaction.implemented-state-dependency-retained");
     }
 
     private static void ValidateParentWorldBlocker()
