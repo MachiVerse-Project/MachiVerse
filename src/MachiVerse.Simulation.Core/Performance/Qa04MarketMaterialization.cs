@@ -51,6 +51,33 @@ public static class Qa04MarketMaterializerV1
     {
         ArgumentNullException.ThrowIfNull(tileScopeForTile);
         ValidateCanonicalContract();
+        return CreateMarketStateValidated(scopeOrdinal, tileScopeForTile, out identityBinding);
+    }
+
+    public static SocietyMarketTransactionRecordMaterialV2 CreateOrder(
+        ulong globalOrderOrdinal,
+        out Qa04MarketDescriptorIdentityBindingV1 identityBinding)
+    {
+        ValidateCanonicalContract();
+        return CreateOrderValidated(globalOrderOrdinal, out identityBinding);
+    }
+
+    public static IEnumerable<SocietyMarketTransactionRecordMaterialV2> MaterializeCanonical(
+        Func<ushort, PartitionRecordRefV1> tileScopeForTile)
+    {
+        ArgumentNullException.ThrowIfNull(tileScopeForTile);
+        ValidateCanonicalContract();
+        for (uint scope = 0; scope < CanonicalMarketStateCount; scope++)
+            yield return CreateMarketStateValidated(scope, tileScopeForTile, out _);
+        for (ulong order = 0; order < CanonicalOrderCount; order++)
+            yield return CreateOrderValidated(order, out _);
+    }
+
+    private static SocietyMarketTransactionRecordMaterialV2 CreateMarketStateValidated(
+        uint scopeOrdinal,
+        Func<ushort, PartitionRecordRefV1> tileScopeForTile,
+        out Qa04MarketDescriptorIdentityBindingV1 identityBinding)
+    {
         if (scopeOrdinal >= CanonicalMarketStateCount)
             throw new ArgumentOutOfRangeException(nameof(scopeOrdinal));
 
@@ -89,11 +116,10 @@ public static class Qa04MarketMaterializerV1
                 lastClearingPriceMicrounit: null));
     }
 
-    public static SocietyMarketTransactionRecordMaterialV2 CreateOrder(
+    private static SocietyMarketTransactionRecordMaterialV2 CreateOrderValidated(
         ulong globalOrderOrdinal,
         out Qa04MarketDescriptorIdentityBindingV1 identityBinding)
     {
-        ValidateCanonicalContract();
         if (globalOrderOrdinal >= CanonicalOrderCount)
             throw new ArgumentOutOfRangeException(nameof(globalOrderOrdinal));
 
@@ -140,16 +166,5 @@ public static class Qa04MarketMaterializerV1
                 quantity,
                 eligibleStep: 0,
                 Open));
-    }
-
-    public static IEnumerable<SocietyMarketTransactionRecordMaterialV2> MaterializeCanonical(
-        Func<ushort, PartitionRecordRefV1> tileScopeForTile)
-    {
-        ArgumentNullException.ThrowIfNull(tileScopeForTile);
-        ValidateCanonicalContract();
-        for (uint scope = 0; scope < CanonicalMarketStateCount; scope++)
-            yield return CreateMarketState(scope, tileScopeForTile, out _);
-        for (ulong order = 0; order < CanonicalOrderCount; order++)
-            yield return CreateOrder(order, out _);
     }
 }
