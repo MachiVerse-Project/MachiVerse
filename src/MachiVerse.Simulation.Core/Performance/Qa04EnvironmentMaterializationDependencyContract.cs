@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
@@ -86,7 +87,7 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
         var d1 = Qa04EnvironmentReferenceDecompositionV1.BindD1(0);
         var probeScope = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(
             d1,
-            tile => new WorldState.PartitionRecordRefV1(
+            tile => new PartitionRecordRefV1(
                 new StableToken(Qa04EnvironmentD1PartitionMaterializerV1.SpatialScopePartitionId),
                 Qa04ReferenceLoadV1.Record(new StableToken("resident.persistent-identity"), tile).RecordId));
         if (probeScope.PartitionId.Value != Qa04EnvironmentD1PartitionMaterializerV1.SpatialScopePartitionId || probeScope.RecordId.IsZero)
