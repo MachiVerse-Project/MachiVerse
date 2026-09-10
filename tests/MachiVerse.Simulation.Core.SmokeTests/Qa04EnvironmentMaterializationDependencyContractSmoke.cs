@@ -10,9 +10,9 @@ internal static class Qa04EnvironmentMaterializationDependencyContractSmoke
     {
         Qa04EnvironmentMaterializationDependencyContractV1.ValidateCanonicalContract();
 
-        Require(Qa04EnvironmentMaterializationDependencyContractV1.Blockers.Count == 3,
+        Require(Qa04EnvironmentMaterializationDependencyContractV1.Blockers.Count == 2,
             "QA-04 Environment materialization dependency count drifted.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 6,
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 5,
             "Environment subdependencies must not change the reference-world blocker count.");
 
         var expected = new[]
@@ -21,19 +21,24 @@ internal static class Qa04EnvironmentMaterializationDependencyContractSmoke
                 "qa04.environment.d0-lineage-subject-binding-pending"),
             ("environment.materialization.d1-lineage-subject-binding", Qa04EnvironmentMaterializationDependencyKindV1.LineageSubjectBinding,
                 "qa04.environment.d1-lineage-subject-binding-pending"),
-            ("environment.materialization.tile-scope-authority", Qa04EnvironmentMaterializationDependencyKindV1.SpatialScopeAuthority,
-                "qa04.environment.tile-scope-authority-pending"),
         };
         var actual = Qa04EnvironmentMaterializationDependencyContractV1.Blockers
             .Select(static blocker => (blocker.DependencyId.Value, blocker.Kind, blocker.FailureCode.Value))
             .ToArray();
         Require(actual.SequenceEqual(expected),
             "QA-04 Environment materialization dependency identity/kind/failure-code drifted.");
+        Require(Qa04EnvironmentMaterializationDependencyContractV1.FailureCodes.All(static code =>
+                code.Value != "qa04.environment.tile-scope-authority-pending"),
+            "Implemented canonical TileScope authority must not remain an Environment dependency.");
 
         var binding = Qa04EnvironmentReferenceDecompositionV1.BindD1(0);
         var expectedTile = binding.Descriptor.RegionalTileIndex;
+        var canonicalScope = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(binding);
+        Require(canonicalScope == Qa04SpatialTileScopeAuthorityV1.ScopeRef(expectedTile),
+            "Environment D1 must use the canonical TileScope authority in production.");
+
         ushort? observedTile = null;
-        var scope = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(
+        var fixtureScope = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(
             binding,
             tile =>
             {
@@ -43,16 +48,16 @@ internal static class Qa04EnvironmentMaterializationDependencyContractSmoke
                     Qa04ReferenceLoadV1.Record(new StableToken("resident.persistent-identity"), tile).RecordId);
             });
         Require(observedTile == expectedTile &&
-                scope.PartitionId.Value == Qa04EnvironmentD1PartitionMaterializerV1.SpatialScopePartitionId &&
-                !scope.RecordId.IsZero,
-            "Environment D1 spatial scope must bind the descriptor's canonical RegionalTileIndex through Spatial authority.");
+                fixtureScope.PartitionId.Value == Qa04EnvironmentD1PartitionMaterializerV1.SpatialScopePartitionId &&
+                !fixtureScope.RecordId.IsZero,
+            "Environment D1 fixture seam must preserve descriptor RegionalTileIndex for negative testing.");
 
         var rejected = false;
         try
         {
             _ = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(
                 binding,
-                _ => new PartitionRecordRefV1(new StableToken("environment.geology"), scope.RecordId));
+                _ => new PartitionRecordRefV1(new StableToken("environment.geology"), fixtureScope.RecordId));
         }
         catch (InvalidDataException ex) when (ex.Message == "qa04.environment.d1-spatial-scope-ref-invalid")
         {
