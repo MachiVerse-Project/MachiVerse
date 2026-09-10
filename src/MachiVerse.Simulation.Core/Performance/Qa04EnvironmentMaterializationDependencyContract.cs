@@ -17,9 +17,10 @@ public sealed record Qa04EnvironmentMaterializationDependencyV1(
 
 /// <summary>
 /// Fail-closed implementation audit beneath the two Environment world blockers. Exact D0/D1
-/// partition decomposition, four-to-one source coverage, fixed vocabulary, topology, common
-/// genesis hash source, descriptor-owned D0/D1 spatial-scope selection, and canonical TileScope
-/// authority are implemented. Only lineage subject bindings remain beneath these world blockers.
+/// decomposition, four-to-one source coverage, genesis vocabulary/topology, canonical TileScope,
+/// and D0/D1 Environment lineage subject/parent authority are implemented. No internal authority
+/// subdependency remains; the parent world blockers stay until full canonical materialization,
+/// Ref closure and Snapshot/recovery proof are complete.
 /// </summary>
 public static class Qa04EnvironmentMaterializationDependencyContractV1
 {
@@ -28,19 +29,8 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
     public const string D1ParentWorldDependencyId = "environment.d1-aggregate.partition-mapping";
     public const string D1ParentWorldFailureCode = "qa04.material.environment-d1-partition-mapping-undefined";
 
-    private static readonly IReadOnlyList<Qa04EnvironmentMaterializationDependencyV1> BlockersValue = Array.AsReadOnly(new[]
-    {
-        Blocker(
-            "environment.materialization.d0-lineage-subject-binding",
-            Qa04EnvironmentMaterializationDependencyKindV1.LineageSubjectBinding,
-            "qa04.environment.d0-lineage-subject-binding-pending"),
-        Blocker(
-            "environment.materialization.d1-lineage-subject-binding",
-            Qa04EnvironmentMaterializationDependencyKindV1.LineageSubjectBinding,
-            "qa04.environment.d1-lineage-subject-binding-pending"),
-    }
-    .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-    .ToArray());
+    private static readonly IReadOnlyList<Qa04EnvironmentMaterializationDependencyV1> BlockersValue =
+        Array.AsReadOnly(Array.Empty<Qa04EnvironmentMaterializationDependencyV1>());
 
     public static IReadOnlyList<Qa04EnvironmentMaterializationDependencyV1> Blockers => BlockersValue;
     public static IReadOnlyList<StableToken> FailureCodes
@@ -53,19 +43,10 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
         Qa04EnvironmentD0PartitionMaterializerV1.ValidateCanonicalContract();
         Qa04EnvironmentD1PartitionMaterializerV1.ValidateCanonicalContract();
         Qa04SpatialTileScopeAuthorityV1.ValidateCanonicalContract();
+        Qa04EnvironmentLineageAuthorityV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 2)
-            throw new InvalidDataException("qa04.environment.materialization-dependency-count-drift");
-        if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.environment.materialization-dependency-id-duplicate");
-        if (BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.environment.materialization-dependency-code-duplicate");
-        if (BlockersValue.Any(static blocker => !Enum.IsDefined(blocker.Kind)))
-            throw new InvalidDataException("qa04.environment.materialization-dependency-kind-invalid");
-
-        var ids = BlockersValue.Select(static blocker => blocker.DependencyId.Value).ToArray();
-        if (!ids.SequenceEqual(ids.OrderBy(static value => value, StringComparer.Ordinal), StringComparer.Ordinal))
-            throw new InvalidDataException("qa04.environment.materialization-dependency-order");
+        if (BlockersValue.Count != 0 || FailureCodes.Count != 0)
+            throw new InvalidDataException("qa04.environment.materialization-dependency-retained");
 
         RequireParent(D0ParentWorldDependencyId, D0ParentWorldFailureCode);
         RequireParent(D1ParentWorldDependencyId, D1ParentWorldFailureCode);
@@ -82,14 +63,22 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
 
         var d0 = Qa04EnvironmentReferenceDecompositionV1.BindD0(0);
         var d1 = Qa04EnvironmentReferenceDecompositionV1.BindD1(0);
-        var d0Scope = Qa04EnvironmentD0PartitionMaterializerV1.ResolveSpatialScope(d0);
-        var d1Scope = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(d1);
-        if (d0Scope != Qa04SpatialTileScopeAuthorityV1.ScopeRef(d0.Descriptor.RegionalTileIndex) ||
-            d1Scope != Qa04SpatialTileScopeAuthorityV1.ScopeRef(d1.Descriptor.RegionalTileIndex))
+        if (Qa04EnvironmentD0PartitionMaterializerV1.ResolveSpatialScope(d0) !=
+                Qa04SpatialTileScopeAuthorityV1.ScopeRef(d0.Descriptor.RegionalTileIndex) ||
+            Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(d1) !=
+                Qa04SpatialTileScopeAuthorityV1.ScopeRef(d1.Descriptor.RegionalTileIndex))
             throw new InvalidDataException("qa04.environment.canonical-tile-scope-binding-drift");
 
-        if (FailureCodes.Any(static code => code.Value == "qa04.environment.tile-scope-authority-pending"))
-            throw new InvalidDataException("qa04.environment.implemented-tile-scope-dependency-retained");
+        var lineageSlice = Qa04EnvironmentReferenceDecompositionV1.Get(Qa04EnvironmentLineageAuthorityV1.LineagePartitionId);
+        var lineageD0 = Qa04EnvironmentReferenceDecompositionV1.BindD0(lineageSlice.D0StartOrdinal);
+        var lineageD1 = Qa04EnvironmentReferenceDecompositionV1.BindD1(lineageSlice.D1StartOrdinal);
+        var d0Subject = Qa04EnvironmentLineageAuthorityV1.ResolveD0Subject(lineageD0);
+        var d1Subject = Qa04EnvironmentLineageAuthorityV1.ResolveD1Subject(lineageD1);
+        if (d0Subject.PartitionId.Value == Qa04EnvironmentLineageAuthorityV1.LineagePartitionId ||
+            d1Subject.PartitionId.Value == Qa04EnvironmentLineageAuthorityV1.LineagePartitionId ||
+            Qa04EnvironmentLineageAuthorityV1.ResolveD1Parents(lineageD1).Count !=
+                Qa04EnvironmentLineageAuthorityV1.D1ParentCount)
+            throw new InvalidDataException("qa04.environment.lineage-binding-drift");
     }
 
     private static void RequireParent(string dependencyId, string failureCode)
@@ -103,10 +92,4 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
             parent.FailureCode.Value != failureCode)
             throw new InvalidDataException($"qa04.environment.parent-world-blocker-drift:{dependencyId}");
     }
-
-    private static Qa04EnvironmentMaterializationDependencyV1 Blocker(
-        string dependencyId,
-        Qa04EnvironmentMaterializationDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 }
