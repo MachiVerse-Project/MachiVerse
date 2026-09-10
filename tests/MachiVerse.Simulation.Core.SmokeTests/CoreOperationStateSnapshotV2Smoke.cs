@@ -34,6 +34,22 @@ internal static class CoreOperationStateSnapshotV2Smoke
         Require(recoveredAuthority.CanonicalDigest.SequenceEqual(authority.CanonicalDigest),
             "v2 section semantic digest changed after round trip.");
 
+        var section = CoreOperationStateSnapshotSectionProviderV2.Create(2, [], [state]);
+        Require(section.SectionId == "core.operation-state" && section.SectionSchema == authority.Schema &&
+                section.LogicalItemCount == 1 && section.Fragments.Count == 1,
+            "v2 production section shape mismatch.");
+        var recoveredSection = CoreOperationStateSnapshotSectionProviderV2.Recover(section, 2);
+        Require(recoveredSection.Operations.Count == 0 && recoveredSection.Transactions.Count == 1 &&
+                recoveredSection.Transactions[0].CanonicalDigest().SequenceEqual(state.CanonicalDigest()) &&
+                recoveredSection.LogicalContentDigest.SequenceEqual(authority.CanonicalDigest),
+            "v2 production section recovery must reconstruct semantic transaction authority.");
+
+        var tamperedDigest = section with { LogicalContentDigest = Enumerable.Repeat((byte)0x55, 32).ToArray() };
+        ExpectReject(() => CoreOperationStateSnapshotSectionProviderV2.Recover(tamperedDigest, 2),
+            "v2 production section must reject semantic digest tamper.");
+        ExpectReject(() => CoreOperationStateSnapshotSectionProviderV2.Recover(section, 3),
+            "v2 production section must reject Snapshot basis Step mismatch.");
+
         var malformed = encoded.Concat(new byte[] { 0x98, 0x06, 0x00 }).ToArray(); // field 99, wire 0
         ExpectReject(() => CoreOperationStateSnapshotWireCodecV2.Decode(malformed),
             "v2 unknown authoritative field must fail closed.");
