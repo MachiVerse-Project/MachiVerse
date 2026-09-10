@@ -1,5 +1,7 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Runtime;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
@@ -10,11 +12,63 @@ public sealed record Qa04ActiveTransactionDetailGuardCountV1(
 
 /// <summary>
 /// Rebuilds detail.guard.active-transaction exclusively from authoritative ACTIVE transaction
-/// states. The tile -> detail-region identity remains an external canonical Spatial/detail authority
-/// input; this type never invents region ids or persists reference counts as a second authority.
+/// states. Canonical production binding accepts TileScope refs from the Spatial authority and resolves
+/// DetailRegionId only through DetailDirectory.SpatialScopeRef; this type never invents scope/region ids
+/// or persists reference counts as a second authority.
 /// </summary>
 public static class Qa04CrossDomainTransactionDetailGuardReconstructionV1
 {
+    public static Func<ushort, OpaqueId128> CreateRegionResolverFromTileScopes(
+        DetailDirectoryV1 directory,
+        Func<ushort, PartitionRecordRefV1> tileScopeForTile)
+    {
+        ArgumentNullException.ThrowIfNull(directory);
+        ArgumentNullException.ThrowIfNull(tileScopeForTile);
+
+        var regionByScope = new Dictionary<OpaqueId128, OpaqueId128>();
+        foreach (var region in directory.Regions)
+        {
+            if (!regionByScope.TryAdd(region.SpatialScopeRef, region.DetailRegionId))
+                throw new InvalidDataException("qa04.transaction.detail-guard-scope-ambiguous");
+        }
+
+        return tile =>
+        {
+            var scope = tileScopeForTile(tile);
+            if (scope.PartitionId.Value != SpatialScopeRegistryPayloadV1.PartitionId || scope.RecordId.IsZero)
+                throw new InvalidDataException("qa04.transaction.detail-guard-scope-ref-invalid");
+            if (!regionByScope.TryGetValue(scope.RecordId, out var regionId))
+                throw new InvalidDataException("qa04.transaction.detail-guard-scope-region-missing");
+            return regionId;
+        };
+    }
+
+    public static IReadOnlyList<Qa04ActiveTransactionDetailGuardCountV1> ReconstructCountsFromTileScopes(
+        IEnumerable<CrossDomainTransactionStateV1> transactionStates,
+        DetailDirectoryV1 directory,
+        Func<ushort, PartitionRecordRefV1> tileScopeForTile)
+        => ReconstructCounts(
+            transactionStates,
+            CreateRegionResolverFromTileScopes(directory, tileScopeForTile));
+
+    public static DetailDirectoryV1 RebuildDirectoryGuardsFromTileScopes(
+        DetailDirectoryV1 recoveredDirectory,
+        IEnumerable<CrossDomainTransactionStateV1> transactionStates,
+        Func<ushort, PartitionRecordRefV1> tileScopeForTile)
+        => RebuildDirectoryGuards(
+            recoveredDirectory,
+            transactionStates,
+            CreateRegionResolverFromTileScopes(recoveredDirectory, tileScopeForTile));
+
+    public static void ValidateDirectoryMatchesTileScopeAuthority(
+        DetailDirectoryV1 recoveredDirectory,
+        IEnumerable<CrossDomainTransactionStateV1> transactionStates,
+        Func<ushort, PartitionRecordRefV1> tileScopeForTile)
+        => ValidateDirectoryMatchesAuthority(
+            recoveredDirectory,
+            transactionStates,
+            CreateRegionResolverFromTileScopes(recoveredDirectory, tileScopeForTile));
+
     public static IReadOnlyList<Qa04ActiveTransactionDetailGuardCountV1> ReconstructCounts(
         IEnumerable<CrossDomainTransactionStateV1> transactionStates,
         Func<ushort, OpaqueId128> detailRegionForTile)
