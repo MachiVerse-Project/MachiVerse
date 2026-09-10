@@ -16,7 +16,7 @@ internal static class SocietyMarketTransactionV2ProductionSnapshotSmoke
         var marketRef = new PartitionRecordRefV1(SocietyMarketTransactionRecordSchemaV2.PartitionId, stateId);
 
         var state = new SocietyMarketTransactionRecordMaterialV2(
-            stateId, 1, 0, null, DetailLevelV1.D2LocalDetailed, null,
+            stateId, 1, 0, null, DetailLevelV1.D2RegionalAggregate, null,
             new SocietyMarketStatePayloadV2(
                 scopeRef,
                 new StableToken("reference-instrument"),
@@ -26,7 +26,7 @@ internal static class SocietyMarketTransactionV2ProductionSnapshotSmoke
                 null,
                 null));
         var order = new SocietyMarketTransactionRecordMaterialV2(
-            orderId, 1, 0, null, DetailLevelV1.D2LocalDetailed, null,
+            orderId, 1, 0, null, DetailLevelV1.D2RegionalAggregate, null,
             new SocietyMarketOrderPayloadV2(
                 marketRef,
                 ownerRef,
@@ -41,7 +41,7 @@ internal static class SocietyMarketTransactionV2ProductionSnapshotSmoke
         var partition = new SocietyMarketTransactionPartitionStateV2(new[] { state, order });
         SocietyMarketTransactionReferenceClosureV2.Validate(partition.RecordSet.RecordsCanonical);
         var authority = SocietyMarketTransactionSnapshotAuthorityV2.CreateCanonical(
-            partition, 1, 0, DetailLevelV1.D2LocalDetailed);
+            partition, 1, 0, DetailLevelV1.D2RegionalAggregate);
         var provider = new SocietyMarketTransactionSnapshotSectionProviderV2();
         var section = provider.Create(authority);
         Require(section.LogicalItemCount == 2, "Market v2 production section must retain both records.");
@@ -61,7 +61,7 @@ internal static class SocietyMarketTransactionV2ProductionSnapshotSmoke
             "Market order wire round-trip must preserve record kind.");
 
         var invalidOrder = new SocietyMarketTransactionRecordMaterialV2(
-            Id("00000000000000000000000000041003"), 1, 0, null, DetailLevelV1.D2LocalDetailed, null,
+            Id("00000000000000000000000000041003"), 1, 0, null, DetailLevelV1.D2RegionalAggregate, null,
             new SocietyMarketOrderPayloadV2(
                 new PartitionRecordRefV1(SocietyMarketTransactionRecordSchemaV2.PartitionId, orderId),
                 ownerRef,
