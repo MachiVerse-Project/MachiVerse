@@ -40,12 +40,10 @@ public static class Qa04ReferenceWorldMaterialContractV1
             Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount,
             "resident.identity_lifecycle"),
 
-        Blocked(
+        Available(
             "physical.d0-presence",
-            500_000,
-            "physical.presence",
-            Qa04ReferenceMaterialBindingStateV1.BlockedByRecordSchema,
-            "qa04.material.physical-presence-shape-authority-undefined"),
+            Qa04PhysicalD0MaterializerV1.CanonicalPhysicalCount,
+            "physical.presence"),
 
         Blocked(
             "environment.d0-cell-cohort",
@@ -143,6 +141,12 @@ public static class Qa04ReferenceWorldMaterialContractV1
         if (!resident.ProductionMaterializerAvailable ||
             resident.PrimaryPartitionId?.Value != "resident.identity_lifecycle")
             throw new InvalidDataException("qa04.material.resident-binding-drift");
+
+        var physical = Get(new StableToken("physical.d0-presence"));
+        if (!physical.ProductionMaterializerAvailable ||
+            physical.PrimaryPartitionId?.Value != "physical.presence" ||
+            physical.CanonicalCount != Qa04PhysicalD0MaterializerV1.CanonicalPhysicalCount)
+            throw new InvalidDataException("qa04.material.physical-binding-drift");
 
         if (AllProductionMaterializersAvailable)
             throw new InvalidDataException("qa04.material.contract-unexpectedly-complete");
