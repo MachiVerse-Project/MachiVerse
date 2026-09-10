@@ -67,11 +67,17 @@ internal static class Qa04CrossDomainTransactionOperationStateV2Exact103Producti
         Require(recovered.LogicalContentDigest.SequenceEqual(operation.LogicalContentDigest),
             "Exact-103 recovered operation-state semantic digest must match section authority.");
 
+        var domainSections = sections
+            .Where(section => StandardDomainPartitionRegistry.TryGet(section.SectionId, out _))
+            .ToArray();
+        var recoveredReferences = DomainSnapshotReferenceResolverV1.FromRecoveredSections(domainSections);
         var semanticVerifiers = StandardSnapshotOwnerCompositionV1.CreateSemanticVerifierRegistryV2(
             coreCut,
             authorities,
             providers);
-        semanticVerifiers.VerifyAll(sections);
+        semanticVerifiers.VerifyAll(
+            sections,
+            new SnapshotSectionSemanticVerificationContextV1(recoveredReferences));
 
         var tampered = operation with
         {
