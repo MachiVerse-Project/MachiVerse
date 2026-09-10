@@ -254,7 +254,7 @@ public static class PhysicalOccupancyRecordWireCodecV2
     {
         Vec3MmV1? center = null;
         Vec3MmV1? half = null;
-        QuaternionQ30V1? orientation = null;
+        global::MachiVerse.Simulation.Core.Domains.QuaternionQ30V1? orientation = null;
         ReadShapeFields(ref reader, (field, wire, bytes, number) =>
         {
             if (field == 10) { RequireLengthDelimited(wire); center = ToMm(DecodeVec3(bytes!)); }
@@ -437,7 +437,7 @@ public static class PhysicalOccupancyRecordWireCodecV2
 
     private static Vec3MmV1 ToMm(Vec3Int64V1 value) => new(value.X, value.Y, value.Z);
 
-    private static byte[] EncodeQuaternion(QuaternionQ30V1 value) => Proto.Encode(stream =>
+    private static byte[] EncodeQuaternion(global::MachiVerse.Simulation.Core.Domains.QuaternionQ30V1 value) => Proto.Encode(stream =>
     {
         Proto.WriteSInt32(stream, 1, value.X);
         Proto.WriteSInt32(stream, 2, value.Y);
@@ -445,7 +445,7 @@ public static class PhysicalOccupancyRecordWireCodecV2
         Proto.WriteSInt32(stream, 4, value.W);
     });
 
-    private static QuaternionQ30V1 DecodeQuaternion(ReadOnlySpan<byte> encoded)
+    private static global::MachiVerse.Simulation.Core.Domains.QuaternionQ30V1 DecodeQuaternion(ReadOnlySpan<byte> encoded)
     {
         var reader = new Proto.Reader(encoded);
         int? x = null;
@@ -466,7 +466,7 @@ public static class PhysicalOccupancyRecordWireCodecV2
             else throw WireError("quat-field-unknown");
         }
         if (x is null || y is null || z is null || w is null) throw WireError("quat-required-field");
-        var result = new QuaternionQ30V1(x.Value, y.Value, z.Value, w.Value);
+        var result = new global::MachiVerse.Simulation.Core.Domains.QuaternionQ30V1(x.Value, y.Value, z.Value, w.Value);
         result.ValidateCanonical();
         return result;
     }
