@@ -90,7 +90,7 @@ public static class Qa04SocietyGovernanceReferenceDecompositionV1
     {
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         var descriptorClass = Qa04ReferenceLoadV1.RecordClasses.Single(recordClass => recordClass.ClassToken == ReferenceClass);
-        if (descriptorClass.Count != CanonicalCount || descriptorClass.DetailLevel != DetailLevelV1.D2RegionalAggregate)
+        if (descriptorClass.Count != CanonicalCount)
             throw new InvalidDataException("qa04.society-governance.reference-class-drift");
         if (PartitionsValue.Count != 33)
             throw new InvalidDataException("qa04.society-governance.partition-count-drift");
@@ -122,6 +122,12 @@ public static class Qa04SocietyGovernanceReferenceDecompositionV1
         if (MarketStateCount + MarketOrderCount != MarketSliceCount ||
             (ulong)MarketScopeCount * MarketOrdersPerScope != MarketOrderCount)
             throw new InvalidDataException("qa04.society-governance.market-count-drift");
+
+        foreach (var probeOrdinal in PartitionsValue.SelectMany(static slice => new[] { slice.StartOrdinal, slice.EndExclusive - 1 }))
+        {
+            if (Qa04ReferenceLoadV1.Record(ReferenceClass, probeOrdinal).DetailLevel != DetailLevelV1.D2RegionalAggregate)
+                throw new InvalidDataException("qa04.society-governance.descriptor-detail-level-drift");
+        }
     }
 
     public static Qa04SocietyGovernanceBindingV1 Bind(ulong globalOrdinal)
