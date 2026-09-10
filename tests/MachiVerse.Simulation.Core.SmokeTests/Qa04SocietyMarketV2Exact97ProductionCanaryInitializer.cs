@@ -22,8 +22,8 @@ internal static class Qa04SocietyMarketV2Exact97ProductionCanaryInitializer
         var scopeRef = new PartitionRecordRefV1(scopeId, scopeRecordId);
         var voidRef = new PartitionRecordRefV1(voidId, voidRecordId);
 
-        var scopeAuthority = CreateScopeAuthority(resident, scopeRecordId, voidRef);
-        var voidAuthority = CreateVoidAuthority(resident, voidRecordId, voidRef);
+        var scopeAuthority = CreateScopeAuthority(resident.WorldState, scopeRecordId, voidRef);
+        var voidAuthority = CreateVoidAuthority(resident.WorldState, voidRecordId, voidRef);
 
         var marketState = Qa04MarketMaterializerV1.CreateMarketState(
             0,
@@ -110,12 +110,12 @@ internal static class Qa04SocietyMarketV2Exact97ProductionCanaryInitializer
     }
 
     private static DomainPartitionSnapshotAuthorityV1<SpatialScopeRegistryPayloadV1> CreateScopeAuthority(
-        Qa04ResidentIdentityLifecycleMaterializationV1 resident,
+        WorldStateV1 world,
         OpaqueId128 recordId,
         PartitionRecordRefV1 geometryRef)
     {
         var identity = StandardDomainPartitionRegistry.Get(SpatialScopeRegistryPayloadV1.PartitionId);
-        var prior = resident.WorldState.Partitions.Get(identity.PartitionId.Value).Header;
+        var prior = world.Partitions.Get(identity.PartitionId.Value).Header;
         var payload = new SpatialScopeRegistryPayloadV1(
             new StableToken("qa04.canary.scope"),
             geometryRef,
@@ -133,12 +133,12 @@ internal static class Qa04SocietyMarketV2Exact97ProductionCanaryInitializer
     }
 
     private static DomainPartitionSnapshotAuthorityV1<SpatialVoidGeometryPayloadV1> CreateVoidAuthority(
-        Qa04ResidentIdentityLifecycleMaterializationV1 resident,
+        WorldStateV1 world,
         OpaqueId128 recordId,
         PartitionRecordRefV1 selfRef)
     {
         var identity = StandardDomainPartitionRegistry.Get(SpatialVoidGeometryPayloadV1.PartitionId);
-        var prior = resident.WorldState.Partitions.Get(identity.PartitionId.Value).Header;
+        var prior = world.Partitions.Get(identity.PartitionId.Value).Header;
         var payload = new SpatialVoidGeometryPayloadV1(
             selfRef,
             Array.Empty<PartitionRecordRefV1>(),
