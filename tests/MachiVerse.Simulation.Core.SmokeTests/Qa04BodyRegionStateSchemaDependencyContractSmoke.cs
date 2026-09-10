@@ -13,8 +13,8 @@ internal static class Qa04BodyRegionStateSchemaDependencyContractSmoke
             "Resolved BodyRegionState schema must have no remaining subdependency blockers.");
         Require(Qa04BodyRegionStateSchemaDependencyContractV1.FailureCodes.Count == 0,
             "Resolved BodyRegionState schema must expose no unresolved failure codes.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 8,
-            "Resolved BodyRegionState schema must remove exactly one reference-world blocker.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 7,
+            "Resolved BodyRegionState schema must remain absent from the current reference-world blocker set.");
         Require(Qa04ReferenceWorldDependencyContractV1.Blockers.All(blocker =>
                 blocker.DependencyId.Value != Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldDependencyId &&
                 blocker.FailureCode.Value != Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldFailureCode),
