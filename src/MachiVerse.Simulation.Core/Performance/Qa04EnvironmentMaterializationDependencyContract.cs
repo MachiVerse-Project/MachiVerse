@@ -16,9 +16,10 @@ public sealed record Qa04EnvironmentMaterializationDependencyV1(
 
 /// <summary>
 /// Fail-closed implementation audit beneath the two Environment world blockers. Exact D0/D1
-/// partition decomposition, four-to-one source coverage, fixed vocabulary, topology, and the common
-/// genesis hash source are already implemented. These entries are only the remaining authority
-/// bindings that cannot be inferred from those contracts without inventing canonical Ref targets.
+/// partition decomposition, four-to-one source coverage, fixed vocabulary, topology, common
+/// genesis hash source, and descriptor-owned D0/D1 spatial-scope selection are implemented. The
+/// remaining entries are only authority bindings that cannot be inferred without inventing actual
+/// canonical target records.
 /// </summary>
 public static class Qa04EnvironmentMaterializationDependencyContractV1
 {
@@ -38,10 +39,6 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
             Qa04EnvironmentMaterializationDependencyKindV1.LineageSubjectBinding,
             "qa04.environment.d1-lineage-subject-binding-pending"),
         Blocker(
-            "environment.materialization.d1-spatial-scope-binding",
-            Qa04EnvironmentMaterializationDependencyKindV1.AggregateScopeBinding,
-            "qa04.environment.d1-spatial-scope-binding-pending"),
-        Blocker(
             "environment.materialization.tile-scope-authority",
             Qa04EnvironmentMaterializationDependencyKindV1.SpatialScopeAuthority,
             "qa04.environment.tile-scope-authority-pending"),
@@ -57,8 +54,10 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
     {
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         Qa04EnvironmentReferenceDecompositionV1.ValidateCanonicalContract();
+        Qa04EnvironmentD0PartitionMaterializerV1.ValidateCanonicalContract();
+        Qa04EnvironmentD1PartitionMaterializerV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 4)
+        if (BlockersValue.Count != 3)
             throw new InvalidDataException("qa04.environment.materialization-dependency-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.environment.materialization-dependency-id-duplicate");
@@ -83,6 +82,15 @@ public static class Qa04EnvironmentMaterializationDependencyContractV1
         var hash = Qa04ReferenceGenesisValueSourceV1.Hash(sample.RecordId, "environment.contract-probe");
         if (hash.Length != 32)
             throw new InvalidDataException("qa04.environment.materialization-genesis-source-drift");
+
+        var d1 = Qa04EnvironmentReferenceDecompositionV1.BindD1(0);
+        var probeScope = Qa04EnvironmentD1PartitionMaterializerV1.ResolveSpatialScope(
+            d1,
+            tile => new WorldState.PartitionRecordRefV1(
+                new StableToken(Qa04EnvironmentD1PartitionMaterializerV1.SpatialScopePartitionId),
+                Qa04ReferenceLoadV1.Record(new StableToken("resident.persistent-identity"), tile).RecordId));
+        if (probeScope.PartitionId.Value != Qa04EnvironmentD1PartitionMaterializerV1.SpatialScopePartitionId || probeScope.RecordId.IsZero)
+            throw new InvalidDataException("qa04.environment.d1-spatial-scope-binding-drift");
     }
 
     private static void RequireParent(string dependencyId, string failureCode)
