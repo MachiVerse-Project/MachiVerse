@@ -17,6 +17,7 @@ public static class Qa04EnvironmentD0PartitionMaterializerV1
     public static void ValidateCanonicalContract()
     {
         Qa04EnvironmentReferenceDecompositionV1.ValidateCanonicalContract();
+        Qa04EnvironmentGenesisContractV1.ValidateCanonicalContract();
         if (InitialRecordRevision != 1 || InitialCreatedStep != 0)
             throw new InvalidDataException("qa04.environment.d0-genesis-envelope-drift");
     }
