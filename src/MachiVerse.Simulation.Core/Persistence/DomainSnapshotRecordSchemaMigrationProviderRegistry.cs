@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
+using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -23,6 +24,10 @@ public static class DomainSnapshotRecordSchemaMigrationProviderRegistryV1
             PhysicalOccupancyRecordSchemaV2.PartitionId,
             PhysicalOccupancyRecordSchemaV2.RecordSchema,
             static () => new PhysicalOccupancySnapshotSectionProviderV2()),
+        Registration(
+            SocietyMarketTransactionRecordSchemaV2.PartitionId,
+            SocietyMarketTransactionRecordSchemaV2.RecordSchema,
+            static () => new SocietyMarketTransactionSnapshotSectionProviderV2()),
         Registration(
             SpatialTerrainGeometryRecordSchemaV2.PartitionId,
             SpatialTerrainGeometryRecordSchemaV2.RecordSchema,
