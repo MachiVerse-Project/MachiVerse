@@ -9,6 +9,7 @@ internal static class DomainSnapshotReferenceSchemaMigrationInitializer
     internal static void Initialize()
     {
         VerifyResolverPreservesRegisteredPhysicalOccupancyV2();
+        VerifyResolverPreservesRegisteredMarketV2();
         VerifyResolverPreservesRegisteredTerrainV2();
         VerifyResolverRejectsUnregisteredSchema();
         VerifyCrossPartitionReferenceValidationUsesMigrationRegistry();
@@ -34,6 +35,28 @@ internal static class DomainSnapshotReferenceSchemaMigrationInitializer
         Require(resolver.Exists(reference), "all-97 resolver must preserve migrated Physical occupancy record existence.");
         Require(resolver.TryGetRecordSchema(reference, out var actual) && actual == migration.TargetRecordSchema,
             "all-97 resolver must preserve the actual registered Physical occupancy v2 schema rather than rewriting it to v1.");
+    }
+
+    private static void VerifyResolverPreservesRegisteredMarketV2()
+    {
+        var marketId = Id("00000000000000000000000000025501");
+        var migration = StandardDomainRecordSchemaMigrationRegistryV1.Get("society.market_transaction");
+        var sources = StandardDomainPartitionRegistry.Entries
+            .Select(identity => (IDomainPartitionSnapshotReferenceSourceV1)new FakeSource(
+                identity.PartitionId,
+                identity.PartitionId.Value == "society.market_transaction"
+                    ? migration.TargetRecordSchema
+                    : identity.RecordSchema,
+                identity.PartitionId.Value == "society.market_transaction"
+                    ? new[] { marketId }
+                    : Array.Empty<OpaqueId128>()))
+            .ToArray();
+
+        var resolver = new DomainSnapshotReferenceResolverV1(sources);
+        var reference = new PartitionRecordRefV1("society.market_transaction", marketId);
+        Require(resolver.Exists(reference), "all-97 resolver must preserve migrated Society market record existence.");
+        Require(resolver.TryGetRecordSchema(reference, out var actual) && actual == migration.TargetRecordSchema,
+            "all-97 resolver must preserve the actual registered Society market v2 schema rather than rewriting it to v1.");
     }
 
     private static void VerifyResolverPreservesRegisteredTerrainV2()
