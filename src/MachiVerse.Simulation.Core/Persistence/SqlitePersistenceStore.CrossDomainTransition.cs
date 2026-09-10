@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Runtime;
 
 namespace MachiVerse.Simulation.Core.Persistence;
@@ -44,7 +45,7 @@ public sealed partial class SqlitePersistenceStore
         foreach (var terminal in orderedTerminalOperations)
         {
             if (terminal.OperationId.IsZero) throw new ArgumentException("Terminal OperationId ZERO is invalid.", nameof(terminalOperations));
-            _ = new Determinism.StableToken(terminal.ResultCode);
+            _ = new StableToken(terminal.ResultCode);
         }
 
         var orderedTransactions = crossDomainTransactions
