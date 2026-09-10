@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using MachiVerse.Simulation.Core.Runtime;
 
 namespace MachiVerse.Simulation.Core.Persistence;
 
@@ -30,10 +31,55 @@ public static class CoreSnapshotProductionSectionProviderV1
         return Array.AsReadOnly(sections);
     }
 
+    public static IReadOnlyList<CanonicalSnapshotSectionMaterialV1> CreateAllSixV2(
+        CoreSnapshotOwnerMaterialCutV1 cut,
+        IReadOnlyList<CrossDomainTransactionStateV1> transactions)
+    {
+        ArgumentNullException.ThrowIfNull(cut);
+        ArgumentNullException.ThrowIfNull(transactions);
+        var primary = CoreSnapshotPrimarySectionProviderV1.Create(cut)
+            .Where(static section => !string.Equals(
+                section.SectionId,
+                CoreSnapshotOwnerSectionRegistryV1.OperationState,
+                StringComparison.Ordinal));
+        var operation = CoreOperationStateSnapshotSectionProviderV2.Create(
+            cut.BasisStep,
+            cut.DurableOperations,
+            transactions);
+        var sections = primary
+            .Append(operation)
+            .Concat(new[]
+            {
+                CoreSnapshotSecondarySectionProviderV1.CreateDetail(cut),
+                CoreSnapshotDomainRegistrySectionProviderV1.Create(cut),
+                CoreSnapshotSecondarySectionProviderV1.CreateConfig(cut),
+            })
+            .OrderBy(static section => section.SectionId, StringComparer.Ordinal)
+            .ToArray();
+        RequireExactCoreSet(sections.Select(static section => section.SectionId));
+        if (sections.Single(static section => section.SectionId == CoreSnapshotOwnerSectionRegistryV1.OperationState).SectionSchema !=
+            CoreOperationStateSnapshotAuthorityV2.Schema)
+            throw new InvalidDataException("snapshot-core.production-operation-v2-schema-mismatch");
+        return Array.AsReadOnly(sections);
+    }
+
     public static void VerifyAllSix(
         IReadOnlyList<CanonicalSnapshotSectionMaterialV1> sections,
         ulong snapshotStep,
         ulong expectedConfigGeneration)
+        => VerifyAllSixInternal(sections, snapshotStep, expectedConfigGeneration, operationV2: false);
+
+    public static void VerifyAllSixV2(
+        IReadOnlyList<CanonicalSnapshotSectionMaterialV1> sections,
+        ulong snapshotStep,
+        ulong expectedConfigGeneration)
+        => VerifyAllSixInternal(sections, snapshotStep, expectedConfigGeneration, operationV2: true);
+
+    private static void VerifyAllSixInternal(
+        IReadOnlyList<CanonicalSnapshotSectionMaterialV1> sections,
+        ulong snapshotStep,
+        ulong expectedConfigGeneration,
+        bool operationV2)
     {
         ArgumentNullException.ThrowIfNull(sections);
         RequireExactCoreSet(sections.Select(static section => section.SectionId));
@@ -42,7 +88,9 @@ public static class CoreSnapshotProductionSectionProviderV1
             CoreSnapshotSecondarySemanticVerifierV1.Config(snapshotStep, expectedConfigGeneration),
             CoreSnapshotSecondarySemanticVerifierV1.Detail(snapshotStep),
             CoreSnapshotDomainRegistrySemanticVerifierV1.Create(snapshotStep),
-            CoreSnapshotPrimarySemanticVerifierV1.Operation(snapshotStep),
+            operationV2
+                ? CoreOperationStateSnapshotSectionProviderV2.SemanticVerifier(snapshotStep)
+                : CoreSnapshotPrimarySemanticVerifierV1.Operation(snapshotStep),
             CoreSnapshotPrimarySemanticVerifierV1.Scheduler(snapshotStep),
             CoreSnapshotPrimarySemanticVerifierV1.WorldStateHeader(snapshotStep),
         }.ToDictionary(static verifier => verifier.SectionId, StringComparer.Ordinal);
