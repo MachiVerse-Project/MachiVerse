@@ -48,9 +48,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "spatial.terrain_geometry",
             "root_brick_ref",
             "qa04.material.terrain-brick-authority-undefined"),
-        PersistentAuthority(
-            "transaction.active-cross-domain.persistent-authority",
-            "qa04.material.cross-domain-transaction-authority-undefined"),
     }
     .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
     .ToArray());
@@ -62,7 +59,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
 
     public static void ValidateCanonicalContract()
     {
-        if (BlockersValue.Count != 6)
+        if (BlockersValue.Count != 5)
             throw new InvalidDataException("qa04.material.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.material.dependency-blocker-id-duplicate");
@@ -96,10 +93,10 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "spatial.terrain_geometry",
             "root_brick_ref",
             "qa04.material.terrain-brick-authority-undefined");
-        RequireUnscoped(
-            "transaction.active-cross-domain.persistent-authority",
-            Qa04ReferenceDependencyBlockerKindV1.PersistentAuthority,
-            "qa04.material.cross-domain-transaction-authority-undefined");
+        if (BlockersValue.Any(static blocker =>
+                blocker.DependencyId.Value == "transaction.active-cross-domain.persistent-authority" ||
+                blocker.FailureCode.Value == "qa04.material.cross-domain-transaction-authority-undefined"))
+            throw new InvalidDataException("qa04.material.implemented-cross-domain-transaction-blocker-retained");
     }
 
     private static void Require(
@@ -114,20 +111,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
         if (blocker.Kind != kind ||
             blocker.PartitionId?.Value != partitionId ||
             !string.Equals(blocker.FieldName, fieldName, StringComparison.Ordinal) ||
-            blocker.FailureCode.Value != failureCode)
-            throw new InvalidDataException($"qa04.material.dependency-blocker-drift:{dependencyId}");
-    }
-
-    private static void RequireUnscoped(
-        string dependencyId,
-        Qa04ReferenceDependencyBlockerKindV1 kind,
-        string failureCode)
-    {
-        var blocker = BlockersValue.SingleOrDefault(value => value.DependencyId.Value == dependencyId)
-            ?? throw new InvalidDataException($"qa04.material.dependency-blocker-missing:{dependencyId}");
-        if (blocker.Kind != kind ||
-            blocker.PartitionId is not null ||
-            blocker.FieldName is not null ||
             blocker.FailureCode.Value != failureCode)
             throw new InvalidDataException($"qa04.material.dependency-blocker-drift:{dependencyId}");
     }
@@ -175,16 +158,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
         => new(
             new StableToken(dependencyId),
             Qa04ReferenceDependencyBlockerKindV1.PartitionMapping,
-            null,
-            null,
-            new StableToken(failureCode));
-
-    private static Qa04ReferenceDependencyBlockerV1 PersistentAuthority(
-        string dependencyId,
-        string failureCode)
-        => new(
-            new StableToken(dependencyId),
-            Qa04ReferenceDependencyBlockerKindV1.PersistentAuthority,
             null,
             null,
             new StableToken(failureCode));
