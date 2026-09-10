@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
 
@@ -73,7 +74,7 @@ public static class InfrastructureNetworkTopologyReferenceClosureV2
     }
 
     private static void RequireNetworkRef(
-        WorldState.PartitionRecordRefV1 reference,
+        PartitionRecordRefV1 reference,
         OpaqueId128 expectedNetworkId,
         string suffix)
     {
