@@ -53,9 +53,49 @@ internal static class Qa04TerrainRootMaterializationSmoke
                 interiorRoot.ConnectivityRefs.OrderBy(static reference => reference.RecordId)),
             "Terrain root connectivity refs must be canonical RecordId order.");
 
-        Require(Qa04TerrainRootMaterializerV1.RootId(0) != Qa04TerrainRootMaterializerV1.AnchorId(0) &&
-                Qa04TerrainRootMaterializerV1.RootId(0) != Qa04TerrainRootMaterializerV1.RootId(1),
-            "Terrain root/anchor identities must be distinct across kinds and tiles.");
+        VerifyAllRootTopology();
+    }
+
+    private static void VerifyAllRootTopology()
+    {
+        var rootIds = new HashSet<OpaqueId128>();
+        var anchorIds = new HashSet<OpaqueId128>();
+        var expectedRootIds = Enumerable.Range(0, Qa04ReferenceLoadV1.RegionalTileCount)
+            .Select(static tile => Qa04TerrainRootMaterializerV1.RootId(checked((ushort)tile)))
+            .ToHashSet();
+
+        for (ushort tile = 0; tile < Qa04ReferenceLoadV1.RegionalTileCount; tile++)
+        {
+            var rootId = Qa04TerrainRootMaterializerV1.RootId(tile);
+            var anchorId = Qa04TerrainRootMaterializerV1.AnchorId(tile);
+            Require(rootIds.Add(rootId), "Terrain root ids must be unique across all 4096 tiles.");
+            Require(anchorIds.Add(anchorId), "Terrain D3 anchor ids must be unique across all 4096 tiles.");
+            Require(rootId != anchorId && !anchorIds.Contains(rootId),
+                "Terrain root and D3 anchor identity spaces must not collide.");
+
+            var root = Qa04TerrainRootMaterializerV1.CreateRoot(tile, ScopeForTile(tile));
+            var payload = root.Payload as SpatialTerrainRootPayloadV2
+                ?? throw new InvalidOperationException("Canonical terrain root must use terrain_root payload.");
+            var row = tile / Qa04ReferenceLoadV1.RegionalTileColumns;
+            var column = tile % Qa04ReferenceLoadV1.RegionalTileColumns;
+            var expectedDegree = (row > 0 ? 1 : 0) +
+                                 (row + 1 < Qa04ReferenceLoadV1.RegionalTileRows ? 1 : 0) +
+                                 (column > 0 ? 1 : 0) +
+                                 (column + 1 < Qa04ReferenceLoadV1.RegionalTileColumns ? 1 : 0);
+            Require(payload.ConnectivityRefs.Count == expectedDegree,
+                "Terrain root connectivity degree must match the rectangular tile lattice.");
+            Require(payload.ConnectivityRefs.All(reference =>
+                    reference.PartitionId.Value == SpatialTerrainGeometryRecordSchemaV2.PartitionId &&
+                    expectedRootIds.Contains(reference.RecordId)),
+                "Every terrain root connectivity ref must close onto an actual canonical terrain_root id.");
+            Require(payload.RootBrickRef.RecordId == anchorId,
+                "Every terrain root must target its tile's canonical D3 anchor id.");
+        }
+
+        Require(rootIds.Count == Qa04ReferenceLoadV1.RegionalTileCount &&
+                anchorIds.Count == Qa04ReferenceLoadV1.RegionalTileCount &&
+                !rootIds.Overlaps(anchorIds),
+            "Terrain root/anchor cardinality or identity disjointness drifted.");
     }
 
     private static PartitionRecordRefV1 ScopeForTile(ushort tile)
