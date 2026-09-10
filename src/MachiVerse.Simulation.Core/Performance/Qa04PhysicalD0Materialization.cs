@@ -17,8 +17,8 @@ public sealed record Qa04PhysicalPresenceGenesisBindingV1(
 
 public sealed record Qa04PhysicalTerrainRootBindingV1(
     PartitionRecordRefV1 TerrainRootRef,
-    Vec3Int64V1 LocalAabbMin,
-    Vec3Int64V1 LocalAabbMax);
+    Vec3Int64V1 OccupancyAabbMin,
+    Vec3Int64V1 OccupancyAabbMax);
 
 public sealed record Qa04PhysicalD0RecordMaterialV1(
     ulong PhysicalOrdinal,
@@ -126,13 +126,11 @@ public static class Qa04PhysicalD0MaterializerV1
             descriptor.RecordId,
             OccupancyPurpose,
             0);
-        var localBounds = LocalBounds(shape.Payload, terrainBinding);
-        var worldMin = Translate(localBounds.Min, presenceBinding.Position);
-        var worldMax = Translate(localBounds.Max, presenceBinding.Position);
+        var bounds = OccupancyBounds(shape.Payload, terrainBinding, presenceBinding.Position);
         var occupancyPayload = new PhysicalOccupancyStatePayloadV2(
             new PartitionRecordRefV1(PhysicalPresencePayloadV1.PartitionId, descriptor.RecordId),
-            worldMin,
-            worldMax,
+            bounds.Min,
+            bounds.Max,
             Array.Empty<PartitionRecordRefV1>(),
             occupancyFlags: 0,
             collisionLayer: 1);
@@ -168,9 +166,19 @@ public static class Qa04PhysicalD0MaterializerV1
         }
     }
 
-    private static (Vec3Int64V1 Min, Vec3Int64V1 Max) LocalBounds(
+    private static (Vec3Int64V1 Min, Vec3Int64V1 Max) OccupancyBounds(
         PhysicalOccupancyRecordPayloadV2 payload,
-        Qa04PhysicalTerrainRootBindingV1 terrain)
+        Qa04PhysicalTerrainRootBindingV1 terrain,
+        Vec3Int64V1 presencePosition)
+    {
+        if (payload is PhysicalTerrainSdfRefShapePayloadV2)
+            return (terrain.OccupancyAabbMin, terrain.OccupancyAabbMax);
+
+        var local = LocalBounds(payload);
+        return (Translate(local.Min, presencePosition), Translate(local.Max, presencePosition));
+    }
+
+    private static (Vec3Int64V1 Min, Vec3Int64V1 Max) LocalBounds(PhysicalOccupancyRecordPayloadV2 payload)
         => payload switch
         {
             PhysicalSphereShapePayloadV2 sphere => Expand(sphere.CenterMm, sphere.RadiusMm),
@@ -186,7 +194,6 @@ public static class Qa04PhysicalD0MaterializerV1
                     checked(box.CenterMm.Z + box.HalfExtentsMm.Z))),
             PhysicalConvexPolytopeShapePayloadV2 convex => VertexBounds(convex.VerticesMm),
             PhysicalTriangleMeshStaticShapePayloadV2 mesh => TriangleBounds(mesh.Triangles),
-            PhysicalTerrainSdfRefShapePayloadV2 => (terrain.LocalAabbMin, terrain.LocalAabbMax),
             _ => throw new InvalidDataException("qa04.materialization.physical-shape-payload-unsupported"),
         };
 
@@ -236,9 +243,9 @@ public static class Qa04PhysicalD0MaterializerV1
         if (binding.TerrainRootRef.PartitionId.Value != "spatial.terrain_geometry" ||
             binding.TerrainRootRef.RecordId.IsZero)
             throw new InvalidDataException("qa04.materialization.physical-terrain-root-ref-invalid");
-        if (binding.LocalAabbMin.X > binding.LocalAabbMax.X ||
-            binding.LocalAabbMin.Y > binding.LocalAabbMax.Y ||
-            binding.LocalAabbMin.Z > binding.LocalAabbMax.Z)
+        if (binding.OccupancyAabbMin.X > binding.OccupancyAabbMax.X ||
+            binding.OccupancyAabbMin.Y > binding.OccupancyAabbMax.Y ||
+            binding.OccupancyAabbMin.Z > binding.OccupancyAabbMax.Z)
             throw new InvalidDataException("qa04.materialization.physical-terrain-aabb-order");
     }
 }
