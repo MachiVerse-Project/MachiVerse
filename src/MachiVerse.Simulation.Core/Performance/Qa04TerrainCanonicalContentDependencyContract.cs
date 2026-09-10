@@ -19,80 +19,37 @@ public sealed record Qa04TerrainCanonicalContentDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Fail-closed audit of the unresolved normative inputs required to turn the already-canonical
-/// perf.reference.v1 hot-Terrain descriptors into canonical Terrain v2 content.
-///
-/// This is a subdependency contract beneath the single Terrain CanonicalMaterial blocker in
-/// Qa04ReferenceWorldDependencyContractV1. It intentionally does not add seven world blockers or
-/// replace the compatibility failure code qa04.material.terrain-brick-authority-undefined.
-/// Existing SBO-SDF shape, descriptor identity/count, D0 spacing, common initial record revision,
-/// migration, Snapshot, and recovery contracts are treated as fixed. Only missing benchmark
-/// content-generation/closure rules appear here; no synthetic smoke value is promoted into release
-/// material.
+/// Terrain canonical-content authority audit beneath the single Terrain CanonicalMaterial world blocker.
+/// The normative generation inputs are now implemented: hot-cell origin mapping, deterministic SDF and
+/// surface material generation, surface-class vocabulary, TileScope/root identity, root connectivity,
+/// and genesis revision/lineage. The parent world blocker intentionally remains until the complete
+/// production-path materialization / target-kind closure / exact-103 recovery semantic-rehash evidence
+/// required by phase4-alpha11-terrain-canonical-generation.md has been produced.
 /// </summary>
 public static class Qa04TerrainCanonicalContentDependencyContractV1
 {
     public const string ParentWorldDependencyId = "spatial.terrain-geometry.root-brick-target";
     public const string ParentWorldFailureCode = "qa04.material.terrain-brick-authority-undefined";
 
-    private static readonly IReadOnlyList<Qa04TerrainCanonicalContentDependencyV1> BlockersValue = Array.AsReadOnly(new[]
-    {
-        Blocker(
-            "terrain.content.cell-origin-mapping",
-            Qa04TerrainCanonicalContentDependencyKindV1.SpatialMapping,
-            "qa04.terrain.cell-origin-mapping-undefined"),
-        Blocker(
-            "terrain.content.sdf-sample-generation",
-            Qa04TerrainCanonicalContentDependencyKindV1.SampleGeneration,
-            "qa04.terrain.sdf-generation-undefined"),
-        Blocker(
-            "terrain.content.surface-material-generation",
-            Qa04TerrainCanonicalContentDependencyKindV1.SurfaceMaterialGeneration,
-            "qa04.terrain.surface-material-generation-undefined"),
-        Blocker(
-            "terrain.content.surface-class-vocabulary",
-            Qa04TerrainCanonicalContentDependencyKindV1.SurfaceMaterialVocabulary,
-            "qa04.terrain.surface-class-tokens-undefined"),
-        Blocker(
-            "terrain.content.root-scope-identity",
-            Qa04TerrainCanonicalContentDependencyKindV1.RootClosure,
-            "qa04.terrain.root-scope-identity-undefined"),
-        Blocker(
-            "terrain.content.root-topology-connectivity",
-            Qa04TerrainCanonicalContentDependencyKindV1.RootClosure,
-            "qa04.terrain.root-topology-connectivity-undefined"),
-        Blocker(
-            "terrain.content.geometry-revision-lineage",
-            Qa04TerrainCanonicalContentDependencyKindV1.Lifecycle,
-            "qa04.terrain.geometry-revision-lineage-undefined"),
-    }
-    .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-    .ToArray());
+    private static readonly IReadOnlyList<Qa04TerrainCanonicalContentDependencyV1> BlockersValue =
+        Array.AsReadOnly(Array.Empty<Qa04TerrainCanonicalContentDependencyV1>());
 
     public static IReadOnlyList<Qa04TerrainCanonicalContentDependencyV1> Blockers => BlockersValue;
-
-    public static IReadOnlyList<StableToken> FailureCodes
-        => BlockersValue.Select(static blocker => blocker.FailureCode).ToArray();
+    public static IReadOnlyList<StableToken> FailureCodes =>
+        BlockersValue.Select(static blocker => blocker.FailureCode).ToArray();
 
     public static void ValidateCanonicalContract()
     {
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         Qa04TerrainBrickDescriptorMaterializerV1.ValidateCanonicalContract();
+        Qa04TerrainCanonicalContentSourceV1.ValidateCanonicalContract();
+        Qa04TerrainRootMaterializerV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 7)
-            throw new InvalidDataException("qa04.terrain.dependency-blocker-count-drift");
-        if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.terrain.dependency-blocker-id-duplicate");
-        if (BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.terrain.dependency-blocker-code-duplicate");
-        if (BlockersValue.Any(static blocker => !Enum.IsDefined(blocker.Kind)))
-            throw new InvalidDataException("qa04.terrain.dependency-blocker-kind-invalid");
-
-        var ordered = BlockersValue.Select(static blocker => blocker.DependencyId.Value).ToArray();
-        if (!ordered.SequenceEqual(ordered.OrderBy(static value => value, StringComparer.Ordinal), StringComparer.Ordinal))
-            throw new InvalidDataException("qa04.terrain.dependency-blocker-order");
+        if (BlockersValue.Count != 0 || FailureCodes.Count != 0)
+            throw new InvalidDataException("qa04.terrain.implemented-subdependency-retained");
 
         ValidateFixedTerrainBoundary();
+        ValidateImplementedAuthority();
         ValidateParentWorldBlocker();
     }
 
@@ -112,6 +69,30 @@ public static class Qa04TerrainCanonicalContentDependencyContractV1
             throw new InvalidDataException("qa04.terrain.brick-cardinality-drift");
     }
 
+    private static void ValidateImplementedAuthority()
+    {
+        if (Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm != 250 ||
+            Qa04TerrainCanonicalContentSourceV1.D0BrickWidthMm != 2_000 ||
+            Qa04TerrainCanonicalContentSourceV1.SurfaceClasses.Count != 3 ||
+            Qa04TerrainRootMaterializerV1.CanonicalRootCount != 4_096 ||
+            Qa04TerrainRootMaterializerV1.CanonicalAnchorCount != 4_096 ||
+            Qa04TerrainRootMaterializerV1.D3SampleSpacingMm != 64_000 ||
+            Qa04TerrainRootMaterializerV1.InitialRevision != 1)
+            throw new InvalidDataException("qa04.terrain.implemented-authority-drift");
+
+        var scopeRef = Qa04SpatialTileScopeAuthorityV1.ScopeRef(0);
+        var tile = Qa04TerrainRootMaterializerV1.MaterializeTile(0, static index => Qa04SpatialTileScopeAuthorityV1.ScopeRef(index));
+        var root = tile.Root.Payload as SpatialTerrainRootPayloadV2
+            ?? throw new InvalidDataException("qa04.terrain.root-payload-kind-drift");
+        if (tile.ScopeRef != scopeRef ||
+            root.ScopeRef != scopeRef ||
+            root.RootBrickRef.RecordId != tile.Anchor.RecordId ||
+            root.GeometryRevision != 1 ||
+            tile.Root.Revision != 1 || tile.Root.CreatedStep != 0 || tile.Root.RetiredStep is not null || tile.Root.LineageRef is not null ||
+            tile.Anchor.Revision != 1 || tile.Anchor.CreatedStep != 0 || tile.Anchor.RetiredStep is not null || tile.Anchor.LineageRef is not null)
+            throw new InvalidDataException("qa04.terrain.root-authority-drift");
+    }
+
     private static void ValidateParentWorldBlocker()
     {
         var parent = Qa04ReferenceWorldDependencyContractV1.Blockers.SingleOrDefault(
@@ -123,17 +104,5 @@ public static class Qa04TerrainCanonicalContentDependencyContractV1
             !string.Equals(parent.FieldName, "root_brick_ref", StringComparison.Ordinal) ||
             parent.FailureCode.Value != ParentWorldFailureCode)
             throw new InvalidDataException("qa04.terrain.parent-world-blocker-drift");
-
-        var worldCodes = Qa04ReferenceWorldDependencyContractV1.FailureCodes
-            .Select(static code => code.Value)
-            .ToHashSet(StringComparer.Ordinal);
-        if (FailureCodes.Any(code => worldCodes.Contains(code.Value)))
-            throw new InvalidDataException("qa04.terrain.subdependency-code-collides-with-world-blocker");
     }
-
-    private static Qa04TerrainCanonicalContentDependencyV1 Blocker(
-        string dependencyId,
-        Qa04TerrainCanonicalContentDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 }
