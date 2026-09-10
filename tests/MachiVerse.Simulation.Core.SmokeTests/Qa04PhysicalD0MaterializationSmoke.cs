@@ -44,9 +44,9 @@ internal static class Qa04PhysicalD0MaterializationSmoke
             "Physical ordinal 99 must retain the supplied canonical Terrain root Ref.");
 
         var occupancy = (PhysicalOccupancyStatePayloadV2)material.Occupancy.Payload;
-        Require(occupancy.AabbMin == new Vec3Int64V1(500, 1500, 2500) &&
-                occupancy.AabbMax == new Vec3Int64V1(1500, 2500, 3500),
-            "Terrain-backed occupancy must use supplied root bounds translated by presence position.");
+        Require(occupancy.AabbMin == new Vec3Int64V1(-500, -500, -500) &&
+                occupancy.AabbMax == new Vec3Int64V1(500, 500, 500),
+            "Terrain-backed occupancy must preserve the owner-supplied final occupancy bounds.");
     }
 
     private static void VerifyBatchMaterialization()
