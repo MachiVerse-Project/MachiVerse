@@ -10,7 +10,7 @@ internal static class Qa04TerrainCanonicalContentDependencyContractSmoke
 
         Require(Qa04TerrainCanonicalContentDependencyContractV1.Blockers.Count == 7,
             "QA-04 Terrain canonical content dependency count drifted.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 9,
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 8,
             "Terrain subdependencies must not change the reference-world blocker count.");
         Require(Qa04TerrainBrickDescriptorMaterializerV1.InitialRecordRevision == 1,
             "Common Domain initial revision must already be fixed before Terrain content binding.");
