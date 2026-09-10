@@ -8,11 +8,34 @@ internal static class DomainSnapshotReferenceSchemaMigrationInitializer
     [ModuleInitializer]
     internal static void Initialize()
     {
+        VerifyResolverPreservesRegisteredInfrastructureV2();
         VerifyResolverPreservesRegisteredPhysicalOccupancyV2();
         VerifyResolverPreservesRegisteredMarketV2();
         VerifyResolverPreservesRegisteredTerrainV2();
         VerifyResolverRejectsUnregisteredSchema();
         VerifyCrossPartitionReferenceValidationUsesMigrationRegistry();
+    }
+
+    private static void VerifyResolverPreservesRegisteredInfrastructureV2()
+    {
+        var topologyId = Id("00000000000000000000000000024501");
+        var migration = StandardDomainRecordSchemaMigrationRegistryV1.Get("infrastructure.network_topology");
+        var sources = StandardDomainPartitionRegistry.Entries
+            .Select(identity => (IDomainPartitionSnapshotReferenceSourceV1)new FakeSource(
+                identity.PartitionId,
+                identity.PartitionId.Value == "infrastructure.network_topology"
+                    ? migration.TargetRecordSchema
+                    : identity.RecordSchema,
+                identity.PartitionId.Value == "infrastructure.network_topology"
+                    ? new[] { topologyId }
+                    : Array.Empty<OpaqueId128>()))
+            .ToArray();
+
+        var resolver = new DomainSnapshotReferenceResolverV1(sources);
+        var reference = new PartitionRecordRefV1("infrastructure.network_topology", topologyId);
+        Require(resolver.Exists(reference), "all-97 resolver must preserve migrated Infrastructure topology record existence.");
+        Require(resolver.TryGetRecordSchema(reference, out var actual) && actual == migration.TargetRecordSchema,
+            "all-97 resolver must preserve the actual registered Infrastructure topology v2 schema rather than rewriting it to v1.");
     }
 
     private static void VerifyResolverPreservesRegisteredPhysicalOccupancyV2()
