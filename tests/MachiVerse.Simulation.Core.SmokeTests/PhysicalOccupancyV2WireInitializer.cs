@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
-using MachiVerse.Simulation.Core.Domains;
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Persistence;
@@ -48,7 +47,8 @@ internal static class PhysicalOccupancyV2WireInitializer
             Record(3, new PhysicalCapsuleShapePayloadV2(
                 new Vec3MmV1(0, -400, 0), new Vec3MmV1(0, 400, 0), 201)),
             Record(4, new PhysicalOrientedBoxShapePayloadV2(
-                new Vec3MmV1(0, 0, 0), half, QuaternionQ30V1.Identity)),
+                new Vec3MmV1(0, 0, 0), half,
+                global::MachiVerse.Simulation.Core.Domains.QuaternionQ30V1.Identity)),
             Record(5, new PhysicalConvexPolytopeShapePayloadV2(Corners(half))),
             Record(6, new PhysicalTriangleMeshStaticShapePayloadV2(
             [
