@@ -22,9 +22,9 @@ public sealed record Qa04CrossDomainTransactionPersistentAuthorityDependencyV1(
 
 /// <summary>
 /// Remaining implementation dependencies beneath the single reference-world persistent-authority
-/// blocker. The persistent logical state schema and lifecycle transition semantics are implemented
-/// by CrossDomainTransactionStateV1; this contract therefore tracks only the still-missing durable
-/// owner/Snapshot/history/recovery/detail-guard/benchmark bindings.
+/// blocker. Persistent logical state/lifecycle semantics and exact benchmark genesis/turnover are
+/// implemented; this contract therefore tracks only the still-missing durable owner, Snapshot,
+/// history, recovery, and detail-guard bindings.
 /// </summary>
 public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1
 {
@@ -39,10 +39,6 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
             "cross-domain-transaction.persistence.authority-owner",
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.AuthorityOwner,
             "qa04.cross-domain-transaction.authority-owner-undefined"),
-        Blocker(
-            "cross-domain-transaction.persistence.benchmark-turnover-binding",
-            Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.BenchmarkTurnoverBinding,
-            "qa04.transaction.benchmark-turnover-binding-undefined"),
         Blocker(
             "cross-domain-transaction.persistence.detail-guard-binding",
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.DetailGuardBinding,
@@ -74,7 +70,7 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         Qa04CanonicalWorkloadDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 6)
+        if (BlockersValue.Count != 5)
             throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-id-duplicate");
@@ -89,6 +85,7 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
 
         ValidateEstablishedRuntimeBoundary();
         ValidateImplementedPersistentStateBoundary();
+        ValidateImplementedBenchmarkTurnoverBoundary();
         ValidateParentWorldBlocker();
         ValidateSeparateWorkloadBlocker();
     }
@@ -119,6 +116,17 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
                 code.Value is "qa04.cross-domain-transaction.state-schema-undefined" or
                     "qa04.cross-domain-transaction.lifecycle-semantics-undefined"))
             throw new InvalidDataException("qa04.cross-domain-transaction.implemented-state-dependency-retained");
+    }
+
+    private static void ValidateImplementedBenchmarkTurnoverBoundary()
+    {
+        if (Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount != 10_000 ||
+            Qa04CrossDomainTransactionTurnoverV1.CanonicalTurnoverCount != 1_000 ||
+            Qa04CrossDomainTransactionTurnoverV1.CadenceSteps != 300 ||
+            Qa04CrossDomainTransactionTurnoverV1.LifetimeSteps != 3_000)
+            throw new InvalidDataException("qa04.cross-domain-transaction.turnover-contract-drift");
+        if (FailureCodes.Any(static code => code.Value == "qa04.transaction.benchmark-turnover-binding-undefined"))
+            throw new InvalidDataException("qa04.cross-domain-transaction.implemented-turnover-dependency-retained");
     }
 
     private static void ValidateParentWorldBlocker()
