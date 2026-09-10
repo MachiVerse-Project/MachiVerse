@@ -10,7 +10,7 @@ internal static class CoreOperationStateSnapshotV2Smoke
     {
         var state = CreateTransaction();
         var authority = CoreOperationStateSnapshotAuthorityV2.Create([], [state], basisStep: 2);
-        Require(authority.Schema.Version.Major == 2 && authority.Schema.Version.Minor == 0,
+        Require(CoreOperationStateSnapshotAuthorityV2.Schema.Version.Major == 2 && CoreOperationStateSnapshotAuthorityV2.Schema.Version.Minor == 0,
             "core.operation-state v2 schema identity drifted.");
         Require(authority.LogicalItemCount == 1, "v2 logical item count must include transaction state.");
 
@@ -35,7 +35,7 @@ internal static class CoreOperationStateSnapshotV2Smoke
             "v2 section semantic digest changed after round trip.");
 
         var section = CoreOperationStateSnapshotSectionProviderV2.Create(2, [], [state]);
-        Require(section.SectionId == "core.operation-state" && section.SectionSchema == authority.Schema &&
+        Require(section.SectionId == "core.operation-state" && section.SectionSchema == CoreOperationStateSnapshotAuthorityV2.Schema &&
                 section.LogicalItemCount == 1 && section.Fragments.Count == 1,
             "v2 production section shape mismatch.");
         var recoveredSection = CoreOperationStateSnapshotSectionProviderV2.Recover(section, 2);
