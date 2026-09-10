@@ -59,8 +59,8 @@ public static class Qa04TerrainRootMaterializerV1
 
         var scopeRef = tileScopeForTile(tileIndex);
         ValidateScopeRef(scopeRef);
-        var anchor = CreateAnchor(tileIndex);
-        var root = CreateRoot(tileIndex, scopeRef);
+        var anchor = CreateAnchorValidated(tileIndex);
+        var root = CreateRootValidated(tileIndex, scopeRef);
         return new Qa04TerrainTileAuthorityV1(tileIndex, scopeRef, root, anchor);
     }
 
@@ -128,13 +128,58 @@ public static class Qa04TerrainRootMaterializerV1
             level: 3,
             origin,
             D3SampleSpacingMm,
-            Qa04TerrainCanonicalContentSourceV1.CreateSdfSamples(origin, D3SampleSpacingMm),
-            Qa04TerrainCanonicalContentSourceV1.CreateSurfaceMaterials(origin, D3SampleSpacingMm),
+            CreateD3SdfSamples(origin),
+            CreateD3SurfaceMaterials(origin),
             InitialRevision);
         return SpatialTerrainGeometryRecordMaterialV2.FromTerrainBrick(
             brick,
             createdStep: 0,
             detailLevel: DetailLevelV1.D3BoundarySummary);
+    }
+
+    private static int[] CreateD3SdfSamples(SpatialCellKeyV1 origin)
+    {
+        if (origin.Level != 3)
+            throw new ArgumentException("D3 anchor origin must be level 3.", nameof(origin));
+        var values = new int[TerrainBrickV1.SdfSampleCount];
+        for (var z = 0; z < TerrainBrickV1.SamplesPerAxis; z++)
+        for (var y = 0; y < TerrainBrickV1.SamplesPerAxis; y++)
+        for (var x = 0; x < TerrainBrickV1.SamplesPerAxis; x++)
+        {
+            var wx = checked(((long)origin.X + x) * D3SampleSpacingMm);
+            var wy = checked(((long)origin.Y + y) * D3SampleSpacingMm);
+            var wz = checked(((long)origin.Z + z) * D3SampleSpacingMm);
+            var sdf = checked((int)(wz - Qa04TerrainCanonicalContentSourceV1.HeightMm(wx, wy)));
+            var index = checked(((z * TerrainBrickV1.SamplesPerAxis) + y) * TerrainBrickV1.SamplesPerAxis + x);
+            values[index] = sdf;
+        }
+        return values;
+    }
+
+    private static ushort[] CreateD3SurfaceMaterials(SpatialCellKeyV1 origin)
+    {
+        if (origin.Level != 3)
+            throw new ArgumentException("D3 anchor origin must be level 3.", nameof(origin));
+        var values = new ushort[TerrainBrickV1.SurfaceMaterialCount];
+        for (var z = 0; z < TerrainBrickV1.CellsPerAxis; z++)
+        for (var y = 0; y < TerrainBrickV1.CellsPerAxis; y++)
+        for (var x = 0; x < TerrainBrickV1.CellsPerAxis; x++)
+        {
+            var cx = checked((checked(2L * ((long)origin.X + x)) + 1) * D3SampleSpacingMm / 2);
+            var cy = checked((checked(2L * ((long)origin.Y + y)) + 1) * D3SampleSpacingMm / 2);
+            var cz = checked((checked(2L * ((long)origin.Z + z)) + 1) * D3SampleSpacingMm / 2);
+            var distance = checked(cz - Qa04TerrainCanonicalContentSourceV1.HeightMm(cx, cy));
+            var material = distance switch
+            {
+                > 0 => Qa04TerrainCanonicalContentSourceV1.MaterialVoid,
+                > -500 => Qa04TerrainCanonicalContentSourceV1.MaterialSoil,
+                > -2_000 => Qa04TerrainCanonicalContentSourceV1.MaterialSediment,
+                _ => Qa04TerrainCanonicalContentSourceV1.MaterialRock,
+            };
+            var index = checked(((z * TerrainBrickV1.CellsPerAxis) + y) * TerrainBrickV1.CellsPerAxis + x);
+            values[index] = material;
+        }
+        return values;
     }
 
     private static SpatialTerrainGeometryRecordMaterialV2 CreateRootValidated(
