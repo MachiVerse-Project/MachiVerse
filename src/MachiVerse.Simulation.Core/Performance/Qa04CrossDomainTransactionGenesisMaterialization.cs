@@ -1,5 +1,6 @@
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Runtime;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
@@ -8,6 +9,7 @@ public sealed record Qa04CrossDomainTransactionGenesisBindingV1(
     OpaqueId128 DescriptorTransactionId,
     OpaqueId128 AuthoritativeTransactionId,
     StableToken TransactionKind,
+    IReadOnlyList<PartitionRecordRefV1> ParticipantTargetRefs,
     CrossDomainTransactionStateV1 State);
 
 /// <summary>
@@ -32,6 +34,9 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
             ["infrastructure_information"] = "infrastructure.service_queue",
         };
 
+    private static readonly IReadOnlyDictionary<StableToken, ushort> DomainRanks =
+        StandardDomainExecutionPlanV1.Create().Entries.ToDictionary(static entry => entry.DomainToken, static entry => entry.DomainRank);
+
     private static readonly string[] OtherKinds =
     [
         "transaction.demolition",
@@ -49,7 +54,7 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
         if (CanonicalActiveCount != Qa04ReferenceScenariosV1.ActiveCrossDomainTransactionTarget)
             throw new InvalidDataException("qa04.transaction.genesis-active-count-drift");
-        if (ParticipantPartitionByDomain.Count != StandardDomainExecutionPlanV1.Create().Entries.Count)
+        if (ParticipantPartitionByDomain.Count != DomainRanks.Count)
             throw new InvalidDataException("qa04.transaction.genesis-participant-domain-coverage");
 
         foreach (var entry in StandardDomainExecutionPlanV1.Create().Entries)
@@ -110,7 +115,7 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
             .Concat(registration.RequiredAnyDomainGroups.Select(group =>
             {
                 var selected = group
-                    .OrderBy(domain => DomainRank(domain))
+                    .OrderBy(DomainRank)
                     .ThenBy(static domain => domain.Value, StringComparer.Ordinal)
                     .First();
                 return (Domain: selected, Required: true);
@@ -124,8 +129,6 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
             CausalityRefKindV1.Entity,
             descriptor.SubjectIds[0].ToBytes(),
             basisStep: 0);
-
-        // First derive the authoritative id from the exact mapped transaction identity contract.
         var authoritativeId = TransactionIdentityV1.Derive(
             Qa04ReferenceLoadV1.WorldId,
             mappedKind,
@@ -134,11 +137,12 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
             descriptor.SubjectIds,
             stableLocalOrdinal: slotOrdinal);
 
-        var participants = participantDomains.Select(pair =>
+        var participantMaterial = participantDomains.Select(pair =>
         {
             var partitionId = ParticipantPartitionByDomain[pair.Domain.Value];
             var pool = canonicalRecordPools[partitionId];
             var target = pool[checked((int)(slotOrdinal % checked((ulong)pool.Count)))];
+            var targetRef = new PartitionRecordRefV1(partitionId, target);
             var intentId = HashSuite.Trunc128(HashSuite.DomainHash(
                 "mv.perf-reference-transaction-intent.v1",
                 writer =>
@@ -159,14 +163,14 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
                     writer.WriteAsciiText(partitionId);
                     writer.WriteBytes(intentId.ToBytes());
                 });
-            _ = target; // Pool selection is part of the canonical binding evidence; participant wire owns partition/intent identity.
-            return new TransactionParticipantCandidateV1(
+            var participant = new TransactionParticipantCandidateV1(
                 pair.Domain,
                 new StableToken(partitionId),
                 [intentId],
                 pair.Required,
                 TransactionParticipantOutcomeV1.Ready,
                 effectDigest);
+            return (Participant: participant, TargetRef: targetRef);
         }).ToArray();
 
         var invariants = CrossDomainTransactionInvariantRegistryV1.GetRequiredInvariantIds(mappedKind)
@@ -185,7 +189,7 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
             root,
             descriptor.SubjectIds,
             stableLocalOrdinal: slotOrdinal,
-            participants,
+            participantMaterial.Select(static value => value.Participant),
             invariants);
         if (!candidate.CanFinalize || candidate.Status != TransactionCandidateStatusV1.Valid ||
             candidate.TransactionId != authoritativeId || candidate.IsAuthoritative)
@@ -207,6 +211,7 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
             descriptor.TransactionId,
             authoritativeId,
             mappedKind,
+            Array.AsReadOnly(participantMaterial.Select(static value => value.TargetRef).ToArray()),
             state);
     }
 
@@ -229,12 +234,14 @@ public static class Qa04CrossDomainTransactionGenesisMaterializerV1
             .OrderBy(slot => Qa04ReferenceScenariosV1.ActiveTransaction(slot).TransactionId)
             .ToArray();
         return orderedSlots
-            .Select((slot, index) => (slot, index: checked((ulong)index)))
-            .ToDictionary(static pair => pair.slot, static pair => pair.index);
+            .Select((slot, index) => (slot, Index: checked((ulong)index)))
+            .ToDictionary(static pair => pair.slot, static pair => pair.Index);
     }
 
     private static ushort DomainRank(StableToken domain)
-        => StandardDomainExecutionPlanV1.Create().Entries.Single(entry => entry.DomainToken == domain).DomainRank;
+        => DomainRanks.TryGetValue(domain, out var rank)
+            ? rank
+            : throw new InvalidDataException("qa04.transaction.genesis-domain-rank-missing");
 
     private static void ValidatePools(IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>> pools)
     {
