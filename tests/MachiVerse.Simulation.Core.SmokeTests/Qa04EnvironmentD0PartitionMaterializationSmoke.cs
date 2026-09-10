@@ -12,6 +12,7 @@ internal static class Qa04EnvironmentD0PartitionMaterializationSmoke
         Qa04EnvironmentD0PartitionMaterializerV1.ValidateCanonicalContract();
         VerifyAtmosphereEnvelopeAndPartition();
         VerifyGroundwaterTopologyRefValidation();
+        VerifyTileScopeValidation();
         VerifyMissingReferenceFailsClosed();
     }
 
@@ -23,7 +24,7 @@ internal static class Qa04EnvironmentD0PartitionMaterializationSmoke
         var partition = Qa04EnvironmentD0PartitionMaterializerV1.MaterializePartition(
             EnvironmentAtmospherePayloadV1.PartitionId,
             recordCount: 2,
-            binding => Atmosphere(binding, scope),
+            binding => Atmosphere(binding, Qa04EnvironmentD0PartitionMaterializerV1.ResolveSpatialScope(binding, _ => scope)),
             static payload => payload.ToStandardPayload(),
             resolver);
 
@@ -59,7 +60,9 @@ internal static class Qa04EnvironmentD0PartitionMaterializationSmoke
 
         var record = Qa04EnvironmentD0PartitionMaterializerV1.CreateRecord(
             binding.GlobalOrdinal,
-            current => Groundwater(current, scope),
+            current => Groundwater(
+                current,
+                Qa04EnvironmentD0PartitionMaterializerV1.ResolveSpatialScope(current, _ => scope)),
             static payload => payload.ToStandardPayload(),
             resolver);
         Require(record.RecordId == binding.Descriptor.RecordId,
@@ -68,13 +71,31 @@ internal static class Qa04EnvironmentD0PartitionMaterializationSmoke
             "Environment groundwater must use canonical next-record topology Ref.");
     }
 
+    private static void VerifyTileScopeValidation()
+    {
+        var binding = Qa04EnvironmentReferenceDecompositionV1.BindD0(0);
+        var scope = Ref("spatial.scope_registry", "00000000000000000000000000e00004");
+        ushort? requestedTile = null;
+        var resolved = Qa04EnvironmentD0PartitionMaterializerV1.ResolveSpatialScope(binding, tile =>
+        {
+            requestedTile = tile;
+            return scope;
+        });
+        Require(requestedTile == binding.Descriptor.RegionalTileIndex && resolved == scope,
+            "Environment D0 spatial scope must resolve exactly the descriptor regional tile.");
+
+        ExpectInvalid(() => _ = Qa04EnvironmentD0PartitionMaterializerV1.ResolveSpatialScope(
+            binding,
+            _ => Ref("spatial.terrain_geometry", "00000000000000000000000000e00005")));
+    }
+
     private static void VerifyMissingReferenceFailsClosed()
     {
         var scope = Ref("spatial.scope_registry", "00000000000000000000000000e00003");
         var slice = Qa04EnvironmentReferenceDecompositionV1.Get(EnvironmentAtmospherePayloadV1.PartitionId);
         ExpectInvalid(() => _ = Qa04EnvironmentD0PartitionMaterializerV1.CreateRecord(
             slice.D0StartOrdinal,
-            binding => Atmosphere(binding, scope),
+            binding => Atmosphere(binding, Qa04EnvironmentD0PartitionMaterializerV1.ResolveSpatialScope(binding, _ => scope)),
             static payload => payload.ToStandardPayload(),
             new Resolver(Array.Empty<PartitionRecordRefV1>())));
     }
@@ -130,7 +151,7 @@ internal static class Qa04EnvironmentD0PartitionMaterializationSmoke
         {
             return;
         }
-        throw new InvalidOperationException("Expected Environment D0 missing Ref rejection.");
+        throw new InvalidOperationException("Expected Environment D0 validation rejection.");
     }
 
     private static void Require(bool condition, string message)
