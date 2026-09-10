@@ -1,3 +1,4 @@
+using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -18,6 +19,10 @@ public static class DomainSnapshotRecordSchemaMigrationProviderRegistryV1
 {
     private static readonly DomainSnapshotRecordSchemaMigrationProviderRegistrationV1[] CanonicalEntries =
     [
+        Registration(
+            PhysicalOccupancyRecordSchemaV2.PartitionId,
+            PhysicalOccupancyRecordSchemaV2.RecordSchema,
+            static () => new PhysicalOccupancySnapshotSectionProviderV2()),
         Registration(
             SpatialTerrainGeometryRecordSchemaV2.PartitionId,
             SpatialTerrainGeometryRecordSchemaV2.RecordSchema,
