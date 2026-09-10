@@ -74,11 +74,11 @@ public static class CoreOperationStateSnapshotSectionProviderV2
             var decoded = CoreOperationStateSnapshotWireCodecV2.Decode(fragment.FragmentPayload);
             if (decoded.BasisStep != expectedBasisStep)
                 throw new InvalidDataException("snapshot-core.operation-v2.fragment-basis-step-mismatch");
-            if (decoded.Transactions.Count != 0) transactionArmSeen = true;
-            if (transactionArmSeen && decoded.Operations.Count != 0 && operations.Count != 0)
+            if (transactionArmSeen && decoded.Operations.Count != 0)
                 throw new InvalidDataException("snapshot-core.operation-v2.fragment-kind-order");
             operations.AddRange(decoded.Operations);
             transactions.AddRange(decoded.Transactions);
+            if (decoded.Transactions.Count != 0) transactionArmSeen = true;
         }
 
         var authority = CoreOperationStateSnapshotAuthorityV2.Create(operations, transactions, expectedBasisStep);
