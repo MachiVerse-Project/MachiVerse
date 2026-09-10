@@ -121,9 +121,9 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
     private static void ValidateImplementedBenchmarkTurnoverBoundary()
     {
         if (Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount != 10_000 ||
-            Qa04CrossDomainTransactionTurnoverV1.CanonicalTurnoverCount != 1_000 ||
-            Qa04CrossDomainTransactionTurnoverV1.CadenceSteps != 300 ||
-            Qa04CrossDomainTransactionTurnoverV1.LifetimeSteps != 3_000)
+            Qa04CrossDomainTransactionTurnoverMaterializerV1.CohortSize != 1_000 ||
+            Qa04CrossDomainTransactionTurnoverMaterializerV1.TurnoverCadenceSteps != 300 ||
+            Qa04CrossDomainTransactionTurnoverMaterializerV1.LifetimeSteps != 3_000)
             throw new InvalidDataException("qa04.cross-domain-transaction.turnover-contract-drift");
         if (FailureCodes.Any(static code => code.Value == "qa04.transaction.benchmark-turnover-binding-undefined"))
             throw new InvalidDataException("qa04.cross-domain-transaction.implemented-turnover-dependency-retained");
