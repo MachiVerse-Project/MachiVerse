@@ -9,14 +9,11 @@ internal static class Qa04CrossDomainTransactionDetailGuardReconstructionSmoke
     [ModuleInitializer]
     internal static void Run()
     {
+        var subjects = SubjectsAcrossTwoTiles();
         var active = State(
             "0000000000000000000000000004a001",
             TransactionLifecycleV1.Active,
-            [
-                OpaqueId128.Parse("0011000000000000000000000004a010"),
-                OpaqueId128.Parse("0011000000000000000000000004a011"),
-                OpaqueId128.Parse("0022000000000000000000000004a012")
-            ]);
+            [subjects.SameTileA, subjects.SameTileB, subjects.OtherTile]);
         var committed = State(
             "0000000000000000000000000004a002",
             TransactionLifecycleV1.Committed,
@@ -85,6 +82,24 @@ internal static class Qa04CrossDomainTransactionDetailGuardReconstructionSmoke
             () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.RebuildDirectoryGuards(
                 incompleteDirectory, [active], Resolve),
             "Missing authoritative guarded detail region must fail closed.");
+    }
+
+    private static (OpaqueId128 SameTileA, OpaqueId128 SameTileB, OpaqueId128 OtherTile) SubjectsAcrossTwoTiles()
+    {
+        var first = OpaqueId128.Parse("0000000000000000000000000004d001");
+        var firstTile = Qa04ReferenceLoadV1.RegionalTileIndex(first);
+        OpaqueId128 same = OpaqueId128.Zero;
+        OpaqueId128 other = OpaqueId128.Zero;
+        for (ulong ordinal = 0x4d002; ordinal < 0x5d002 && (same.IsZero || other.IsZero); ordinal++)
+        {
+            var candidate = OpaqueId128.Parse(ordinal.ToString("x32"));
+            var tile = Qa04ReferenceLoadV1.RegionalTileIndex(candidate);
+            if (tile == firstTile && same.IsZero) same = candidate;
+            if (tile != firstTile && other.IsZero) other = candidate;
+        }
+        if (same.IsZero || other.IsZero)
+            throw new InvalidOperationException("Unable to derive deterministic two-tile detail guard fixture.");
+        return (first, same, other);
     }
 
     private static CrossDomainTransactionStateV1 State(
