@@ -82,6 +82,14 @@ public static class Qa04PhysicalD0MaterializerV1
         Func<ushort, Qa04PhysicalTerrainRootBindingV1> terrainRootForTile)
     {
         ValidateCanonicalContract();
+        return CreateValidated(physicalOrdinal, presenceBinding, terrainRootForTile);
+    }
+
+    internal static Qa04PhysicalD0RecordMaterialV1 CreateValidated(
+        ulong physicalOrdinal,
+        Qa04PhysicalPresenceGenesisBindingV1 presenceBinding,
+        Func<ushort, Qa04PhysicalTerrainRootBindingV1> terrainRootForTile)
+    {
         ArgumentNullException.ThrowIfNull(presenceBinding);
         ArgumentNullException.ThrowIfNull(terrainRootForTile);
 
@@ -93,7 +101,7 @@ public static class Qa04PhysicalD0MaterializerV1
             ?? throw new InvalidDataException("qa04.materialization.physical-terrain-binding-missing");
         ValidateTerrainBinding(terrainBinding);
 
-        var shape = Qa04PhysicalShapeMaterializerV1.CreateShapeRecord(
+        var shape = Qa04PhysicalShapeMaterializerV1.CreateShapeRecordValidated(
             physicalOrdinal,
             _ => terrainBinding.TerrainRootRef);
         var shapeRef = new PartitionRecordRefV1(PhysicalOccupancyRecordSchemaV2.PartitionId, shape.RecordId);
@@ -153,6 +161,7 @@ public static class Qa04PhysicalD0MaterializerV1
         Func<ulong, Qa04PhysicalPresenceGenesisBindingV1> presenceBindingForOrdinal,
         Func<ushort, Qa04PhysicalTerrainRootBindingV1> terrainRootForTile)
     {
+        ValidateCanonicalContract();
         if (count is 0 or > CanonicalPhysicalCount)
             throw new ArgumentOutOfRangeException(nameof(count));
         ArgumentNullException.ThrowIfNull(presenceBindingForOrdinal);
@@ -162,7 +171,7 @@ public static class Qa04PhysicalD0MaterializerV1
         {
             var binding = presenceBindingForOrdinal(ordinal)
                 ?? throw new InvalidDataException("qa04.materialization.physical-presence-binding-missing");
-            yield return Create(ordinal, binding, terrainRootForTile);
+            yield return CreateValidated(ordinal, binding, terrainRootForTile);
         }
     }
 
