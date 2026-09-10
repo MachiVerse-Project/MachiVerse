@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Runtime;
+using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04CrossDomainTransactionDetailGuardReconstructionSmoke
 {
@@ -49,7 +50,7 @@ internal static class Qa04CrossDomainTransactionDetailGuardReconstructionSmoke
                     : Array.Empty<StableToken>()))
             .Append(Region(unrelatedRegion, [DetailTransitionGuardV1.ActiveTransaction]))
             .ToArray();
-        var stale = new DetailDirectoryV1(regions, Array.Empty<DetailTransitionRequestV1>());
+        var stale = new DetailDirectoryV1(regions, Array.Empty<DetailTransitionCandidateV1>());
         var rebuilt = Qa04CrossDomainTransactionDetailGuardReconstructionV1.RebuildDirectoryGuards(
             stale, [active, committed], Resolve);
 
@@ -79,7 +80,7 @@ internal static class Qa04CrossDomainTransactionDetailGuardReconstructionSmoke
 
         var incompleteDirectory = new DetailDirectoryV1(
             rebuilt.Regions.Where(region => region.DetailRegionId != guardedIds.First()).ToArray(),
-            Array.Empty<DetailTransitionRequestV1>());
+            Array.Empty<DetailTransitionCandidateV1>());
         ExpectReject(
             () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.RebuildDirectoryGuards(
                 incompleteDirectory, [active], Resolve),
