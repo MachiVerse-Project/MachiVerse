@@ -25,12 +25,18 @@ internal static class Qa04ReferenceWorldRefOwnershipContractInitializer
                 shape.TargetRecordKind.Value == "collision_shape",
             "QA-04 collision shape ownership decision drifted.");
 
+        var market = Qa04ReferenceWorldRefOwnershipContractV1.RefClosures.Single(
+            static closure => closure.DependencyId.Value == "society.market-transaction.market-ref-target");
+        Require(market.TargetPartitionId.Value == "society.market_transaction" &&
+                market.TargetRecordKind.Value == "market_state",
+            "QA-04 Market ownership decision drifted.");
+
         Require(Qa04ReferenceWorldDependencyContractV1.FailureCodes.All(
                 static code => code.Value != "qa04.material.physical-presence-shape-authority-undefined"),
             "QA-04 resolved physical shape authority blocker must remain absent while ownership closure stays normative.");
-        Require(Qa04ReferenceWorldDependencyContractV1.FailureCodes.Any(
-                static code => code.Value == "qa04.material.market-ref-authority-undefined"),
-            "QA-04 runtime material gate must remain fail-closed until the market v2 schema is implemented.");
+        Require(Qa04ReferenceWorldDependencyContractV1.FailureCodes.All(
+                static code => code.Value != "qa04.material.market-ref-authority-undefined"),
+            "QA-04 resolved Market authority blocker must remain absent while ownership closure stays normative.");
     }
 
     private static void Require(bool condition, string message)
