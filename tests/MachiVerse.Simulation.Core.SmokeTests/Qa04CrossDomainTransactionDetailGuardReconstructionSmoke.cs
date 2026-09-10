@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
@@ -19,38 +20,51 @@ internal static class Qa04CrossDomainTransactionDetailGuardReconstructionSmoke
             TransactionLifecycleV1.Committed,
             [OpaqueId128.Parse("0033000000000000000000000004a013")]);
 
-        var regionByTile = new Dictionary<ushort, OpaqueId128>();
-        OpaqueId128 Resolve(ushort tile)
+        var activeTiles = active.SubjectIds
+            .Select(Qa04ReferenceLoadV1.RegionalTileIndex)
+            .Distinct()
+            .Order()
+            .ToArray();
+        Require(activeTiles.Length == 2, "Fixture must span exactly two canonical tiles.");
+
+        var scopeByTile = activeTiles.ToDictionary(
+            static tile => tile,
+            static tile => OpaqueId128.Parse((0x4e000UL + tile).ToString("x32")));
+        PartitionRecordRefV1 TileScope(ushort tile)
         {
-            if (!regionByTile.TryGetValue(tile, out var id))
-            {
-                id = OpaqueId128.Parse((0x4b000UL + tile).ToString("x32"));
-                regionByTile.Add(tile, id);
-            }
-            return id;
+            if (!scopeByTile.TryGetValue(tile, out var scopeId))
+                scopeId = OpaqueId128.Parse((0x4e000UL + tile).ToString("x32"));
+            return new PartitionRecordRefV1(SpatialScopeRegistryPayloadV1.PartitionId, scopeId);
         }
 
-        var counts = Qa04CrossDomainTransactionDetailGuardReconstructionV1.ReconstructCounts(
-            [active, committed], Resolve);
+        var regionByTile = activeTiles.ToDictionary(
+            static tile => tile,
+            static tile => OpaqueId128.Parse((0x4b000UL + tile).ToString("x32")));
+        var unrelatedRegion = OpaqueId128.Parse("0000000000000000000000000004bfff");
+        var unrelatedScope = OpaqueId128.Parse("0000000000000000000000000004efff");
+        var regions = activeTiles.Select(tile => Region(
+                regionByTile[tile],
+                scopeByTile[tile],
+                tile == activeTiles[1]
+                    ? [new StableToken("detail.guard.pinned")]
+                    : Array.Empty<StableToken>()))
+            .Append(Region(unrelatedRegion, unrelatedScope, [DetailTransitionGuardV1.ActiveTransaction]))
+            .ToArray();
+        var stale = new DetailDirectoryV1(regions, Array.Empty<DetailTransitionCandidateV1>());
+
+        var counts = Qa04CrossDomainTransactionDetailGuardReconstructionV1.ReconstructCountsFromTileScopes(
+            [active, committed], stale, TileScope);
         Require(counts.Sum(static count => count.ActiveSubjectReferenceCount) == 3,
             "Detail guard counts must include only ACTIVE transaction subjects.");
         Require(counts.Count == 2 && counts.Any(static count => count.ActiveSubjectReferenceCount == 2) &&
                 counts.Any(static count => count.ActiveSubjectReferenceCount == 1),
-            "Detail guard reconstruction must aggregate subject references by canonical tile region.");
+            "TileScope binding must aggregate subject references by authoritative detail region.");
+        Require(counts.All(count => regionByTile[count.TileIndex] == count.DetailRegionId),
+            "TileScope resolver must derive DetailRegionId only from DetailDirectory.SpatialScopeRef.");
 
         var guardedIds = counts.Select(static count => count.DetailRegionId).ToHashSet();
-        var unrelatedRegion = OpaqueId128.Parse("0000000000000000000000000004bfff");
-        var regions = counts.Select(count => Region(
-                count.DetailRegionId,
-                guards: count.ActiveSubjectReferenceCount == 1
-                    ? [new StableToken("detail.guard.pinned")]
-                    : Array.Empty<StableToken>()))
-            .Append(Region(unrelatedRegion, [DetailTransitionGuardV1.ActiveTransaction]))
-            .ToArray();
-        var stale = new DetailDirectoryV1(regions, Array.Empty<DetailTransitionCandidateV1>());
-        var rebuilt = Qa04CrossDomainTransactionDetailGuardReconstructionV1.RebuildDirectoryGuards(
-            stale, [active, committed], Resolve);
-
+        var rebuilt = Qa04CrossDomainTransactionDetailGuardReconstructionV1.RebuildDirectoryGuardsFromTileScopes(
+            stale, [active, committed], TileScope);
         Require(rebuilt.Regions.Where(region => guardedIds.Contains(region.DetailRegionId)).All(region =>
                 region.ActiveGuards.Contains(DetailTransitionGuardV1.ActiveTransaction)),
             "Every region referenced by ACTIVE transaction subjects must receive the active-transaction guard.");
@@ -60,28 +74,38 @@ internal static class Qa04CrossDomainTransactionDetailGuardReconstructionSmoke
         Require(rebuilt.Regions.Any(region => region.ActiveGuards.Contains(new StableToken("detail.guard.pinned"))),
             "Reconstruction must preserve unrelated guards.");
 
-        Qa04CrossDomainTransactionDetailGuardReconstructionV1.ValidateDirectoryMatchesAuthority(
-            rebuilt, [active, committed], Resolve);
+        Qa04CrossDomainTransactionDetailGuardReconstructionV1.ValidateDirectoryMatchesTileScopeAuthority(
+            rebuilt, [active, committed], TileScope);
         ExpectReject(
-            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.ValidateDirectoryMatchesAuthority(
-                stale, [active, committed], Resolve),
-            "Stale recovered detail guards must fail authority comparison.");
+            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.ValidateDirectoryMatchesTileScopeAuthority(
+                stale, [active, committed], TileScope),
+            "Stale recovered detail guards must fail TileScope authority comparison.");
 
         ExpectReject(
-            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.ReconstructCounts([active], static _ => OpaqueId128.Zero),
-            "Zero detail-region resolver output must fail closed.");
+            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.ReconstructCountsFromTileScopes(
+                [active], stale, tile => new PartitionRecordRefV1("spatial.terrain_geometry", TileScope(tile).RecordId)),
+            "Non-scope-registry refs must fail closed.");
         ExpectReject(
-            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.ReconstructCounts([active], static _ =>
-                OpaqueId128.Parse("0000000000000000000000000004c001")),
-            "Distinct tiles must not alias to one detail-region id.");
+            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.ReconstructCountsFromTileScopes(
+                [active], stale, static _ => new PartitionRecordRefV1(SpatialScopeRegistryPayloadV1.PartitionId, OpaqueId128.Zero)),
+            "ZERO TileScope RecordId must fail closed.");
+        ExpectReject(
+            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.ReconstructCountsFromTileScopes(
+                [active], stale, static _ => new PartitionRecordRefV1(
+                    SpatialScopeRegistryPayloadV1.PartitionId,
+                    OpaqueId128.Parse("0000000000000000000000000004eeee"))),
+            "TileScope without a DetailDirectory region must fail closed.");
 
-        var incompleteDirectory = new DetailDirectoryV1(
-            rebuilt.Regions.Where(region => region.DetailRegionId != guardedIds.First()).ToArray(),
+        var ambiguous = new DetailDirectoryV1(
+            [
+                Region(OpaqueId128.Parse("0000000000000000000000000004c001"), scopeByTile[activeTiles[0]], []),
+                Region(OpaqueId128.Parse("0000000000000000000000000004c002"), scopeByTile[activeTiles[0]], []),
+            ],
             Array.Empty<DetailTransitionCandidateV1>());
         ExpectReject(
-            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.RebuildDirectoryGuards(
-                incompleteDirectory, [active], Resolve),
-            "Missing authoritative guarded detail region must fail closed.");
+            () => Qa04CrossDomainTransactionDetailGuardReconstructionV1.CreateRegionResolverFromTileScopes(
+                ambiguous, TileScope),
+            "Multiple detail regions owning one SpatialScopeRef must fail closed.");
     }
 
     private static (OpaqueId128 SameTileA, OpaqueId128 SameTileB, OpaqueId128 OtherTile) SubjectsAcrossTwoTiles()
@@ -140,10 +164,13 @@ internal static class Qa04CrossDomainTransactionDetailGuardReconstructionSmoke
             [invariant]);
     }
 
-    private static DetailRegionStateV1 Region(OpaqueId128 id, IEnumerable<StableToken> guards)
+    private static DetailRegionStateV1 Region(
+        OpaqueId128 id,
+        OpaqueId128 scopeId,
+        IEnumerable<StableToken> guards)
         => new(
             id,
-            OpaqueId128.Parse((id == OpaqueId128.Zero ? 1UL : 0x4d000UL).ToString("x32")),
+            scopeId,
             new Dictionary<StableToken, DetailLevelV1>
             {
                 [new StableToken("resident")] = DetailLevelV1.D2RegionalAggregate,
