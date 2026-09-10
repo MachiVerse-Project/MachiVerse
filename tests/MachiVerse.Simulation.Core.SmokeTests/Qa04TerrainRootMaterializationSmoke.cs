@@ -15,10 +15,10 @@ internal static class Qa04TerrainRootMaterializationSmoke
         Qa04TerrainRootMaterializerV1.ValidateCanonicalContract();
 
         var corner = Qa04TerrainRootMaterializerV1.MaterializeTile(0, ScopeForTile);
-        Require(corner.Root.Payload is SpatialTerrainRootPayloadV2 cornerRoot,
-            "Terrain tile root must use terrain_root payload.");
-        Require(corner.Anchor.Payload is SpatialTerrainBrickPayloadV2 cornerAnchor,
-            "Terrain tile anchor must use terrain_brick payload.");
+        var cornerRoot = corner.Root.Payload as SpatialTerrainRootPayloadV2
+            ?? throw new InvalidOperationException("Terrain tile root must use terrain_root payload.");
+        var cornerAnchor = corner.Anchor.Payload as SpatialTerrainBrickPayloadV2
+            ?? throw new InvalidOperationException("Terrain tile anchor must use terrain_brick payload.");
         Require(corner.Root.RecordId == Qa04TerrainRootMaterializerV1.RootId(0) &&
                 corner.Anchor.RecordId == Qa04TerrainRootMaterializerV1.AnchorId(0),
             "Terrain root/anchor Step0 identity drifted.");
@@ -42,7 +42,9 @@ internal static class Qa04TerrainRootMaterializationSmoke
 
         const ushort interiorTile = 65;
         var interior = Qa04TerrainRootMaterializerV1.MaterializeTile(interiorTile, ScopeForTile);
-        Require(interior.Root.Payload is SpatialTerrainRootPayloadV2 interiorRoot && interiorRoot.ConnectivityRefs.Count == 4,
+        var interiorRoot = interior.Root.Payload as SpatialTerrainRootPayloadV2
+            ?? throw new InvalidOperationException("Interior terrain root must use terrain_root payload.");
+        Require(interiorRoot.ConnectivityRefs.Count == 4,
             "Interior terrain root must have N/E/S/W connectivity.");
         Require(interiorRoot.ConnectivityRefs.Select(static reference => reference.RecordId).Distinct().Count() == 4 &&
                 interiorRoot.ConnectivityRefs.All(static reference => reference.PartitionId.Value == SpatialTerrainGeometryRecordSchemaV2.PartitionId),
