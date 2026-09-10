@@ -235,7 +235,7 @@ public static class Qa04InfrastructureNetworkMaterializerV1
     }
 
     private static StableToken NetworkKindFor(uint networkOrdinal)
-        => new(networkOrdinal % 4u switch
+        => new((networkOrdinal % 4u) switch
         {
             0 => "transport",
             1 => "water",
