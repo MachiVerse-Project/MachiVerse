@@ -13,6 +13,7 @@ internal static class Qa04PhysicalD0MaterializationSmoke
         VerifySphereClosureAndBounds();
         VerifyTerrainBindingBounds();
         VerifyBatchMaterialization();
+        VerifyPartitionMaterialization();
         VerifyInvalidTerrainBindingFailsClosed();
     }
 
@@ -60,6 +61,22 @@ internal static class Qa04PhysicalD0MaterializationSmoke
             "Physical D0 collision-shape ids must be unique across canonical descriptors.");
         Require(records.All(static value => value.Presence.Payload.ShapeRef.RecordId == value.CollisionShape.RecordId),
             "Every Physical D0 presence must close to its own collision-shape record.");
+    }
+
+    private static void VerifyPartitionMaterialization()
+    {
+        var slice = Qa04PhysicalD0PartitionMaterializerV1.Materialize(100, PresenceBinding, TerrainBinding);
+        Require(slice.DescriptorCount == 100 && !slice.IsCanonicalCount,
+            "Reduced Physical partition materialization must retain its descriptor count without claiming canonical completion.");
+        Require(slice.Presence.ItemCount == 100,
+            "Physical presence partition must contain exactly one record per descriptor.");
+        Require(slice.Occupancy.State.ItemCount == 200,
+            "Physical occupancy v2 partition must contain occupancy plus collision-shape for every descriptor.");
+        Require(slice.Occupancy.RecordSet.RecordsCanonical.Count(
+                    static record => record.Payload is PhysicalOccupancyStatePayloadV2) == 100 &&
+                slice.Occupancy.RecordSet.RecordsCanonical.Count(
+                    static record => record.Payload is PhysicalCollisionShapePayloadV2) == 100,
+            "Physical occupancy v2 mixed state must retain exact one-to-one arm counts.");
     }
 
     private static void VerifyInvalidTerrainBindingFailsClosed()
