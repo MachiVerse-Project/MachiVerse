@@ -16,6 +16,7 @@ public static class StandardDomainRecordSchemaMigrationRegistryV1
 {
     private static readonly DomainRecordSchemaMigrationRegistrationV1[] CanonicalEntries =
     [
+        Registration("physical.occupancy", 2, 0),
         Registration("spatial.terrain_geometry", 2, 0),
     ];
 
@@ -78,10 +79,16 @@ public static class StandardDomainRecordSchemaMigrationRegistryV1
                 throw new InvalidOperationException($"domain.record-schema-migration-target:{entry.PartitionId.Value}");
         }
 
-        var terrain = Get("spatial.terrain_geometry");
-        if (terrain.SourceRecordSchema.Version != new SchemaVersionV1(1, 0) ||
-            terrain.TargetRecordSchema.Version != new SchemaVersionV1(2, 0))
-            throw new InvalidOperationException("domain.record-schema-migration-terrain-contract");
+        RequireV1ToV2("physical.occupancy", "domain.record-schema-migration-physical-occupancy-contract");
+        RequireV1ToV2("spatial.terrain_geometry", "domain.record-schema-migration-terrain-contract");
+    }
+
+    private static void RequireV1ToV2(string partitionId, string failureCode)
+    {
+        var migration = Get(partitionId);
+        if (migration.SourceRecordSchema.Version != new SchemaVersionV1(1, 0) ||
+            migration.TargetRecordSchema.Version != new SchemaVersionV1(2, 0))
+            throw new InvalidOperationException(failureCode);
     }
 
     private static DomainRecordSchemaMigrationRegistrationV1 Registration(
