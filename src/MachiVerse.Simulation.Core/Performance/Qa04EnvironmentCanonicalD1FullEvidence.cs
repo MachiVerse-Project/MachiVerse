@@ -5,19 +5,21 @@ namespace MachiVerse.Simulation.Core.Performance;
 
 /// <summary>
 /// Full perf.reference.v1 Environment D1 materialization evidence. This proves exact four-to-one
-/// D0 source coverage, full typed D1 materialization, fail-closed reference closure, and canonical
-/// partition headers. Snapshot/recovery evidence remains a separate acceptance boundary.
+/// D0 source coverage, full typed D1 materialization, fail-closed reference closure, canonical
+/// partition headers, and production Snapshot recovery semantic rehash for all thirteen partitions.
 /// </summary>
 public sealed class Qa04EnvironmentCanonicalD1FullEvidenceV1
 {
     internal Qa04EnvironmentCanonicalD1FullEvidenceV1(
         Qa04EnvironmentD1DomainMaterializationV1 materialization,
         IReadOnlyList<PartitionStateHeaderV1> partitionHeaders,
-        ulong consumedD0SourceCount)
+        ulong consumedD0SourceCount,
+        int snapshotRecoveredPartitionCount)
     {
         Materialization = materialization ?? throw new ArgumentNullException(nameof(materialization));
         PartitionHeaders = partitionHeaders ?? throw new ArgumentNullException(nameof(partitionHeaders));
         ConsumedD0SourceCount = consumedD0SourceCount;
+        SnapshotRecoveredPartitionCount = snapshotRecoveredPartitionCount;
 
         if (!Materialization.FullCanonicalD1Materialized)
             throw new InvalidDataException("qa04.environment.d1-full-evidence-materialization-incomplete");
@@ -25,6 +27,8 @@ public sealed class Qa04EnvironmentCanonicalD1FullEvidenceV1
             throw new InvalidDataException("qa04.environment.d1-full-evidence-source-count");
         if (PartitionHeaders.Count != Qa04EnvironmentReferenceDecompositionV1.Partitions.Count)
             throw new InvalidDataException("qa04.environment.d1-full-evidence-header-count");
+        if (SnapshotRecoveredPartitionCount != Qa04EnvironmentSnapshotRecoveryEvidenceV1.EnvironmentPartitionCount)
+            throw new InvalidDataException("qa04.environment.d1-full-evidence-recovery-count");
         if (PartitionHeaders.Any(static header => header.BasisStep != 0 || header.Revision != 1 || header.DetailLevel != DetailLevelV1.D1LocalAggregate))
             throw new InvalidDataException("qa04.environment.d1-full-evidence-header-envelope");
     }
@@ -32,6 +36,7 @@ public sealed class Qa04EnvironmentCanonicalD1FullEvidenceV1
     public Qa04EnvironmentD1DomainMaterializationV1 Materialization { get; }
     public IReadOnlyList<PartitionStateHeaderV1> PartitionHeaders { get; }
     public ulong ConsumedD0SourceCount { get; }
+    public int SnapshotRecoveredPartitionCount { get; }
 }
 
 public static class Qa04EnvironmentCanonicalD1FullEvidenceBuilderV1
@@ -84,10 +89,14 @@ public static class Qa04EnvironmentCanonicalD1FullEvidenceBuilderV1
         if (total != Qa04EnvironmentReferenceDecompositionV1.CanonicalD1Count)
             throw new InvalidDataException("qa04.environment.d1-full-evidence-header-total");
 
+        var orderedHeaders = Array.AsReadOnly(headers.OrderBy(static header => header.PartitionId.Value, StringComparer.Ordinal).ToArray());
+        var recovered = Qa04EnvironmentSnapshotRecoveryEvidenceV1.Verify(state, orderedHeaders, resolver);
+
         return new Qa04EnvironmentCanonicalD1FullEvidenceV1(
             materialized,
-            Array.AsReadOnly(headers.OrderBy(static header => header.PartitionId.Value, StringComparer.Ordinal).ToArray()),
-            consumed);
+            orderedHeaders,
+            consumed,
+            recovered);
     }
 
     private static ulong ValidateExactSourceCoverage()
