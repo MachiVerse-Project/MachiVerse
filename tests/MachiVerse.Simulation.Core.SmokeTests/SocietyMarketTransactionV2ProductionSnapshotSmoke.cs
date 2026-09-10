@@ -12,7 +12,7 @@ internal static class SocietyMarketTransactionV2ProductionSnapshotSmoke
         var stateId = Id("00000000000000000000000000041001");
         var orderId = Id("00000000000000000000000000041002");
         var scopeRef = new PartitionRecordRefV1("spatial.scope_registry", Id("00000000000000000000000000042001"));
-        var ownerRef = new PartitionRecordRefV1("resident.identity", Id("00000000000000000000000000043001"));
+        var ownerRef = new PartitionRecordRefV1("resident.identity_lifecycle", Id("00000000000000000000000000043001"));
         var marketRef = new PartitionRecordRefV1(SocietyMarketTransactionRecordSchemaV2.PartitionId, stateId);
 
         var state = new SocietyMarketTransactionRecordMaterialV2(
