@@ -29,11 +29,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
 {
     private static readonly IReadOnlyList<Qa04ReferenceDependencyBlockerV1> BlockersValue = Array.AsReadOnly(new[]
     {
-        RecordSchema(
-            "physical.presence.shape-ref-target",
-            "physical.presence",
-            "shape_ref",
-            "qa04.material.physical-presence-shape-authority-undefined"),
         PartitionMapping(
             "environment.d0-cell-cohort.partition-mapping",
             "qa04.material.environment-d0-partition-mapping-undefined"),
@@ -72,7 +67,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
 
     public static void ValidateCanonicalContract()
     {
-        if (BlockersValue.Count != 8)
+        if (BlockersValue.Count != 7)
             throw new InvalidDataException("qa04.material.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.material.dependency-blocker-id-duplicate");
@@ -106,12 +101,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "society.market_transaction",
             "market_ref",
             "qa04.material.market-ref-authority-undefined");
-        Require(
-            "physical.presence.shape-ref-target",
-            Qa04ReferenceDependencyBlockerKindV1.RecordSchema,
-            "physical.presence",
-            "shape_ref",
-            "qa04.material.physical-presence-shape-authority-undefined");
         Require(
             "spatial.terrain-geometry.root-brick-target",
             Qa04ReferenceDependencyBlockerKindV1.CanonicalMaterial,
