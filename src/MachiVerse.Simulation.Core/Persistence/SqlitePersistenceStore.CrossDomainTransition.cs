@@ -7,10 +7,46 @@ namespace MachiVerse.Simulation.Core.Persistence;
 
 public sealed record CrossDomainTransactionStateCommitV1(
     CrossDomainTransactionStateV1 State,
-    byte[] StateWire);
+    byte[] StateWire)
+{
+    public static CrossDomainTransactionStateCommitV1 CreateCanonical(CrossDomainTransactionStateV1 state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return new CrossDomainTransactionStateCommitV1(
+            state,
+            CrossDomainTransactionPersistentWireV1.Encode(state));
+    }
+}
 
 public sealed partial class SqlitePersistenceStore
 {
+    public Task<DurableTransitionResult> PersistTransitionCommitWithCanonicalCrossDomainTransactionsAsync(
+        ulong effectiveStep,
+        ulong resultingStep,
+        byte[] resultingStateContinuityToken,
+        ulong activeConfigGeneration,
+        byte[] activeConfigDigest,
+        HistoryRecordMaterial history,
+        IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(crossDomainTransactions);
+        var canonical = crossDomainTransactions
+            .Select(CrossDomainTransactionStateCommitV1.CreateCanonical)
+            .ToArray();
+        return PersistTransitionCommitWithCrossDomainTransactionsAsync(
+            effectiveStep,
+            resultingStep,
+            resultingStateContinuityToken,
+            activeConfigGeneration,
+            activeConfigDigest,
+            history,
+            terminalOperations,
+            canonical,
+            cancellationToken);
+    }
+
     /// <summary>
     /// Commits a Step transition and CrossDomainTransaction authority changes in one SQLite
     /// transaction. History, terminal Operation rows, transaction state rows, and persistence_meta
