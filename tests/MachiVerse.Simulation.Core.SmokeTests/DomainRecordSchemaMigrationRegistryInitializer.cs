@@ -7,10 +7,11 @@ internal static class DomainRecordSchemaMigrationRegistryInitializer
     internal static void Initialize()
     {
         StandardDomainRecordSchemaMigrationRegistryV1.ValidateCanonicalContract();
-        Require(StandardDomainRecordSchemaMigrationRegistryV1.Entries.Count == 2,
-            "Only the exact Physical occupancy and Terrain migrations may be registered at this checkpoint.");
+        Require(StandardDomainRecordSchemaMigrationRegistryV1.Entries.Count == 3,
+            "Only the exact Physical occupancy, Society market, and Terrain migrations may be registered at this checkpoint.");
 
         VerifyV1ToV2Migration("physical.occupancy", "Physical occupancy");
+        VerifyV1ToV2Migration("society.market_transaction", "Society market transaction");
         VerifyV1ToV2Migration("spatial.terrain_geometry", "Terrain");
 
         var terrain = StandardDomainPartitionRegistry.Get("spatial.terrain_geometry");
@@ -30,6 +31,15 @@ internal static class DomainRecordSchemaMigrationRegistryInitializer
         Require(!StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedPartitionIdentity(
                 migratedOccupancyIdentity with { OwnerDomainRank = checked((ushort)(occupancy.OwnerDomainRank + 1)) }),
             "Physical occupancy migration compatibility must not relax non-schema partition identity fields.");
+
+        var market = StandardDomainPartitionRegistry.Get("society.market_transaction");
+        var marketMigration = StandardDomainRecordSchemaMigrationRegistryV1.Get(market.PartitionId.Value);
+        var migratedMarketIdentity = market with { RecordSchema = marketMigration.TargetRecordSchema };
+        Require(StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedPartitionIdentity(migratedMarketIdentity),
+            "Society market identity with only the registered record-schema migration must be allowed.");
+        Require(!StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedPartitionIdentity(
+                migratedMarketIdentity with { OwnerDomainRank = checked((ushort)(market.OwnerDomainRank + 1)) }),
+            "Society market migration compatibility must not relax non-schema partition identity fields.");
 
         var presence = StandardDomainPartitionRegistry.Get("physical.presence");
         Require(!StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedRecordSchema(
