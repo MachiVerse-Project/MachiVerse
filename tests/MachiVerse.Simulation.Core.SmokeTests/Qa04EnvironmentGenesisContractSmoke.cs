@@ -19,7 +19,10 @@ internal static class Qa04EnvironmentGenesisContractSmoke
         Require(Qa04EnvironmentGenesisContractV1.HazardKind.Value == "perf.synthetic-hazard", "Environment hazard token drifted.");
         Require(Qa04EnvironmentGenesisContractV1.MaterializationKind.Value == "perf.genesis", "Environment genesis lineage token drifted.");
         Require(Qa04EnvironmentGenesisContractV1.D1MaterializationKind.Value == "perf.aggregate-d1", "Environment D1 lineage token drifted.");
-        Require(Qa04EnvironmentGenesisContractV1.AtmosphereGasPpb.Sum(static pair => (ulong)pair.Value) == 1_000_000_000UL,
+        var gasTotal = Qa04EnvironmentGenesisContractV1.AtmosphereGasPpb.Aggregate(
+            0UL,
+            static (total, pair) => checked(total + pair.Value));
+        Require(gasTotal == 1_000_000_000UL,
             "Environment atmosphere gas composition must total one billion ppb.");
     }
 
