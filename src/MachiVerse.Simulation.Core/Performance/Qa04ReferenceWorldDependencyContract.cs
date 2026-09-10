@@ -39,11 +39,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
             "society-governance.active-record.partition-mapping",
             "qa04.material.society-governance-partition-mapping-undefined"),
         RecordSchema(
-            "society.market-transaction.market-ref-target",
-            "society.market_transaction",
-            "market_ref",
-            "qa04.material.market-ref-authority-undefined"),
-        RecordSchema(
             "infrastructure.network-topology.node-edge-targets",
             "infrastructure.network_topology",
             "node_refs/edge_refs",
@@ -67,7 +62,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
 
     public static void ValidateCanonicalContract()
     {
-        if (BlockersValue.Count != 7)
+        if (BlockersValue.Count != 6)
             throw new InvalidDataException("qa04.material.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.material.dependency-blocker-id-duplicate");
@@ -95,12 +90,6 @@ public static class Qa04ReferenceWorldDependencyContractV1
             }
         }
 
-        Require(
-            "society.market-transaction.market-ref-target",
-            Qa04ReferenceDependencyBlockerKindV1.RecordSchema,
-            "society.market_transaction",
-            "market_ref",
-            "qa04.material.market-ref-authority-undefined");
         Require(
             "spatial.terrain-geometry.root-brick-target",
             Qa04ReferenceDependencyBlockerKindV1.CanonicalMaterial,
