@@ -149,9 +149,11 @@ WHERE transaction_id=$transaction_id;
         var id = OpaqueId128.FromBytes((byte[])reader[0]);
         if (id.IsZero) throw new InvalidDataException("persistence.cross-domain-transaction-id-zero");
         var lifecycleRaw = reader.GetInt32(1);
-        if (!Enum.IsDefined(typeof(TransactionLifecycleV1), lifecycleRaw))
+        if (lifecycleRaw < byte.MinValue || lifecycleRaw > byte.MaxValue)
             throw new InvalidDataException("persistence.cross-domain-transaction-lifecycle-invalid");
-        var lifecycle = (TransactionLifecycleV1)lifecycleRaw;
+        var lifecycle = (TransactionLifecycleV1)(byte)lifecycleRaw;
+        if (!Enum.IsDefined(lifecycle))
+            throw new InvalidDataException("persistence.cross-domain-transaction-lifecycle-invalid");
         var created = U64Be.Decode((byte[])reader[2]);
         var updated = U64Be.Decode((byte[])reader[3]);
         ulong? terminal = reader.IsDBNull(4) ? null : U64Be.Decode((byte[])reader[4]);
