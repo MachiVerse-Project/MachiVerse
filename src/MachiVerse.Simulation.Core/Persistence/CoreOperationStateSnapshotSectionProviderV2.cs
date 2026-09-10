@@ -66,11 +66,51 @@ public static class CoreOperationStateSnapshotSectionProviderV2
         if (section.SectionSchema != CoreOperationStateSnapshotAuthorityV2.Schema)
             throw new InvalidDataException("snapshot-core.operation-v2.section-schema-mismatch");
 
+        var authority = DecodeAuthority(section.Fragments, expectedBasisStep);
+        if (authority.LogicalItemCount != section.LogicalItemCount)
+            throw new InvalidDataException("snapshot-core.operation-v2.semantic-item-count-mismatch");
+        if (!CryptographicOperations.FixedTimeEquals(authority.CanonicalDigest, section.LogicalContentDigest))
+            throw new InvalidDataException("snapshot-core.operation-v2.semantic-digest-mismatch");
+        return new RecoveredCoreOperationStateV2(
+            expectedBasisStep,
+            authority.Operations,
+            authority.Transactions,
+            authority.CanonicalDigest.ToArray());
+    }
+
+    public static SnapshotSectionSemanticVerifierV1 SemanticVerifier(ulong expectedBasisStep)
+        => new(
+            SectionIdValue,
+            CoreOperationStateSnapshotAuthorityV2.Schema,
+            fragments =>
+            {
+                var authority = DecodeAuthority(fragments, expectedBasisStep);
+                return new SnapshotSectionSemanticVerificationV1(
+                    authority.LogicalItemCount,
+                    authority.CanonicalDigest.ToArray());
+            });
+
+    private static CoreOperationStateSnapshotAuthorityV2 DecodeAuthority(
+        IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments,
+        ulong expectedBasisStep)
+    {
+        ArgumentNullException.ThrowIfNull(fragments);
+        if (fragments.Count == 0)
+            throw new InvalidDataException("snapshot-core.operation-v2.fragment-missing");
+
         var operations = new List<DurableOperationStateV1>();
         var transactions = new List<CrossDomainTransactionStateV1>();
         var transactionArmSeen = false;
-        foreach (var fragment in section.Fragments)
+        ulong logicalItemCount = 0;
+        for (var i = 0; i < fragments.Count; i++)
         {
+            var fragment = fragments[i];
+            if (!string.Equals(fragment.SectionId, SectionIdValue, StringComparison.Ordinal) ||
+                fragment.FragmentIndex != (uint)i || fragment.FragmentCount != (uint)fragments.Count ||
+                fragment.FirstRecordId is not null || fragment.LastRecordId is not null || fragment.FragmentPayload is null)
+                throw new InvalidDataException("snapshot-core.operation-v2.fragment-shape");
+            logicalItemCount = checked(logicalItemCount + fragment.ItemCount);
+
             var decoded = CoreOperationStateSnapshotWireCodecV2.Decode(fragment.FragmentPayload);
             if (decoded.BasisStep != expectedBasisStep)
                 throw new InvalidDataException("snapshot-core.operation-v2.fragment-basis-step-mismatch");
@@ -82,15 +122,9 @@ public static class CoreOperationStateSnapshotSectionProviderV2
         }
 
         var authority = CoreOperationStateSnapshotAuthorityV2.Create(operations, transactions, expectedBasisStep);
-        if (authority.LogicalItemCount != section.LogicalItemCount)
-            throw new InvalidDataException("snapshot-core.operation-v2.semantic-item-count-mismatch");
-        if (!CryptographicOperations.FixedTimeEquals(authority.CanonicalDigest, section.LogicalContentDigest))
-            throw new InvalidDataException("snapshot-core.operation-v2.semantic-digest-mismatch");
-        return new RecoveredCoreOperationStateV2(
-            expectedBasisStep,
-            authority.Operations,
-            authority.Transactions,
-            authority.CanonicalDigest.ToArray());
+        if (authority.LogicalItemCount != logicalItemCount)
+            throw new InvalidDataException("snapshot-core.operation-v2.fragment-item-count-mismatch");
+        return authority;
     }
 
     private static IReadOnlyList<IReadOnlyList<object>> Fragment(IReadOnlyList<object> items, ulong basisStep)
