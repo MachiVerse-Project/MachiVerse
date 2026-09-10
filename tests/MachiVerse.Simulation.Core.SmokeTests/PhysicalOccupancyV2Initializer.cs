@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
-using MachiVerse.Simulation.Core.Domains;
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.WorldState;
@@ -82,7 +81,7 @@ internal static class PhysicalOccupancyV2Initializer
             Record(0x42, new PhysicalOrientedBoxShapePayloadV2(
                 new Vec3MmV1(0, 0, 0),
                 half,
-                QuaternionQ30V1.Identity)),
+                global::MachiVerse.Simulation.Core.Domains.QuaternionQ30V1.Identity)),
             Record(0x43, new PhysicalConvexPolytopeShapePayloadV2(Corners(half))),
             Record(0x44, new PhysicalTriangleMeshStaticShapePayloadV2(new[]
             {
@@ -111,12 +110,14 @@ internal static class PhysicalOccupancyV2Initializer
             "sphere v2 must reconstruct runtime collider exactly.");
         Require(((PhysicalCapsuleShapePayloadV2)records[2].Payload).ToRuntime().RadiusMm == 225,
             "capsule v2 must reconstruct runtime collider exactly.");
-        Require(((PhysicalOrientedBoxShapePayloadV2)records[3].Payload).ToRuntime().Orientation == QuaternionQ30V1.Identity,
+        Require(((PhysicalOrientedBoxShapePayloadV2)records[3].Payload).ToRuntime().Orientation ==
+                global::MachiVerse.Simulation.Core.Domains.QuaternionQ30V1.Identity,
             "oriented-box v2 must preserve canonical quaternion.");
-        Require(((PhysicalConvexPolytopeShapePayloadV2)records[4].Payload).ToRuntime().VerticesCanonical.Count == 8,
+        Require(((PhysicalConvexPolytopeShapePayloadV2)records[4].Payload).ToRuntime().Vertices.Count == 8,
             "convex v2 must preserve authoritative vertex index order.");
-        Require(((PhysicalTriangleMeshStaticShapePayloadV2)records[5].Payload).ToRuntime().TrianglesCanonical.Count == 2,
-            "static-mesh v2 must preserve canonical triangle count.");
+        Require(((PhysicalTriangleMeshStaticShapePayloadV2)records[5].Payload).ToRuntime()
+                .QueryAabb(new Vec3MmV1(-2000, -2000, -1), new Vec3MmV1(2000, 2000, 1)).Count == 2,
+            "static-mesh v2 must preserve canonical triangle material.");
     }
 
     private static void VerifyFailClosedValidation()
