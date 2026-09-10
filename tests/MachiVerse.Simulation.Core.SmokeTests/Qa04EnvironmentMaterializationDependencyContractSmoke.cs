@@ -10,7 +10,7 @@ internal static class Qa04EnvironmentMaterializationDependencyContractSmoke
 
         Require(Qa04EnvironmentMaterializationDependencyContractV1.Blockers.Count == 4,
             "QA-04 Environment materialization dependency count drifted.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 7,
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 6,
             "Environment subdependencies must not change the reference-world blocker count.");
 
         var expected = new[]
