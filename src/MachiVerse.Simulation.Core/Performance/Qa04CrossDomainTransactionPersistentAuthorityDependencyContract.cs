@@ -22,9 +22,9 @@ public sealed record Qa04CrossDomainTransactionPersistentAuthorityDependencyV1(
 
 /// <summary>
 /// Remaining implementation dependencies beneath the single reference-world persistent-authority
-/// blocker. Persistent logical state/lifecycle semantics and exact benchmark genesis/turnover are
-/// implemented; this contract therefore tracks only the still-missing durable owner, Snapshot,
-/// history, recovery, and detail-guard bindings.
+/// blocker. Persistent logical state/lifecycle semantics, exact benchmark genesis/turnover, the
+/// SQLite durable owner, and transition-history atomic commit binding are implemented. Snapshot,
+/// recovery, and detail-guard integration remain blocked.
 /// </summary>
 public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1
 {
@@ -36,17 +36,9 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
     private static readonly IReadOnlyList<Qa04CrossDomainTransactionPersistentAuthorityDependencyV1> BlockersValue = Array.AsReadOnly(new[]
     {
         Blocker(
-            "cross-domain-transaction.persistence.authority-owner",
-            Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.AuthorityOwner,
-            "qa04.cross-domain-transaction.authority-owner-undefined"),
-        Blocker(
             "cross-domain-transaction.persistence.detail-guard-binding",
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.DetailGuardBinding,
             "qa04.cross-domain-transaction.detail-guard-binding-undefined"),
-        Blocker(
-            "cross-domain-transaction.persistence.history-commit-binding",
-            Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.HistoryCommitBinding,
-            "qa04.cross-domain-transaction.history-commit-binding-undefined"),
         Blocker(
             "cross-domain-transaction.persistence.recovery-reconstruction",
             Qa04CrossDomainTransactionPersistentAuthorityDependencyKindV1.RecoveryReconstruction,
@@ -70,7 +62,7 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         Qa04CanonicalWorkloadDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 5)
+        if (BlockersValue.Count != 3)
             throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.cross-domain-transaction.dependency-blocker-id-duplicate");
@@ -86,6 +78,7 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         ValidateEstablishedRuntimeBoundary();
         ValidateImplementedPersistentStateBoundary();
         ValidateImplementedBenchmarkTurnoverBoundary();
+        ValidateImplementedDurableOwnerAndHistoryBoundary();
         ValidateParentWorldBlocker();
         ValidateSeparateWorkloadBlocker();
     }
@@ -127,6 +120,14 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
             throw new InvalidDataException("qa04.cross-domain-transaction.turnover-contract-drift");
         if (FailureCodes.Any(static code => code.Value == "qa04.transaction.benchmark-turnover-binding-undefined"))
             throw new InvalidDataException("qa04.cross-domain-transaction.implemented-turnover-dependency-retained");
+    }
+
+    private static void ValidateImplementedDurableOwnerAndHistoryBoundary()
+    {
+        if (FailureCodes.Any(static code => code.Value is
+                "qa04.cross-domain-transaction.authority-owner-undefined" or
+                "qa04.cross-domain-transaction.history-commit-binding-undefined"))
+            throw new InvalidDataException("qa04.cross-domain-transaction.implemented-durable-dependency-retained");
     }
 
     private static void ValidateParentWorldBlocker()
