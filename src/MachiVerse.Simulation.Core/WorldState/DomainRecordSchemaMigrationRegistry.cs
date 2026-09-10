@@ -16,6 +16,7 @@ public static class StandardDomainRecordSchemaMigrationRegistryV1
 {
     private static readonly DomainRecordSchemaMigrationRegistrationV1[] CanonicalEntries =
     [
+        Registration("infrastructure.network_topology", 2, 0),
         Registration("physical.occupancy", 2, 0),
         Registration("society.market_transaction", 2, 0),
         Registration("spatial.terrain_geometry", 2, 0),
@@ -80,6 +81,7 @@ public static class StandardDomainRecordSchemaMigrationRegistryV1
                 throw new InvalidOperationException($"domain.record-schema-migration-target:{entry.PartitionId.Value}");
         }
 
+        RequireV1ToV2("infrastructure.network_topology", "domain.record-schema-migration-infrastructure-network-contract");
         RequireV1ToV2("physical.occupancy", "domain.record-schema-migration-physical-occupancy-contract");
         RequireV1ToV2("society.market_transaction", "domain.record-schema-migration-society-market-contract");
         RequireV1ToV2("spatial.terrain_geometry", "domain.record-schema-migration-terrain-contract");
