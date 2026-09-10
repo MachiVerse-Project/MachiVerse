@@ -13,13 +13,34 @@ public static class Qa04EnvironmentD0PartitionMaterializerV1
 {
     public const ulong InitialRecordRevision = 1;
     public const ulong InitialCreatedStep = 0;
+    public const string SpatialScopePartitionId = "spatial.scope_registry";
 
     public static void ValidateCanonicalContract()
     {
         Qa04EnvironmentReferenceDecompositionV1.ValidateCanonicalContract();
         Qa04EnvironmentGenesisContractV1.ValidateCanonicalContract();
+        _ = StandardDomainPartitionRegistry.Get(SpatialScopePartitionId);
         if (InitialRecordRevision != 1 || InitialCreatedStep != 0)
             throw new InvalidDataException("qa04.environment.d0-genesis-envelope-drift");
+    }
+
+    /// <summary>
+    /// Resolves the descriptor's canonical regional tile into its owning Spatial scope authority.
+    /// The scope RecordId is deliberately supplied by Spatial; Environment only validates the target
+    /// partition, non-zero identity, and descriptor tile range.
+    /// </summary>
+    public static PartitionRecordRefV1 ResolveSpatialScope(
+        Qa04EnvironmentD0BindingV1 binding,
+        Func<ushort, PartitionRecordRefV1> tileScopeForTile)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        ArgumentNullException.ThrowIfNull(tileScopeForTile);
+        if (binding.Descriptor.RegionalTileIndex >= Qa04ReferenceLoadV1.RegionalTileCount)
+            throw new InvalidDataException("qa04.environment.d0-regional-tile-range");
+        var scope = tileScopeForTile(binding.Descriptor.RegionalTileIndex);
+        if (scope.PartitionId.Value != SpatialScopePartitionId || scope.RecordId.IsZero)
+            throw new InvalidDataException("qa04.environment.d0-spatial-scope-ref-invalid");
+        return scope;
     }
 
     public static DomainPartitionStateV1<TPayload> MaterializeCanonicalPartition<TPayload>(
