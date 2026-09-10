@@ -10,6 +10,7 @@ internal static class Qa04EnvironmentReferenceDecompositionSmoke
         VerifyExactPartitionCounts();
         VerifyBoundaryMappings();
         VerifyEveryD0SourceConsumedExactlyOnce();
+        VerifyCanonicalNextRecordTopology();
         VerifyOutOfRangeFailsClosed();
     }
 
@@ -88,12 +89,46 @@ internal static class Qa04EnvironmentReferenceDecompositionSmoke
             "Environment D1 decomposition must consume every D0 source exactly once.");
     }
 
+    private static void VerifyCanonicalNextRecordTopology()
+    {
+        foreach (var partitionId in new[]
+                 {
+                     "environment.groundwater",
+                     "environment.surface_water",
+                     "environment.ocean",
+                 })
+        {
+            var slice = Qa04EnvironmentReferenceDecompositionV1.Get(partitionId);
+            var ordered = Enumerable.Range(0, checked((int)slice.D0Count))
+                .Select(offset => Qa04EnvironmentReferenceDecompositionV1.BindD0(
+                    checked(slice.D0StartOrdinal + (ulong)offset)).Descriptor.RecordId)
+                .OrderBy(static recordId => recordId)
+                .ToArray();
+            Require(ordered.Length > 1,
+                $"Environment topology partition must contain multiple records: {partitionId}");
+
+            for (var index = 0; index < ordered.Length; index++)
+            {
+                var expectedNext = ordered[(index + 1) % ordered.Length];
+                var actual = Qa04EnvironmentReferenceDecompositionV1.NextD0RecordRef(partitionId, ordered[index]);
+                Require(actual.PartitionId.Value == partitionId && actual.RecordId == expectedNext,
+                    $"Environment canonical next-record topology drifted: {partitionId}:{index}");
+                Require(actual.RecordId != ordered[index],
+                    $"Environment canonical topology must not self-reference: {partitionId}:{index}");
+            }
+        }
+    }
+
     private static void VerifyOutOfRangeFailsClosed()
     {
         ExpectOutOfRange(() => Qa04EnvironmentReferenceDecompositionV1.BindD0(
             Qa04EnvironmentReferenceDecompositionV1.CanonicalD0Count));
         ExpectOutOfRange(() => Qa04EnvironmentReferenceDecompositionV1.BindD1(
             Qa04EnvironmentReferenceDecompositionV1.CanonicalD1Count));
+
+        var firstGeology = Qa04EnvironmentReferenceDecompositionV1.BindD0(0).Descriptor.RecordId;
+        ExpectArgument(() => Qa04EnvironmentReferenceDecompositionV1.NextD0RecordRef(
+            "environment.geology", firstGeology));
     }
 
     private static void ExpectOutOfRange(Action action)
@@ -107,6 +142,19 @@ internal static class Qa04EnvironmentReferenceDecompositionSmoke
             return;
         }
         throw new InvalidOperationException("Expected QA-04 Environment ordinal rejection.");
+    }
+
+    private static void ExpectArgument(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (ArgumentException)
+        {
+            return;
+        }
+        throw new InvalidOperationException("Expected QA-04 Environment topology rejection.");
     }
 
     private static void Require(bool condition, string message)
