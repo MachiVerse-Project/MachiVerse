@@ -18,15 +18,18 @@ public sealed class SpatialTerrainGeometryStreamingFragmentSourceV2
     private readonly PartitionStateHeaderV1 _header;
     private readonly Func<IEnumerable<SpatialTerrainGeometryRecordMaterialV2>> _recordFactory;
     private readonly ulong _expectedItemCount;
+    private readonly IDomainRecordSchemaResolverV1? _references;
 
     public SpatialTerrainGeometryStreamingFragmentSourceV2(
         PartitionStateHeaderV1 header,
         ulong expectedItemCount,
-        Func<IEnumerable<SpatialTerrainGeometryRecordMaterialV2>> recordFactory)
+        Func<IEnumerable<SpatialTerrainGeometryRecordMaterialV2>> recordFactory,
+        IDomainRecordSchemaResolverV1? references = null)
     {
         _header = header ?? throw new ArgumentNullException(nameof(header));
         _recordFactory = recordFactory ?? throw new ArgumentNullException(nameof(recordFactory));
         _expectedItemCount = expectedItemCount;
+        _references = references;
         RequireHeaderIdentity(_header);
         if (_header.ItemCount != expectedItemCount)
             throw new InvalidDataException("persistence.snapshot.terrain-v2-stream-header-item-count");
@@ -126,7 +129,7 @@ public sealed class SpatialTerrainGeometryStreamingFragmentSourceV2
         if (currentCount > 0) counts.Add(currentCount);
         if (total != _expectedItemCount)
             throw new InvalidDataException("persistence.snapshot.terrain-v2-stream-first-pass-count");
-        if (counts.Count == 0 || counts.Count > uint.MaxValue)
+        if (counts.Count == 0 || checked((ulong)counts.Count) > uint.MaxValue)
             throw new InvalidDataException("persistence.snapshot.terrain-v2-fragment-count");
         return counts.ToArray();
     }
@@ -147,6 +150,8 @@ public sealed class SpatialTerrainGeometryStreamingFragmentSourceV2
             throw new InvalidDataException("persistence.snapshot.terrain-v2-stream-record-step-after-basis");
         if (previous is { } prior && prior.CompareTo(record.RecordId) >= 0)
             throw new InvalidDataException("persistence.snapshot.terrain-v2-stream-record-order");
+        if (_references is not null && record.Payload is SpatialTerrainRootPayloadV2)
+            _ = SpatialTerrainGeometryPayloadCanonicalDigestV2.Compute(record.Payload, _references);
         previous = record.RecordId;
     }
 
