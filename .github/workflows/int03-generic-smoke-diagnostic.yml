@@ -21,7 +21,7 @@ jobs:
   diagnose-generic-smoke:
     name: Capture managed stack from generic smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: Checkout pull request
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,7 +36,7 @@ jobs:
       - name: Capture smoke managed stack
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           smoke="$GITHUB_WORKSPACE/tests/MachiVerse.Simulation.Core.SmokeTests/bin/Release/net10.0/MachiVerse.Simulation.Core.SmokeTests"
           "$smoke" > "$RUNNER_TEMP/generic-smoke.stdout" 2> "$RUNNER_TEMP/generic-smoke.stderr" &
           pid=$!
@@ -48,20 +48,22 @@ jobs:
           }
           trap cleanup EXIT
 
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 30); do
             if ! kill -0 "$pid" 2>/dev/null; then
               wait "$pid"
               status=$?
               echo "generic smoke exited before diagnostic capture: status=$status"
+              echo '=== generic smoke stdout ==='
               cat "$RUNNER_TEMP/generic-smoke.stdout" || true
+              echo '=== generic smoke stderr ==='
               cat "$RUNNER_TEMP/generic-smoke.stderr" || true
               exit "$status"
             fi
             sleep 1
           done
 
-          echo '=== generic smoke managed stack after 90s ==='
-          dotnet-stack report --process-id "$pid" | tee "$RUNNER_TEMP/generic-smoke.stack"
+          echo '=== generic smoke managed stack after 30s ==='
+          timeout 30s dotnet-stack report --process-id "$pid" | tee "$RUNNER_TEMP/generic-smoke.stack" || true
           echo '=== generic smoke stdout ==='
           cat "$RUNNER_TEMP/generic-smoke.stdout" || true
           echo '=== generic smoke stderr ==='
