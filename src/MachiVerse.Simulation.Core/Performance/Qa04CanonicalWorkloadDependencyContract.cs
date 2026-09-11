@@ -22,7 +22,11 @@ public sealed record Qa04CanonicalWorkloadDependencyV1(
 /// This contract is intentionally separate from Qa04ReferenceWorldDependencyContractV1: the world
 /// contract owns initial authoritative material, while this contract owns workload-to-runtime
 /// binding. It does not invent SameStepOrderKey fields, domain payloads, transaction participant
-/// material, or detail-transition semantics that are not fixed by the existing design.
+/// material, or detail-transition identities that are not fixed by the existing design.
+///
+/// The parent blockers remain active until each full workload surface is authoritative. The
+/// operation binding currently closes four of six families and the detail binding closes the exact
+/// cadence/request mapping while still requiring an actual canonical DetailRegion authority.
 /// </summary>
 public static class Qa04CanonicalWorkloadDependencyContractV1
 {
@@ -74,6 +78,8 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
 
     private static void ValidateOperationDescriptorBoundary()
     {
+        Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
+
         var expectedFamilies = new[]
         {
             "participation-control-resident-action",
@@ -86,6 +92,32 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
         if (!Qa04ReferenceLoadV1.OperationFamilies.Select(static family => family.FamilyToken.Value)
                 .SequenceEqual(expectedFamilies, StringComparer.Ordinal))
             throw new InvalidDataException("qa04.workload.operation-family-set-drift");
+
+        var boundFamilies = Qa04CanonicalOperationBindingV1.BoundFamilies
+            .Select(static family => family.Value)
+            .OrderBy(static family => family, StringComparer.Ordinal)
+            .ToArray();
+        var expectedBoundFamilies = new[]
+        {
+            "environment-spatial-admin-synthetic",
+            "participation-control-resident-action",
+            "physical-item-movement-work",
+            "society-market-payment-contract",
+        };
+        if (!boundFamilies.SequenceEqual(expectedBoundFamilies, StringComparer.Ordinal))
+            throw new InvalidDataException("qa04.workload.operation-bound-family-progress-drift");
+
+        var pendingFamilies = Qa04CanonicalOperationBindingV1.PendingAuthorityFamilies
+            .Select(static family => family.Value)
+            .OrderBy(static family => family, StringComparer.Ordinal)
+            .ToArray();
+        var expectedPendingFamilies = new[]
+        {
+            "governance-security",
+            "infrastructure-service-delivery",
+        };
+        if (!pendingFamilies.SequenceEqual(expectedPendingFamilies, StringComparer.Ordinal))
+            throw new InvalidDataException("qa04.workload.operation-pending-family-progress-drift");
 
         var steady = Qa04ReferenceLoadV1.OperationsForStep(1).ToArray();
         if (steady.Length != 5_000 ||
@@ -114,6 +146,8 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
 
     private static void ValidateDetailTransitionBoundary()
     {
+        Qa04CanonicalDetailTransitionBindingV1.ValidateCanonicalContract();
+
         if (Qa04ReferenceScenariosV1.DetailTransitionBatches(299).Count != 0)
             throw new InvalidDataException("qa04.workload.detail-transition-pre-cadence-drift");
         var batches = Qa04ReferenceScenariosV1.DetailTransitionBatches(300);
@@ -121,6 +155,16 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
             batches.Single(static batch => batch.TransitionKind.Value == "promotion").CandidateRecordCount != 30_000 ||
             batches.Single(static batch => batch.TransitionKind.Value == "demotion").CandidateRecordCount != 80_000)
             throw new InvalidDataException("qa04.workload.detail-transition-descriptor-drift");
+
+        if (Qa04CanonicalDetailTransitionBindingV1.CanonicalCadenceCount != 89 ||
+            Qa04CanonicalDetailTransitionBindingV1.CanonicalRequestCount != 1_424)
+            throw new InvalidDataException("qa04.workload.detail-transition-binding-progress-drift");
+
+        var firstCadence = Qa04CanonicalDetailTransitionBindingV1.RequirementsForStep(300);
+        if (firstCadence.Count != 16 ||
+            firstCadence.Count(static requirement => requirement.Direction == DetailTransitionDirectionV1.Promotion) != 6 ||
+            firstCadence.Count(static requirement => requirement.Direction == DetailTransitionDirectionV1.Demotion) != 10)
+            throw new InvalidDataException("qa04.workload.detail-transition-binding-cadence-progress-drift");
     }
 
     private static Qa04CanonicalWorkloadDependencyV1 Blocker(
