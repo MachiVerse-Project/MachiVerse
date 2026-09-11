@@ -28,21 +28,10 @@ public sealed class Qa04TerrainBrickDescriptorMaterializationV1
     public SpatialTerrainGeometryPartitionStateV2 Partition { get; }
     public ulong MaterializedBrickCount { get; }
 
-    /// <summary>
-    /// QA-04 の全 hot-terrain-brick descriptor に対応する v2 brick record が存在する場合のみ true。
-    /// これは descriptor/count の充足だけを表し、SDF/material 値が canonical benchmark Terrain であること、
-    /// または terrain_root/scope closure が成立したことを示さない。
-    /// </summary>
     public bool FullDescriptorCountMaterialized
         => MaterializedBrickCount == Qa04TerrainBrickDescriptorMaterializerV1.CanonicalTerrainBrickCount;
 }
 
-/// <summary>
-/// 既に canonical な QA-04 Terrain descriptor identity を、exact TerrainBrickV1/v2 record material へ結び付ける。
-/// 未定義の Terrain 生成 semantics は補完しない。cell origin、SDF sample、surface material id は
-/// 明示的な content source からのみ受け取る。common Domain record contract が固定する genesis revision=1 は
-/// descriptor binding で強制する。
-/// </summary>
 public static class Qa04TerrainBrickDescriptorMaterializerV1
 {
     public const ulong CanonicalTerrainBrickCount = 500_000;
@@ -84,7 +73,7 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
         if (recordCount is 0 or > CanonicalTerrainBrickCount)
             throw new ArgumentOutOfRangeException(nameof(recordCount));
 
-        var records = CreateRecords(contentSource, recordCount).ToArray();
+        var records = CreateRecordsValidated(contentSource, recordCount).ToArray();
         var partition = new SpatialTerrainGeometryPartitionStateV2(records);
         if (partition.State.ItemCount != recordCount)
             throw new InvalidDataException("qa04.materialization.terrain-partition-count-mismatch");
@@ -92,11 +81,6 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
         return new Qa04TerrainBrickDescriptorMaterializationV1(partition, recordCount);
     }
 
-    /// <summary>
-    /// Materializes exactly one canonical hot-terrain-brick descriptor without building a partition.
-    /// This is the production boundary used by bounded-memory Terrain enumeration: descriptor identity
-    /// and payload are validated with the same rules as the existing bulk materializer.
-    /// </summary>
     public static SpatialTerrainGeometryRecordMaterialV2 MaterializeRecord(
         IQa04TerrainBrickContentSourceV1 contentSource,
         ulong ordinal)
@@ -105,7 +89,13 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
         ValidateCanonicalContract();
         if (ordinal >= CanonicalTerrainBrickCount)
             throw new ArgumentOutOfRangeException(nameof(ordinal));
+        return MaterializeRecordValidated(contentSource, ordinal);
+    }
 
+    internal static SpatialTerrainGeometryRecordMaterialV2 MaterializeRecordValidated(
+        IQa04TerrainBrickContentSourceV1 contentSource,
+        ulong ordinal)
+    {
         var descriptor = Qa04ReferenceLoadV1.Record(TerrainReferenceClass, ordinal);
         if (descriptor.DetailLevel != DetailLevelV1.D0Entity)
             throw new InvalidDataException("qa04.materialization.terrain-detail-not-d0");
@@ -119,12 +109,12 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
             detailLevel: descriptor.DetailLevel);
     }
 
-    private static IEnumerable<SpatialTerrainGeometryRecordMaterialV2> CreateRecords(
+    private static IEnumerable<SpatialTerrainGeometryRecordMaterialV2> CreateRecordsValidated(
         IQa04TerrainBrickContentSourceV1 contentSource,
         ulong count)
     {
         for (ulong ordinal = 0; ordinal < count; ordinal++)
-            yield return MaterializeRecord(contentSource, ordinal);
+            yield return MaterializeRecordValidated(contentSource, ordinal);
     }
 
     private static void ValidateDescriptorBinding(Qa04ReferenceRecordV1 descriptor, TerrainBrickV1 brick)
