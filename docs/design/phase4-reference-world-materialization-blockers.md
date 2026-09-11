@@ -37,10 +37,20 @@ current materialized checkpoint:
 | Environment D1 | 250,000 actual records |
 | Society Market | 1,000,100 actual records |
 | Society Household | 40,000 actual records |
-| Governance Polity | 1,000-record materializer added; CI verification required before counting as accepted checkpoint |
+| Governance Polity | 1,000 actual records; generic smoke / runtime target / multi-Gateway verification accepted |
 | Terrain | 508,192 actual v2 records, full production proof complete |
 | CrossDomainTransaction | persistent authority implemented |
 | Infrastructure topology | 120,100 / 500,000 specialized material |
+
+Society/Governance accepted checkpoint:
+
+```text
+Market     = 1,000,100
+Household  =    40,000
+Polity     =     1,000
+total      = 1,041,100 / 2,000,000
+remaining  =   958,900
+```
 
 ## 3. Resolved former blockers
 
@@ -101,13 +111,17 @@ Governance = 400,000
 total = 2,000,000
 ```
 
-accepted material before the new Polity CI checkpoint:
+accepted material:
 
 ```text
 Market     = 1,000,100
 Household  =    40,000
-total      = 1,040,100
+Polity     =     1,000
+total      = 1,041,100
+remaining  =   958,900
 ```
+
+Polity 1,000 records は generic Simulation Core smoke、`INT-03 runtime target validation`、`INT-02 multi-Gateway integration` が clean verification commit で完走したため accepted checkpoint に含める。
 
 残りpartitionの多くはrequired arbitrary Tokenに依存する。例:
 
