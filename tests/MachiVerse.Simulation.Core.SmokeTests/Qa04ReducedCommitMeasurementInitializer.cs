@@ -1,20 +1,16 @@
-using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Performance;
 
 internal static class Qa04ReducedCommitMeasurementInitializer
 {
-    [ModuleInitializer]
-    internal static void Initialize()
+    internal static async Task RunAsync()
     {
         var root = Path.Combine(Path.GetTempPath(), "machiverse-qa04-reduced-commit-metric-" + Guid.NewGuid().ToString("N"));
         try
         {
-            var proof = Qa04InstrumentedAuthoritativeStepLoopBridgeV1.RunReducedAsync(
-                    workerCount: 1,
-                    residentRecordCount: 1,
-                    persistenceRoot: root)
-                .GetAwaiter()
-                .GetResult();
+            var proof = await Qa04InstrumentedAuthoritativeStepLoopBridgeV1.RunReducedAsync(
+                workerCount: 1,
+                residentRecordCount: 1,
+                persistenceRoot: root);
 
             Require(proof.AuthorityProbe.StepCount == Qa04AuthoritativeStepLoopBridgeV1.StandardReducedStepCount,
                 "Instrumented QA-04 reduced loop Step count drifted.");
