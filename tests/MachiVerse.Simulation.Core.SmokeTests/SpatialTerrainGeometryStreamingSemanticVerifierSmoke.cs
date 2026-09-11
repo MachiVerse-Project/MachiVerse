@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Persistence;
@@ -6,11 +5,7 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class SpatialTerrainGeometryStreamingSemanticVerifierSmoke
 {
-    [ModuleInitializer]
-    internal static void Run()
-        => RunAsync().GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         var brickId = OpaqueId128.Parse("00000000000000000000000000000120");
         var rootId = OpaqueId128.Parse("00000000000000000000000000000110");
