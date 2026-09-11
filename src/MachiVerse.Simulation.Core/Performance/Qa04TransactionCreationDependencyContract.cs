@@ -16,6 +16,11 @@ public sealed record Qa04TransactionCreationDependencyV1(
     Qa04TransactionCreationDependencyKindV1 Kind,
     StableToken FailureCode);
 
+public sealed record Qa04TransactionParticipantAuthorityCoverageV1(
+    StableToken PartitionId,
+    StableToken OwnerDomain,
+    IReadOnlyList<StableToken> AffectedProductionKinds);
+
 /// <summary>
 /// Machine-readable audit for the remaining perf.reference.v1 transaction-creation binding gap.
 ///
@@ -27,8 +32,9 @@ public sealed record Qa04TransactionCreationDependencyV1(
 /// production assembler/state path. The only remaining creation dependency is actual participant
 /// record authority. Four of the eight owner partitions already have canonical QA-04 authority;
 /// participation.control_mode, society.contract_claim, governance.permission_license, and
-/// infrastructure.service_queue remain unavailable and therefore keep every canonical kind
-/// fail-closed because optional participants are also materialized by the benchmark contract.
+/// infrastructure.service_queue remain unavailable. Coverage is derived from the production
+/// transaction registry so the next authority work can be prioritized without guessing workload
+/// semantics.
 /// </summary>
 public static class Qa04TransactionCreationDependencyContractV1
 {
@@ -95,6 +101,9 @@ public static class Qa04TransactionCreationDependencyContractV1
         new StableToken("governance.permission_license"),
         new StableToken("infrastructure.service_queue"),
     });
+
+    public static IReadOnlyList<Qa04TransactionParticipantAuthorityCoverageV1> MissingAuthorityCoverage { get; } =
+        BuildMissingAuthorityCoverage();
 
     public static void ValidateCanonicalContract()
     {
@@ -163,11 +172,74 @@ public static class Qa04TransactionCreationDependencyContractV1
         foreach (var partitionId in CanonicalParticipantOwnerPartitions)
             _ = StandardDomainPartitionRegistry.Get(partitionId.Value);
 
+        ValidateMissingAuthorityCoverage();
+
         if (BlockersValue.Count != 1 ||
             BlockersValue[0].Kind != Qa04TransactionCreationDependencyKindV1.ParticipantAuthorityBinding ||
             BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
             BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.workload.transaction-dependency-contract-drift");
+    }
+
+    private static IReadOnlyList<Qa04TransactionParticipantAuthorityCoverageV1> BuildMissingAuthorityCoverage()
+    {
+        var executionRanks = StandardDomainExecutionPlanV1.Create().Entries
+            .ToDictionary(static entry => entry.DomainToken, static entry => entry.DomainRank);
+        var rows = new List<Qa04TransactionParticipantAuthorityCoverageV1>();
+        foreach (var partitionId in MissingParticipantAuthorityPartitions.OrderBy(static value => value.Value, StringComparer.Ordinal))
+        {
+            var identity = StandardDomainPartitionRegistry.Get(partitionId.Value);
+            var affected = CrossDomainTransactionKindRegistryV1.Registrations
+                .Where(registration => ParticipantDomains(registration, executionRanks).Contains(identity.OwnerDomain))
+                .Select(static registration => registration.TransactionKind)
+                .OrderBy(static kind => kind.Value, StringComparer.Ordinal)
+                .ToArray();
+            rows.Add(new Qa04TransactionParticipantAuthorityCoverageV1(
+                partitionId,
+                identity.OwnerDomain,
+                Array.AsReadOnly(affected)));
+        }
+        return Array.AsReadOnly(rows.ToArray());
+    }
+
+    private static IReadOnlySet<StableToken> ParticipantDomains(
+        CrossDomainTransactionKindRegistrationV1 registration,
+        IReadOnlyDictionary<StableToken, ushort> executionRanks)
+    {
+        var domains = registration.RequiredDomains
+            .Concat(registration.OptionalDomains)
+            .Concat(registration.RequiredAnyDomainGroups.Select(group => group
+                .OrderBy(domain => executionRanks[domain])
+                .ThenBy(static domain => domain.Value, StringComparer.Ordinal)
+                .First()))
+            .ToHashSet();
+        return domains;
+    }
+
+    private static void ValidateMissingAuthorityCoverage()
+    {
+        if (MissingAuthorityCoverage.Count != MissingParticipantAuthorityPartitions.Count ||
+            MissingAuthorityCoverage.Select(static row => row.PartitionId).Distinct().Count() != MissingAuthorityCoverage.Count ||
+            !MissingAuthorityCoverage.Select(static row => row.PartitionId).ToHashSet()
+                .SetEquals(MissingParticipantAuthorityPartitions) ||
+            MissingAuthorityCoverage.Any(static row => row.AffectedProductionKinds.Count == 0))
+            throw new InvalidDataException("qa04.workload.transaction-participant-coverage-drift");
+
+        var expectedCounts = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["participation.control_mode"] = 1,
+            ["society.contract_claim"] = 14,
+            ["governance.permission_license"] = 8,
+            ["infrastructure.service_queue"] = 10,
+        };
+        foreach (var row in MissingAuthorityCoverage)
+        {
+            if (!expectedCounts.TryGetValue(row.PartitionId.Value, out var expected) ||
+                row.AffectedProductionKinds.Count != expected ||
+                row.AffectedProductionKinds.Distinct().Count() != row.AffectedProductionKinds.Count ||
+                row.AffectedProductionKinds.Any(static kind => !CrossDomainTransactionKindRegistryV1.Contains(kind)))
+                throw new InvalidDataException($"qa04.workload.transaction-participant-coverage:{row.PartitionId.Value}");
+        }
     }
 
     private static Qa04TransactionCreationDependencyV1 Blocker(
