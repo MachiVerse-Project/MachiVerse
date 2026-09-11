@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using MachiVerse.Simulation.Core.Determinism;
@@ -6,11 +5,7 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class PartitionStateHeaderAsyncStreamingSmoke
 {
-    [ModuleInitializer]
-    internal static void Run()
-        => RunAsync().GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         var identity = StandardDomainPartitionRegistry.Get("spatial.terrain_geometry");
         var records = new[]
