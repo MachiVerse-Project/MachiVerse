@@ -7,8 +7,7 @@ public enum Qa04GovernancePermissionLicenseDependencyKindV1 : byte
 {
     PermissionKindVocabulary = 1,
     PublicAuthorityTarget = 2,
-    ScopeAuthorityMapping = 3,
-    GenesisEffectiveFrom = 4,
+    GenesisEffectiveFrom = 3,
 }
 
 public sealed record Qa04GovernancePermissionLicenseDependencyV1(
@@ -19,12 +18,12 @@ public sealed record Qa04GovernancePermissionLicenseDependencyV1(
 /// <summary>
 /// Exact fail-closed boundary for the canonical 70,000 governance.permission_license records.
 ///
-/// Alpha 1.1 already fixes the descriptor range, non-specialized authoritative RecordId mapping,
-/// D2 genesis envelope, subject selector (Resident), status=active, optional effective_until=NONE,
-/// and the deterministic conditions_digest scalar source. The remaining semantic gaps are the
-/// canonical permission_kind vocabulary, actual PublicAuthority target authority, the meaning and
-/// target pool for required scope_refs, and the canonical genesis effective_from Step. None of
-/// those are synthesized by the generic scalar source.
+/// Alpha 1.1 fixes the descriptor range, non-specialized authoritative RecordId mapping,
+/// D2 genesis envelope, subject selector (Resident), required spatial scope selector (canonical
+/// TileScope modulo mapping), status=active, optional effective_until=NONE, and the deterministic
+/// conditions_digest scalar source. The remaining semantic gaps are the canonical permission_kind
+/// vocabulary, actual PublicAuthority target authority, and the canonical genesis effective_from
+/// Step. None of those are synthesized by the generic scalar source.
 /// </summary>
 public static class Qa04GovernancePermissionLicenseDependencyContractV1
 {
@@ -49,10 +48,6 @@ public static class Qa04GovernancePermissionLicenseDependencyContractV1
                 Qa04GovernancePermissionLicenseDependencyKindV1.PublicAuthorityTarget,
                 "qa04.material.permission-public-authority-undefined"),
             Blocker(
-                "governance.permission-license.scope-ref-mapping",
-                Qa04GovernancePermissionLicenseDependencyKindV1.ScopeAuthorityMapping,
-                "qa04.material.permission-scope-mapping-undefined"),
-            Blocker(
                 "governance.permission-license.effective-from-genesis",
                 Qa04GovernancePermissionLicenseDependencyKindV1.GenesisEffectiveFrom,
                 "qa04.material.permission-effective-from-undefined"),
@@ -69,6 +64,7 @@ public static class Qa04GovernancePermissionLicenseDependencyContractV1
     {
         Qa04SocietyGovernanceReferenceDecompositionV1.ValidateCanonicalContract();
         Qa04GovernancePublicAuthorityDependencyContractV1.ValidateCanonicalContract();
+        Qa04SpatialTileScopeAuthorityV1.ValidateCanonicalContract();
 
         var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(PartitionId);
         if (slice.StartOrdinal != CanonicalStartOrdinal || slice.Count != CanonicalCount || slice.UsesSpecializedIdentity)
@@ -94,10 +90,11 @@ public static class Qa04GovernancePermissionLicenseDependencyContractV1
         var probe = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(CanonicalStartOrdinal);
         if (probe.PartitionId.Value != PartitionId || probe.Descriptor.RecordId.IsZero ||
             ConditionsDigest(probe.Descriptor.RecordId).Length != 32 || CanonicalStatus.Value != "active" ||
-            Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count != 4)
+            Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count != 3 ||
+            Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount != 4_096)
             throw new InvalidDataException("qa04.governance.permission-license-known-genesis-drift");
 
-        if (BlockersValue.Count != 4 ||
+        if (BlockersValue.Count != 3 ||
             BlockersValue.Select(static blocker => blocker.Kind).Distinct().Count() != BlockersValue.Count ||
             BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
             BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
