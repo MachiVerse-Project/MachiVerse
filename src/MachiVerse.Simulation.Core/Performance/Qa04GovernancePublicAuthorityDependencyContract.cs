@@ -7,8 +7,7 @@ public enum Qa04GovernancePublicAuthorityDependencyKindV1 : byte
 {
     InstitutionAuthority = 1,
     AuthorityTokenVocabulary = 2,
-    ScopeAuthorityMapping = 3,
-    GenesisEffectiveFrom = 4,
+    GenesisEffectiveFrom = 3,
 }
 
 public sealed record Qa04GovernancePublicAuthorityDependencyV1(
@@ -20,11 +19,11 @@ public sealed record Qa04GovernancePublicAuthorityDependencyV1(
 /// Exact fail-closed boundary for the canonical 25,000 governance.public_authority records.
 ///
 /// Alpha 1.1 fixes the descriptor range, non-specialized authoritative RecordId mapping, holder
-/// selector (Resident), status=active, optional effective_until=NONE, and the D2 genesis envelope.
-/// Actual Institution authority is not yet available, the canonical authority_tokens vocabulary is
-/// undefined, scope_refs have no canonical benchmark target mapping, and effective_from has no
-/// profile-specific genesis rule. PublicAuthority materialization must remain fail-closed until
-/// those four dependencies are resolved.
+/// selector (Resident), required spatial scope selector (canonical TileScope modulo mapping),
+/// status=active, optional effective_until=NONE, and the D2 genesis envelope. Actual Institution
+/// authority is not yet available, the canonical authority_tokens vocabulary is undefined, and
+/// effective_from has no profile-specific genesis rule. PublicAuthority materialization must remain
+/// fail-closed until those three dependencies are resolved.
 /// </summary>
 public static class Qa04GovernancePublicAuthorityDependencyContractV1
 {
@@ -48,10 +47,6 @@ public static class Qa04GovernancePublicAuthorityDependencyContractV1
                 Qa04GovernancePublicAuthorityDependencyKindV1.AuthorityTokenVocabulary,
                 "qa04.material.public-authority-token-vocabulary-undefined"),
             Blocker(
-                "governance.public-authority.scope-ref-mapping",
-                Qa04GovernancePublicAuthorityDependencyKindV1.ScopeAuthorityMapping,
-                "qa04.material.public-authority-scope-mapping-undefined"),
-            Blocker(
                 "governance.public-authority.effective-from-genesis",
                 Qa04GovernancePublicAuthorityDependencyKindV1.GenesisEffectiveFrom,
                 "qa04.material.public-authority-effective-from-undefined"),
@@ -65,6 +60,7 @@ public static class Qa04GovernancePublicAuthorityDependencyContractV1
     {
         Qa04SocietyGovernanceReferenceDecompositionV1.ValidateCanonicalContract();
         Qa04GovernanceInstitutionDependencyContractV1.ValidateCanonicalContract();
+        Qa04SpatialTileScopeAuthorityV1.ValidateCanonicalContract();
 
         var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(PartitionId);
         if (slice.StartOrdinal != CanonicalStartOrdinal || slice.Count != CanonicalCount || slice.UsesSpecializedIdentity)
@@ -86,10 +82,11 @@ public static class Qa04GovernancePublicAuthorityDependencyContractV1
         RequireField(schema, "status", DomainPayloadFieldKindV1.Token, optional: false);
 
         if (CanonicalStatus.Value != "active" ||
-            Qa04GovernanceInstitutionDependencyContractV1.Blockers.Count != 3)
+            Qa04GovernanceInstitutionDependencyContractV1.Blockers.Count != 3 ||
+            Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount != 4_096)
             throw new InvalidDataException("qa04.governance.public-authority-known-genesis-drift");
 
-        if (BlockersValue.Count != 4 ||
+        if (BlockersValue.Count != 3 ||
             BlockersValue.Select(static blocker => blocker.Kind).Distinct().Count() != BlockersValue.Count ||
             BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
             BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
