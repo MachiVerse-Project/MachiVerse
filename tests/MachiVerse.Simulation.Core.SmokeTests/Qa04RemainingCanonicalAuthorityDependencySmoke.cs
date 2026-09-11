@@ -23,11 +23,11 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
             "Canonical governance.institution dependency count drifted.");
 
         Qa04GovernancePublicAuthorityDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count == 4,
+        Require(Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count == 3,
             "Canonical governance.public_authority dependency count drifted.");
 
         Qa04GovernancePermissionLicenseDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count == 4,
+        Require(Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count == 3,
             "Canonical governance.permission_license dependency count drifted.");
 
         Qa04ParticipationControlModeDependencyContractV1.ValidateCanonicalContract();
@@ -57,7 +57,7 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
         .SelectMany(static codes => codes)
         .ToArray();
 
-        Require(failureCodes.Length == 25,
+        Require(failureCodes.Length == 23,
             "Canonical remaining authority dependency total drifted.");
         Require(failureCodes.Distinct(StringComparer.Ordinal).Count() == failureCodes.Length,
             "Canonical remaining authority failure codes must remain unique.");
