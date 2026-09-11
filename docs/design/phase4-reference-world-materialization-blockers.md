@@ -1,226 +1,182 @@
 # Phase 4 QA-04 canonical reference world materialization 監査
 
-Status: 実装阻害要因の監査中  
+Status: Current implementation audit  
 Tracking: #240  
 Implementation: Draft PR #265  
 Profile: `perf.reference.v1`
 
-## 目的
+## 1. 目的
 
-この文書は、QA-04 が固定済みの deterministic descriptor と、実際の production authoritative material の境界を記録する。
+この文書は、QA-04 deterministic descriptor と production authoritative material の現在の境界を記録する。
 
-`Qa04ReferenceLoadV1` は以下を既に固定している。
+実装状態のsource of truthは `Qa04ReferenceWorldDependencyContractV1` と Issue #240。旧auditで記録したblocker名がcurrent machine contractと衝突する場合、current machine contractを優先する。
 
-- 8 initial-world class の件数
-- record creation ordinal から導出する identity
-- Resident detail 分布
-- 64 × 64 regional tile 分布
-- D0 dense-region 選択
-- `perf.reference.position.v1` による tile 内位置 descriptor
+## 2. Current checkpoint
 
-`Qa04ReferenceScenariosV1` は transaction mix、market scope/order identity、Infrastructure node/edge/request identity、各 load selector を固定している。
-
-ただし descriptor が deterministic であることと、`referenceWorldMaterialized=true` は同義ではない。各 class は exact P4-05 payload と実在する Ref target を持つ production authority へ materialize されなければならない。
-
-## 現在の binding 状態
-
-| `perf.reference.v1` class | count | production binding | 状態 |
-|---|---:|---|---|
-| `resident.persistent-identity` | 1,000,000 | `resident.identity_lifecycle` | 実 materializer 完了 |
-| `physical.d0-presence` | 500,000 | `physical.presence` + `physical.occupancy/collision_shape` | ownership 決定済み、exact lossless v2 collision-shape schema/materializer 未確定 |
-| `environment.d0-cell-cohort` | 1,000,000 | Environment 13 partitions | class-to-partition split / canonical initial values 未確定 |
-| `environment.d1-aggregate` | 250,000 | Environment 13 partitions | aggregate-to-partition split / canonical initial values 未確定 |
-| `society-governance.active-record` | 2,000,000 | Society/Governance 33 partitions | decomposition 未確定 |
-| `infrastructure.active-record` | 500,000 | `infrastructure.network_topology/{network,node,edge}` + service authority | ownership 決定済み、exact v2 node/edge schema/materializer 未確定 |
-| `spatial.hot-terrain-brick` | 500,000 | `spatial.terrain_geometry/terrain_brick` v2 | production migration path 完了、canonical Terrain content 未確定 |
-| `transaction.active-cross-domain` | 10,000 | 未確定 | candidate は non-authoritative、persistent/reconstruction authority 未確定 |
-
-## Terrain 500,000 の現在地
-
-Terrain は authority/schema/wire/recovery の問題と benchmark content の問題を分離する。
-
-### 完了済み
-
-- `root_brick_ref` owner = `spatial.terrain_geometry/terrain_brick`
-- `terrain_root` / `terrain_brick` record schema 2.0
-- `TerrainBrickV1` の exact lossless v2 record mapping
-- 729 SDF sample / 512 surface material id の exact wire
-- v1 root -> v2 root migration
-- exact-97 authority/provider integration
-- recovery Phase 1 / Phase 2
-- actual record schema 2.0 を保持する all-97 resolver
-- Spatial v2 owner material seam
-- exact-97 / exact-103 semantic canary
-- QA-04 hot-terrain-brick descriptor count = 500,000
-- descriptor record id / D0 classification
-- D0 sample spacing = 250 mm
-- descriptor id と supplied `TerrainBrickV1.brick_id` を fail-closed で結ぶ materialization boundary
-
-`Qa04TerrainBrickDescriptorMaterializerV1` は、QA-04 descriptor identity を exact Terrain v2 brick record へ結ぶ。ただし値を生成しない。cell origin、SDF、surface material、revision は明示的な content source からのみ受け取る。
-
-### 未確定
-
-現在の正本仕様には、次を canonical に決める規則がない。
-
-1. 64 × 64 regional tile と tile 内 descriptor を `SpatialCellKeyV1` の `(level,x,y,z)` へ変換する物理座標規則
-2. 500,000 brick の 729 SDF sample を WorldSeed から生成する規則
-3. 512 surface material id を生成・割り当てする規則
-4. Terrain surface class の canonical token 集合
-5. root record と scope record の個数・identity・対応関係
-6. root brick 選択と octree/root topology
-7. `connectivity_refs` の canonical population
-8. Terrain revision / lineage の initial-world 規則
-
-P4-04 は SBO-SDF の表現、sample cardinality、符号意味、D0=250 mm spacing、octree traversal を固定している。しかし benchmark 固有の地形形状そのものは固定していない。
-
-そのため flat terrain、random noise、all-solid、all-void などを勝手に採用して canonical benchmark material と扱ってはならない。
-
-既存 failure code `qa04.material.terrain-brick-authority-undefined` は、名称が現在の詳細理由より広いが、500,000 canonical Terrain material が成立するまで conservative release gate として維持する。
-
-## Physical D0 500,000
-
-ownership は次で決定済み。
+active reference-world blockerは **2件**:
 
 ```text
-physical.presence.shape_ref
-  -> physical.occupancy / collision_shape
+society-governance.active-record.partition-mapping
+infrastructure.network-topology.node-edge-targets
 ```
 
-残る問題は authority owner ではなく、Sphere / Capsule / OrientedBox / ConvexPolytope / TriangleMeshStatic / 許可する SDF reference form を lossless に表現する exact v2 `collision_shape` record arm である。
-
-P4-04 の runtime algorithm type だけから field layout、canonical ordering、Ref semantics を推測して v2 schema を作らない。
-
-## Environment D0 / D1
-
-P4-06 `perf.reference.v1` は次だけを canonical input として固定する。
-
-- `environment.d0-cell-cohort` = 1,000,000
-- `environment.d1-aggregate` = 250,000
-- D0/D1 detail class
-- deterministic identity / tile distribution
-- precipitation、surface-flow、hazard、ecosystem、contaminant の load selector
-
-Phase 3 Environment design と P4-05 は、13 semantic partitions と各 partition の意味・payload を固定する。
-
-しかし両仕様を結ぶ次の rule は存在しない。
-
-- D0 1,000,000 descriptor が atmosphere / weather / soil / ecosystem 等のどれへ何件 materialize されるか
-- 1 descriptor が単一 record なのか複数 coupled record なのか
-- D1 250,000 の exact owner split
-- D0/D1 の canonical initial payload values
-- coupled Environment record 間の initial Ref closure
-
-したがって benchmark count/detail だけから partition split を導出してはならない。`qa04.material.environment-d0-partition-mapping-undefined` と `qa04.material.environment-d1-partition-mapping-undefined` は維持する。
-
-## Society / Governance 2,000,000
-
-33 partitions 全体に対する exact decomposition が未確定。
-
-market ownership は次で決定済み。
+release flags:
 
 ```text
-society.market_transaction.market_ref
-  -> society.market_transaction / market_state
+referenceWorldMaterialized = false
+authoritativeStepLoopAvailable = false
 ```
 
-ただし `market_state` / `order_or_offer` / `transaction_or_price_fact` の exact v2 field schema と、2,000,000 aggregate class との関係は未確定。
+current materialized checkpoint:
 
-## Infrastructure 500,000
+| class / scope | current authority |
+|---|---|
+| Resident identity | 1,000,000 actual records |
+| Physical | implemented production authority |
+| Environment D0 | 1,000,000 actual records |
+| Environment D1 | 250,000 actual records |
+| Society Market | 1,000,100 actual records |
+| Society Household | 40,000 actual records |
+| Governance Polity | 1,000-record materializer added; CI verification required before counting as accepted checkpoint |
+| Terrain | 508,192 actual v2 records, full production proof complete |
+| CrossDomainTransaction | persistent authority implemented |
+| Infrastructure topology | 120,100 / 500,000 specialized material |
 
-ownership は次で決定済み。
+## 3. Resolved former blockers
+
+以下は旧auditでは未解消だったが、current branchではactive world blockerではない。
+
+### Physical shape authority
+
+`physical.occupancy /2.0` のcollision-shape ownership / migration / materialization / production proofが成立済み。
+
+### Environment D0 / D1 mapping
+
+exact D0 1,000,000 / D1 250,000 のpartition decomposition、genesis values、Ref closure、Snapshot recovery、semantic rehashが成立済み。
+
+### Market authority
+
+`society.market_transaction /2.0` で market_state 100 + open order 1,000,000 のactual authorityが成立済み。
+
+### Terrain canonical material
+
+旧 failure code:
 
 ```text
-infrastructure.network_topology.node_refs -> same partition / node
-infrastructure.network_topology.edge_refs -> same partition / edge
+qa04.material.terrain-brick-authority-undefined
 ```
 
-P4-06 は 20,000 node、100,000 edge、250,000 queued service request を固定しているが、`network/node/edge` v2 record の exact payload field と残り active-record class の構成が未確定。
+はactiveではない。
 
-## active CrossDomainTransaction 10,000
+full production proofは次を満たす。
 
-QA-04 は 10,000 deterministic descriptor と transaction mix を持つ。
+- hot D0 500,000
+- terrain root 4,096
+- D3 anchor 4,096
+- total 508,192 records
+- canonical payload on-demand generation
+- actual TileScope closure
+- exact-103 streaming Snapshot composition
+- Zstd `MVCHNK01` staging + durable `manifest.pb`
+- same staged SnapshotからScope/Terrainを2-pass recovery
+- recovered RecordId全件一致
+- root/anchor kind closure
+- post-recovery semantic rehash一致
 
-現在の `CrossDomainTransactionCandidateV1` は Step candidate であり `IsAuthoritative == false`。candidate を Snapshot persistent authority として保存してはならない。
+### `resident.body_health.body_region_states`
 
-必要なのは persistent active-transaction owner、または 103 sections 内の既存 durable authority から 10,000 active state を exact に再構成できる normative rule である。
+exact nested schema / codec / runtime material boundaryは実装済み。旧 body-region schema blockerはactiveではない。
 
-## nested payload schema
+### active CrossDomainTransaction 10,000
 
-### 解消済み: `resident.perception.perceived_facts`
+persistent authority / SQLite state / Snapshot / recovery / reconstruction pathは実装済み。`CrossDomainTransactionCandidateV1` は引き続きnon-authoritativeであり、candidate自体をpersistent authorityとして保存しない。
 
-既存 runtime authority `ResidentPerceptionObservationV1` を exact source として、`domain.resident.perceived-fact / 1.0` の nested schema / codec / runtime reconstruction を固定済み。
+## 4. Active blocker: Society / Governance 2,000,000
 
-- fact identity
-- resident / subject identity
-- proposition
-- source delivery
-- confidence
-- perceived step
-- fact-id canonical order
-- standard payload wire roundtrip / semantic digest
-
-CLR reflection / JSON fallback は使用しない。
-
-### 解消済み: `governance.law_rule` Rule AST
-
-既存 runtime authority `LawPredicateNodeV1` / `LawEffectV1` を exact source として次を固定済み。
+exact decomposition:
 
 ```text
-domain.governance.rule-predicate-ast / 1.0
-domain.governance.rule-effect-ast / 1.0
+Society = 1,600,000
+Governance = 400,000
+total = 2,000,000
 ```
 
-predicate は runtime の8 fieldを lossless に保持し、`children` に限って同一 schema への explicit self-recursion を許可する。他 nested schema の再帰は引き続き fail-closed。
-
-runtime AST -> nested wire -> runtime AST、decode->encode canonicality、full `governance.law_rule` payload、production provider/recovery semantic rehash を smoke で確認済み。
-
-### 未解消: `resident.body_health.body_region_states`
-
-P3 Resident design は粗い身体部位・負傷・疾病・障害・回復等を扱える conceptual body/health state を要求するが、`BodyRegionStateV1` の exact field set は固定していない。
-
-P4-05 が固定するのは:
+accepted material before the new Polity CI checkpoint:
 
 ```text
-body_region_states : ordered list<BodyRegionStateV1>
+Market     = 1,000,100
+Household  =    40,000
+total      = 1,040,100
 ```
 
-と region token canonical order までであり、次は未定義。
+残りpartitionの多くはrequired arbitrary Tokenに依存する。例:
 
-- region record の exact fields
-- scalar kinds / units
-- required / optional
-- injury/disease との nested-vs-Ref 境界
-- capability / integrity / pain 等を region record に持つか
-- canonical wire field order
+```text
+society.organization.organization_class
+society.employment.job_token
+society.contract_claim.contract_kind
+society.property_right.right_kind
+society.currency_money.currency_token
+society.reputation.dimension_token
+```
 
-runtime の `ResidentHealthStateV1(HealthCapacity, Pain, Stress, Fatigue)` は whole-resident state であり、これを body-region state とみなす根拠はない。
+`phase4-alpha11-normative-closure.md` のscalar hash ruleはarbitrary Token vocabularyを生成する根拠ではない。専用正本にcanonical token setがない値を `perf.*` などで推測してはならない。
 
-そのため `qa04.material.body-region-state-schema-undefined` は維持する。
+required relation Refは `phase4-alpha11-reference-world-decomposition.md` のcanonical poolsへ閉じる。
 
-## dependency contract checkpoint
+current active parent blocker:
 
-exact nested schema 2件の解消により、`Qa04ReferenceWorldDependencyContractV1` の unresolved blocker は **9件**。
+```text
+society-governance.active-record.partition-mapping
+```
 
-- Physical shape authority
-- Environment D0 mapping
-- Environment D1 mapping
-- Society/Governance decomposition
-- Market authority
-- Infrastructure node/edge authority
-- Terrain canonical material gate
-- active CrossDomainTransaction persistent authority
-- BodyRegionState nested schema
+解除条件:
 
-## 完了条件
+1. exact 2,000,000 production records
+2. required Token vocabularyが正本で定義済み
+3. actual cross-partition Ref closure
+4. exact-97 authority / exact-103 Snapshot
+5. staging / recovery / semantic rehash
+6. machine blocker removal smoke green
 
-`referenceWorldMaterialized=true` は、8 initial-world class すべてについて次が成立した場合のみ許可する。
+## 5. Active blocker: Infrastructure 500,000
 
-1. header/count placeholder ではなく実 authoritative record を生成する
-2. exact owner payload/schema contract を使う
-3. required Ref が同一 world の実 record に closure する
-4. material から canonical partition/state digest を生成する
-5. 実 6 Core + 97 Domain = 103 section Snapshot -> Zstd/chunk -> manifest -> staging -> recovery -> semantic rehash に参加する
+current specialized topology:
 
-reduced canary の typed-empty root や synthetic Terrain content は infrastructure test としてのみ使用でき、non-empty `perf.reference.v1` material として数えない。
+```text
+network =    100
+node    = 20,000
+edge    =100,000
+total   =120,100
+```
 
-PR #265 は引き続き Draft とし、Stage 2 / Alpha 1.1 release gate は未完了のままとする。
+remaining generic materialは **379,900**。
+
+内部node/edge closureとTileScope authorityは成立済み。残る `operator_refs` 等のclosureにはactual `society.organization` authorityが必要であり、synthetic Organization targetを作ってはならない。
+
+current active parent blocker:
+
+```text
+infrastructure.network-topology.node-edge-targets
+```
+
+解除条件:
+
+1. full 500,000 production material
+2. actual Society/Spatial Ref closure
+3. exact-97 / exact-103 production Snapshot
+4. staging / recovery / semantic rehash
+5. machine blocker removal smoke green
+
+## 6. 完了条件
+
+`referenceWorldMaterialized=true` は、8 initial-world classすべてについて次が成立した場合のみ許可する。
+
+1. placeholderではなくactual authoritative record
+2. exact owner payload/schema contract
+3. required Refが同一worldのactual recordへclosure
+4. canonical partition/state digest
+5. real 6 Core + 97 Domain = 103 section Snapshot
+6. Zstd/chunk -> manifest -> staging -> recovery -> semantic rehash
+
+synthetic/reduced/preflight evidenceをrelease evidenceとして数えない。PR #265はStage 2完了までDraftを維持する。
