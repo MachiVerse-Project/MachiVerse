@@ -254,6 +254,7 @@ finally
     if (Directory.Exists(persistenceRoot)) Directory.Delete(persistenceRoot, recursive: true);
 }
 
+await PartitionStateHeaderAsyncStreamingSmoke.RunAsync();
 SnapshotManifestSmoke.Run();
 await PersistenceSnapshotSmoke.RunAsync();
 await PersistenceMigrationSmoke.RunAsync();
