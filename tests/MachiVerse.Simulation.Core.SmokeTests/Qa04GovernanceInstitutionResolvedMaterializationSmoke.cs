@@ -22,7 +22,7 @@ internal static class Qa04GovernanceInstitutionResolvedMaterializationSmoke
         Require(blockerCodes.SetEquals(new[]
             {
                 "qa04.material.institution-kind-vocabulary-undefined",
-                "qa04.material.institution-decision-method-vocabulary-undefined",
+                "qa04.material.decision-method-vocabulary-undefined",
                 "qa04.material.institution-office-mapping-undefined",
             }),
             "Resolved Institution mechanics must not release the three canonical authority blockers.");
@@ -66,7 +66,7 @@ internal static class Qa04GovernanceInstitutionResolvedMaterializationSmoke
             .GroupBy(static record => record.Payload.PolityRef)
             .Select(static group => group.Count())
             .ToArray();
-        Require(polityDistribution.Length == Qa04GovernancePolityMaterializerV1.CanonicalCount &&
+        Require(checked((ulong)polityDistribution.Length) == Qa04GovernancePolityMaterializerV1.CanonicalCount &&
                 polityDistribution.All(static count => count == 5),
             "Canonical Institution -> Polity modulo mapping must bind exactly five Institutions per Polity.");
 
