@@ -157,7 +157,7 @@ internal static class SpatialTerrainGeometryStagedRecoverySmoke
                 "Staged recovery must recover all 4,096 TileScope identities from the physical Snapshot.");
             Require(recovered.Terrain.ActualItemCount == terrainAuthority.ActualItemCount,
                 "Staged recovery must recover the exact canonical reduced Terrain record count.");
-            Require(recovered.Terrain.RootClosures.Count == Qa04TerrainRootMaterializerV1.CanonicalRootCount,
+            Require(checked((ulong)recovered.Terrain.RootClosures.Count) == Qa04TerrainRootMaterializerV1.CanonicalRootCount,
                 "Staged recovery must retain all canonical Terrain root closure relations.");
             Require(recovered.Terrain.TryGetKind(
                     Qa04TerrainRootMaterializerV1.RootId(0),
