@@ -147,17 +147,49 @@ public static class CanonicalSnapshotProductionPhysicalDrainV1
                 config,
                 zstdCodec,
                 cancellationToken).ConfigureAwait(false);
-            descriptors.Add(new PhysicalSnapshotChunkDescriptor(
-                (uint)i,
-                chunk.Fragments[0].SectionId,
-                chunk.Fragments[^1].SectionId,
-                header.UncompressedLength,
-                header.StoredLength,
-                header.Compression,
-                header.LogicalPayloadDigest.ToArray(),
-                header.StoredPayloadDigest.ToArray(),
-                relative));
+            descriptors.Add(Descriptor((uint)i, chunk, header, relative));
         }
+        return Array.AsReadOnly(descriptors.ToArray());
+    }
+
+    /// <summary>
+    /// Bounded-memory production drain. Section metadata is validated up front, then fragments are
+    /// packed and written one chunk at a time. Only the current chunk plus the compact physical
+    /// descriptor list remains resident; no all-fragment or all-chunk payload collection is built.
+    /// </summary>
+    public static async Task<IReadOnlyList<PhysicalSnapshotChunkDescriptor>> StageStreamingAsync(
+        SnapshotPhysicalPaths physical,
+        IEnumerable<CanonicalSnapshotStreamingSectionV1> sections,
+        EffectiveCoreConfig config,
+        WorldStateV1? frozenState = null,
+        ISnapshotChunkCompressionCodecV1? zstdCodec = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(physical);
+        ArgumentNullException.ThrowIfNull(sections);
+        ArgumentNullException.ThrowIfNull(config);
+        if (!Directory.Exists(physical.StagingChunksDirectory))
+            throw new InvalidDataException("persistence.snapshot-chunks-missing");
+
+        var descriptors = new List<PhysicalSnapshotChunkDescriptor>();
+        uint chunkIndex = 0;
+        foreach (var chunk in SnapshotChunkStreamingPackerV1.PackStandard(sections, frozenState))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var relative = SnapshotChunkFile.RelativePath(chunkIndex);
+            var path = Path.Combine(physical.StagingDirectory, relative.Replace('/', Path.DirectorySeparatorChar));
+            var header = await CanonicalSnapshotProductionChunkFileV1.WriteAsync(
+                path,
+                chunk,
+                config,
+                zstdCodec,
+                cancellationToken).ConfigureAwait(false);
+            descriptors.Add(Descriptor(chunkIndex, chunk, header, relative));
+            chunkIndex = checked(chunkIndex + 1);
+        }
+
+        if (descriptors.Count == 0)
+            throw new InvalidDataException("persistence.snapshot-fragment-invalid:no-fragments");
         return Array.AsReadOnly(descriptors.ToArray());
     }
 
@@ -169,15 +201,26 @@ public static class CanonicalSnapshotProductionPhysicalDrainV1
         ISnapshotChunkCompressionCodecV1? zstdCodec = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(cut);
-        ArgumentNullException.ThrowIfNull(physical);
-        ArgumentNullException.ThrowIfNull(frozenConfig);
-        if (physical.SnapshotId != cut.SnapshotId)
-            throw new InvalidDataException("snapshot-running.physical-id-mismatch");
-        if (frozenConfig.Generation != cut.FrozenState.Header.ConfigGeneration ||
-            !CryptographicOperations.FixedTimeEquals(frozenConfig.Digest, cut.FrozenState.Diagnostic.ConfigDigest))
-            throw new InvalidDataException("snapshot-running.compression-config-authority-mismatch");
+        ValidateRunningCut(cut, physical, frozenConfig);
         return StageAsync(
+            physical,
+            sections,
+            frozenConfig,
+            cut.FrozenState,
+            zstdCodec,
+            cancellationToken);
+    }
+
+    public static Task<IReadOnlyList<PhysicalSnapshotChunkDescriptor>> StageRunningCutStreamingAsync(
+        RunningSnapshotCutV1 cut,
+        SnapshotPhysicalPaths physical,
+        IEnumerable<CanonicalSnapshotStreamingSectionV1> sections,
+        EffectiveCoreConfig frozenConfig,
+        ISnapshotChunkCompressionCodecV1? zstdCodec = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRunningCut(cut, physical, frozenConfig);
+        return StageStreamingAsync(
             physical,
             sections,
             frozenConfig,
@@ -191,4 +234,35 @@ public static class CanonicalSnapshotProductionPhysicalDrainV1
         => Array.AsReadOnly<ISnapshotChunkCompressionDecoderV1>([
             zstdCodec ?? new ZstdSnapshotChunkCompressionCodecV1()
         ]);
+
+    private static void ValidateRunningCut(
+        RunningSnapshotCutV1 cut,
+        SnapshotPhysicalPaths physical,
+        EffectiveCoreConfig frozenConfig)
+    {
+        ArgumentNullException.ThrowIfNull(cut);
+        ArgumentNullException.ThrowIfNull(physical);
+        ArgumentNullException.ThrowIfNull(frozenConfig);
+        if (physical.SnapshotId != cut.SnapshotId)
+            throw new InvalidDataException("snapshot-running.physical-id-mismatch");
+        if (frozenConfig.Generation != cut.FrozenState.Header.ConfigGeneration ||
+            !CryptographicOperations.FixedTimeEquals(frozenConfig.Digest, cut.FrozenState.Diagnostic.ConfigDigest))
+            throw new InvalidDataException("snapshot-running.compression-config-authority-mismatch");
+    }
+
+    private static PhysicalSnapshotChunkDescriptor Descriptor(
+        uint chunkIndex,
+        SnapshotChunkFragmentPayloadV1 chunk,
+        SnapshotChunkHeader header,
+        string relative)
+        => new(
+            chunkIndex,
+            chunk.Fragments[0].SectionId,
+            chunk.Fragments[^1].SectionId,
+            header.UncompressedLength,
+            header.StoredLength,
+            header.Compression,
+            header.LogicalPayloadDigest.ToArray(),
+            header.StoredPayloadDigest.ToArray(),
+            relative);
 }
