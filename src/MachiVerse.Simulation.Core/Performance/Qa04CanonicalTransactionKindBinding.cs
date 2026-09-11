@@ -85,11 +85,12 @@ public static class Qa04CanonicalTransactionKindBindingV1
             descriptor.SubjectIds,
             stableLocalOrdinal,
             participants);
+        var canonicalSubjects = descriptor.SubjectIds.Order().ToArray();
 
         if (candidate.TransactionKind != productionKind ||
             candidate.WorldId != Qa04ReferenceLoadV1.WorldId ||
             candidate.BasisStep != basisStep ||
-            !candidate.SubjectRefs.SequenceEqual(descriptor.SubjectIds))
+            !candidate.SubjectRefs.SequenceEqual(canonicalSubjects))
             throw new InvalidDataException("qa04.workload.tx-production-binding-drift");
 
         return new Qa04CanonicalTransactionKindBindingResultV1(
