@@ -1,0 +1,34 @@
+name: INT-03 full Terrain production validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.TerrainFullProductionSmoke/**'
+      - '.github/workflows/int03-terrain-full-production-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-terrain-full-production-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  terrain-full-production:
+    name: Full 508,192-record Terrain Snapshot / recovery
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build full Terrain production probe
+        run: dotnet build tests/MachiVerse.Simulation.Core.TerrainFullProductionSmoke/MachiVerse.Simulation.Core.TerrainFullProductionSmoke.csproj --configuration Release
+      - name: Prove full Terrain production Snapshot and staged recovery
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.TerrainFullProductionSmoke/MachiVerse.Simulation.Core.TerrainFullProductionSmoke.csproj --configuration Release --no-build
