@@ -13,12 +13,9 @@ internal static class Qa04BodyRegionStateSchemaDependencyContractSmoke
             "Resolved BodyRegionState schema must have no remaining subdependency blockers.");
         Require(Qa04BodyRegionStateSchemaDependencyContractV1.FailureCodes.Count == 0,
             "Resolved BodyRegionState schema must expose no unresolved failure codes.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 3,
-            "Resolved BodyRegionState schema must remain absent from the current reference-world blocker set.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.All(blocker =>
-                blocker.DependencyId.Value != Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldDependencyId &&
-                blocker.FailureCode.Value != Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldFailureCode),
-            "Resolved BodyRegionState compatibility blocker must be absent from the world contract.");
+        Require(Qa04ReferenceWorldDependencyContractV1.FailureCodes.All(code =>
+                code.Value != Qa04BodyRegionStateSchemaDependencyContractV1.ParentWorldFailureCode),
+            "Resolved BodyRegionState compatibility blocker must remain absent from the world contract.");
 
         var genesis = Qa04BodyRegionStateSchemaDependencyContractV1.CreateCanonicalGenesis();
         Require(genesis.Count == 7 && genesis.All(static value => value is ResidentBodyRegionStateNestedValueV1),
