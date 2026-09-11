@@ -27,13 +27,17 @@ internal static class Qa04CanonicalDetailTransitionBindingSmoke
 
         var step = 300UL;
         var requirements = Qa04CanonicalDetailTransitionBindingV1.RequirementsForStep(step);
+        var promotionRecords = requirements
+            .Where(static requirement => requirement.Direction == DetailTransitionDirectionV1.Promotion)
+            .Aggregate(0UL, static (total, requirement) => checked(total + requirement.EstimatedRecordCount));
+        var demotionRecords = requirements
+            .Where(static requirement => requirement.Direction == DetailTransitionDirectionV1.Demotion)
+            .Aggregate(0UL, static (total, requirement) => checked(total + requirement.EstimatedRecordCount));
         Require(requirements.Count == 16 &&
                 requirements.Count(static requirement => requirement.Direction == DetailTransitionDirectionV1.Promotion) == 6 &&
                 requirements.Count(static requirement => requirement.Direction == DetailTransitionDirectionV1.Demotion) == 10 &&
-                requirements.Where(static requirement => requirement.Direction == DetailTransitionDirectionV1.Promotion)
-                    .Sum(static requirement => (ulong)requirement.EstimatedRecordCount) == 30_000 &&
-                requirements.Where(static requirement => requirement.Direction == DetailTransitionDirectionV1.Demotion)
-                    .Sum(static requirement => (ulong)requirement.EstimatedRecordCount) == 80_000,
+                promotionRecords == 30_000 &&
+                demotionRecords == 80_000,
             "QA-04 canonical detail cadence mix/budget drifted.");
 
         var configDigest = SHA256.HashData("qa04-canonical-detail-binding-config"u8);
