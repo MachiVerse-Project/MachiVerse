@@ -68,6 +68,7 @@ public static class Qa04GovernancePermissionLicenseDependencyContractV1
     public static void ValidateCanonicalContract()
     {
         Qa04SocietyGovernanceReferenceDecompositionV1.ValidateCanonicalContract();
+        Qa04GovernancePublicAuthorityDependencyContractV1.ValidateCanonicalContract();
 
         var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(PartitionId);
         if (slice.StartOrdinal != CanonicalStartOrdinal || slice.Count != CanonicalCount || slice.UsesSpecializedIdentity)
@@ -92,7 +93,8 @@ public static class Qa04GovernancePermissionLicenseDependencyContractV1
 
         var probe = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(CanonicalStartOrdinal);
         if (probe.PartitionId.Value != PartitionId || probe.Descriptor.RecordId.IsZero ||
-            ConditionsDigest(probe.Descriptor.RecordId).Length != 32 || CanonicalStatus.Value != "active")
+            ConditionsDigest(probe.Descriptor.RecordId).Length != 32 || CanonicalStatus.Value != "active" ||
+            Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count != 4)
             throw new InvalidDataException("qa04.governance.permission-license-known-genesis-drift");
 
         if (BlockersValue.Count != 4 ||
