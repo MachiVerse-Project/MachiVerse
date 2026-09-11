@@ -8,6 +8,9 @@ internal static class SpatialTerrainGeometryStreamingSemanticVerifierSmoke
 {
     [ModuleInitializer]
     internal static void Run()
+        => RunAsync().GetAwaiter().GetResult();
+
+    private static async Task RunAsync()
     {
         var brickId = OpaqueId128.Parse("00000000000000000000000000000120");
         var rootId = OpaqueId128.Parse("00000000000000000000000000000110");
@@ -49,7 +52,13 @@ internal static class SpatialTerrainGeometryStreamingSemanticVerifierSmoke
         var provider = new SpatialTerrainGeometrySnapshotSectionProviderV2();
         var section = provider.Create(authority);
         var recovered = new SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2(section.Fragments);
+        var recoveredAsync = await SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2.CreateAsync(
+            Async(section.Fragments));
         var references = BuildResolver(rootId, brickId, scopeId, includeScope: true);
+
+        Require(recoveredAsync.RecordIdsCanonical.SequenceEqual(recovered.RecordIdsCanonical) &&
+                recoveredAsync.RootClosures.SequenceEqual(recovered.RootClosures),
+            "Async Terrain phase-1 recovery index must match the synchronous bounded-memory source.");
 
         var legacyVerifier = provider.CreateSemanticVerifier(authority.Header);
         var legacy = legacyVerifier.VerifyWithContext!(
@@ -60,21 +69,29 @@ internal static class SpatialTerrainGeometryStreamingSemanticVerifierSmoke
             section.Fragments,
             recovered,
             references);
+        var streamingAsync = await SpatialTerrainGeometryStreamingSemanticVerifierV2.VerifyAsync(
+            authority.Header,
+            Async(section.Fragments),
+            recoveredAsync,
+            references);
 
         Require(streaming.LogicalItemCount == legacy.LogicalItemCount &&
                 streaming.LogicalContentDigest.AsSpan().SequenceEqual(legacy.LogicalContentDigest),
             "Streaming Terrain semantic verifier must reproduce the existing recovered semantic rehash exactly.");
-        Require(streaming.LogicalContentDigest.AsSpan().SequenceEqual(authority.Header.CanonicalDigest),
-            "Streaming Terrain semantic verifier must rehash to the frozen authority digest.");
+        Require(streamingAsync.LogicalItemCount == streaming.LogicalItemCount &&
+                streamingAsync.LogicalContentDigest.AsSpan().SequenceEqual(streaming.LogicalContentDigest),
+            "Async Terrain semantic verifier must be byte-for-byte identical to the synchronous bounded-memory verifier.");
+        Require(streamingAsync.LogicalContentDigest.AsSpan().SequenceEqual(authority.Header.CanonicalDigest),
+            "Async Terrain semantic verifier must rehash to the frozen authority digest.");
 
         var missingScope = BuildResolver(rootId, brickId, scopeId, includeScope: false);
         var rejected = false;
         try
         {
-            _ = SpatialTerrainGeometryStreamingSemanticVerifierV2.Verify(
+            _ = await SpatialTerrainGeometryStreamingSemanticVerifierV2.VerifyAsync(
                 authority.Header,
-                section.Fragments,
-                recovered,
+                Async(section.Fragments),
+                recoveredAsync,
                 missingScope);
         }
         catch (InvalidDataException ex) when (
@@ -83,7 +100,7 @@ internal static class SpatialTerrainGeometryStreamingSemanticVerifierSmoke
             rejected = true;
         }
         Require(rejected,
-            "Streaming Terrain semantic verifier must fail closed when the recovered TileScope reference is missing.");
+            "Async Terrain semantic verifier must fail closed when the recovered TileScope reference is missing.");
     }
 
     private static DomainSnapshotCompactReferenceResolverV1 BuildResolver(
@@ -114,6 +131,16 @@ internal static class SpatialTerrainGeometryStreamingSemanticVerifierSmoke
             })
             .ToArray();
         return new DomainSnapshotCompactReferenceResolverV1(sources);
+    }
+
+    private static async IAsyncEnumerable<SnapshotSectionFragmentMaterialV1> Async(
+        IEnumerable<SnapshotSectionFragmentMaterialV1> fragments)
+    {
+        foreach (var fragment in fragments)
+        {
+            await Task.Yield();
+            yield return fragment;
+        }
     }
 
     private sealed class Source : IDomainPartitionSnapshotReferenceSourceV1
