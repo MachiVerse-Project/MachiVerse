@@ -1,5 +1,6 @@
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Runtime;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
@@ -24,7 +25,10 @@ public sealed record Qa04TransactionCreationDependencyV1(
 /// registered production kinds. Qa04CrossDomainTransactionGenesisMaterializerV1 and
 /// Qa04CrossDomainTransactionTurnoverMaterializerV1 already implement those rules through the
 /// production assembler/state path. The only remaining creation dependency is actual participant
-/// record authority for the canonical owner partitions; missing pools remain fail-closed.
+/// record authority. Four of the eight owner partitions already have canonical QA-04 authority;
+/// participation.control_mode, society.contract_claim, governance.permission_license, and
+/// infrastructure.service_queue remain unavailable and therefore keep every canonical kind
+/// fail-closed because optional participants are also materialized by the benchmark contract.
 /// </summary>
 public static class Qa04TransactionCreationDependencyContractV1
 {
@@ -62,6 +66,34 @@ public static class Qa04TransactionCreationDependencyContractV1
         new StableToken("transaction.disease-transmission"),
         new StableToken("transaction.public-record"),
         new StableToken("transaction.military-operation"),
+    });
+
+    public static IReadOnlyList<StableToken> CanonicalParticipantOwnerPartitions { get; } = Array.AsReadOnly(new[]
+    {
+        new StableToken("spatial.scope_registry"),
+        new StableToken("environment.hazard"),
+        new StableToken("physical.presence"),
+        new StableToken("participation.control_mode"),
+        new StableToken("resident.identity_lifecycle"),
+        new StableToken("society.contract_claim"),
+        new StableToken("governance.permission_license"),
+        new StableToken("infrastructure.service_queue"),
+    });
+
+    public static IReadOnlyList<StableToken> AvailableParticipantAuthorityPartitions { get; } = Array.AsReadOnly(new[]
+    {
+        new StableToken("spatial.scope_registry"),
+        new StableToken("environment.hazard"),
+        new StableToken("physical.presence"),
+        new StableToken("resident.identity_lifecycle"),
+    });
+
+    public static IReadOnlyList<StableToken> MissingParticipantAuthorityPartitions { get; } = Array.AsReadOnly(new[]
+    {
+        new StableToken("participation.control_mode"),
+        new StableToken("society.contract_claim"),
+        new StableToken("governance.permission_license"),
+        new StableToken("infrastructure.service_queue"),
     });
 
     public static void ValidateCanonicalContract()
@@ -119,6 +151,17 @@ public static class Qa04TransactionCreationDependencyContractV1
             allocationCounts[ordinal % OtherRegisteredProductionKinds.Count]++;
         if (!allocationCounts.SequenceEqual(new[] { 34, 34, 33, 33, 33, 33 }))
             throw new InvalidDataException("qa04.workload.transaction-other-round-robin-drift");
+
+        if (CanonicalParticipantOwnerPartitions.Count != 8 ||
+            CanonicalParticipantOwnerPartitions.Distinct().Count() != 8 ||
+            AvailableParticipantAuthorityPartitions.Count != 4 ||
+            MissingParticipantAuthorityPartitions.Count != 4 ||
+            AvailableParticipantAuthorityPartitions.Intersect(MissingParticipantAuthorityPartitions).Any() ||
+            !AvailableParticipantAuthorityPartitions.Concat(MissingParticipantAuthorityPartitions).ToHashSet()
+                .SetEquals(CanonicalParticipantOwnerPartitions))
+            throw new InvalidDataException("qa04.workload.transaction-participant-authority-boundary-drift");
+        foreach (var partitionId in CanonicalParticipantOwnerPartitions)
+            _ = StandardDomainPartitionRegistry.Get(partitionId.Value);
 
         if (BlockersValue.Count != 1 ||
             BlockersValue[0].Kind != Qa04TransactionCreationDependencyKindV1.ParticipantAuthorityBinding ||
