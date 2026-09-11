@@ -240,3 +240,58 @@ Before claiming 500,000 canonical hot bricks:
 - partition semantic rehash after exact103 recovery equal
 
 Only after these production-path checks pass may the Terrain canonical-material blocker be removed.
+
+## 12. Bounded-memory production Snapshot / recovery
+
+The canonical Terrain v2 partition contains exactly:
+
+```text
+500,000 hot D0 terrain_brick
+4,096 terrain_root
+4,096 D3 anchor terrain_brick
+= 508,192 records
+```
+
+The production path must not require all 508,192 Terrain payloads, all Terrain fragment payloads, or all recovered Terrain records to coexist in memory.
+
+The following bounded-memory rules are normative for the Alpha 1.1 release path:
+
+1. **Canonical identity index**
+   - it is permitted to retain compact deterministic locator metadata such as `RecordId`, record kind, and source ordinal/tile;
+   - it is not permitted to pre-materialize and retain all 729-SDF / 512-material payloads merely to establish canonical order;
+   - the complete Terrain record stream is ordered by `RecordId` ascending, with no duplicate identity across hot/root/anchor records.
+
+2. **On-demand materialization**
+   - hot records use the canonical descriptor identity and the generation rules in this document;
+   - root and D3 anchor records use the same canonical root/anchor materializers and actual TileScope authority;
+   - repeated passes over the same frozen authority must regenerate byte-identical record material.
+
+3. **Partition semantic digest**
+   - the digest remains the existing `mv.state-diagnostic.v1` canonical digest;
+   - streaming hash computation may feed the existing canonical MV-DCBOR bytes incrementally, but must be byte-for-byte equivalent to the materialized computation;
+   - no new hash domain, record identity, schema version, or digest preimage is introduced for bounded-memory operation.
+
+4. **Section fragmentation**
+   - `SpatialTerrainGeometrySnapshotFragmentWireV2` remains unchanged;
+   - the existing `32 MiB` target and `64 MiB` hard uncompressed limits remain unchanged;
+   - because each fragment carries `fragment_count`, a deterministic two-pass implementation is permitted:
+     1. first pass regenerates records one at a time, measures the existing v2 record wire length, and retains only per-fragment item counts/boundaries;
+     2. second pass regenerates the same canonical record stream and emits one fragment at a time;
+   - fragment ranges, item counts, and payload bytes must match the existing materialized provider for the same record stream.
+
+5. **Chunk drain**
+   - physical chunk packing must be able to consume canonical fragments in order without first aggregating all section fragments into an array;
+   - chunk target/hard limits and `SnapshotChunkPayloadWireCodecV1` remain unchanged;
+   - a completed chunk may be encoded/compressed/written before the next chunk is assembled.
+
+6. **Recovery / semantic verification**
+   - recovered Terrain fragments are processed in canonical fragment/record order;
+   - semantic payload validation and partition rehash must not require retaining all recovered payload records simultaneously;
+   - compact recovered identity/type indexes may be retained when required for `terrain_root -> terrain_brick`, connectivity, TileScope, and exact-97/all-reference closure checks;
+   - recovery must still prove exact `508,192` Terrain record count and the same canonical partition digest.
+
+7. **Release boundary**
+   - bounded-memory preflight or fragment-equivalence tests alone are not release evidence;
+   - the Terrain parent blocker remains until the actual production exact-103 path completes Snapshot -> compression/staging -> recovery -> semantic rehash with all canonical Terrain records and required reference closure.
+
+This bounded-memory path is an implementation boundary only. It does not alter the existing Terrain v2 representation, Snapshot wire, standard partition identity, migration activation rule, or blocker acceptance criteria.
