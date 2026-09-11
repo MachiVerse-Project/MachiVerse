@@ -41,6 +41,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
 
     public static void ValidateCanonicalContract()
     {
+        Qa04SocietyOrganizationDependencyContractV1.ValidateCanonicalContract();
         Qa04SocietyContractClaimDependencyContractV1.ValidateCanonicalContract();
 
         if (BlockersValue.Count != 2)
@@ -49,8 +50,9 @@ public static class Qa04ReferenceWorldDependencyContractV1
             throw new InvalidDataException("qa04.material.dependency-blocker-id-duplicate");
         if (BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.material.dependency-blocker-code-duplicate");
-        if (Qa04SocietyContractClaimDependencyContractV1.Blockers.Count != 2)
-            throw new InvalidDataException("qa04.material.society-contract-claim-progress-drift");
+        if (Qa04SocietyOrganizationDependencyContractV1.Blockers.Count != 1 ||
+            Qa04SocietyContractClaimDependencyContractV1.Blockers.Count != 2)
+            throw new InvalidDataException("qa04.material.society-authority-progress-drift");
 
         string? previous = null;
         foreach (var blocker in BlockersValue)
