@@ -16,15 +16,22 @@ public sealed record Qa04SocietyContractClaimDependencyV1(
 
 /// <summary>
 /// Exact fail-closed boundary for the canonical 60,000 society.contract_claim records.
-/// The descriptor range and production payload schema are already fixed. The benchmark still lacks
-/// a canonical contract_kind vocabulary and a canonical actual-record mapping for party_refs. Those
-/// two decisions are required before contract material can be produced; optional amount/quantity/
-/// claimant/obligor/due fields are not used to hide either authority gap.
+/// The descriptor range and production payload schema are already fixed. Alpha 1.1 also fixes the
+/// common status=active genesis rule, optional fields remain absent unless a more-specific semantic
+/// rule exists, and the required terms_digest is derived from the canonical generic genesis scalar
+/// source. The benchmark still lacks a canonical contract_kind vocabulary and a canonical
+/// actual-record mapping for party_refs. Those two decisions are required before contract material
+/// can be accepted; optional amount/quantity/claimant/obligor/due fields are not used to hide either
+/// authority gap.
 /// </summary>
 public static class Qa04SocietyContractClaimDependencyContractV1
 {
+    public const string PartitionId = "society.contract_claim";
     public const ulong CanonicalCount = 60_000;
     public const ulong CanonicalStartOrdinal = 210_000;
+    public const string TermsDigestFieldTag = "society.contract_claim.terms_digest";
+
+    public static readonly StableToken CanonicalStatus = new("active");
 
     private static readonly IReadOnlyList<Qa04SocietyContractClaimDependencyV1> BlockersValue =
         Array.AsReadOnly(new[]
@@ -43,25 +50,36 @@ public static class Qa04SocietyContractClaimDependencyContractV1
 
     public static IReadOnlyList<Qa04SocietyContractClaimDependencyV1> Blockers => BlockersValue;
 
+    public static byte[] TermsDigest(OpaqueId128 recordId)
+        => Qa04ReferenceGenesisValueSourceV1.Hash(recordId, TermsDigestFieldTag);
+
     public static void ValidateCanonicalContract()
     {
         Qa04SocietyGovernanceReferenceDecompositionV1.ValidateCanonicalContract();
 
-        var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get("society.contract_claim");
+        var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(PartitionId);
         if (slice.StartOrdinal != CanonicalStartOrdinal || slice.Count != CanonicalCount || slice.UsesSpecializedIdentity)
             throw new InvalidDataException("qa04.society.contract-claim-decomposition-drift");
 
-        var partition = StandardDomainPartitionRegistry.Get("society.contract_claim");
+        var partition = StandardDomainPartitionRegistry.Get(PartitionId);
         if (partition.OwnerDomain.Value != "society_economy")
             throw new InvalidDataException("qa04.society.contract-claim-owner-drift");
 
-        var schema = StandardDomainPayloadSchemaRegistry.Get("society.contract_claim");
+        var schema = StandardDomainPayloadSchemaRegistry.Get(PartitionId);
         RequireField(schema, "contract_kind", DomainPayloadFieldKindV1.Token, optional: false);
         RequireField(schema, "party_refs", DomainPayloadFieldKindV1.RefList, optional: false);
         RequireField(schema, "status", DomainPayloadFieldKindV1.Token, optional: false);
         RequireField(schema, "terms_digest", DomainPayloadFieldKindV1.Digest, optional: false);
         RequireField(schema, "claimant_ref", DomainPayloadFieldKindV1.Ref, optional: true);
         RequireField(schema, "obligor_ref", DomainPayloadFieldKindV1.Ref, optional: true);
+        RequireField(schema, "amount", DomainPayloadFieldKindV1.Money, optional: true);
+        RequireField(schema, "quantity", DomainPayloadFieldKindV1.Int64, optional: true);
+        RequireField(schema, "due_step", DomainPayloadFieldKindV1.Step, optional: true);
+
+        var probe = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(CanonicalStartOrdinal);
+        if (probe.PartitionId.Value != PartitionId || probe.Descriptor.RecordId.IsZero ||
+            CanonicalStatus.Value != "active" || TermsDigest(probe.Descriptor.RecordId).Length != 32)
+            throw new InvalidDataException("qa04.society.contract-claim-known-genesis-drift");
 
         if (BlockersValue.Count != 2 ||
             BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
