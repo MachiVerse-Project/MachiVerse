@@ -260,6 +260,7 @@ await PersistenceSnapshotSmoke.RunAsync();
 await PersistenceMigrationSmoke.RunAsync();
 await PortableWorldExportSmoke.RunAsync();
 await CanonicalSnapshotStage2Smoke.RunAsync();
+await SpatialTerrainGeometryStagedRecoveryInitializer.RunAsync();
 await Qa04CrossDomainTransactionV2PhysicalExact103CanaryInitializer.RunAsync();
 Qa04ReferenceLoadSmoke.Run();
 await Qa04RuntimeTargetSmoke.RunAsync();
