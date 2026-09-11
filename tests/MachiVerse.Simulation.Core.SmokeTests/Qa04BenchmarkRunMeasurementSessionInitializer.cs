@@ -61,6 +61,10 @@ internal static class Qa04BenchmarkRunMeasurementSessionInitializer
         var cow = cowCollector.Snapshot().SnapshotCowBarrierDuration;
         Require(cow?.SampleCount == 1 && cow.Minimum >= TimeSpan.Zero,
             "QA-04 COW timer must record only successful non-null freeze materialization.");
+
+        // Keep async workload custody validation on the ordinary Program await flow. In particular,
+        // do not move this SQLite path back under a synchronous ModuleInitializer.
+        await Qa04CanonicalOperationDurableAdmissionSmoke.RunAsync().ConfigureAwait(false);
     }
 
     private static void Require(bool condition, string message)
