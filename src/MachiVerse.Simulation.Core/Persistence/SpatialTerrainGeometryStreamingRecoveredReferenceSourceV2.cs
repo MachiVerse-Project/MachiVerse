@@ -36,106 +36,21 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
 
     public SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2(
         IEnumerable<SnapshotSectionFragmentMaterialV1> fragments)
+        : this(Build(fragments))
     {
-        ArgumentNullException.ThrowIfNull(fragments);
-        var standard = StandardDomainPartitionRegistry.Get(SpatialTerrainGeometryRecordSchemaV2.PartitionId);
-        var ids = new List<OpaqueId128>();
-        var kinds = new List<SpatialTerrainGeometryRecoveredRecordKindV2>();
-        var roots = new List<SpatialTerrainGeometryRecoveredRootClosureV2>();
-        PartitionStateHeaderV1? repeatedHeader = null;
-        OpaqueId128? previous = null;
-        uint expectedFragmentIndex = 0;
-        uint? declaredFragmentCount = null;
-        ulong total = 0;
+    }
 
-        foreach (var fragment in fragments)
-        {
-            ArgumentNullException.ThrowIfNull(fragment);
-            if (!string.Equals(fragment.SectionId, SpatialTerrainGeometryRecordSchemaV2.PartitionId, StringComparison.Ordinal) ||
-                fragment.FragmentCount == 0 ||
-                fragment.FragmentIndex != expectedFragmentIndex)
-                throw new InvalidDataException("persistence.snapshot.recovered-reference-fragment-shape:spatial.terrain_geometry");
-
-            declaredFragmentCount ??= fragment.FragmentCount;
-            if (fragment.FragmentCount != declaredFragmentCount.Value ||
-                fragment.FragmentIndex >= fragment.FragmentCount)
-                throw new InvalidDataException("persistence.snapshot.recovered-reference-fragment-shape:spatial.terrain_geometry");
-
-            var decoded = SpatialTerrainGeometrySnapshotFragmentWireV2.Decode(fragment.FragmentPayload);
-            if (repeatedHeader is null)
-                repeatedHeader = decoded.Header;
-            else
-                RequireSameHeader(repeatedHeader, decoded.Header);
-
-            if (decoded.Records.Count != checked((int)fragment.ItemCount))
-                throw new InvalidDataException("persistence.snapshot.recovered-reference-item-count:spatial.terrain_geometry");
-            RequireFragmentRange(fragment, decoded.Records);
-
-            foreach (var record in decoded.Records)
-            {
-                if (record.RecordSchema != SpatialTerrainGeometryRecordSchemaV2.RecordSchema)
-                    throw new InvalidDataException("persistence.snapshot.recovered-reference-schema:spatial.terrain_geometry");
-                if (previous is { } prior && prior.CompareTo(record.RecordId) >= 0)
-                    throw new InvalidDataException("persistence.snapshot.recovered-reference-order:spatial.terrain_geometry");
-                previous = record.RecordId;
-
-                ids.Add(record.RecordId);
-                switch (record.Payload)
-                {
-                    case SpatialTerrainBrickPayloadV2:
-                        kinds.Add(SpatialTerrainGeometryRecoveredRecordKindV2.Brick);
-                        break;
-                    case SpatialTerrainRootPayloadV2 root:
-                        kinds.Add(SpatialTerrainGeometryRecoveredRecordKindV2.Root);
-                        if (!string.Equals(root.ScopeRef.PartitionId.Value, ScopeRegistryPartitionId, StringComparison.Ordinal))
-                            throw new InvalidDataException("persistence.snapshot.terrain-v2-root-scope-owner");
-                        if (!string.Equals(root.RootBrickRef.PartitionId.Value, SpatialTerrainGeometryRecordSchemaV2.PartitionId, StringComparison.Ordinal))
-                            throw new InvalidDataException("persistence.snapshot.terrain-v2-root-brick-owner");
-                        var connectivity = new OpaqueId128[root.ConnectivityRefs.Count];
-                        for (var i = 0; i < root.ConnectivityRefs.Count; i++)
-                        {
-                            var reference = root.ConnectivityRefs[i];
-                            if (!string.Equals(reference.PartitionId.Value, SpatialTerrainGeometryRecordSchemaV2.PartitionId, StringComparison.Ordinal))
-                                throw new InvalidDataException("persistence.snapshot.terrain-v2-connectivity-owner");
-                            connectivity[i] = reference.RecordId;
-                        }
-                        roots.Add(new SpatialTerrainGeometryRecoveredRootClosureV2(
-                            record.RecordId,
-                            root.RootBrickRef.RecordId,
-                            Array.AsReadOnly(connectivity)));
-                        break;
-                    default:
-                        throw new InvalidDataException("persistence.snapshot.terrain-v2-record-kind");
-                }
-            }
-
-            total = checked(total + fragment.ItemCount);
-            expectedFragmentIndex = checked(expectedFragmentIndex + 1);
-        }
-
-        if (declaredFragmentCount is null || expectedFragmentIndex != declaredFragmentCount.Value)
-            throw new InvalidDataException("persistence.snapshot.recovered-reference-fragment-missing:spatial.terrain_geometry");
-
-        Header = repeatedHeader
-            ?? throw new InvalidDataException("persistence.snapshot.recovered-reference-header-missing:spatial.terrain_geometry");
-        if (Header.PartitionId != standard.PartitionId ||
-            Header.OwnerDomain != standard.OwnerDomain ||
-            Header.Schema != standard.PartitionSchema)
-            throw new InvalidDataException("persistence.snapshot.recovered-reference-header-identity:spatial.terrain_geometry");
-        if (total != Header.ItemCount || total != checked((ulong)ids.Count) || ids.Count != kinds.Count)
-            throw new InvalidDataException("persistence.snapshot.recovered-reference-total-count:spatial.terrain_geometry");
-        if (Header.ItemCount == 0 && declaredFragmentCount.Value != 1)
-            throw new InvalidDataException("persistence.snapshot.recovered-reference-empty-fragment-count:spatial.terrain_geometry");
-
-        _recordIds = ids.ToArray();
-        _recordKinds = kinds.ToArray();
+    private SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2(BuildResult result)
+    {
+        Header = result.Header;
+        _recordIds = result.RecordIds;
+        _recordKinds = result.RecordKinds;
         _recordIdsReadOnly = Array.AsReadOnly(_recordIds);
-        _rootClosures = Array.AsReadOnly(roots.ToArray());
-        ValidateInternalTopology();
-
-        PartitionId = standard.PartitionId;
+        _rootClosures = Array.AsReadOnly(result.RootClosures);
+        PartitionId = StandardDomainPartitionRegistry.Get(SpatialTerrainGeometryRecordSchemaV2.PartitionId).PartitionId;
         RecordSchema = SpatialTerrainGeometryRecordSchemaV2.RecordSchema;
-        ActualItemCount = total;
+        ActualItemCount = result.ActualItemCount;
+        ValidateInternalTopology();
     }
 
     public StableToken PartitionId { get; }
@@ -144,6 +59,21 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
     public IReadOnlyList<OpaqueId128> RecordIdsCanonical => _recordIdsReadOnly;
     public PartitionStateHeaderV1 Header { get; }
     public IReadOnlyList<SpatialTerrainGeometryRecoveredRootClosureV2> RootClosures => _rootClosures;
+
+    public static async Task<SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2> CreateAsync(
+        IAsyncEnumerable<SnapshotSectionFragmentMaterialV1> fragments,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fragments);
+        var builder = new Builder();
+        await foreach (var fragment in fragments
+            .WithCancellation(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            builder.Add(fragment);
+        }
+        return new SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2(builder.Complete());
+    }
 
     public bool TryGetKind(OpaqueId128 recordId, out SpatialTerrainGeometryRecoveredRecordKindV2 kind)
     {
@@ -155,6 +85,14 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
         }
         kind = _recordKinds[index];
         return true;
+    }
+
+    private static BuildResult Build(IEnumerable<SnapshotSectionFragmentMaterialV1> fragments)
+    {
+        ArgumentNullException.ThrowIfNull(fragments);
+        var builder = new Builder();
+        foreach (var fragment in fragments) builder.Add(fragment);
+        return builder.Complete();
     }
 
     private void ValidateInternalTopology()
@@ -188,6 +126,119 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
         }
         return -1;
     }
+
+    private sealed class Builder
+    {
+        private readonly List<OpaqueId128> _ids = [];
+        private readonly List<SpatialTerrainGeometryRecoveredRecordKindV2> _kinds = [];
+        private readonly List<SpatialTerrainGeometryRecoveredRootClosureV2> _roots = [];
+        private PartitionStateHeaderV1? _repeatedHeader;
+        private OpaqueId128? _previous;
+        private uint _expectedFragmentIndex;
+        private uint? _declaredFragmentCount;
+        private ulong _total;
+        private bool _completed;
+
+        public void Add(SnapshotSectionFragmentMaterialV1 fragment)
+        {
+            if (_completed) throw new InvalidOperationException("Terrain recovered-reference builder is complete.");
+            ArgumentNullException.ThrowIfNull(fragment);
+            if (!string.Equals(fragment.SectionId, SpatialTerrainGeometryRecordSchemaV2.PartitionId, StringComparison.Ordinal) ||
+                fragment.FragmentCount == 0 ||
+                fragment.FragmentIndex != _expectedFragmentIndex)
+                throw new InvalidDataException("persistence.snapshot.recovered-reference-fragment-shape:spatial.terrain_geometry");
+
+            _declaredFragmentCount ??= fragment.FragmentCount;
+            if (fragment.FragmentCount != _declaredFragmentCount.Value ||
+                fragment.FragmentIndex >= fragment.FragmentCount)
+                throw new InvalidDataException("persistence.snapshot.recovered-reference-fragment-shape:spatial.terrain_geometry");
+
+            var decoded = SpatialTerrainGeometrySnapshotFragmentWireV2.Decode(fragment.FragmentPayload);
+            if (_repeatedHeader is null)
+                _repeatedHeader = decoded.Header;
+            else
+                RequireSameHeader(_repeatedHeader, decoded.Header);
+
+            if (decoded.Records.Count != checked((int)fragment.ItemCount))
+                throw new InvalidDataException("persistence.snapshot.recovered-reference-item-count:spatial.terrain_geometry");
+            RequireFragmentRange(fragment, decoded.Records);
+
+            foreach (var record in decoded.Records)
+            {
+                if (record.RecordSchema != SpatialTerrainGeometryRecordSchemaV2.RecordSchema)
+                    throw new InvalidDataException("persistence.snapshot.recovered-reference-schema:spatial.terrain_geometry");
+                if (_previous is { } prior && prior.CompareTo(record.RecordId) >= 0)
+                    throw new InvalidDataException("persistence.snapshot.recovered-reference-order:spatial.terrain_geometry");
+                _previous = record.RecordId;
+
+                _ids.Add(record.RecordId);
+                switch (record.Payload)
+                {
+                    case SpatialTerrainBrickPayloadV2:
+                        _kinds.Add(SpatialTerrainGeometryRecoveredRecordKindV2.Brick);
+                        break;
+                    case SpatialTerrainRootPayloadV2 root:
+                        _kinds.Add(SpatialTerrainGeometryRecoveredRecordKindV2.Root);
+                        if (!string.Equals(root.ScopeRef.PartitionId.Value, ScopeRegistryPartitionId, StringComparison.Ordinal))
+                            throw new InvalidDataException("persistence.snapshot.terrain-v2-root-scope-owner");
+                        if (!string.Equals(root.RootBrickRef.PartitionId.Value, SpatialTerrainGeometryRecordSchemaV2.PartitionId, StringComparison.Ordinal))
+                            throw new InvalidDataException("persistence.snapshot.terrain-v2-root-brick-owner");
+                        var connectivity = new OpaqueId128[root.ConnectivityRefs.Count];
+                        for (var i = 0; i < root.ConnectivityRefs.Count; i++)
+                        {
+                            var reference = root.ConnectivityRefs[i];
+                            if (!string.Equals(reference.PartitionId.Value, SpatialTerrainGeometryRecordSchemaV2.PartitionId, StringComparison.Ordinal))
+                                throw new InvalidDataException("persistence.snapshot.terrain-v2-connectivity-owner");
+                            connectivity[i] = reference.RecordId;
+                        }
+                        _roots.Add(new SpatialTerrainGeometryRecoveredRootClosureV2(
+                            record.RecordId,
+                            root.RootBrickRef.RecordId,
+                            Array.AsReadOnly(connectivity)));
+                        break;
+                    default:
+                        throw new InvalidDataException("persistence.snapshot.terrain-v2-record-kind");
+                }
+            }
+
+            _total = checked(_total + fragment.ItemCount);
+            _expectedFragmentIndex = checked(_expectedFragmentIndex + 1);
+        }
+
+        public BuildResult Complete()
+        {
+            if (_completed) throw new InvalidOperationException("Terrain recovered-reference builder is already complete.");
+            _completed = true;
+            if (_declaredFragmentCount is null || _expectedFragmentIndex != _declaredFragmentCount.Value)
+                throw new InvalidDataException("persistence.snapshot.recovered-reference-fragment-missing:spatial.terrain_geometry");
+
+            var header = _repeatedHeader
+                ?? throw new InvalidDataException("persistence.snapshot.recovered-reference-header-missing:spatial.terrain_geometry");
+            var standard = StandardDomainPartitionRegistry.Get(SpatialTerrainGeometryRecordSchemaV2.PartitionId);
+            if (header.PartitionId != standard.PartitionId ||
+                header.OwnerDomain != standard.OwnerDomain ||
+                header.Schema != standard.PartitionSchema)
+                throw new InvalidDataException("persistence.snapshot.recovered-reference-header-identity:spatial.terrain_geometry");
+            if (_total != header.ItemCount || _total != checked((ulong)_ids.Count) || _ids.Count != _kinds.Count)
+                throw new InvalidDataException("persistence.snapshot.recovered-reference-total-count:spatial.terrain_geometry");
+            if (header.ItemCount == 0 && _declaredFragmentCount.Value != 1)
+                throw new InvalidDataException("persistence.snapshot.recovered-reference-empty-fragment-count:spatial.terrain_geometry");
+
+            return new BuildResult(
+                header,
+                _ids.ToArray(),
+                _kinds.ToArray(),
+                _roots.ToArray(),
+                _total);
+        }
+    }
+
+    private sealed record BuildResult(
+        PartitionStateHeaderV1 Header,
+        OpaqueId128[] RecordIds,
+        SpatialTerrainGeometryRecoveredRecordKindV2[] RecordKinds,
+        SpatialTerrainGeometryRecoveredRootClosureV2[] RootClosures,
+        ulong ActualItemCount);
 
     private static void RequireFragmentRange(
         SnapshotSectionFragmentMaterialV1 fragment,
