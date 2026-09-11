@@ -8,20 +8,19 @@ namespace MachiVerse.Simulation.Core.Performance;
 public sealed record Qa04GovernancePublicAuthorityResolvedAuthorityV1(
     PartitionRecordRefV1 InstitutionRef,
     IReadOnlyList<StableToken> AuthorityTokens,
-    IReadOnlyList<PartitionRecordRefV1> ScopeRefs,
     ulong? EffectiveFrom);
 
 /// <summary>
 /// Mechanical materialization boundary for canonical perf.reference.v1 governance.public_authority
-/// records after the unresolved Institution authority, authority-token vocabulary, scope mapping,
-/// and payload effective_from have been supplied explicitly.
+/// records after the unresolved Institution authority, authority-token vocabulary, and payload
+/// effective_from have been supplied explicitly.
 ///
-/// Alpha 1.1 already fixes the holder target pool to Resident using canonical modulo mapping,
-/// status=active, effective_until=NONE, descriptor identity, and the D2 genesis envelope. This type
-/// deliberately provides no parameterless canonical materializer and does not choose any of the
-/// remaining four authorities. Supplied refs must close against actual records through the provided
-/// production reference resolver. Fixture authorities prove mechanics only and do not release the
-/// PublicAuthority blockers.
+/// Alpha 1.1 fixes the holder target pool to Resident, required spatial scope to canonical TileScope,
+/// both using canonical modulo mapping, plus status=active, effective_until=NONE, descriptor identity,
+/// and the D2 genesis envelope. This type deliberately provides no parameterless canonical materializer
+/// and does not choose any of the remaining three authorities. Supplied refs must close against actual
+/// records through the provided production reference resolver. Fixture authorities prove mechanics only
+/// and do not release the remaining PublicAuthority blockers.
 /// </summary>
 public static class Qa04GovernancePublicAuthorityResolvedMaterializerV1
 {
@@ -33,16 +32,16 @@ public static class Qa04GovernancePublicAuthorityResolvedMaterializerV1
     {
         Qa04GovernancePublicAuthorityDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
+        Qa04SpatialTileScopeAuthorityV1.ValidateCanonicalContract();
 
         var blockers = Qa04GovernancePublicAuthorityDependencyContractV1.Blockers;
         var expectedFailureCodes = new HashSet<string>(StringComparer.Ordinal)
         {
             "qa04.material.public-authority-institution-undefined",
             "qa04.material.public-authority-token-vocabulary-undefined",
-            "qa04.material.public-authority-scope-mapping-undefined",
             "qa04.material.public-authority-effective-from-undefined",
         };
-        if (blockers.Count != 4 ||
+        if (blockers.Count != 3 ||
             !blockers.Select(static blocker => blocker.FailureCode.Value).ToHashSet(StringComparer.Ordinal)
                 .SetEquals(expectedFailureCodes))
             throw new InvalidDataException("qa04.governance.public-authority-resolved-boundary-stale");
@@ -50,6 +49,7 @@ public static class Qa04GovernancePublicAuthorityResolvedMaterializerV1
         if (CanonicalCount != 25_000 ||
             Qa04GovernancePublicAuthorityDependencyContractV1.CanonicalStartOrdinal != 1_676_000 ||
             Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount != 1_000_000 ||
+            Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount != 4_096 ||
             Qa04GovernancePublicAuthorityDependencyContractV1.CanonicalStatus.Value != "active" ||
             InitialRecordRevision != 1 || InitialEnvelopeCreatedStep != 0)
             throw new InvalidDataException("qa04.governance.public-authority-resolved-genesis-drift");
@@ -110,6 +110,15 @@ public static class Qa04GovernancePublicAuthorityResolvedMaterializerV1
             residentRecord.RecordId);
     }
 
+    public static PartitionRecordRefV1 ResolveCanonicalScopeRef(ulong publicAuthorityLocalOrdinal)
+    {
+        if (publicAuthorityLocalOrdinal >= CanonicalCount)
+            throw new ArgumentOutOfRangeException(nameof(publicAuthorityLocalOrdinal));
+
+        var tileOrdinal = publicAuthorityLocalOrdinal % checked((ulong)Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount);
+        return Qa04SpatialTileScopeAuthorityV1.ScopeRef(checked((ushort)tileOrdinal));
+    }
+
     private static DomainRecordEnvelopeV1<GovernancePublicAuthorityPayloadV1> CreateResolvedValidated(
         ulong localOrdinal,
         Qa04GovernancePublicAuthorityResolvedAuthorityV1 authority,
@@ -129,7 +138,7 @@ public static class Qa04GovernancePublicAuthorityResolvedMaterializerV1
             authority.InstitutionRef,
             ResolveCanonicalHolderRef(localOrdinal),
             authority.AuthorityTokens.ToArray(),
-            authority.ScopeRefs.ToArray(),
+            new[] { ResolveCanonicalScopeRef(localOrdinal) },
             authority.EffectiveFrom!.Value,
             EffectiveUntil: null,
             Qa04GovernancePublicAuthorityDependencyContractV1.CanonicalStatus);
@@ -158,8 +167,6 @@ public static class Qa04GovernancePublicAuthorityResolvedMaterializerV1
             throw new InvalidDataException("qa04.governance.public-authority-institution-authority-required");
         if (authority.AuthorityTokens is null || authority.AuthorityTokens.Count == 0)
             throw new InvalidDataException("qa04.governance.public-authority-token-authority-required");
-        if (authority.ScopeRefs is null || authority.ScopeRefs.Count == 0)
-            throw new InvalidDataException("qa04.governance.public-authority-scope-authority-required");
         if (authority.EffectiveFrom is null)
             throw new InvalidDataException("qa04.governance.public-authority-effective-from-authority-required");
         return authority;
