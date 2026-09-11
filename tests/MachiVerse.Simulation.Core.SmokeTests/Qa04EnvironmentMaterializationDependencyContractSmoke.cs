@@ -14,8 +14,10 @@ internal static class Qa04EnvironmentMaterializationDependencyContractSmoke
             "Implemented QA-04 Environment authority bindings must have no remaining subdependency blockers.");
         Require(Qa04EnvironmentMaterializationDependencyContractV1.FailureCodes.Count == 0,
             "Implemented QA-04 Environment authority bindings must expose no pending failure codes.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 5,
-            "Environment subdependencies must not change the reference-world blocker count.");
+        Require(Qa04ReferenceWorldDependencyContractV1.FailureCodes.All(static code =>
+                code.Value != Qa04EnvironmentMaterializationDependencyContractV1.D0ParentWorldFailureCode &&
+                code.Value != Qa04EnvironmentMaterializationDependencyContractV1.D1ParentWorldFailureCode),
+            "Implemented Environment D0/D1 parent blockers must remain absent from the reference-world contract.");
 
         var binding = Qa04EnvironmentReferenceDecompositionV1.BindD1(0);
         var expectedTile = binding.Descriptor.RegionalTileIndex;
@@ -63,15 +65,6 @@ internal static class Qa04EnvironmentMaterializationDependencyContractSmoke
         Require(Qa04EnvironmentLineageAuthorityV1.ResolveD1Parents(lineageD1).Count ==
                 Qa04EnvironmentLineageAuthorityV1.D1ParentCount,
             "Environment D1 lineage authority must retain exact four-source provenance.");
-
-        var d0 = Qa04ReferenceWorldDependencyContractV1.Blockers.Single(
-            static blocker => blocker.DependencyId.Value == Qa04EnvironmentMaterializationDependencyContractV1.D0ParentWorldDependencyId);
-        var d1 = Qa04ReferenceWorldDependencyContractV1.Blockers.Single(
-            static blocker => blocker.DependencyId.Value == Qa04EnvironmentMaterializationDependencyContractV1.D1ParentWorldDependencyId);
-        Require(d0.FailureCode.Value == Qa04EnvironmentMaterializationDependencyContractV1.D0ParentWorldFailureCode,
-            "Environment D0 parent blocker drifted.");
-        Require(d1.FailureCode.Value == Qa04EnvironmentMaterializationDependencyContractV1.D1ParentWorldFailureCode,
-            "Environment D1 parent blocker drifted.");
     }
 
     private static void Require(bool condition, string message)
