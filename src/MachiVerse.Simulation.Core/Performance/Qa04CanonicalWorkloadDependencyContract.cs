@@ -28,8 +28,9 @@ public sealed record Qa04CanonicalWorkloadDependencyV1(
 /// operation binding currently closes four of six families. Transaction creation already has the
 /// exact 10,000 ACTIVE genesis set, 200-entry other-kind allocation, and 1,000-per-300-Step
 /// production turnover path; its only remaining sub-blocker is actual participant record authority.
-/// The detail binding closes the exact cadence/request mapping while still requiring actual canonical
-/// DetailRegion authority.
+/// The detail binding closes the exact cadence/request mapping and now records the two remaining
+/// DetailRegion authority gaps explicitly: actual spatial.detail_regions materialization and the
+/// canonical genesis profile state.
 /// </summary>
 public static class Qa04CanonicalWorkloadDependencyContractV1
 {
@@ -148,6 +149,7 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
     private static void ValidateDetailTransitionBoundary()
     {
         Qa04CanonicalDetailTransitionBindingV1.ValidateCanonicalContract();
+        Qa04DetailRegionAuthorityDependencyContractV1.ValidateCanonicalContract();
 
         if (Qa04ReferenceScenariosV1.DetailTransitionBatches(299).Count != 0)
             throw new InvalidDataException("qa04.workload.detail-transition-pre-cadence-drift");
@@ -158,7 +160,10 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
             throw new InvalidDataException("qa04.workload.detail-transition-descriptor-drift");
 
         if (Qa04CanonicalDetailTransitionBindingV1.CanonicalCadenceCount != 89 ||
-            Qa04CanonicalDetailTransitionBindingV1.CanonicalRequestCount != 1_424)
+            Qa04CanonicalDetailTransitionBindingV1.CanonicalRequestCount != 1_424 ||
+            Qa04DetailRegionAuthorityDependencyContractV1.CanonicalTileRegionCount != 4_096 ||
+            Qa04DetailRegionAuthorityDependencyContractV1.CanonicalRequestedOverrideCount != 1_424 ||
+            Qa04DetailRegionAuthorityDependencyContractV1.Blockers.Count != 2)
             throw new InvalidDataException("qa04.workload.detail-transition-binding-progress-drift");
 
         var firstCadence = Qa04CanonicalDetailTransitionBindingV1.RequirementsForStep(300);
