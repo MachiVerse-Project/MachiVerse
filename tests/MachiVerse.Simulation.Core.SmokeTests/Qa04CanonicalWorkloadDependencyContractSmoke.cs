@@ -55,15 +55,15 @@ internal static class Qa04CanonicalWorkloadDependencyContractSmoke
             source.SubjectIds[0].ToBytes(),
             0);
         var binding = Qa04CanonicalTransactionKindBindingV1.BindKnownDescriptor(
-            source,
+            descriptor: source,
             basisStep: 300,
-            root,
+            rootCausalityRef: root,
             stableLocalOrdinal: source.Ordinal,
-            Array.Empty<TransactionParticipantCandidateV1>());
+            participants: Array.Empty<TransactionParticipantCandidateV1>());
         Require(binding.ProductionKind.Value == "transaction.market-sale-delivery" &&
                 binding.Candidate.TransactionKind == binding.ProductionKind &&
                 binding.Candidate.BasisStep == 300 &&
-                binding.Candidate.SubjectRefs.SequenceEqual(source.SubjectIds) &&
+                binding.Candidate.SubjectRefs.SequenceEqual(source.SubjectIds.Order()) &&
                 binding.Candidate.Status == TransactionCandidateStatusV1.Invalid &&
                 binding.Candidate.FailureCode?.Value == "transaction.participant-missing" &&
                 !binding.Candidate.IsAuthoritative,
