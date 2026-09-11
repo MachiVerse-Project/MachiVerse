@@ -151,8 +151,8 @@ public static class Qa04TerrainCanonicalReleasePreflightV1
                 throw new InvalidDataException("qa04.terrain.preflight-root-closure");
         }
 
-        if (rootIds.Count != Qa04TerrainRootMaterializerV1.CanonicalRootCount ||
-            anchorIds.Count != Qa04TerrainRootMaterializerV1.CanonicalAnchorCount ||
+        if ((ulong)rootIds.Count != Qa04TerrainRootMaterializerV1.CanonicalRootCount ||
+            (ulong)anchorIds.Count != Qa04TerrainRootMaterializerV1.CanonicalAnchorCount ||
             rootIds.Overlaps(anchorIds))
             throw new InvalidDataException("qa04.terrain.preflight-root-anchor-count");
 
