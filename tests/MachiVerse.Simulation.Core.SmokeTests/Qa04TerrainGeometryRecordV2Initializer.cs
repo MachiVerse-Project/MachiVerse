@@ -2,6 +2,8 @@ using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Performance;
+using MachiVerse.Simulation.Core.Persistence;
+using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04TerrainGeometryRecordV2Initializer
 {
