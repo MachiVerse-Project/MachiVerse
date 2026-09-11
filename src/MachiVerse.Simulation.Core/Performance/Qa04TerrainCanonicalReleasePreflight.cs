@@ -101,29 +101,39 @@ public static class Qa04TerrainCanonicalReleasePreflightV1
 
     private static void VerifySharedFace(SpatialCellKeyV1 a, SpatialCellKeyV1 b, bool xAxis)
     {
-        var aSamples = Qa04TerrainCanonicalContentSourceV1.CreateSdfSamples(
-            a,
-            Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm);
-        var bSamples = Qa04TerrainCanonicalContentSourceV1.CreateSdfSamples(
-            b,
-            Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm);
-
         for (var z = 0; z < TerrainBrickV1.SamplesPerAxis; z++)
         for (var orthogonal = 0; orthogonal < TerrainBrickV1.SamplesPerAxis; orthogonal++)
         {
-            var aIndex = xAxis
-                ? SampleIndex(TerrainBrickV1.CellsPerAxis, orthogonal, z)
-                : SampleIndex(orthogonal, TerrainBrickV1.CellsPerAxis, z);
-            var bIndex = xAxis
-                ? SampleIndex(0, orthogonal, z)
-                : SampleIndex(orthogonal, 0, z);
-            if (aSamples[aIndex] != bSamples[bIndex])
+            var aSdf = xAxis
+                ? Qa04TerrainCanonicalContentSourceV1.SdfSampleAt(
+                    a,
+                    Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm,
+                    TerrainBrickV1.CellsPerAxis,
+                    orthogonal,
+                    z)
+                : Qa04TerrainCanonicalContentSourceV1.SdfSampleAt(
+                    a,
+                    Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm,
+                    orthogonal,
+                    TerrainBrickV1.CellsPerAxis,
+                    z);
+            var bSdf = xAxis
+                ? Qa04TerrainCanonicalContentSourceV1.SdfSampleAt(
+                    b,
+                    Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm,
+                    0,
+                    orthogonal,
+                    z)
+                : Qa04TerrainCanonicalContentSourceV1.SdfSampleAt(
+                    b,
+                    Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm,
+                    orthogonal,
+                    0,
+                    z);
+            if (aSdf != bSdf)
                 throw new InvalidDataException("qa04.terrain.preflight-shared-face-sdf-mismatch");
         }
     }
-
-    private static int SampleIndex(int x, int y, int z)
-        => checked(((z * TerrainBrickV1.SamplesPerAxis) + y) * TerrainBrickV1.SamplesPerAxis + x);
 
     private static (int RootCount, int AnchorCount) VerifyRootAndAnchorIdentityClosure()
     {
