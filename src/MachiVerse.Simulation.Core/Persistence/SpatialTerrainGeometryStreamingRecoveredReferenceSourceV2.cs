@@ -212,7 +212,7 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
         public SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 Complete()
             => new(CompleteResult());
 
-        private BuildResult CompleteResult()
+        internal BuildResult CompleteResult()
         {
             if (_completed) throw new InvalidOperationException("Terrain recovered-reference builder is already complete.");
             _completed = true;
@@ -240,7 +240,7 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
         }
     }
 
-    private sealed record BuildResult(
+    internal sealed record BuildResult(
         PartitionStateHeaderV1 Header,
         OpaqueId128[] RecordIds,
         SpatialTerrainGeometryRecoveredRecordKindV2[] RecordKinds,
