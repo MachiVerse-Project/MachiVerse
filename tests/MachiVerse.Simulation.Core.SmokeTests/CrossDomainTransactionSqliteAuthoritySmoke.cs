@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using MachiVerse.Simulation.Core.Determinism;
@@ -7,10 +6,7 @@ using MachiVerse.Simulation.Core.Runtime;
 
 internal static class CrossDomainTransactionSqliteAuthoritySmoke
 {
-    [ModuleInitializer]
-    internal static void Initialize() => RunAsync().GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         var rootPath = Path.Combine(Path.GetTempPath(), "machiverse-cross-domain-tx-sqlite-" + Guid.NewGuid().ToString("N"));
         try
