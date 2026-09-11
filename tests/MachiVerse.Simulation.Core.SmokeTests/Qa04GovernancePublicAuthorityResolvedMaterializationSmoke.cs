@@ -25,14 +25,13 @@ internal static class Qa04GovernancePublicAuthorityResolvedMaterializationSmoke
             {
                 "qa04.material.public-authority-institution-undefined",
                 "qa04.material.public-authority-token-vocabulary-undefined",
-                "qa04.material.public-authority-scope-mapping-undefined",
                 "qa04.material.public-authority-effective-from-undefined",
             }),
-            "Resolved PublicAuthority mechanics must not release the four canonical authority blockers.");
+            "Resolved PublicAuthority mechanics must retain only the three unresolved canonical authority blockers.");
 
-        var resolver = BuildFixtureResolver(out var institutionRefs, out var scopeRefs);
+        var resolver = BuildFixtureResolver(out var institutionRefs);
         var records = Qa04GovernancePublicAuthorityResolvedMaterializerV1.MaterializeResolved(
-                localOrdinal => Authority(localOrdinal, institutionRefs, scopeRefs),
+                localOrdinal => Authority(localOrdinal, institutionRefs),
                 resolver)
             .ToArray();
 
@@ -50,8 +49,9 @@ internal static class Qa04GovernancePublicAuthorityResolvedMaterializationSmoke
             var descriptor = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(
                 checked(slice.StartOrdinal + localOrdinal));
             var record = records[index];
-            var expectedAuthority = Authority(localOrdinal, institutionRefs, scopeRefs);
+            var expectedAuthority = Authority(localOrdinal, institutionRefs);
             var expectedHolder = Qa04GovernancePublicAuthorityResolvedMaterializerV1.ResolveCanonicalHolderRef(localOrdinal);
+            var expectedScope = Qa04GovernancePublicAuthorityResolvedMaterializerV1.ResolveCanonicalScopeRef(localOrdinal);
 
             Require(record.RecordId == descriptor.Descriptor.RecordId &&
                     record.Revision == 1 && record.CreatedStep == 0 && record.RetiredStep is null &&
@@ -60,15 +60,15 @@ internal static class Qa04GovernancePublicAuthorityResolvedMaterializationSmoke
             Require(record.Payload.InstitutionRef == expectedAuthority.InstitutionRef &&
                     record.Payload.HolderRef == expectedHolder &&
                     record.Payload.AuthorityTokens.SequenceEqual(expectedAuthority.AuthorityTokens) &&
-                    record.Payload.ScopeRefs.SequenceEqual(expectedAuthority.ScopeRefs) &&
+                    record.Payload.ScopeRefs.SequenceEqual(new[] { expectedScope }) &&
                     record.Payload.EffectiveFrom == expectedAuthority.EffectiveFrom &&
                     record.Payload.EffectiveUntil is null &&
                     record.Payload.Status.Value == "active",
-                "Resolved PublicAuthority must preserve supplied authority while using the canonical Resident holder selector.");
+                "Resolved PublicAuthority must preserve supplied unresolved authority and use canonical Resident/TileScope selectors.");
         }
 
         var partition = Qa04GovernancePublicAuthorityResolvedMaterializerV1.MaterializeResolvedPartition(
-            localOrdinal => Authority(localOrdinal, institutionRefs, scopeRefs),
+            localOrdinal => Authority(localOrdinal, institutionRefs),
             resolver);
         Require(partition.ItemCount == Qa04GovernancePublicAuthorityResolvedMaterializerV1.CanonicalCount,
             "Resolved PublicAuthority partition must retain all 25,000 records.");
@@ -81,7 +81,6 @@ internal static class Qa04GovernancePublicAuthorityResolvedMaterializationSmoke
                 new Qa04GovernancePublicAuthorityResolvedAuthorityV1(
                     institutionRefs[0],
                     Array.Empty<StableToken>(),
-                    new[] { scopeRefs[0] },
                     EffectiveFrom: 0),
                 resolver,
                 out _);
@@ -98,8 +97,8 @@ internal static class Qa04GovernancePublicAuthorityResolvedMaterializationSmoke
         {
             _ = Qa04GovernancePublicAuthorityResolvedMaterializerV1.CreateResolved(
                 0,
-                Authority(0, institutionRefs, scopeRefs),
-                new RejectResidentReferenceResolver(resolver),
+                Authority(0, institutionRefs),
+                new RejectPartitionReferenceResolver(resolver, ResidentIdentityLifecyclePayloadV1.PartitionId),
                 out _);
         }
         catch (InvalidDataException ex) when (
@@ -109,21 +108,35 @@ internal static class Qa04GovernancePublicAuthorityResolvedMaterializationSmoke
         }
         Require(unresolvedHolderRejected,
             "Resolved PublicAuthority materialization must fail closed when the canonical Resident holder is not resolvable.");
+
+        var unresolvedScopeRejected = false;
+        try
+        {
+            _ = Qa04GovernancePublicAuthorityResolvedMaterializerV1.CreateResolved(
+                0,
+                Authority(0, institutionRefs),
+                new RejectPartitionReferenceResolver(resolver, SpatialScopeRegistryPayloadV1.PartitionId),
+                out _);
+        }
+        catch (InvalidDataException ex) when (
+            ex.Message == "domain.payload.reference-validation:governance.public_authority:scope_refs")
+        {
+            unresolvedScopeRejected = true;
+        }
+        Require(unresolvedScopeRejected,
+            "Resolved PublicAuthority materialization must fail closed when the canonical TileScope is not resolvable.");
     }
 
     private static Qa04GovernancePublicAuthorityResolvedAuthorityV1 Authority(
         ulong localOrdinal,
-        IReadOnlyList<PartitionRecordRefV1> institutionRefs,
-        IReadOnlyList<PartitionRecordRefV1> scopeRefs)
+        IReadOnlyList<PartitionRecordRefV1> institutionRefs)
         => new(
             institutionRefs[checked((int)(localOrdinal % (ulong)institutionRefs.Count))],
             new[] { (localOrdinal & 1UL) == 0 ? FixtureAuthorityA : FixtureAuthorityB },
-            new[] { scopeRefs[checked((int)(localOrdinal % (ulong)scopeRefs.Count))] },
             localOrdinal % 19UL);
 
     private static FixtureReferenceResolver BuildFixtureResolver(
-        out IReadOnlyList<PartitionRecordRefV1> institutionRefs,
-        out IReadOnlyList<PartitionRecordRefV1> scopeRefs)
+        out IReadOnlyList<PartitionRecordRefV1> institutionRefs)
     {
         var resolver = new FixtureReferenceResolver();
 
@@ -157,14 +170,11 @@ internal static class Qa04GovernancePublicAuthorityResolvedMaterializationSmoke
         Require(scopePartition.ItemCount == checked((ulong)Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount),
             "Canonical TileScope fixture authority must retain 4,096 records.");
         var scopeSchema = StandardDomainPartitionRegistry.Get(SpatialScopeRegistryPayloadV1.PartitionId).RecordSchema;
-        var scopeArray = new PartitionRecordRefV1[Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount];
-        for (var tile = 0; tile < scopeArray.Length; tile++)
+        for (var tile = 0; tile < Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount; tile++)
         {
             var scopeRef = Qa04SpatialTileScopeAuthorityV1.ScopeRef(checked((ushort)tile));
-            scopeArray[tile] = scopeRef;
             resolver.Add(scopeRef, scopeSchema);
         }
-        scopeRefs = scopeArray;
 
         return resolver;
     }
@@ -182,19 +192,23 @@ internal static class Qa04GovernancePublicAuthorityResolvedMaterializationSmoke
             => _records.TryGetValue(reference, out schema);
     }
 
-    private sealed class RejectResidentReferenceResolver : IDomainRecordSchemaResolverV1
+    private sealed class RejectPartitionReferenceResolver : IDomainRecordSchemaResolverV1
     {
         private readonly IDomainRecordSchemaResolverV1 _inner;
+        private readonly string _partitionId;
 
-        public RejectResidentReferenceResolver(IDomainRecordSchemaResolverV1 inner)
-            => _inner = inner;
+        public RejectPartitionReferenceResolver(IDomainRecordSchemaResolverV1 inner, string partitionId)
+        {
+            _inner = inner;
+            _partitionId = partitionId;
+        }
 
         public bool Exists(PartitionRecordRefV1 reference)
-            => reference.PartitionId.Value != ResidentIdentityLifecyclePayloadV1.PartitionId && _inner.Exists(reference);
+            => reference.PartitionId.Value != _partitionId && _inner.Exists(reference);
 
         public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
         {
-            if (reference.PartitionId.Value == ResidentIdentityLifecyclePayloadV1.PartitionId)
+            if (reference.PartitionId.Value == _partitionId)
             {
                 schema = default;
                 return false;
