@@ -124,14 +124,30 @@ public sealed class Qa04TerrainCanonicalContentSourceV1 : IQa04TerrainBrickConte
         for (var y = 0; y < TerrainBrickV1.SamplesPerAxis; y++)
         for (var x = 0; x < TerrainBrickV1.SamplesPerAxis; x++)
         {
-            var wx = checked(((long)origin.X + x) * sampleSpacingMm);
-            var wy = checked(((long)origin.Y + y) * sampleSpacingMm);
-            var wz = checked(((long)origin.Z + z) * sampleSpacingMm);
-            var sdf = checked((int)(wz - HeightMm(wx, wy)));
             var index = checked(((z * TerrainBrickV1.SamplesPerAxis) + y) * TerrainBrickV1.SamplesPerAxis + x);
-            values[index] = sdf;
+            values[index] = SdfSampleAt(origin, sampleSpacingMm, x, y, z);
         }
         return values;
+    }
+
+    internal static int SdfSampleAt(
+        SpatialCellKeyV1 origin,
+        uint sampleSpacingMm,
+        int x,
+        int y,
+        int z)
+    {
+        if (origin.Level != 0) throw new ArgumentException("Hot D0 origin must be level 0.", nameof(origin));
+        if (sampleSpacingMm != D0SampleSpacingMm) throw new ArgumentOutOfRangeException(nameof(sampleSpacingMm));
+        if ((uint)x >= TerrainBrickV1.SamplesPerAxis ||
+            (uint)y >= TerrainBrickV1.SamplesPerAxis ||
+            (uint)z >= TerrainBrickV1.SamplesPerAxis)
+            throw new ArgumentOutOfRangeException(nameof(x), "Terrain SDF sample coordinate is outside the canonical brick lattice.");
+
+        var wx = checked(((long)origin.X + x) * sampleSpacingMm);
+        var wy = checked(((long)origin.Y + y) * sampleSpacingMm);
+        var wz = checked(((long)origin.Z + z) * sampleSpacingMm);
+        return checked((int)(wz - HeightMm(wx, wy)));
     }
 
     public static ushort[] CreateSurfaceMaterials(SpatialCellKeyV1 origin, uint sampleSpacingMm)
