@@ -84,10 +84,10 @@ internal static class Qa04TerrainCanonicalRecordSourceSmoke
             Require(firstEnvelopes[index - 1].RecordId.CompareTo(firstEnvelopes[index].RecordId) < 0,
                 "Canonical Terrain envelope stream must preserve locator RecordId order.");
 
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Any(static blocker =>
-                blocker.DependencyId.Value == "spatial.terrain-geometry.root-brick-target" &&
-                blocker.FailureCode.Value == "qa04.material.terrain-brick-authority-undefined"),
-            "Terrain parent world blocker must remain until full production Snapshot/recovery evidence is complete.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.All(static blocker =>
+                blocker.DependencyId.Value != "spatial.terrain-geometry.root-brick-target" &&
+                blocker.FailureCode.Value != "qa04.material.terrain-brick-authority-undefined"),
+            "Terrain parent world blocker must remain released after full production Snapshot/recovery evidence.");
     }
 
     private static void Require(bool condition, string message)
