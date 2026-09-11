@@ -207,6 +207,10 @@ MachiVerseでは、確定済みのProtocol・決定論・コンポーネント�
 - GitHub Discussions: https://github.com/MachiVerse-Project/MachiVerse/discussions
 - Roadmap: [`ROADMAP.md`](ROADMAP.md)
 
-## License
+## License and rights
 
-MachiVerse is licensed under the [Apache License 2.0](LICENSE).
+MachiVerseの**ソフトウェアコード**は、特に明記されていない限り [Apache License 2.0](LICENSE) のもとで提供されます。
+
+キャラクター、イラスト、ロゴ、画像、3Dモデル、音声、音楽、動画その他のCreative Assetは、Apache-2.0の対象であると明示されていない限り [`RIGHTS.md`](RIGHTS.md) の **MachiVerse Rights, Fan Works & Asset Use Policy** に従います。
+
+Creative Assetの二次創作、改変、収益化、再配布、派生プロジェクトでの利用、Contributionの扱いについても `RIGHTS.md` を参照してください。
