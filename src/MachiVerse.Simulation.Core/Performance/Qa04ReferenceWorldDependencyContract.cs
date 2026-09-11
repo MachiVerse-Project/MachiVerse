@@ -53,7 +53,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
             throw new InvalidDataException("qa04.material.dependency-blocker-code-duplicate");
         if (Qa04SocietyOrganizationDependencyContractV1.Blockers.Count != 1 ||
             Qa04SocietyContractClaimDependencyContractV1.Blockers.Count != 2 ||
-            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 4)
+            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 3)
             throw new InvalidDataException("qa04.material.society-authority-progress-drift");
 
         string? previous = null;
