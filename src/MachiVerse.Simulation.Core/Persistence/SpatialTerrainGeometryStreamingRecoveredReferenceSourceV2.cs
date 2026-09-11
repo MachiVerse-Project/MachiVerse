@@ -72,7 +72,7 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
         {
             builder.Add(fragment);
         }
-        return new SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2(builder.Complete());
+        return builder.Complete();
     }
 
     public bool TryGetKind(OpaqueId128 recordId, out SpatialTerrainGeometryRecoveredRecordKindV2 kind)
@@ -92,7 +92,7 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
         ArgumentNullException.ThrowIfNull(fragments);
         var builder = new Builder();
         foreach (var fragment in fragments) builder.Add(fragment);
-        return builder.Complete();
+        return builder.CompleteResult();
     }
 
     private void ValidateInternalTopology()
@@ -127,7 +127,11 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
         return -1;
     }
 
-    private sealed class Builder
+    /// <summary>
+    /// Incremental phase-1 builder used by staged recovery so Terrain and its external reference
+    /// authorities can be scanned together in one physical Snapshot pass.
+    /// </summary>
+    public sealed class Builder
     {
         private readonly List<OpaqueId128> _ids = [];
         private readonly List<SpatialTerrainGeometryRecoveredRecordKindV2> _kinds = [];
@@ -205,7 +209,10 @@ public sealed class SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 : 
             _expectedFragmentIndex = checked(_expectedFragmentIndex + 1);
         }
 
-        public BuildResult Complete()
+        public SpatialTerrainGeometryStreamingRecoveredReferenceSourceV2 Complete()
+            => new(CompleteResult());
+
+        private BuildResult CompleteResult()
         {
             if (_completed) throw new InvalidOperationException("Terrain recovered-reference builder is already complete.");
             _completed = true;
