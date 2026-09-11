@@ -177,7 +177,7 @@ public static class Qa04TransactionCreationDependencyContractV1
 
         ValidateMissingAuthorityCoverage();
         if (Qa04ParticipationControlModeDependencyContractV1.Blockers.Count != 3 ||
-            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 4 ||
+            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 3 ||
             Qa04InfrastructureServiceQueueDependencyContractV1.Blockers.Count != 3)
             throw new InvalidDataException("qa04.workload.transaction-participant-progress-drift");
 
