@@ -43,8 +43,7 @@ internal static class CanonicalSnapshotStreamingChunkSmoke
         Require(logicalExpected.Count == logicalActual.Count,
             "Streaming logical section metadata must preserve exact-103 cardinality.");
         for (var index = 0; index < logicalExpected.Count; index++)
-            Require(logicalExpected[index] == logicalActual[index],
-                "Streaming logical section metadata must match the materialized path.");
+            RequireSameLogicalSection(logicalExpected[index], logicalActual[index]);
     }
 
     private static List<CanonicalSnapshotSectionMaterialV1> BuildSections(WorldStateV1 state)
@@ -122,6 +121,20 @@ internal static class CanonicalSnapshotStreamingChunkSmoke
                 OptionalBytesEqual(expected.LastRecordId, actual.LastRecordId) &&
                 expected.FragmentPayload.AsSpan().SequenceEqual(actual.FragmentPayload),
             "Streaming fragment ranges and payload must match the materialized path.");
+    }
+
+    private static void RequireSameLogicalSection(
+        LogicalSnapshotSection expected,
+        LogicalSnapshotSection actual)
+    {
+        Require(string.Equals(expected.SectionId, actual.SectionId, StringComparison.Ordinal) &&
+                string.Equals(expected.SchemaId, actual.SchemaId, StringComparison.Ordinal) &&
+                expected.SchemaMajor == actual.SchemaMajor &&
+                expected.SchemaMinor == actual.SchemaMinor &&
+                expected.LogicalItemCount == actual.LogicalItemCount &&
+                expected.Required == actual.Required &&
+                expected.LogicalContentDigest.AsSpan().SequenceEqual(actual.LogicalContentDigest),
+            "Streaming logical section metadata must match the materialized path.");
     }
 
     private static bool OptionalBytesEqual(byte[]? left, byte[]? right)
