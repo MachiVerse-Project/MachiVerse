@@ -25,8 +25,9 @@ public sealed record Qa04CanonicalWorkloadDependencyV1(
 /// material, or detail-transition identities that are not fixed by the existing design.
 ///
 /// The parent blockers remain active until each full workload surface is authoritative. The
-/// operation binding currently closes four of six families and the detail binding closes the exact
-/// cadence/request mapping while still requiring an actual canonical DetailRegion authority.
+/// operation binding currently closes four of six families, transaction creation has eleven direct
+/// production-kind mappings but retains three explicit sub-blockers, and the detail binding closes
+/// the exact cadence/request mapping while still requiring actual canonical DetailRegion authority.
 /// </summary>
 public static class Qa04CanonicalWorkloadDependencyContractV1
 {
@@ -127,21 +128,11 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
 
     private static void ValidateTransactionKindBoundary()
     {
-        var benchmarkKinds = Qa04ReferenceScenariosV1.TransactionKinds
-            .Select(static item => item.KindToken.Value)
-            .ToArray();
-        if (!benchmarkKinds.Contains("other-registered-transactions", StringComparer.Ordinal))
-            throw new InvalidDataException("qa04.workload.transaction-other-bucket-missing");
+        Qa04TransactionCreationDependencyContractV1.ValidateCanonicalContract();
 
-        foreach (var kind in benchmarkKinds.Where(static value => value != "other-registered-transactions"))
-        {
-            var productionKind = new StableToken($"transaction.{kind}");
-            if (!CrossDomainTransactionKindRegistryV1.Contains(productionKind))
-                throw new InvalidDataException($"qa04.workload.transaction-kind-unregistered:{kind}");
-        }
-
-        if (CrossDomainTransactionKindRegistryV1.Contains(new StableToken("transaction.other-registered-transactions")))
-            throw new InvalidDataException("qa04.workload.transaction-other-bucket-must-require-explicit-allocation");
+        if (Qa04TransactionCreationDependencyContractV1.DirectlyMappedProductionKinds.Count != 11 ||
+            Qa04TransactionCreationDependencyContractV1.Blockers.Count != 3)
+            throw new InvalidDataException("qa04.workload.transaction-binding-progress-drift");
     }
 
     private static void ValidateDetailTransitionBoundary()
