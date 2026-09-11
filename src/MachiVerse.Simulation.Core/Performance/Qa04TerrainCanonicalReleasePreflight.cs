@@ -82,54 +82,86 @@ public static class Qa04TerrainCanonicalReleasePreflightV1
         var pairCount = 0;
         foreach (var origin in origins)
         {
-            var east = new SpatialCellKeyV1(origin.Level, checked(origin.X + TerrainBrickV1.CellsPerAxis), origin.Y, origin.Z);
-            if (origins.Contains(east))
-            {
-                VerifySharedFace(origin, east, xAxis: true);
-                pairCount++;
-            }
-
-            var north = new SpatialCellKeyV1(origin.Level, origin.X, checked(origin.Y + TerrainBrickV1.CellsPerAxis), origin.Z);
-            if (origins.Contains(north))
-            {
-                VerifySharedFace(origin, north, xAxis: false);
-                pairCount++;
-            }
+            pairCount = checked(pairCount + VerifyHorizontalNeighborFaces(
+                origins,
+                origin,
+                checked(origin.X + TerrainBrickV1.CellsPerAxis),
+                origin.Y,
+                xAxis: true));
+            pairCount = checked(pairCount + VerifyHorizontalNeighborFaces(
+                origins,
+                origin,
+                origin.X,
+                checked(origin.Y + TerrainBrickV1.CellsPerAxis),
+                xAxis: false));
         }
         return pairCount;
     }
 
+    private static int VerifyHorizontalNeighborFaces(
+        IReadOnlySet<SpatialCellKeyV1> origins,
+        SpatialCellKeyV1 origin,
+        int neighborX,
+        int neighborY,
+        bool xAxis)
+    {
+        var count = 0;
+        for (var deltaZ = -TerrainBrickV1.CellsPerAxis;
+             deltaZ <= TerrainBrickV1.CellsPerAxis;
+             deltaZ += TerrainBrickV1.CellsPerAxis)
+        {
+            var neighbor = new SpatialCellKeyV1(
+                origin.Level,
+                neighborX,
+                neighborY,
+                checked(origin.Z + deltaZ));
+            if (!origins.Contains(neighbor)) continue;
+            VerifySharedFace(origin, neighbor, xAxis);
+            count++;
+        }
+        return count;
+    }
+
     private static void VerifySharedFace(SpatialCellKeyV1 a, SpatialCellKeyV1 b, bool xAxis)
     {
-        for (var z = 0; z < TerrainBrickV1.SamplesPerAxis; z++)
+        var firstSharedGlobalZ = Math.Max(a.Z, b.Z);
+        var lastSharedGlobalZ = Math.Min(
+            checked(a.Z + TerrainBrickV1.CellsPerAxis),
+            checked(b.Z + TerrainBrickV1.CellsPerAxis));
+        if (firstSharedGlobalZ > lastSharedGlobalZ)
+            throw new InvalidDataException("qa04.terrain.preflight-shared-face-without-sample-overlap");
+
+        for (var globalZ = firstSharedGlobalZ; globalZ <= lastSharedGlobalZ; globalZ++)
         for (var orthogonal = 0; orthogonal < TerrainBrickV1.SamplesPerAxis; orthogonal++)
         {
+            var aZ = checked(globalZ - a.Z);
+            var bZ = checked(globalZ - b.Z);
             var aSdf = xAxis
                 ? Qa04TerrainCanonicalContentSourceV1.SdfSampleAt(
                     a,
                     Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm,
                     TerrainBrickV1.CellsPerAxis,
                     orthogonal,
-                    z)
+                    aZ)
                 : Qa04TerrainCanonicalContentSourceV1.SdfSampleAt(
                     a,
                     Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm,
                     orthogonal,
                     TerrainBrickV1.CellsPerAxis,
-                    z);
+                    aZ);
             var bSdf = xAxis
                 ? Qa04TerrainCanonicalContentSourceV1.SdfSampleAt(
                     b,
                     Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm,
                     0,
                     orthogonal,
-                    z)
+                    bZ)
                 : Qa04TerrainCanonicalContentSourceV1.SdfSampleAt(
                     b,
                     Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm,
                     orthogonal,
                     0,
-                    z);
+                    bZ);
             if (aSdf != bSdf)
                 throw new InvalidDataException("qa04.terrain.preflight-shared-face-sdf-mismatch");
         }
