@@ -1,4 +1,5 @@
 using Google.Protobuf;
+using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.Runtime;
 
@@ -10,8 +11,9 @@ public sealed record Qa04CanonicalOperationDurableAdmissionReceiptV1(
     OperationDurableObservationV1 Scheduled)
 {
     public bool Passed
-        => Accepted.Lifecycle == OperationLifecycleStateV1.AcceptedDurable &&
-           Scheduled.Lifecycle == OperationLifecycleStateV1.ScheduledDurable &&
+        => Accepted.AcceptedSequence is not null &&
+           Scheduled.AcceptedSequence == Accepted.AcceptedSequence &&
+           Scheduled.Lifecycle is OperationLifecycleStateV1.ScheduledDurable or OperationLifecycleStateV1.TerminalDurable &&
            Scheduled.EffectiveStep == Binding.ScheduledOperation.EffectiveStep;
 }
 
@@ -146,7 +148,7 @@ public static class Qa04CanonicalOperationDurableAdmissionV1
         Qa04CanonicalOperationBindingResultV1 binding,
         string recordType,
         string schemaId,
-        Action<Determinism.MvDcborWriter> writeNormalized,
+        Action<MvDcborWriter> writeNormalized,
         CancellationToken cancellationToken)
     {
         var anchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
