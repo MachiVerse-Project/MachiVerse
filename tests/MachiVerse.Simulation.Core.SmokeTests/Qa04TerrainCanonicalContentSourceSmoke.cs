@@ -40,6 +40,8 @@ internal static class Qa04TerrainCanonicalContentSourceSmoke
         Require(firstBrick.CellOrigin != secondBrick.CellOrigin,
             "Two canonical hot descriptors in one tile must not collide on cell origin.");
 
+        VerifyCachedGenerationMatchesCanonicalFormula(firstBrick);
+
         var materialization = Qa04TerrainBrickDescriptorMaterializerV1.Materialize(source, 1);
         var materialized = materialization.Partition.RecordSet.RecordsCanonical.Single();
         Require(materialization.MaterializedBrickCount == 1 &&
@@ -54,6 +56,45 @@ internal static class Qa04TerrainCanonicalContentSourceSmoke
                 payload.SdfMm.Count == TerrainBrickV1.SdfSampleCount &&
                 payload.SurfaceMaterialIds.Count == TerrainBrickV1.SurfaceMaterialCount,
             "Terrain canonical content must pass the production descriptor materializer without identity drift.");
+    }
+
+    private static void VerifyCachedGenerationMatchesCanonicalFormula(TerrainBrickV1 brick)
+    {
+        const uint spacing = Qa04TerrainCanonicalContentSourceV1.D0SampleSpacingMm;
+        var origin = brick.CellOrigin;
+
+        for (var z = 0; z < TerrainBrickV1.SamplesPerAxis; z++)
+        for (var y = 0; y < TerrainBrickV1.SamplesPerAxis; y++)
+        for (var x = 0; x < TerrainBrickV1.SamplesPerAxis; x++)
+        {
+            var wx = checked(((long)origin.X + x) * spacing);
+            var wy = checked(((long)origin.Y + y) * spacing);
+            var wz = checked(((long)origin.Z + z) * spacing);
+            var expected = checked((int)(wz - Qa04TerrainCanonicalContentSourceV1.HeightMm(wx, wy)));
+            var index = checked(((z * TerrainBrickV1.SamplesPerAxis) + y) * TerrainBrickV1.SamplesPerAxis + x);
+            Require(brick.SdfMm[index] == expected,
+                "Terrain cached SDF generation changed the canonical absolute-XY height formula.");
+        }
+
+        for (var z = 0; z < TerrainBrickV1.CellsPerAxis; z++)
+        for (var y = 0; y < TerrainBrickV1.CellsPerAxis; y++)
+        for (var x = 0; x < TerrainBrickV1.CellsPerAxis; x++)
+        {
+            var cx = checked((checked(2L * ((long)origin.X + x)) + 1) * spacing / 2);
+            var cy = checked((checked(2L * ((long)origin.Y + y)) + 1) * spacing / 2);
+            var cz = checked((checked(2L * ((long)origin.Z + z)) + 1) * spacing / 2);
+            var distance = checked(cz - Qa04TerrainCanonicalContentSourceV1.HeightMm(cx, cy));
+            var expected = distance switch
+            {
+                > 0 => Qa04TerrainCanonicalContentSourceV1.MaterialVoid,
+                > -500 => Qa04TerrainCanonicalContentSourceV1.MaterialSoil,
+                > -2_000 => Qa04TerrainCanonicalContentSourceV1.MaterialSediment,
+                _ => Qa04TerrainCanonicalContentSourceV1.MaterialRock,
+            };
+            var index = checked(((z * TerrainBrickV1.CellsPerAxis) + y) * TerrainBrickV1.CellsPerAxis + x);
+            Require(brick.SurfaceMaterialIds[index] == expected,
+                "Terrain cached material generation changed the canonical cell-center classification formula.");
+        }
     }
 
     private static Qa04ReferenceRecordV1 FindSameTile(Qa04ReferenceRecordV1 first)
