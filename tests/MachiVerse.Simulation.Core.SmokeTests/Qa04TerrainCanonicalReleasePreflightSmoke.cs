@@ -17,10 +17,10 @@ internal static class Qa04TerrainCanonicalReleasePreflightSmoke
         Require(evidence.SharedFacePairCount >= 0,
             "Terrain release preflight shared-face evidence count must not be negative.");
 
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Any(static blocker =>
-                blocker.DependencyId.Value == "spatial.terrain-geometry.root-brick-target" &&
-                blocker.FailureCode.Value == "qa04.material.terrain-brick-authority-undefined"),
-            "Terrain parent world blocker must remain until full production Snapshot/recovery evidence is complete.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.All(static blocker =>
+                blocker.DependencyId.Value != "spatial.terrain-geometry.root-brick-target" &&
+                blocker.FailureCode.Value != "qa04.material.terrain-brick-authority-undefined"),
+            "Terrain parent world blocker must remain released after full production Snapshot/recovery proof.");
     }
 
     private static void Require(bool condition, string message)
