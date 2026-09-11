@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
