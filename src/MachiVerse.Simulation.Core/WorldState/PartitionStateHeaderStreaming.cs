@@ -46,7 +46,7 @@ public static class PartitionStateHeaderStreamingV1
                     throw new InvalidDataException("domain.record-schema-mismatch");
                 if (record.CreatedStep > basisStep)
                     throw new InvalidDataException("domain.record-created-after-partition-basis");
-                if (record.RetiredStep is { } retired && retired > basisStep)
+                if (record.RetiredStep is { } retiredAfterBasis && retiredAfterBasis > basisStep)
                     throw new InvalidDataException("domain.record-retired-after-partition-basis");
                 if (previousRecordId is { } previous && previous.CompareTo(record.RecordId) >= 0)
                     throw new InvalidDataException("domain.streaming-record-order");
@@ -68,10 +68,10 @@ public static class PartitionStateHeaderStreamingV1
                 writer.WriteUnsigned(4); writer.WriteUnsigned(record.Revision);
                 writer.WriteUnsigned(5); writer.WriteUnsigned(record.CreatedStep);
                 writer.WriteUnsigned(6);
-                if (record.RetiredStep is { } retired)
+                if (record.RetiredStep is { } retiredValue)
                 {
                     writer.WriteArrayStart(1);
-                    writer.WriteUnsigned(retired);
+                    writer.WriteUnsigned(retiredValue);
                 }
                 else writer.WriteArrayStart(0);
                 writer.WriteUnsigned(7); writer.WriteUnsigned((byte)record.DetailLevel);
