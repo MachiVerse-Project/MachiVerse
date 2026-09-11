@@ -25,10 +25,11 @@ public sealed record Qa04CanonicalWorkloadDependencyV1(
 /// material, or detail-transition identities that are not fixed by the existing design.
 ///
 /// The parent blockers remain active until each full workload surface is authoritative. The
-/// operation binding currently closes four of six families, transaction creation has eleven direct
-/// production-kind bindings into the ordinary assembler but retains three explicit sub-blockers,
-/// and the detail binding closes the exact cadence/request mapping while still requiring actual
-/// canonical DetailRegion authority.
+/// operation binding currently closes four of six families. Transaction creation already has the
+/// exact 10,000 ACTIVE genesis set, 200-entry other-kind allocation, and 1,000-per-300-Step
+/// production turnover path; its only remaining sub-blocker is actual participant record authority.
+/// The detail binding closes the exact cadence/request mapping while still requiring actual canonical
+/// DetailRegion authority.
 /// </summary>
 public static class Qa04CanonicalWorkloadDependencyContractV1
 {
@@ -134,7 +135,13 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
 
         if (Qa04TransactionCreationDependencyContractV1.DirectlyMappedProductionKinds.Count != 11 ||
             Qa04CanonicalTransactionKindBindingV1.DirectKindMappings.Count != 11 ||
-            Qa04TransactionCreationDependencyContractV1.Blockers.Count != 3)
+            Qa04TransactionCreationDependencyContractV1.OtherRegisteredProductionKinds.Count != 6 ||
+            Qa04TransactionCreationDependencyContractV1.CanonicalInitialActiveCount != 10_000 ||
+            Qa04TransactionCreationDependencyContractV1.CanonicalReplacementCountPerCadence != 1_000 ||
+            Qa04TransactionCreationDependencyContractV1.CanonicalOtherInitialCount != 200 ||
+            Qa04TransactionCreationDependencyContractV1.Blockers.Count != 1 ||
+            Qa04TransactionCreationDependencyContractV1.Blockers[0].Kind !=
+                Qa04TransactionCreationDependencyKindV1.ParticipantAuthorityBinding)
             throw new InvalidDataException("qa04.workload.transaction-binding-progress-drift");
     }
 
