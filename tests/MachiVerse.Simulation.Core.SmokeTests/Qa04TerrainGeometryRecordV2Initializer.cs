@@ -2,8 +2,6 @@ using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Performance;
-using MachiVerse.Simulation.Core.Persistence;
-using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04TerrainGeometryRecordV2Initializer
 {
@@ -14,7 +12,7 @@ internal static class Qa04TerrainGeometryRecordV2Initializer
         VerifyRootMigrationAndWire();
         VerifyBrickRoundTrip();
         VerifyFailClosedWire();
-        VerifyProductionGateRemainsClosed();
+        VerifyProductionGateReleaseState();
     }
 
     private static void VerifyRootMigrationAndWire()
@@ -135,14 +133,14 @@ internal static class Qa04TerrainGeometryRecordV2Initializer
             "spatial.terrain-v2.root-brick-owner");
     }
 
-    private static void VerifyProductionGateRemainsClosed()
+    private static void VerifyProductionGateReleaseState()
     {
         var current = StandardDomainPartitionRegistry.Get(SpatialTerrainGeometryRecordSchemaV2.PartitionId);
         Require(current.RecordSchema.Version == new SchemaVersionV1(1, 0),
-            "standalone terrain v2 contract must not silently flip the production standard registry.");
-        Require(Qa04ReferenceWorldDependencyContractV1.FailureCodes.Any(static code =>
-                code.Value == "qa04.material.terrain-brick-authority-undefined"),
-            "terrain material gate must remain fail-closed until v2 production integration and canonical brick content exist.");
+            "Terrain v2 production activation must not mutate the global standard registry baseline.");
+        Require(Qa04ReferenceWorldDependencyContractV1.FailureCodes.All(static code =>
+                code.Value != "qa04.material.terrain-brick-authority-undefined"),
+            "Terrain material gate must remain released after full v2 production integration and canonical recovery proof.");
     }
 
     private static OpaqueId128 Id(string value) => OpaqueId128.Parse(value);
