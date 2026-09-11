@@ -34,20 +34,8 @@ public static class CanonicalSnapshotProductionManifestDrainV1
         ISnapshotChunkCompressionCodecV1? zstdCodec = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(cut);
-        ArgumentNullException.ThrowIfNull(physical);
+        ValidateRunningCut(cut, physical, frozenConfig, worldSeed, out var worldSeedBytes);
         ArgumentNullException.ThrowIfNull(sections);
-        ArgumentNullException.ThrowIfNull(frozenConfig);
-        if (physical.SnapshotId != cut.SnapshotId)
-            throw new InvalidDataException("snapshot-running.physical-id-mismatch");
-        if (frozenConfig.Generation != cut.FrozenState.Header.ConfigGeneration ||
-            !CryptographicOperations.FixedTimeEquals(frozenConfig.Digest, cut.FrozenState.Diagnostic.ConfigDigest))
-            throw new InvalidDataException("snapshot-running.manifest-config-authority-mismatch");
-
-        var worldSeedBytes = worldSeed.ToBytes();
-        var worldSeedDigest = SHA256.HashData(worldSeedBytes);
-        if (!CryptographicOperations.FixedTimeEquals(worldSeedDigest, cut.FrozenState.Header.WorldSeedDigest))
-            throw new InvalidDataException("snapshot-running.manifest-world-seed-authority-mismatch");
 
         var expectedSections = CanonicalSnapshotSectionValidationV1.ValidateStandard(sections, cut.FrozenState);
         var chunks = await CanonicalSnapshotProductionPhysicalDrainV1.StageRunningCutAsync(
@@ -58,6 +46,108 @@ public static class CanonicalSnapshotProductionManifestDrainV1
             zstdCodec,
             cancellationToken).ConfigureAwait(false);
 
+        var logical = BuildLogicalManifest(
+            cut,
+            worldSeedBytes,
+            CanonicalSnapshotSectionValidationV1.ToLogicalSections(expectedSections, cut.FrozenState),
+            requiredAddons);
+        var manifest = await WriteAndValidateManifestAsync(
+            physical,
+            logical,
+            chunks,
+            addonCodecs,
+            cancellationToken).ConfigureAwait(false);
+        SnapshotPhysicalManifestStagingValidationV1.RequireExpectedAuthority(
+            manifest,
+            expectedSections,
+            cut.FrozenState,
+            cut,
+            logical.SnapshotDigest,
+            manifest.PhysicalManifestDigest);
+
+        return Result(manifest, chunks);
+    }
+
+    /// <summary>
+    /// Bounded-memory production manifest drain. The exact-103 section metadata is retained, while
+    /// section fragments and physical chunk payloads flow through the streaming packer one chunk at
+    /// a time. Manifest wire/schema/digest semantics are identical to <see cref="StageRunningCutAsync"/>.
+    /// </summary>
+    public static async Task<CanonicalSnapshotProductionStageResultV1> StageRunningCutStreamingAsync(
+        RunningSnapshotCutV1 cut,
+        SnapshotPhysicalPaths physical,
+        IEnumerable<CanonicalSnapshotStreamingSectionV1> sections,
+        EffectiveCoreConfig frozenConfig,
+        WorldSeed256 worldSeed,
+        IEnumerable<RequiredAddonSnapshotMetadataV1>? requiredAddons = null,
+        RequiredAddonSnapshotMetadataCodecRegistryV1? addonCodecs = null,
+        ISnapshotChunkCompressionCodecV1? zstdCodec = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateRunningCut(cut, physical, frozenConfig, worldSeed, out var worldSeedBytes);
+        ArgumentNullException.ThrowIfNull(sections);
+
+        var expectedSections = CanonicalSnapshotStreamingSectionValidationV1.ValidateStandardMetadata(
+            sections,
+            cut.FrozenState);
+        var chunks = await CanonicalSnapshotProductionPhysicalDrainV1.StageRunningCutStreamingAsync(
+            cut,
+            physical,
+            expectedSections,
+            frozenConfig,
+            zstdCodec,
+            cancellationToken).ConfigureAwait(false);
+
+        var logical = BuildLogicalManifest(
+            cut,
+            worldSeedBytes,
+            CanonicalSnapshotStreamingSectionValidationV1.ToLogicalSections(expectedSections, cut.FrozenState),
+            requiredAddons);
+        var manifest = await WriteAndValidateManifestAsync(
+            physical,
+            logical,
+            chunks,
+            addonCodecs,
+            cancellationToken).ConfigureAwait(false);
+        SnapshotPhysicalManifestStreamingAuthorityValidationV1.RequireExpectedAuthority(
+            manifest,
+            expectedSections,
+            cut.FrozenState,
+            cut,
+            logical.SnapshotDigest,
+            manifest.PhysicalManifestDigest);
+
+        return Result(manifest, chunks);
+    }
+
+    private static void ValidateRunningCut(
+        RunningSnapshotCutV1 cut,
+        SnapshotPhysicalPaths physical,
+        EffectiveCoreConfig frozenConfig,
+        WorldSeed256 worldSeed,
+        out byte[] worldSeedBytes)
+    {
+        ArgumentNullException.ThrowIfNull(cut);
+        ArgumentNullException.ThrowIfNull(physical);
+        ArgumentNullException.ThrowIfNull(frozenConfig);
+        if (physical.SnapshotId != cut.SnapshotId)
+            throw new InvalidDataException("snapshot-running.physical-id-mismatch");
+        if (frozenConfig.Generation != cut.FrozenState.Header.ConfigGeneration ||
+            !CryptographicOperations.FixedTimeEquals(frozenConfig.Digest, cut.FrozenState.Diagnostic.ConfigDigest))
+            throw new InvalidDataException("snapshot-running.manifest-config-authority-mismatch");
+
+        worldSeedBytes = worldSeed.ToBytes();
+        var worldSeedDigest = SHA256.HashData(worldSeedBytes);
+        if (!CryptographicOperations.FixedTimeEquals(worldSeedDigest, cut.FrozenState.Header.WorldSeedDigest))
+            throw new InvalidDataException("snapshot-running.manifest-world-seed-authority-mismatch");
+    }
+
+    private static LogicalSnapshotManifest BuildLogicalManifest(
+        RunningSnapshotCutV1 cut,
+        byte[] worldSeedBytes,
+        IReadOnlyList<LogicalSnapshotSection> sections,
+        IEnumerable<RequiredAddonSnapshotMetadataV1>? requiredAddons)
+    {
         var requiredDomains = StandardDomainPartitionRegistry.Entries
             .Select(static entry => entry.OwnerDomain.Value)
             .Distinct(StringComparer.Ordinal)
@@ -76,17 +166,26 @@ public static class CanonicalSnapshotProductionManifestDrainV1
             cut.HistoryAnchor.Sequence,
             cut.HistoryAnchor.Digest.ToArray(),
             cut.StateContinuityToken.ToArray(),
-            worldSeedBytes,
+            worldSeedBytes.ToArray(),
             cut.FrozenState.Header.ConfigGeneration,
             cut.FrozenState.Diagnostic.ConfigDigest.ToArray(),
             cut.FrozenState.Header.MasterGeneration,
             Array.AsReadOnly(requiredDomains),
-            CanonicalSnapshotSectionValidationV1.ToLogicalSections(expectedSections, cut.FrozenState),
+            sections,
             new byte[32])
         {
             RequiredAddons = Array.AsReadOnly(addons),
         };
-        var logical = LogicalSnapshotManifestWireCodecV1.WithComputedSnapshotDigest(logicalDraft);
+        return LogicalSnapshotManifestWireCodecV1.WithComputedSnapshotDigest(logicalDraft);
+    }
+
+    private static async Task<PhysicalSnapshotManifestMaterialV1> WriteAndValidateManifestAsync(
+        SnapshotPhysicalPaths physical,
+        LogicalSnapshotManifest logical,
+        IReadOnlyList<PhysicalSnapshotChunkDescriptor> chunks,
+        RequiredAddonSnapshotMetadataCodecRegistryV1? addonCodecs,
+        CancellationToken cancellationToken)
+    {
         var manifest = PhysicalSnapshotManifestWireCodecV1.WithComputedPhysicalDigest(logical, chunks, addonCodecs);
         var manifestBytes = PhysicalSnapshotManifestWireCodecV1.Encode(manifest, addonCodecs);
         await SnapshotPhysicalStaging.WriteManifestDurablyAsync(
@@ -98,20 +197,26 @@ public static class CanonicalSnapshotProductionManifestDrainV1
             physical,
             addonCodecs,
             cancellationToken).ConfigureAwait(false);
-        SnapshotPhysicalManifestStagingValidationV1.RequireExpectedAuthority(
-            verified,
-            expectedSections,
-            cut.FrozenState,
-            cut,
-            logical.SnapshotDigest,
-            manifest.PhysicalManifestDigest);
+        if (!CryptographicOperations.FixedTimeEquals(
+                verified.Logical.SnapshotDigest,
+                logical.SnapshotDigest) ||
+            !CryptographicOperations.FixedTimeEquals(
+                verified.PhysicalManifestDigest,
+                manifest.PhysicalManifestDigest))
+        {
+            throw new InvalidDataException("persistence.snapshot.manifest-staged-digest-mismatch");
+        }
+        return verified;
+    }
 
-        return new CanonicalSnapshotProductionStageResultV1(
-            verified,
+    private static CanonicalSnapshotProductionStageResultV1 Result(
+        PhysicalSnapshotManifestMaterialV1 manifest,
+        IReadOnlyList<PhysicalSnapshotChunkDescriptor> chunks)
+        => new(
+            manifest,
             Array.AsReadOnly(chunks.Select(static chunk => chunk with
             {
                 LogicalPayloadDigest = chunk.LogicalPayloadDigest.ToArray(),
                 StoredPayloadDigest = chunk.StoredPayloadDigest.ToArray(),
             }).ToArray()));
-    }
 }
