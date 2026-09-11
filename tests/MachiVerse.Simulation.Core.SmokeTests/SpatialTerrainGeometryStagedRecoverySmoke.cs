@@ -43,11 +43,15 @@ internal static class SpatialTerrainGeometryStagedRecoverySmoke
 
         var terrainId = SpatialTerrainGeometryRecordSchemaV2.PartitionId;
         var priorTerrainHeader = baseFrozen.Partitions.Get(terrainId).Header;
-        var terrainPartition = new SpatialTerrainGeometryPartitionStateV2(
-            Qa04TerrainRootMaterializerV1.MaterializeCanonical(
-                Qa04SpatialTileScopeAuthorityV1.ScopeRef));
-        var terrainAuthority = SpatialTerrainGeometrySnapshotAuthorityV2.CreateCanonical(
-            terrainPartition,
+        var terrainRecords = Qa04TerrainRootMaterializerV1.MaterializeCanonical(
+                Qa04SpatialTileScopeAuthorityV1.ScopeRef)
+            .OrderBy(static record => record.RecordId)
+            .ToArray();
+        var terrainIds = Array.AsReadOnly(
+            terrainRecords.Select(static record => record.RecordId).ToArray());
+        var terrainAuthority = SpatialTerrainGeometryStreamingSnapshotAuthorityV2.CreateCanonical(
+            terrainIds,
+            () => terrainRecords,
             priorTerrainHeader.Revision,
             priorTerrainHeader.BasisStep,
             priorTerrainHeader.DetailLevel);
@@ -73,27 +77,13 @@ internal static class SpatialTerrainGeometryStagedRecoverySmoke
                 FrozenCoreConfigSnapshotOwnerV1.Freeze(frozen.Header.Step, config),
             });
         var providers = StandardDomainSnapshotOwnerCompositionV1.CreateAllProviders();
-        var materialized = StandardSnapshotOwnerCompositionV1.CreateAll103(
+        var streaming = StandardSnapshotStreamingOwnerCompositionV1.CreateAll103WithTerrainV2(
             coreCut,
             exact97,
             providers);
-        var terrainSection = materialized.Single(section => section.SectionId == terrainId);
-        var terrainFragmentSource = new SpatialTerrainGeometryStreamingFragmentSourceV2(
-            terrainAuthority.Header,
-            terrainAuthority.ActualItemCount,
-            () => terrainAuthority.Partition.RecordSet.RecordsCanonical);
-        var streaming = materialized
-            .Select(section => string.Equals(section.SectionId, terrainId, StringComparison.Ordinal)
-                ? new CanonicalSnapshotStreamingSectionV1(
-                    section.SectionId,
-                    section.SectionSchema,
-                    section.LogicalItemCount,
-                    section.LogicalContentDigest,
-                    terrainFragmentSource.EnumerateFragments)
-                : CanonicalSnapshotStreamingSectionV1.FromMaterialized(section))
-            .ToArray();
+        var terrainSection = streaming.Single(section => section.SectionId == terrainId);
 
-        Require(streaming.Length == SnapshotManifestValidation.StandardRequiredSectionCount,
+        Require(streaming.Count == SnapshotManifestValidation.StandardRequiredSectionCount,
             "Staged Terrain recovery smoke must preserve exact-103 section cardinality.");
         Require(scopeAuthority.ActualItemCount == Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount,
             "Staged Terrain recovery smoke must use the canonical 4,096 TileScope authority.");
@@ -102,7 +92,7 @@ internal static class SpatialTerrainGeometryStagedRecoverySmoke
                 Qa04TerrainRootMaterializerV1.CanonicalAnchorCount,
             "Staged Terrain recovery smoke must use all canonical roots and D3 anchors.");
         Require(terrainSection.LogicalContentDigest.SequenceEqual(terrainAuthority.Header.CanonicalDigest),
-            "Materialized exact-103 Terrain metadata must bind the canonical reduced Terrain authority.");
+            "Streaming exact-103 Terrain metadata must bind the reduced streaming Terrain authority.");
 
         var historyDigest = SHA256.HashData("terrain-staged-recovery-history"u8);
         var continuity = SHA256.HashData("terrain-staged-recovery-continuity"u8);
