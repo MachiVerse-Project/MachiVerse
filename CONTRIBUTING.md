@@ -13,6 +13,30 @@ MachiVerse への関心と協力ありがとうございます。
 - コンポーネント間通信は `docs/protocols/` の設計書を契約として扱ってください。
 - 調整可能な数値は各コンポーネントが所有する外部Configから変更可能にしてください。
 
+## ライセンスとCreative Asset Contribution
+
+MachiVerseでは、ソフトウェアコードとCreative Assetを異なる権利条件で管理しています。詳細は [`RIGHTS.md`](RIGHTS.md) を確認してください。
+
+### コードContribution
+
+Apache-2.0の対象として指定されているコード領域へ意図的に提出されるコードContributionは、別途合意がある場合を除き、Apache License 2.0の条件で提出されます。
+
+Contributorは、提出するコードについて必要な権利を有していることを確認してください。
+
+### Creative Asset Contribution
+
+画像、イラスト、ロゴ、テクスチャ、3Dモデル、音声、音楽、動画、キャラクター設定その他のCreative Assetは、**通常のApache-2.0コードContributionフローでは受け付けません**。
+
+Creative Assetを提出したい場合は、Pull Requestを作成する前に、適用されるAsset-specific terms、Contributor Agreement、またはその他の個別合意をMachiVerse Projectの公式窓口を通じて確認してください。
+
+Creative Assetを含むPull Requestを例外的に提出する場合は、少なくとも次を明確にする必要があります。
+
+- 提出者が当該Assetを提出するために必要な権利を有していること
+- 適用されるAsset-specific termsまたは個別合意が特定されていること
+- 当該Assetが、単にApache-2.0のリポジトリへ投稿されたことだけを理由として通常のコードContributionとして扱われるものではないことについて、事前の明示的な整理があること
+
+上記が整理されていないCreative Assetを通常のコードPull Requestへ含めないでください。
+
 ## 相談・報告先の使い分け
 
 内容に応じて、次の入口を使い分けてください。
@@ -63,6 +87,8 @@ Pull Requestでは、少なくとも以下を説明してください。
 - 実装変更の場合は確認・テスト方法
 
 1つのPull Requestへ無関係な変更をまとめないでください。
+
+Creative Assetを含む場合は、通常のコードPRとして扱わず、上記「ライセンスとCreative Asset Contribution」の条件を満たしていることを確認してください。
 
 ## プロトコル変更
 
