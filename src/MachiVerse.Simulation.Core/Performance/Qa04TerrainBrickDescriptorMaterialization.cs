@@ -92,24 +92,39 @@ public static class Qa04TerrainBrickDescriptorMaterializerV1
         return new Qa04TerrainBrickDescriptorMaterializationV1(partition, recordCount);
     }
 
+    /// <summary>
+    /// Materializes exactly one canonical hot-terrain-brick descriptor without building a partition.
+    /// This is the production boundary used by bounded-memory Terrain enumeration: descriptor identity
+    /// and payload are validated with the same rules as the existing bulk materializer.
+    /// </summary>
+    public static SpatialTerrainGeometryRecordMaterialV2 MaterializeRecord(
+        IQa04TerrainBrickContentSourceV1 contentSource,
+        ulong ordinal)
+    {
+        ArgumentNullException.ThrowIfNull(contentSource);
+        ValidateCanonicalContract();
+        if (ordinal >= CanonicalTerrainBrickCount)
+            throw new ArgumentOutOfRangeException(nameof(ordinal));
+
+        var descriptor = Qa04ReferenceLoadV1.Record(TerrainReferenceClass, ordinal);
+        if (descriptor.DetailLevel != DetailLevelV1.D0Entity)
+            throw new InvalidDataException("qa04.materialization.terrain-detail-not-d0");
+
+        var brick = contentSource.CreateBrick(descriptor)
+            ?? throw new InvalidDataException("qa04.materialization.terrain-content-source-null");
+        ValidateDescriptorBinding(descriptor, brick);
+        return SpatialTerrainGeometryRecordMaterialV2.FromTerrainBrick(
+            brick,
+            createdStep: 0,
+            detailLevel: descriptor.DetailLevel);
+    }
+
     private static IEnumerable<SpatialTerrainGeometryRecordMaterialV2> CreateRecords(
         IQa04TerrainBrickContentSourceV1 contentSource,
         ulong count)
     {
         for (ulong ordinal = 0; ordinal < count; ordinal++)
-        {
-            var descriptor = Qa04ReferenceLoadV1.Record(TerrainReferenceClass, ordinal);
-            if (descriptor.DetailLevel != DetailLevelV1.D0Entity)
-                throw new InvalidDataException("qa04.materialization.terrain-detail-not-d0");
-
-            var brick = contentSource.CreateBrick(descriptor)
-                ?? throw new InvalidDataException("qa04.materialization.terrain-content-source-null");
-            ValidateDescriptorBinding(descriptor, brick);
-            yield return SpatialTerrainGeometryRecordMaterialV2.FromTerrainBrick(
-                brick,
-                createdStep: 0,
-                detailLevel: descriptor.DetailLevel);
-        }
+            yield return MaterializeRecord(contentSource, ordinal);
     }
 
     private static void ValidateDescriptorBinding(Qa04ReferenceRecordV1 descriptor, TerrainBrickV1 brick)
