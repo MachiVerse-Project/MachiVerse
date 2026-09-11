@@ -265,6 +265,8 @@ await SpatialTerrainGeometryStagedRecoveryInitializer.RunAsync();
 await Qa04CrossDomainTransactionV2PhysicalExact103CanaryInitializer.RunAsync();
 await CrossDomainTransactionSqliteAuthoritySmoke.RunAsync();
 await Qa04AcceptedOperationLossGuardSqliteSmoke.RunAsync();
+await Qa04BenchmarkRunMeasurementSessionInitializer.RunAsync();
+await Qa04ReducedCommitMeasurementInitializer.RunAsync();
 Qa04ReferenceLoadSmoke.Run();
 await Qa04RuntimeTargetSmoke.RunAsync();
 await Qa04CoreSubstateAuthoritySmoke.RunAsync();
