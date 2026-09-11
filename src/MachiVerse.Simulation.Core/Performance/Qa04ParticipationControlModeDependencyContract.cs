@@ -35,15 +35,15 @@ public static class Qa04ParticipationControlModeDependencyContractV1
         Array.AsReadOnly(new[]
         {
             Blocker(
-                "workload.transaction.participation-control-mode.canonical-population",
+                "workload.tx.participation-control-mode.population",
                 Qa04ParticipationControlModeDependencyKindV1.CanonicalPopulationAuthority,
                 "qa04.workload.participation-control-mode-population-undefined"),
             Blocker(
-                "workload.transaction.participation-control-mode.mode-token-vocabulary",
+                "workload.tx.participation-control-mode.mode-token",
                 Qa04ParticipationControlModeDependencyKindV1.ModeTokenVocabulary,
-                "qa04.workload.participation-control-mode-token-vocabulary-undefined"),
+                "qa04.workload.participation-mode-token-undefined"),
             Blocker(
-                "workload.transaction.participation-control-mode.genesis-control-state",
+                "workload.tx.participation-control-mode.genesis-state",
                 Qa04ParticipationControlModeDependencyKindV1.GenesisControlState,
                 "qa04.workload.participation-control-mode-genesis-state-undefined"),
         });
