@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Performance;
@@ -7,11 +6,7 @@ using MachiVerse.Simulation.Core.Runtime;
 
 internal static class Qa04AcceptedOperationLossGuardSqliteSmoke
 {
-    [ModuleInitializer]
-    internal static void Run()
-        => RunAsync().GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         var worldId = OpaqueId128.Parse("0000000000000000000000000000ac01");
         var operationId = OpaqueId128.Parse("0000000000000000000000000000ac02");
