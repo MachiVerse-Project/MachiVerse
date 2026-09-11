@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
@@ -9,11 +8,7 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04CrossDomainTransactionV2PhysicalExact103CanaryInitializer
 {
-    [ModuleInitializer]
-    internal static void Initialize()
-        => RunAsync().GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
