@@ -1,38 +1,32 @@
-# Phase 4 spatial.terrain_geometry record schema v2
+# Phase 4 `spatial.terrain_geometry` record schema v2
 
-Status: Decided / standalone schema + wire + semantic Snapshot foundation implemented / exact-97 activation pending  
+Status: Decided / production activation complete / full Terrain proof complete  
 Tracking: #240  
 Implementation: Draft PR #265  
 Applies to: `domain.spatial.terrain_geometry.record` **2.0**
 
 ## 1. Purpose
 
-`spatial.terrain_geometry` v1 contains the terrain-root record defined by P4-05, while P4-04 independently defines authoritative `TerrainBrickV1` SBO-SDF state. `perf.reference.v1` requires 500,000 hot terrain bricks and the v1 root contains a required `root_brick_ref`, so both root and brick records must exist under the same existing Spatial authority without introducing a 98th partition.
+`spatial.terrain_geometry` v1 contains the P4-05 terrain-root record, while P4-04 defines authoritative `TerrainBrickV1` SBO-SDF state. `perf.reference.v1` requires 500,000 hot terrain bricks and the root contains a required `root_brick_ref`, so root and brick records share the existing Spatial partition without introducing a 98th Domain partition.
 
-This document freezes the exact v2 record contract and implements the standalone semantic Snapshot chain through record wire, target-kind closure, mixed-record partition state, semantic payload digest, frozen authority, fragment wire, section materialization, and recovered rehash. It does **not** activate v2 in the exact-97 production composition, populate the canonical 500,000 brick contents, or mark the QA-04 reference world materialized.
+This document freezes the exact v2 record contract. The v2 path is now active in the QA-04 production Snapshot composition through explicit migration-aware provider/recovery selection; the standard global registry remains the v1 baseline.
 
 ## 2. Schema identity
-
-The stable schema id is unchanged and the major version advances:
 
 ```text
 v1 = domain.spatial.terrain_geometry.record / 1.0
 v2 = domain.spatial.terrain_geometry.record / 2.0
+partition schema = domain.spatial.terrain_geometry / 1.0
+partition id = spatial.terrain_geometry
 ```
 
-The standard runtime registry remains v1 until the partition-wide migration is activated atomically across runtime authority, all-97 reference resolution, Snapshot recovery, and cross-partition schema validation.
+Only the record schema advances. `partition_id`, owner, primary-key kind, persistence class, canonical-order kind, and partition schema remain unchanged.
 
-The partition/container schema remains unchanged:
-
-```text
-domain.spatial.terrain_geometry / 1.0
-```
-
-`PartitionStateHeaderV1` therefore continues to use the existing partition schema. Record schema id/major/minor are already included per record in the canonical partition digest.
+`StandardDomainPartitionRegistry` remains at record schema `1.0`. v2 acceptance is explicit through the registered record-schema migration path; arbitrary 2.x/3.x versions are not accepted.
 
 ## 3. Common record envelope
 
-Both v2 arms use the existing Phase 4 common record envelope:
+Both v2 arms use the standard Domain record envelope:
 
 ```text
 record_id
@@ -52,24 +46,22 @@ TerrainBrickV1.brick_id -> record_id
 TerrainBrickV1.revision -> revision
 ```
 
-No duplicate `brick_id` or `revision` field is added to the payload.
-
-For v1 `terrain_root` migration, all common envelope fields are preserved exactly and only the record schema advances from 1.0 to 2.0.
+For migrated v1 `terrain_root`, all common envelope fields are preserved exactly and only the record schema advances from 1.0 to 2.0.
 
 ## 4. Record kinds
 
-Canonical record kinds are:
+Canonical arms:
 
 ```text
 terrain_brick
 terrain_root
 ```
 
-The payload field at ordinal 1 is always `record_kind:Token`. Unknown record kinds fail closed.
+Unknown arms fail closed.
 
 ## 5. `terrain_root` arm
 
-Exact payload descriptor order:
+Exact payload fields:
 
 | ordinal | field | type | optional |
 |---:|---|---|---|
@@ -81,15 +73,15 @@ Exact payload descriptor order:
 | 6 | `connectivity_refs` | RefList | no |
 | 7 | `archive_anchor` | Digest(32) | yes |
 
-`record_kind` must equal `terrain_root`.
+`record_kind = terrain_root`。
 
-`root_brick_ref.partition_id` must equal `spatial.terrain_geometry`. A synthetic target in another partition is invalid.
+`root_brick_ref.partition_id` must be `spatial.terrain_geometry` and the actual target record must use the `terrain_brick` arm.
 
-The other fields are the exact P4-05 v1 terrain-root fields. Therefore v1 -> v2 root migration is deterministic and lossless when the root brick reference satisfies the decided same-partition ownership rule.
+`scope_ref` closes to actual `spatial.scope_registry` authority. QA-04 canonical roots use actual TileScope records.
 
 ## 6. `terrain_brick` arm
 
-Exact payload descriptor order:
+Exact payload fields:
 
 | ordinal | field | type | optional |
 |---:|---|---|---|
@@ -100,46 +92,31 @@ Exact payload descriptor order:
 | 5 | `sdf_mm` | fixed Int32 list, exactly 729 | no |
 | 6 | `surface_material_id` | fixed UInt16 list, exactly 512 | no |
 
-`record_kind` must equal `terrain_brick`.
-
-The arm is a lossless mapping of the P4-04 `TerrainBrickV1` algorithm state after moving `brick_id` and `revision` into the common record envelope.
+`record_kind = terrain_brick`。
 
 ### 6.1 `SpatialCellKeyV1`
 
-Standalone v2 wire fields:
+```text
+level:uint8
+x:sint32
+y:sint32
+z:sint32
+```
 
-| field | type |
-|---:|---|
-| 1 | `level:uint8` |
-| 2 | `x:sint32` |
-| 3 | `y:sint32` |
-| 4 | `z:sint32` |
-
-All four are encoded explicitly in canonical field order.
-
-`TerrainBrickV1.level` and `TerrainBrickV1.cell_origin.level` are preserved independently. Existing P4-04 runtime state does not assert that they are equal, so v2 must not silently normalize one from the other.
+All fields are encoded explicitly. `TerrainBrickV1.level` and `cell_origin.level` remain independent authoritative values.
 
 ### 6.2 Fixed arrays
 
-`SDF` list:
-
 ```text
-729 × sint32
-index = ((z * 9) + y) * 9 + x
+SDF samples = 729 = 9^3
+surface material ids = 512 = 8^3
 ```
 
-Surface material list:
+The codec rejects all other cardinalities and rejects material ids outside UInt16 range.
 
-```text
-512 × uint16
-index = ((z * 8) + y) * 8 + x
-```
+## 7. Canonical record wire
 
-The standalone codec rejects any other element count or a material value outside uint16 range.
-
-## 7. Standalone protobuf record wire
-
-`SpatialTerrainGeometryRecordWireCodecV2` preserves the existing Domain record-envelope field numbers:
+`SpatialTerrainGeometryRecordWireCodecV2` preserves the standard Domain record-envelope field order:
 
 | field | value |
 |---:|---|
@@ -147,157 +124,139 @@ The standalone codec rejects any other element count or a material value outside
 | 2 | schema id |
 | 3 | schema version |
 | 4 | revision |
-| 5 | created step, omitted only when zero |
-| 6 | retired step, optional |
-| 7 | detail level, omitted only for D0/default |
-| 8 | lineage id bytes(16), optional |
+| 5 | created step |
+| 6 | retired step? |
+| 7 | detail level |
+| 8 | lineage id? |
 | 9 | v2 discriminated payload |
 
-Decoder rules are fail-closed:
+Decoder is fail-closed for unknown/duplicate/non-canonical fields, wrong schema, unknown arm, missing arm-specific fields, invalid root ownership, invalid cell key, and invalid fixed-array cardinality.
 
-- field order must be strictly canonical for singular messages;
-- unknown or duplicate/non-canonical record fields are rejected;
-- schema id/version must be exactly the v2 identity;
-- unknown record kind is rejected;
-- arm-specific unknown/missing/wrong-wire fields are rejected;
-- root brick target must remain inside `spatial.terrain_geometry`;
-- `SpatialCellKeyV1` requires all four scalar fields;
-- SDF/material fixed cardinalities are enforced;
-- decode -> encode returns the canonical same byte sequence for valid material.
+Valid decode -> encode must reproduce canonical bytes.
 
-The codec intentionally does not modify the production v1 `DomainPartitionSnapshotWireCodecV1` record decoder.
+## 8. Semantic target-kind closure
 
-## 8. Semantic target-kind closure and mixed state
+`SpatialTerrainGeometryRecordSetV2` validates every root target against actual v2 material.
 
-`SpatialTerrainGeometryRecordSetV2` holds v2 records in canonical `record_id` byte order and validates every `terrain_root.root_brick_ref` against the actual record set.
+A valid `root_brick_ref` requires:
 
-A valid root target must satisfy all of the following:
+1. partition = `spatial.terrain_geometry`
+2. target RecordId exists
+3. target arm = `terrain_brick`
 
-1. target partition is exactly `spatial.terrain_geometry`;
-2. target record id exists in the same v2 record set;
-3. target payload arm is exactly `terrain_brick`.
+Missing target and wrong target kind are distinct fail-closed errors.
 
-Missing targets fail with `spatial.terrain-v2.root-brick-missing`; an existing non-brick target fails with `spatial.terrain-v2.root-brick-kind`.
+Canonical QA-04 root connectivity is also recovered and validated against actual Terrain root identities.
 
-`SpatialTerrainGeometryPartitionStateV2` then places the closed root + brick set into the existing ordered `DomainPartitionStateV1<SpatialTerrainGeometryPayloadV2>` container using a versioned identity that differs from the standard identity only in record schema `2.0`.
+## 9. Semantic payload / partition digest
 
-The standard runtime registry is explicitly checked to remain at record schema `1.0` during this standalone phase.
+`SpatialTerrainGeometryPayloadCanonicalDigestV2` uses the standard semantic Domain hash boundary and includes the actual v2 schema identity.
 
-## 9. Semantic payload and partition digest
+For roots the digest covers scope/root-brick refs, geometry revision, canonical token/ref lists, and optional archive anchor.
 
-`SpatialTerrainGeometryPayloadCanonicalDigestV2` is independent of protobuf bytes and follows the existing standard Domain semantic digest structure:
+For bricks the digest covers level, cell origin, spacing, all 729 SDF samples, and all 512 material ids.
 
-```text
-HashDomain = mv.domain-payload.v1
-material = {
-  partition_id,
-  record_schema_id,
-  record_schema_major,
-  record_schema_minor,
-  ordered semantic fields
-}
-```
+The same semantic record stream must reproduce the frozen `PartitionStateHeaderV1` digest after recovery.
 
-Reusing the hash domain is safe because schema id + explicit major/minor are inside the hashed material. A v1 and v2 payload therefore do not become equivalent merely because they share the same partition id.
+## 10. Production Snapshot authority
 
-For `terrain_root`, the digest validates canonical TokenList/RefList order and optional reference existence when a resolver is provided.
+Two compatible paths remain available:
 
-For `terrain_brick`, the digest covers both level values, spacing, all 729 SDF entries in canonical array order, and all 512 material ids.
+- materialized `SpatialTerrainGeometrySnapshotAuthorityV2` for bounded fixtures/canaries
+- `SpatialTerrainGeometryStreamingSnapshotAuthorityV2` for full canonical Terrain
 
-`PartitionStateHeaderV1.CreateCanonical` can therefore hash the mixed v2 partition without changing the partition header schema. Tests prove identical semantic material reproduces the same partition digest and that changing an individual SDF sample changes the digest.
+Full QA-04 Terrain uses the streaming authority to avoid retaining all record payloads simultaneously.
 
-## 10. Standalone Snapshot authority and recovery chain
-
-### 10.1 Frozen authority
-
-`SpatialTerrainGeometrySnapshotAuthorityV2` implements the common `IDomainPartitionSnapshotAuthorityV1` boundary without weakening the generic v1 authority class.
-
-It verifies:
-
-- exact Terrain v2 partition identity;
-- unchanged standard partition id / owner / partition schema;
-- actual item count and canonical record-id order;
-- root -> brick target-kind closure;
-- recomputed `PartitionStateHeaderV1` including v2 record schema identities and semantic payload digests.
-
-### 10.2 Fragment wire
-
-`SpatialTerrainGeometrySnapshotFragmentWireV2` keeps the existing Domain fragment envelope:
+Canonical count:
 
 ```text
-field 1 = existing PartitionStateHeaderV1 wire
-field 2 = repeated terrain record-schema-2.0 record wire
+hot D0 bricks = 500,000
+terrain roots =   4,096
+D3 anchors    =   4,096
+total         = 508,192
 ```
 
-The header remains first and unchanged. Records must be canonical by record id and cannot have created/retired steps after the frozen header basis step. Unknown fragment fields fail closed.
+The canonical source stores compact record identity/locator metadata and regenerates payloads deterministically on demand.
 
-A decoded fragment can be re-encoded canonically, reconstructed into a v2 partition, and rebound to the original frozen header; semantic rehash must match exactly.
+## 11. Fragmentation and exact-103 production composition
 
-### 10.3 Section provider
+Terrain v2 keeps the existing Domain fragment envelope and standard Snapshot section identity.
 
-`SpatialTerrainGeometrySnapshotSectionProviderV2` implements the common Domain section-provider interface while remaining **unselected** by the current exact-97 production composition.
+Full material uses bounded-memory two-pass fragmentation:
 
-It:
+1. planning pass computes fragment item counts without retaining all payloads
+2. emission pass regenerates byte-identical records and emits one fragment-sized group at a time
 
-- accepts only `SpatialTerrainGeometrySnapshotAuthorityV2`;
-- emits the standard section id and unchanged partition section schema;
-- uses the frozen authority item count and partition digest as section logical authority;
-- fragments only at record boundaries using the standard 32 MiB target / 64 MiB hard limit;
-- records exact first/last record-id ranges and item counts;
-- reconstructs all fragments, checks repeated headers/ranges/order, rebuilds the v2 mixed-record partition, reruns target-kind closure, and recomputes the frozen partition digest;
-- can validate cross-partition Ref existence through the common reference-resolution context when such a resolver is supplied.
+Existing limits remain unchanged:
 
-This completes a truthful standalone `record -> partition -> header -> section fragments -> recovery -> semantic rehash` chain for Terrain v2.
+```text
+fragment target = 32 MiB
+fragment hard max = 64 MiB
+```
 
-## 11. Migration boundary
+Terrain v2 is selected only for `spatial.terrain_geometry`; the other Domain providers keep their registered schemas. Core 6 + Domain 97 remains exact **103 sections**.
 
-### 11.1 v1 root -> v2 root
+## 12. Production recovery
 
-Deterministic recipe:
+Recovery remains two-phase and bounded-memory.
 
-1. require source record schema `domain.spatial.terrain_geometry.record / 1.0`;
-2. preserve `record_id`, `revision`, `created_step`, `retired_step`, `detail_level`, `lineage_ref`;
-3. set record schema to the same stable id at `2.0`;
-4. set `record_kind = terrain_root`;
-5. copy all six v1 root payload values exactly;
-6. require the decided same-partition `root_brick_ref` owner.
+Phase 1:
 
-No benchmark-specific value is fabricated by migration.
+- staged `MVCHNK01` chunks are read one at a time
+- Terrain fragments are decoded one at a time
+- compact RecordId/kind index is retained
+- root closure metadata is retained
+- actual `spatial.scope_registry` identities are recovered from the same staged Snapshot
 
-### 11.2 `TerrainBrickV1` -> v2 brick
+Phase 2:
 
-Deterministic mapping:
+- Terrain fragments are read again
+- record identity/kind matches are validated
+- root refs and scope refs resolve against actual recovered authority
+- semantic payload digests stream into the canonical partition-header hash
+- recovered digest must equal the frozen Terrain authority
 
-1. `brick_id -> record_id`;
-2. `revision -> record revision`;
-3. caller supplies the common record lifecycle/detail/lineage metadata from authoritative creation context;
-4. copy `level`, `cell_origin`, `sample_spacing_mm`, all 729 SDF samples, and all 512 material ids exactly.
+Full partition payload reconstruction is not required.
 
-### 11.3 Exact-97 activation must be atomic
+## 13. Canonical QA-04 Terrain generation
 
-The current production path still assumes the standard v1 record schema in several coordinated places. Activation must not relax only one of them.
+The benchmark-specific content is frozen by `phase4-alpha11-terrain-canonical-generation.md`.
 
-The next migration slice must update together:
+Key invariants include:
 
-- the frozen canonical world terrain header/material binding;
-- the 8-owner / exact-97 authority set identity policy;
-- provider selection so only `spatial.terrain_geometry` uses the v2 provider;
-- all-97 production reference resolver to preserve the actual v2 target record schema;
-- cross-partition Ref schema validation so the explicitly migrated Terrain schema is accepted and arbitrary major versions are still rejected;
-- recovered-reference construction so Terrain fragments use the v2 decoder before the snapshot-wide resolver is built;
-- second-phase semantic recovery/target-kind validation.
+- 64x64 tile lattice
+- tile width 512,000 mm
+- D0 spacing 250 mm
+- D0 brick width 2,000 mm
+- 500,000 hot D0 descriptors
+- one D3 anchor per tile
+- one root per tile
+- actual TileScope ownership
+- N/E/S/W root connectivity
+- canonical SDF/material generation from the fixed benchmark context
+- no duplicate same-level cell origin
 
-Until those are switched and validated together, the generic v1 production path remains unchanged.
+Preflight/sampled checks are supplemental regression evidence only; they are not release evidence.
 
-## 12. What remains blocked
+## 14. Current release state
 
-This implementation removes Terrain ownership, exact v2 field-shape, standalone record wire, target-kind, mixed-state, semantic digest, frozen-authority, fragment, section, and recovered-rehash ambiguity. The canonical terrain benchmark class is still not materially populated or active in exact-97 production recovery.
+The former Terrain failure code:
 
-Still required before the QA-04 blocker can be removed:
+```text
+qa04.material.terrain-brick-authority-undefined
+```
 
-- perform the atomic exact-97 Terrain v2 activation described above;
-- define the canonical `perf.reference.v1` SDF/material contents for all 500,000 hot bricks;
-- materialize those records from the fixed benchmark seed/context;
-- include the resulting authority in the full exact-97 / exact-103 canonical proof and recovered all-97 resolver.
+is **not active**.
 
-Accordingly `qa04.material.terrain-brick-authority-undefined` remains active for now and `referenceWorldMaterialized` remains false.
+Dedicated `INT-03 full Terrain production validation` has successfully proven the full **508,192-record** path:
+
+1. canonical streaming authority/header
+2. exact-103 streaming composition
+3. actual Zstd staging + `manifest.pb`
+4. staged two-pass recovery
+5. all 508,192 recovered RecordIds equal frozen authority identities
+6. 4,096 root / 4,096 D3 anchor kind closure
+7. actual TileScope closure
+8. post-recovery semantic rehash equality
+
+Terrain completion does not imply `referenceWorldMaterialized=true`. Society/Governance and Infrastructure remain active reference-world blockers, and canonical workload bindings remain incomplete.
