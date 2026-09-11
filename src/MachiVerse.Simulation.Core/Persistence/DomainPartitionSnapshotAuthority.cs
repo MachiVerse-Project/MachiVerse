@@ -195,7 +195,7 @@ public static class DomainPartitionSnapshotProductionProviderV1
         ArgumentNullException.ThrowIfNull(authorities);
         ArgumentNullException.ThrowIfNull(providers);
         var byId = ValidateProviderSet(providers);
-        var references = new DomainSnapshotReferenceResolverV1(authorities.CanonicalAuthorities);
+        var references = new DomainSnapshotCompactReferenceResolverV1(authorities.CanonicalAuthorities);
         var sections = new List<CanonicalSnapshotSectionMaterialV1>(StandardDomainPartitionRegistry.StandardPartitionCount);
         foreach (var identity in StandardDomainPartitionRegistry.Entries)
         {
@@ -224,7 +224,7 @@ public static class DomainPartitionSnapshotProductionProviderV1
         ArgumentNullException.ThrowIfNull(coreVerifiers);
         ArgumentNullException.ThrowIfNull(authorities);
         var byId = ValidateProviderSet(providers);
-        var references = new DomainSnapshotReferenceResolverV1(authorities.CanonicalAuthorities);
+        var references = new DomainSnapshotCompactReferenceResolverV1(authorities.CanonicalAuthorities);
         var verifiers = coreVerifiers.ToList();
         foreach (var identity in StandardDomainPartitionRegistry.Entries)
         {
