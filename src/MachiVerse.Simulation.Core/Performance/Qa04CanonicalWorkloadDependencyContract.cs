@@ -26,8 +26,9 @@ public sealed record Qa04CanonicalWorkloadDependencyV1(
 ///
 /// The parent blockers remain active until each full workload surface is authoritative. The
 /// operation binding currently closes four of six families, transaction creation has eleven direct
-/// production-kind mappings but retains three explicit sub-blockers, and the detail binding closes
-/// the exact cadence/request mapping while still requiring actual canonical DetailRegion authority.
+/// production-kind bindings into the ordinary assembler but retains three explicit sub-blockers,
+/// and the detail binding closes the exact cadence/request mapping while still requiring actual
+/// canonical DetailRegion authority.
 /// </summary>
 public static class Qa04CanonicalWorkloadDependencyContractV1
 {
@@ -129,8 +130,10 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
     private static void ValidateTransactionKindBoundary()
     {
         Qa04TransactionCreationDependencyContractV1.ValidateCanonicalContract();
+        Qa04CanonicalTransactionKindBindingV1.ValidateCanonicalContract();
 
         if (Qa04TransactionCreationDependencyContractV1.DirectlyMappedProductionKinds.Count != 11 ||
+            Qa04CanonicalTransactionKindBindingV1.DirectKindMappings.Count != 11 ||
             Qa04TransactionCreationDependencyContractV1.Blockers.Count != 3)
             throw new InvalidDataException("qa04.workload.transaction-binding-progress-drift");
     }
