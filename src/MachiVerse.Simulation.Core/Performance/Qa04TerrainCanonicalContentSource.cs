@@ -119,13 +119,30 @@ public sealed class Qa04TerrainCanonicalContentSourceV1 : IQa04TerrainBrickConte
     {
         if (origin.Level != 0) throw new ArgumentException("Hot D0 origin must be level 0.", nameof(origin));
         if (sampleSpacingMm != D0SampleSpacingMm) throw new ArgumentOutOfRangeException(nameof(sampleSpacingMm));
-        var values = new int[TerrainBrickV1.SdfSampleCount];
-        for (var z = 0; z < TerrainBrickV1.SamplesPerAxis; z++)
+
+        // Height is a function of absolute XY only. Compute each of the 9x9 XY samples once and
+        // reuse it across all nine Z layers; this preserves exact canonical values while avoiding
+        // 648 duplicate domain hashes per hot brick.
+        var heightByXY = new int[TerrainBrickV1.SamplesPerAxis * TerrainBrickV1.SamplesPerAxis];
         for (var y = 0; y < TerrainBrickV1.SamplesPerAxis; y++)
         for (var x = 0; x < TerrainBrickV1.SamplesPerAxis; x++)
         {
-            var index = checked(((z * TerrainBrickV1.SamplesPerAxis) + y) * TerrainBrickV1.SamplesPerAxis + x);
-            values[index] = SdfSampleAt(origin, sampleSpacingMm, x, y, z);
+            var wx = checked(((long)origin.X + x) * sampleSpacingMm);
+            var wy = checked(((long)origin.Y + y) * sampleSpacingMm);
+            heightByXY[y * TerrainBrickV1.SamplesPerAxis + x] = HeightMm(wx, wy);
+        }
+
+        var values = new int[TerrainBrickV1.SdfSampleCount];
+        for (var z = 0; z < TerrainBrickV1.SamplesPerAxis; z++)
+        {
+            var wz = checked(((long)origin.Z + z) * sampleSpacingMm);
+            for (var y = 0; y < TerrainBrickV1.SamplesPerAxis; y++)
+            for (var x = 0; x < TerrainBrickV1.SamplesPerAxis; x++)
+            {
+                var xyIndex = y * TerrainBrickV1.SamplesPerAxis + x;
+                var index = checked(((z * TerrainBrickV1.SamplesPerAxis) + y) * TerrainBrickV1.SamplesPerAxis + x);
+                values[index] = checked((int)(wz - heightByXY[xyIndex]));
+            }
         }
         return values;
     }
@@ -154,24 +171,37 @@ public sealed class Qa04TerrainCanonicalContentSourceV1 : IQa04TerrainBrickConte
     {
         if (origin.Level != 0) throw new ArgumentException("Hot D0 origin must be level 0.", nameof(origin));
         if (sampleSpacingMm != D0SampleSpacingMm) throw new ArgumentOutOfRangeException(nameof(sampleSpacingMm));
-        var values = new ushort[TerrainBrickV1.SurfaceMaterialCount];
-        for (var z = 0; z < TerrainBrickV1.CellsPerAxis; z++)
+
+        // Material classification also depends on absolute XY height plus the current Z center.
+        // Cache the 8x8 XY height field once and reuse it for all eight Z layers.
+        var heightByXY = new int[TerrainBrickV1.CellsPerAxis * TerrainBrickV1.CellsPerAxis];
         for (var y = 0; y < TerrainBrickV1.CellsPerAxis; y++)
         for (var x = 0; x < TerrainBrickV1.CellsPerAxis; x++)
         {
             var cx = checked((checked(2L * ((long)origin.X + x)) + 1) * sampleSpacingMm / 2);
             var cy = checked((checked(2L * ((long)origin.Y + y)) + 1) * sampleSpacingMm / 2);
+            heightByXY[y * TerrainBrickV1.CellsPerAxis + x] = HeightMm(cx, cy);
+        }
+
+        var values = new ushort[TerrainBrickV1.SurfaceMaterialCount];
+        for (var z = 0; z < TerrainBrickV1.CellsPerAxis; z++)
+        {
             var cz = checked((checked(2L * ((long)origin.Z + z)) + 1) * sampleSpacingMm / 2);
-            var distance = checked(cz - HeightMm(cx, cy));
-            var material = distance switch
+            for (var y = 0; y < TerrainBrickV1.CellsPerAxis; y++)
+            for (var x = 0; x < TerrainBrickV1.CellsPerAxis; x++)
             {
-                > 0 => MaterialVoid,
-                > -500 => MaterialSoil,
-                > -2_000 => MaterialSediment,
-                _ => MaterialRock,
-            };
-            var index = checked(((z * TerrainBrickV1.CellsPerAxis) + y) * TerrainBrickV1.CellsPerAxis + x);
-            values[index] = material;
+                var xyIndex = y * TerrainBrickV1.CellsPerAxis + x;
+                var distance = checked(cz - heightByXY[xyIndex]);
+                var material = distance switch
+                {
+                    > 0 => MaterialVoid,
+                    > -500 => MaterialSoil,
+                    > -2_000 => MaterialSediment,
+                    _ => MaterialRock,
+                };
+                var index = checked(((z * TerrainBrickV1.CellsPerAxis) + y) * TerrainBrickV1.CellsPerAxis + x);
+                values[index] = material;
+            }
         }
         return values;
     }
