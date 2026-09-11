@@ -29,18 +29,18 @@ public static class HashSuite
     public static byte[] DomainHashStreaming(string label, Action<MvDcborWriter> writeValue)
     {
         ArgumentNullException.ThrowIfNull(writeValue);
-        var labelBytes = EncodeDomainLabel(label);
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        hash.AppendData(labelBytes);
-        Span<byte> separator = stackalloc byte[1];
-        separator[0] = 0;
-        hash.AppendData(separator);
-
-        var sink = new IncrementalHashBufferWriter(hash);
-        var writer = new MvDcborWriter(sink);
-        writeValue(writer);
-        return hash.GetHashAndReset();
+        using var session = BeginDomainHashStreaming(label);
+        writeValue(session.Writer);
+        return session.Complete();
     }
+
+    /// <summary>
+    /// Opens an incremental domain-hash session. Callers may keep the canonical writer across async
+    /// suspension points and finalize after the complete value has been emitted. The resulting hash
+    /// uses the identical ASCII-label + NUL + MV-DCBOR preimage as DomainHash/DomainHashStreaming.
+    /// </summary>
+    public static StreamingDomainHashSession BeginDomainHashStreaming(string label)
+        => new(EncodeDomainLabel(label));
 
     public static OpaqueId128 Trunc128(ReadOnlySpan<byte> hash)
     {
@@ -54,6 +54,41 @@ public static class HashSuite
         if (label.Any(static c => c > 0x7f))
             throw new ArgumentException("Domain label must be ASCII.", nameof(label));
         return Encoding.ASCII.GetBytes(label);
+    }
+
+    public sealed class StreamingDomainHashSession : IDisposable
+    {
+        private readonly IncrementalHash _hash;
+        private bool _completed;
+        private bool _disposed;
+
+        internal StreamingDomainHashSession(byte[] labelBytes)
+        {
+            ArgumentNullException.ThrowIfNull(labelBytes);
+            _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            _hash.AppendData(labelBytes);
+            Span<byte> separator = stackalloc byte[1];
+            separator[0] = 0;
+            _hash.AppendData(separator);
+            Writer = new MvDcborWriter(new IncrementalHashBufferWriter(_hash));
+        }
+
+        public MvDcborWriter Writer { get; }
+
+        public byte[] Complete()
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_completed) throw new InvalidOperationException("Domain hash streaming session is already complete.");
+            _completed = true;
+            return _hash.GetHashAndReset();
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _hash.Dispose();
+        }
     }
 
     private sealed class IncrementalHashBufferWriter : IBufferWriter<byte>
