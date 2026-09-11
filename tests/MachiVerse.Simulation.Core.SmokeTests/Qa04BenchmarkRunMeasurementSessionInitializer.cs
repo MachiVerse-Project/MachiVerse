@@ -1,10 +1,8 @@
-using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Performance;
 
 internal static class Qa04BenchmarkRunMeasurementSessionInitializer
 {
-    [ModuleInitializer]
-    internal static void Initialize()
+    internal static async Task RunAsync()
     {
         var collector = new Qa04BenchmarkMetricCollectorV1();
         var session = new Qa04BenchmarkRunMeasurementSessionV1(
@@ -13,9 +11,7 @@ internal static class Qa04BenchmarkRunMeasurementSessionInitializer
 
         for (ulong step = 1; step <= Qa04MeasurementPhaseContractV1.WarmUpLastFinalizedStep; step++)
         {
-            session.ExecuteFinalizingStepAsync(step, static _ => Task.CompletedTask)
-                .GetAwaiter()
-                .GetResult();
+            await session.ExecuteFinalizingStepAsync(step, static _ => Task.CompletedTask);
         }
 
         var warmup = session.Snapshot();
@@ -24,11 +20,9 @@ internal static class Qa04BenchmarkRunMeasurementSessionInitializer
         Require(warmup.CoreWorkingSetSampleCount == 0,
             "QA-04 warm-up Steps must not enter working-set samples.");
 
-        session.ExecuteFinalizingStepAsync(
-                Qa04MeasurementPhaseContractV1.MeasurementFirstFinalizedStep,
-                static _ => Task.CompletedTask)
-            .GetAwaiter()
-            .GetResult();
+        await session.ExecuteFinalizingStepAsync(
+            Qa04MeasurementPhaseContractV1.MeasurementFirstFinalizedStep,
+            static _ => Task.CompletedTask);
 
         var measured = session.Snapshot();
         Require(measured.StepSampleCount == 1 && measured.StepDuration?.SampleCount == 1,
@@ -38,38 +32,30 @@ internal static class Qa04BenchmarkRunMeasurementSessionInitializer
         Require(session.LastFinalizedStep == Qa04MeasurementPhaseContractV1.MeasurementFirstFinalizedStep,
             "QA-04 measurement session finalized-Step cursor drifted.");
 
-        RequireThrows<InvalidDataException>(() =>
-            session.ExecuteFinalizingStepAsync(
-                    Qa04MeasurementPhaseContractV1.MeasurementFirstFinalizedStep + 2,
-                    static _ => Task.CompletedTask)
-                .GetAwaiter()
-                .GetResult(),
+        await RequireThrowsAsync<InvalidDataException>(
+            () => session.ExecuteFinalizingStepAsync(
+                Qa04MeasurementPhaseContractV1.MeasurementFirstFinalizedStep + 2,
+                static _ => Task.CompletedTask),
             "QA-04 measurement session must reject skipped finalized Steps.");
 
         var cowCollector = new Qa04BenchmarkMetricCollectorV1();
         var marker = new object();
-        var materialized = Qa04RunningSnapshotMeasurementExtensionsV1.MeasureSnapshotCowBarrierAsync(
-                cowCollector,
-                _ => Task.FromResult<object?>(marker))
-            .GetAwaiter()
-            .GetResult();
+        var materialized = await Qa04RunningSnapshotMeasurementExtensionsV1.MeasureSnapshotCowBarrierAsync(
+            cowCollector,
+            _ => Task.FromResult<object?>(marker));
         Require(ReferenceEquals(materialized, marker),
             "QA-04 COW timer must return the production materialization result unchanged.");
 
-        var notDue = Qa04RunningSnapshotMeasurementExtensionsV1.MeasureSnapshotCowBarrierAsync<object>(
-                cowCollector,
-                _ => Task.FromResult<object?>(null))
-            .GetAwaiter()
-            .GetResult();
+        var notDue = await Qa04RunningSnapshotMeasurementExtensionsV1.MeasureSnapshotCowBarrierAsync<object>(
+            cowCollector,
+            _ => Task.FromResult<object?>(null));
         Require(notDue is null,
             "QA-04 COW timer null path must remain null.");
 
-        RequireThrows<InvalidOperationException>(() =>
-            Qa04RunningSnapshotMeasurementExtensionsV1.MeasureSnapshotCowBarrierAsync<object>(
-                    cowCollector,
-                    _ => Task.FromException<object?>(new InvalidOperationException("expected")))
-                .GetAwaiter()
-                .GetResult(),
+        await RequireThrowsAsync<InvalidOperationException>(
+            () => Qa04RunningSnapshotMeasurementExtensionsV1.MeasureSnapshotCowBarrierAsync<object>(
+                cowCollector,
+                _ => Task.FromException<object?>(new InvalidOperationException("expected"))),
             "QA-04 COW timer must propagate freeze failures.");
 
         var cow = cowCollector.Snapshot().SnapshotCowBarrierDuration;
@@ -82,12 +68,12 @@ internal static class Qa04BenchmarkRunMeasurementSessionInitializer
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    private static void RequireThrows<T>(Action action, string message)
+    private static async Task RequireThrowsAsync<T>(Func<Task> action, string message)
         where T : Exception
     {
         try
         {
-            action();
+            await action();
         }
         catch (T)
         {
