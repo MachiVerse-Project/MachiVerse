@@ -111,6 +111,7 @@ public static class Qa04TransactionCreationDependencyContractV1
         Qa04CrossDomainTransactionGenesisMaterializerV1.ValidateCanonicalContract();
         Qa04CrossDomainTransactionTurnoverMaterializerV1.ValidateCanonicalContract();
         Qa04ParticipationControlModeDependencyContractV1.ValidateCanonicalContract();
+        Qa04GovernancePermissionLicenseDependencyContractV1.ValidateCanonicalContract();
 
         if (Qa04ReferenceScenariosV1.CrossDomainTransactionCreationEverySteps != 300)
             throw new InvalidDataException("qa04.workload.transaction-creation-cadence-drift");
@@ -174,8 +175,9 @@ public static class Qa04TransactionCreationDependencyContractV1
             _ = StandardDomainPartitionRegistry.Get(partitionId.Value);
 
         ValidateMissingAuthorityCoverage();
-        if (Qa04ParticipationControlModeDependencyContractV1.Blockers.Count != 3)
-            throw new InvalidDataException("qa04.workload.transaction-participation-progress-drift");
+        if (Qa04ParticipationControlModeDependencyContractV1.Blockers.Count != 3 ||
+            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 4)
+            throw new InvalidDataException("qa04.workload.transaction-participant-progress-drift");
 
         if (BlockersValue.Count != 1 ||
             BlockersValue[0].Kind != Qa04TransactionCreationDependencyKindV1.ParticipantAuthorityBinding ||
