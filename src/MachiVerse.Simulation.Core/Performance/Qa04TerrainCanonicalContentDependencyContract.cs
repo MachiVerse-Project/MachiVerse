@@ -19,12 +19,10 @@ public sealed record Qa04TerrainCanonicalContentDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Terrain canonical-content authority audit beneath the single Terrain CanonicalMaterial world blocker.
-/// The normative generation inputs are now implemented: hot-cell origin mapping, deterministic SDF and
-/// surface material generation, surface-class vocabulary, TileScope/root identity, root connectivity,
-/// and genesis revision/lineage. The parent world blocker intentionally remains until the complete
-/// production-path materialization / target-kind closure / exact-103 recovery semantic-rehash evidence
-/// required by phase4-alpha11-terrain-canonical-generation.md has been produced.
+/// Terrain canonical-content authority audit. Canonical generation, root/scope closure, and the
+/// full 508,192-record production Snapshot -> staged recovery -> semantic rehash proof are complete.
+/// The former compatibility world blocker identifiers remain as regression constants only; they
+/// must no longer appear in the active reference-world dependency contract.
 /// </summary>
 public static class Qa04TerrainCanonicalContentDependencyContractV1
 {
@@ -50,7 +48,7 @@ public static class Qa04TerrainCanonicalContentDependencyContractV1
 
         ValidateFixedTerrainBoundary();
         ValidateImplementedAuthority();
-        ValidateParentWorldBlocker();
+        ValidateParentWorldBlockerReleased();
     }
 
     private static void ValidateFixedTerrainBoundary()
@@ -93,16 +91,11 @@ public static class Qa04TerrainCanonicalContentDependencyContractV1
             throw new InvalidDataException("qa04.terrain.root-authority-drift");
     }
 
-    private static void ValidateParentWorldBlocker()
+    private static void ValidateParentWorldBlockerReleased()
     {
-        var parent = Qa04ReferenceWorldDependencyContractV1.Blockers.SingleOrDefault(
-            static blocker => blocker.DependencyId.Value == ParentWorldDependencyId)
-            ?? throw new InvalidDataException("qa04.terrain.parent-world-blocker-missing");
-
-        if (parent.Kind != Qa04ReferenceDependencyBlockerKindV1.CanonicalMaterial ||
-            parent.PartitionId?.Value != "spatial.terrain_geometry" ||
-            !string.Equals(parent.FieldName, "root_brick_ref", StringComparison.Ordinal) ||
-            parent.FailureCode.Value != ParentWorldFailureCode)
-            throw new InvalidDataException("qa04.terrain.parent-world-blocker-drift");
+        if (Qa04ReferenceWorldDependencyContractV1.Blockers.Any(static blocker =>
+                blocker.DependencyId.Value == ParentWorldDependencyId ||
+                blocker.FailureCode.Value == ParentWorldFailureCode))
+            throw new InvalidDataException("qa04.terrain.parent-world-blocker-retained");
     }
 }
