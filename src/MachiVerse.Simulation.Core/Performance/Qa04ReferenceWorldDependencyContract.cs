@@ -43,6 +43,7 @@ public static class Qa04ReferenceWorldDependencyContractV1
     {
         Qa04SocietyOrganizationDependencyContractV1.ValidateCanonicalContract();
         Qa04SocietyContractClaimDependencyContractV1.ValidateCanonicalContract();
+        Qa04GovernancePermissionLicenseDependencyContractV1.ValidateCanonicalContract();
 
         if (BlockersValue.Count != 2)
             throw new InvalidDataException("qa04.material.dependency-blocker-count-drift");
@@ -51,7 +52,8 @@ public static class Qa04ReferenceWorldDependencyContractV1
         if (BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.material.dependency-blocker-code-duplicate");
         if (Qa04SocietyOrganizationDependencyContractV1.Blockers.Count != 1 ||
-            Qa04SocietyContractClaimDependencyContractV1.Blockers.Count != 2)
+            Qa04SocietyContractClaimDependencyContractV1.Blockers.Count != 2 ||
+            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 4)
             throw new InvalidDataException("qa04.material.society-authority-progress-drift");
 
         string? previous = null;
