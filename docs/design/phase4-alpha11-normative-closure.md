@@ -41,6 +41,8 @@ PR #265 = Draft
 
 Terrainは full **500,000 hot + 4,096 root + 4,096 D3 anchor = 508,192 records** の production exact-103 Snapshot / Zstd staging / staged recovery / semantic rehashが成功済みで、旧 `qa04.material.terrain-brick-authority-undefined` はactive blockerではない。
 
+Society/Governance accepted checkpointは **1,041,100 / 2,000,000**。Market 1,000,100、Household 40,000、Governance Polity 1,000 が runtime target / multi-Gateway verification を通過済みで、remainingは **958,900**。
+
 ## 3. 不変境界
 
 ```text
@@ -101,7 +103,19 @@ Governance = 400,000
 total = 2,000,000
 ```
 
-Market **1,000,100** と Household **40,000** はactual materialization済み。追加sliceは、required Token vocabularyやRef ownershipが既存正本で確定しているものだけを実装する。未定義Tokenをbenchmark用の推測値で埋めてはならない。
+accepted material:
+
+```text
+Market     = 1,000,100
+Household  =    40,000
+Polity     =     1,000
+total      = 1,041,100
+remaining  =   958,900
+```
+
+追加sliceは、required Token vocabularyやRef ownershipが既存正本で確定しているものだけを実装する。未定義Tokenをbenchmark用の推測値で埋めてはならない。
+
+current schema/dependency auditでは、Polity以外でrequired arbitrary Tokenを持たないGovernance sliceも、未成立の `Jurisdiction` / `Institution` / `PublicAuthority` / `SecurityIncident`、または未確定 `governance.effective_control.controller_ref` target ownershipへ依存する。したがって現行正本だけで単独追加できる次sliceはない。
 
 active parent blocker:
 
@@ -128,6 +142,8 @@ society-governance.active-record.partition-mapping
 - `phase4-alpha11-reference-world-decomposition.md`
 
 specialized topologyは **120,100 / 500,000** materialized。remaining generic recordsとactual Society Organization authorityへのRef closureが残る。
+
+`water_service` / `power_service` / `communication_service` はpayload shapeだけを見ると required arbitrary Token を持たないが、Alpha 1.1 implementation orderでは actual Organization authority成立後に Infrastructure remaining material + actual Ref closureを接続する。profile-specific `network_ref` / `service_scope_ref` bindingを独自に先行定義して blockerを部分回避しない。
 
 active parent blocker:
 
@@ -201,10 +217,10 @@ Profile-specific scalar materialは各専用specを優先する。専用ruleが�
 
 ## 8. Current Stage 2 order
 
-1. Society/Governance remaining materialを既存正本だけでmaterialize可能なsliceから接続
-2. required Token vocabulary未定義境界を正本で解消
-3. actual Organization authorityを成立させる
-4. Infrastructure remaining material + actual Ref closure
+1. Society/Governance remaining **958,900** のrequired Token vocabulary / unresolved Ref ownershipを正本で解消
+2. actual Organization authorityを成立させる
+3. Society/Governance remaining materialをproduction authorityへ接続
+4. Infrastructure remaining **379,900** + actual Ref closure
 5. world blockers `2 -> 0`
 6. workload 3 bindings -> full authoritative Step loop
 7. full canonical benchmark / persistence / publication evidence
