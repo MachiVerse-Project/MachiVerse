@@ -12,17 +12,18 @@ internal static class Qa04TerrainCanonicalContentDependencyContractSmoke
             "Implemented Terrain canonical generation inputs must expose no unresolved subdependencies.");
         Require(Qa04TerrainCanonicalContentDependencyContractV1.FailureCodes.Count == 0,
             "Implemented Terrain canonical generation inputs must expose no unresolved failure codes.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 3,
-            "Terrain subdependency completion must not prematurely remove the parent world blocker.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 2,
+            "Full Terrain production proof must leave only Society/Governance and Infrastructure world blockers.");
         Require(Qa04TerrainBrickDescriptorMaterializerV1.InitialRecordRevision == 1,
             "Common Domain initial revision must remain fixed for Terrain content binding.");
 
         var terrainParents = Qa04ReferenceWorldDependencyContractV1.Blockers
-            .Where(blocker => blocker.DependencyId.Value == Qa04TerrainCanonicalContentDependencyContractV1.ParentWorldDependencyId)
+            .Where(blocker =>
+                blocker.DependencyId.Value == Qa04TerrainCanonicalContentDependencyContractV1.ParentWorldDependencyId ||
+                blocker.FailureCode.Value == Qa04TerrainCanonicalContentDependencyContractV1.ParentWorldFailureCode)
             .ToArray();
-        Require(terrainParents.Length == 1 &&
-                terrainParents[0].FailureCode.Value == Qa04TerrainCanonicalContentDependencyContractV1.ParentWorldFailureCode,
-            "QA-04 Terrain must remain represented by exactly one compatibility world blocker until full release evidence exists.");
+        Require(terrainParents.Length == 0,
+            "QA-04 Terrain compatibility world blocker must be absent after full production Snapshot/recovery proof.");
 
         Require(Qa04TerrainCanonicalContentSourceV1.SurfaceClasses
                 .Select(static value => value.Value)
