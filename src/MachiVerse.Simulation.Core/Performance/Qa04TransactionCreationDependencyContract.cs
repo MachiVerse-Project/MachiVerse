@@ -38,15 +38,15 @@ public static class Qa04TransactionCreationDependencyContractV1
             Blocker(
                 "workload.transaction.creation-cardinality",
                 Qa04TransactionCreationDependencyKindV1.CreationCardinality,
-                "qa04.workload.transaction-creation-cardinality-undefined"),
+                "qa04.workload.tx-creation-cardinality-undefined"),
             Blocker(
                 "workload.transaction.other-registered-kind-allocation",
                 Qa04TransactionCreationDependencyKindV1.OtherRegisteredKindAllocation,
-                "qa04.workload.transaction-other-registered-kind-allocation-undefined"),
+                "qa04.workload.tx-other-kind-allocation-undefined"),
             Blocker(
                 "workload.transaction.participant-authority-binding",
                 Qa04TransactionCreationDependencyKindV1.ParticipantAuthorityBinding,
-                "qa04.workload.transaction-participant-authority-binding-undefined"),
+                "qa04.workload.tx-participant-authority-undefined"),
         }
         .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
         .ToArray());
