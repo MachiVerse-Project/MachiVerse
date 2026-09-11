@@ -1,3 +1,4 @@
+using System.Collections;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.WorldState;
@@ -41,6 +42,7 @@ public sealed class Qa04TerrainCanonicalRecordSourceV1
     private readonly Qa04TerrainCanonicalContentSourceV1 _contentSource;
     private readonly Qa04TerrainCanonicalRecordLocatorV1[] _locators;
     private readonly IReadOnlyList<Qa04TerrainCanonicalRecordLocatorV1> _readOnlyLocators;
+    private readonly IReadOnlyList<OpaqueId128> _recordIdsCanonical;
 
     private Qa04TerrainCanonicalRecordSourceV1(
         Qa04TerrainCanonicalContentSourceV1 contentSource,
@@ -49,11 +51,13 @@ public sealed class Qa04TerrainCanonicalRecordSourceV1
         _contentSource = contentSource ?? throw new ArgumentNullException(nameof(contentSource));
         _locators = locators ?? throw new ArgumentNullException(nameof(locators));
         _readOnlyLocators = Array.AsReadOnly(_locators);
+        _recordIdsCanonical = new LocatorRecordIdView(_locators);
         ValidateLocatorContract();
     }
 
     public ulong ItemCount => checked((ulong)_locators.Length);
     public IReadOnlyList<Qa04TerrainCanonicalRecordLocatorV1> LocatorsCanonical => _readOnlyLocators;
+    public IReadOnlyList<OpaqueId128> RecordIdsCanonical => _recordIdsCanonical;
 
     public static Qa04TerrainCanonicalRecordSourceV1 CreateCanonical()
     {
@@ -211,5 +215,24 @@ public sealed class Qa04TerrainCanonicalRecordSourceV1
 
         if (hot != CanonicalHotBrickCount || roots != CanonicalRootCount || anchors != CanonicalAnchorCount)
             throw new InvalidDataException("qa04.terrain.canonical-locator-kind-count");
+    }
+
+    private sealed class LocatorRecordIdView : IReadOnlyList<OpaqueId128>
+    {
+        private readonly Qa04TerrainCanonicalRecordLocatorV1[] _source;
+
+        public LocatorRecordIdView(Qa04TerrainCanonicalRecordLocatorV1[] source)
+            => _source = source ?? throw new ArgumentNullException(nameof(source));
+
+        public int Count => _source.Length;
+        public OpaqueId128 this[int index] => _source[index].RecordId;
+
+        public IEnumerator<OpaqueId128> GetEnumerator()
+        {
+            for (var index = 0; index < _source.Length; index++)
+                yield return _source[index].RecordId;
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }
