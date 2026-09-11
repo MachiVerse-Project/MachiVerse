@@ -34,7 +34,7 @@ public static class Qa04GovernanceInstitutionResolvedMaterializerV1
         var expectedFailureCodes = new HashSet<string>(StringComparer.Ordinal)
         {
             "qa04.material.institution-kind-vocabulary-undefined",
-            "qa04.material.institution-decision-method-vocabulary-undefined",
+            "qa04.material.decision-method-vocabulary-undefined",
             "qa04.material.institution-office-mapping-undefined",
         };
         if (blockers.Count != 3 ||
