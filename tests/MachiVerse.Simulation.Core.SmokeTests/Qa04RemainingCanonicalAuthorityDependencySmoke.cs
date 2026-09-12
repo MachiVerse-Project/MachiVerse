@@ -7,28 +7,19 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
     internal static void Run()
     {
         Qa04SocietyOrganizationDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04SocietyOrganizationDependencyContractV1.Blockers.Count == 1,
-            "Canonical society.organization dependency count drifted.");
-
         Qa04SocietyContractClaimDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04SocietyContractClaimDependencyContractV1.Blockers.Count == 2,
-            "Canonical society.contract_claim dependency count drifted.");
-
         Qa04SocietyInformationClaimDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04SocietyInformationClaimDependencyContractV1.Blockers.Count == 3,
-            "Canonical society.information_claim dependency count drifted.");
-
         Qa04GovernanceInstitutionDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04GovernanceInstitutionDependencyContractV1.Blockers.Count == 3,
-            "Canonical governance.institution dependency count drifted.");
-
         Qa04GovernancePublicAuthorityDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count == 3,
-            "Canonical governance.public_authority dependency count drifted.");
-
         Qa04GovernancePermissionLicenseDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count == 3,
-            "Canonical governance.permission_license dependency count drifted.");
+
+        Require(Qa04SocietyOrganizationDependencyContractV1.Blockers.Count == 0 &&
+                Qa04SocietyContractClaimDependencyContractV1.Blockers.Count == 0 &&
+                Qa04SocietyInformationClaimDependencyContractV1.Blockers.Count == 0 &&
+                Qa04GovernanceInstitutionDependencyContractV1.Blockers.Count == 0 &&
+                Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count == 0 &&
+                Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count == 0,
+            "Decided Society/Governance canonical authority dependencies must remain closed.");
 
         Qa04ParticipationControlModeDependencyContractV1.ValidateCanonicalContract();
         Require(Qa04ParticipationControlModeDependencyContractV1.Blockers.Count == 3,
@@ -44,12 +35,6 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
 
         var failureCodes = new[]
         {
-            Qa04SocietyOrganizationDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
-            Qa04SocietyContractClaimDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
-            Qa04SocietyInformationClaimDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
-            Qa04GovernanceInstitutionDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
-            Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
-            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
             Qa04ParticipationControlModeDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
             Qa04InfrastructureServiceQueueDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
             Qa04DetailRegionAuthorityDependencyContractV1.Blockers.Select(static blocker => blocker.FailureCode.Value),
@@ -57,8 +42,8 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
         .SelectMany(static codes => codes)
         .ToArray();
 
-        Require(failureCodes.Length == 23,
-            "Canonical remaining authority dependency total drifted.");
+        Require(failureCodes.Length == 8,
+            "Canonical remaining authority dependency total must be eight.");
         Require(failureCodes.Distinct(StringComparer.Ordinal).Count() == failureCodes.Length,
             "Canonical remaining authority failure codes must remain unique.");
     }
