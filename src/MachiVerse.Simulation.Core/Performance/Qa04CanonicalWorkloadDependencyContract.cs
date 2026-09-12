@@ -22,10 +22,10 @@ public sealed record Qa04CanonicalWorkloadDependencyV1(
 /// This contract is intentionally separate from Qa04ReferenceWorldDependencyContractV1: the world
 /// contract owns initial authoritative material, while this contract owns workload-to-runtime
 /// binding. Operation binding currently closes five of six families; only the complete canonical
-/// Infrastructure service pool remains authority-pending. Transaction creation already has the exact
-/// 10,000 ACTIVE genesis set, 200-entry other-kind allocation, and 1,000-per-300-Step production
-/// turnover path; its only remaining sub-blocker is actual Participation participant record authority.
-/// Detail-transition binding is now closed by the approved 4,096-record DetailRegion authority, all
+/// Infrastructure service pool remains authority-pending. Transaction creation has the exact 10,000
+/// ACTIVE genesis set, 200-entry other-kind allocation, 1,000-per-300-Step production turnover path,
+/// and actual authority for all eight participant partitions, including participation.control_mode.
+/// Detail-transition binding is closed by the approved 4,096-record DetailRegion authority, all
 /// 1,424 canonical request bindings, and production Snapshot/recovery evidence.
 /// </summary>
 public static class Qa04CanonicalWorkloadDependencyContractV1
@@ -36,13 +36,7 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
             "workload.operation.authority-binding",
             Qa04CanonicalWorkloadDependencyKindV1.OperationAuthorityBinding,
             "qa04.workload.operation-authority-binding-undefined"),
-        Blocker(
-            "workload.transaction.creation-binding",
-            Qa04CanonicalWorkloadDependencyKindV1.TransactionCreationBinding,
-            "qa04.workload.transaction-creation-binding-undefined"),
-    }
-    .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-    .ToArray());
+    });
 
     public static IReadOnlyList<Qa04CanonicalWorkloadDependencyV1> Blockers => BlockersValue;
 
@@ -54,7 +48,7 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 2)
+        if (BlockersValue.Count != 1)
             throw new InvalidDataException("qa04.workload.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.workload.dependency-blocker-id-duplicate");
@@ -132,9 +126,9 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
             Qa04TransactionCreationDependencyContractV1.CanonicalInitialActiveCount != 10_000 ||
             Qa04TransactionCreationDependencyContractV1.CanonicalReplacementCountPerCadence != 1_000 ||
             Qa04TransactionCreationDependencyContractV1.CanonicalOtherInitialCount != 200 ||
-            Qa04TransactionCreationDependencyContractV1.Blockers.Count != 1 ||
-            Qa04TransactionCreationDependencyContractV1.Blockers[0].Kind !=
-                Qa04TransactionCreationDependencyKindV1.ParticipantAuthorityBinding)
+            Qa04TransactionCreationDependencyContractV1.Blockers.Count != 0 ||
+            Qa04TransactionCreationDependencyContractV1.MissingParticipantAuthorityPartitions.Count != 0 ||
+            Qa04TransactionCreationDependencyContractV1.AvailableParticipantAuthorityPartitions.Count != 8)
             throw new InvalidDataException("qa04.workload.transaction-binding-progress-drift");
     }
 

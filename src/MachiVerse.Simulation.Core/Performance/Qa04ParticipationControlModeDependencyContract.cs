@@ -17,42 +17,24 @@ public sealed record Qa04ParticipationControlModeDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Fail-closed audit for the canonical transaction participant pool owned by
-/// participation.control_mode.
-///
-/// Production Participation semantics already distinguish the four world-effective control modes,
-/// and the standard payload schema is implemented. perf.reference.v1 does not currently define a
-/// Participation initial-world population/count or identity derivation, does not define the stable
-/// Token serialization vocabulary for the enum semantics, and does not define the genesis binding /
-/// availability / input-authority-generation distribution needed to construct actual records.
-/// Transaction genesis must therefore not synthesize an autonomous pool from Resident identities.
+/// Closed dependency contract for the canonical transaction participant pool owned by
+/// participation.control_mode. The former population, Token-vocabulary, and genesis-state gaps are
+/// fixed by the approved Alpha 1.1 benchmark authority and implemented through
+/// Qa04ParticipationControlModeCanonicalAuthorityV1 with full production Snapshot/recovery proof.
 /// </summary>
 public static class Qa04ParticipationControlModeDependencyContractV1
 {
     public const string PartitionId = "participation.control_mode";
 
     private static readonly IReadOnlyList<Qa04ParticipationControlModeDependencyV1> BlockersValue =
-        Array.AsReadOnly(new[]
-        {
-            Blocker(
-                "workload.tx.participation-control-mode.population",
-                Qa04ParticipationControlModeDependencyKindV1.CanonicalPopulationAuthority,
-                "qa04.workload.participation-control-mode-population-undefined"),
-            Blocker(
-                "workload.tx.participation-control-mode.mode-token",
-                Qa04ParticipationControlModeDependencyKindV1.ModeTokenVocabulary,
-                "qa04.workload.participation-mode-token-undefined"),
-            Blocker(
-                "workload.tx.participation-control-mode.genesis-state",
-                Qa04ParticipationControlModeDependencyKindV1.GenesisControlState,
-                "qa04.workload.participation-control-mode-genesis-state-undefined"),
-        });
+        Array.AsReadOnly(Array.Empty<Qa04ParticipationControlModeDependencyV1>());
 
     public static IReadOnlyList<Qa04ParticipationControlModeDependencyV1> Blockers => BlockersValue;
 
     public static void ValidateCanonicalContract()
     {
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
+        Qa04ParticipationControlModeCanonicalAuthorityV1.ValidateCanonicalContract();
 
         var partition = StandardDomainPartitionRegistry.Get(PartitionId);
         if (partition.OwnerDomain.Value != "participation")
@@ -65,33 +47,29 @@ public static class Qa04ParticipationControlModeDependencyContractV1
         RequireField(schema, "effective_from", DomainPayloadFieldKindV1.Step, optional: false);
         RequireField(schema, "input_authority_generation", DomainPayloadFieldKindV1.UInt32, optional: false);
 
-        var modes = Enum.GetValues<ResidentControlModeV1>();
-        if (modes.Length != 4 ||
-            !modes.Contains(ResidentControlModeV1.Autonomous) ||
-            !modes.Contains(ResidentControlModeV1.DiverControlAvailable) ||
-            !modes.Contains(ResidentControlModeV1.DiverAbsentPolicy) ||
-            !modes.Contains(ResidentControlModeV1.BoundResidentDeceased))
+        var expectedModes = new[]
+        {
+            "autonomous",
+            "diver-control-available",
+            "diver-absent-policy",
+            "bound-resident-deceased",
+        };
+        var actualModes = Enum.GetValues<ResidentControlModeV1>()
+            .Select(Qa04ParticipationControlModeCanonicalAuthorityV1.ModeToken)
+            .Select(static token => token.Value)
+            .ToArray();
+        if (!actualModes.SequenceEqual(expectedModes, StringComparer.Ordinal))
             throw new InvalidDataException("qa04.workload.participation-control-mode-semantic-enum-drift");
 
-        // The canonical benchmark initial-world classes intentionally expose no Participation
-        // population today. If one is added, this blocker contract must be revised rather than
-        // silently retaining the old failure state.
-        if (Qa04ReferenceLoadV1.RecordClasses.Any(static item =>
-                item.ClassToken.Value.StartsWith("participation.", StringComparison.Ordinal)))
-            throw new InvalidDataException("qa04.workload.participation-control-mode-population-contract-stale");
+        var referenceClass = Qa04ReferenceLoadV1.RecordClasses.SingleOrDefault(
+            static item => item.ClassToken.Value == PartitionId)
+            ?? throw new InvalidDataException("qa04.workload.participation-control-mode-population-missing");
+        if (referenceClass.Count != Qa04ParticipationControlModeCanonicalAuthorityV1.CanonicalCount)
+            throw new InvalidDataException("qa04.workload.participation-control-mode-population-drift");
 
-        if (BlockersValue.Count != 3 ||
-            BlockersValue.Select(static blocker => blocker.Kind).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
+        if (BlockersValue.Count != 0)
             throw new InvalidDataException("qa04.workload.participation-control-mode-dependency-drift");
     }
-
-    private static Qa04ParticipationControlModeDependencyV1 Blocker(
-        string dependencyId,
-        Qa04ParticipationControlModeDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 
     private static void RequireField(
         DomainPayloadSchemaDescriptorV1 schema,

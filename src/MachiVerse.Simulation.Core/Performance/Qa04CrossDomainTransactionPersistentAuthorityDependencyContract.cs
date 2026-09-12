@@ -24,7 +24,8 @@ public sealed record Qa04CrossDomainTransactionPersistentAuthorityDependencyV1(
 /// Cross-domain transaction persistent authority is fully implemented: logical state/lifecycle,
 /// benchmark genesis/turnover, SQLite durable ownership, transition-history atomic commit binding,
 /// canonical Snapshot /2.0 authority, physical recovery, and TileScope-backed detail-guard binding.
-/// Workload transaction creation remains a separate canonical workload dependency.
+/// Canonical workload transaction creation is also released now that all eight participant owner
+/// partitions have actual authority, including participation.control_mode.
 /// </summary>
 public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContractV1
 {
@@ -57,7 +58,7 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
         ValidateImplementedSnapshotAndRecoveryBoundary();
         ValidateImplementedDetailGuardBoundary();
         ValidateParentWorldBlockerReleased();
-        ValidateSeparateWorkloadBlocker();
+        ValidateWorkloadCreationReleased();
     }
 
     private static void ValidateEstablishedRuntimeBoundary()
@@ -129,15 +130,14 @@ public static class Qa04CrossDomainTransactionPersistentAuthorityDependencyContr
             throw new InvalidDataException("qa04.cross-domain-transaction.parent-world-blocker-retained");
     }
 
-    private static void ValidateSeparateWorkloadBlocker()
+    private static void ValidateWorkloadCreationReleased()
     {
-        var workload = Qa04CanonicalWorkloadDependencyContractV1.Blockers.SingleOrDefault(
-            static blocker => blocker.DependencyId.Value == WorkloadCreationDependencyId)
-            ?? throw new InvalidDataException("qa04.cross-domain-transaction.workload-blocker-missing");
-        if (workload.Kind != Qa04CanonicalWorkloadDependencyKindV1.TransactionCreationBinding ||
-            workload.FailureCode.Value != WorkloadCreationFailureCode)
-            throw new InvalidDataException("qa04.cross-domain-transaction.workload-blocker-drift");
-        if (FailureCodes.Any(code => code.Value == WorkloadCreationFailureCode))
-            throw new InvalidDataException("qa04.cross-domain-transaction.persistence-workload-code-collision");
+        if (Qa04CanonicalWorkloadDependencyContractV1.Blockers.Any(static blocker =>
+                blocker.DependencyId.Value == WorkloadCreationDependencyId ||
+                blocker.FailureCode.Value == WorkloadCreationFailureCode))
+            throw new InvalidDataException("qa04.cross-domain-transaction.workload-creation-blocker-retained");
+        if (Qa04TransactionCreationDependencyContractV1.Blockers.Count != 0 ||
+            Qa04TransactionCreationDependencyContractV1.MissingParticipantAuthorityPartitions.Count != 0)
+            throw new InvalidDataException("qa04.cross-domain-transaction.workload-creation-authority-drift");
     }
 }

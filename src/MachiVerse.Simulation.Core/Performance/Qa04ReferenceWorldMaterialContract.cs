@@ -41,6 +41,11 @@ public static class Qa04ReferenceWorldMaterialContractV1
             "resident.identity_lifecycle"),
 
         Available(
+            "participation.control_mode",
+            Qa04ParticipationControlModeCanonicalAuthorityV1.CanonicalCount,
+            "participation.control_mode"),
+
+        Available(
             "physical.d0-presence",
             Qa04PhysicalD0MaterializerV1.CanonicalPhysicalCount,
             "physical.presence"),
@@ -101,6 +106,7 @@ public static class Qa04ReferenceWorldMaterialContractV1
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
+        Qa04ParticipationControlModeCanonicalAuthorityV1.ValidateCanonicalContract();
 
         if (BindingsValue.Count != Qa04ReferenceLoadV1.RecordClasses.Count)
             throw new InvalidDataException("qa04.material.binding-count-mismatch");
@@ -135,6 +141,12 @@ public static class Qa04ReferenceWorldMaterialContractV1
         if (!resident.ProductionMaterializerAvailable ||
             resident.PrimaryPartitionId?.Value != "resident.identity_lifecycle")
             throw new InvalidDataException("qa04.material.resident-binding-drift");
+
+        var participation = Get(new StableToken("participation.control_mode"));
+        if (!participation.ProductionMaterializerAvailable ||
+            participation.PrimaryPartitionId?.Value != "participation.control_mode" ||
+            participation.CanonicalCount != Qa04ParticipationControlModeCanonicalAuthorityV1.CanonicalCount)
+            throw new InvalidDataException("qa04.material.participation-control-mode-binding-drift");
 
         var physical = Get(new StableToken("physical.d0-presence"));
         if (!physical.ProductionMaterializerAvailable ||

@@ -11,15 +11,13 @@ internal static class Qa04CanonicalWorkloadDependencyContractSmoke
         Qa04CanonicalWorkloadDependencyContractV1.ValidateCanonicalContract();
         Qa04CanonicalTransactionKindBindingV1.ValidateCanonicalContract();
 
-        Require(Qa04CanonicalWorkloadDependencyContractV1.Blockers.Count == 2,
+        Require(Qa04CanonicalWorkloadDependencyContractV1.Blockers.Count == 1,
             "QA-04 canonical workload dependency count drifted.");
 
         var expected = new[]
         {
             ("workload.operation.authority-binding", Qa04CanonicalWorkloadDependencyKindV1.OperationAuthorityBinding,
                 "qa04.workload.operation-authority-binding-undefined"),
-            ("workload.transaction.creation-binding", Qa04CanonicalWorkloadDependencyKindV1.TransactionCreationBinding,
-                "qa04.workload.transaction-creation-binding-undefined"),
         };
 
         var actual = Qa04CanonicalWorkloadDependencyContractV1.Blockers
@@ -35,6 +33,11 @@ internal static class Qa04CanonicalWorkloadDependencyContractSmoke
                 .Select(static code => code.Value)
                 .All(code => !worldCodes.Contains(code)),
             "QA-04 workload blockers must remain distinct from reference-world blockers.");
+
+        Require(Qa04TransactionCreationDependencyContractV1.Blockers.Count == 0 &&
+                Qa04TransactionCreationDependencyContractV1.MissingParticipantAuthorityPartitions.Count == 0 &&
+                Qa04TransactionCreationDependencyContractV1.AvailableParticipantAuthorityPartitions.Count == 8,
+            "QA-04 transaction creation must remain fully authority-bound.");
 
         Require(Qa04CanonicalTransactionKindBindingV1.DirectKindMappings.Count == 11,
             "QA-04 transaction direct production-kind mapping count drifted.");
@@ -65,7 +68,7 @@ internal static class Qa04CanonicalWorkloadDependencyContractSmoke
                 binding.Candidate.Status == TransactionCandidateStatusV1.Invalid &&
                 binding.Candidate.FailureCode?.Value == "transaction.participant-missing" &&
                 !binding.Candidate.IsAuthoritative,
-            "QA-04 known transaction bucket must enter the ordinary production assembler and fail closed without participant authority.");
+            "QA-04 known transaction bucket must enter the ordinary production assembler and fail closed without participant authority supplied to that call.");
 
         var other = Qa04ReferenceScenariosV1.ActiveTransaction(9_999);
         Require(other.KindToken.Value == "other-registered-transactions",
@@ -73,7 +76,7 @@ internal static class Qa04CanonicalWorkloadDependencyContractSmoke
         RequireThrows<InvalidDataException>(
             () => Qa04CanonicalTransactionKindBindingV1.ResolveProductionKind(other.KindToken),
             "qa04.workload.tx-other-kind-allocation-undefined",
-            "QA-04 other transaction bucket must remain fail-closed until production allocation is defined.");
+            "QA-04 generic other-bucket resolver must remain fail-closed; canonical allocation is owned by transaction materialization.");
     }
 
     private static void RequireThrows<T>(Action action, string expectedMessage, string failureMessage)

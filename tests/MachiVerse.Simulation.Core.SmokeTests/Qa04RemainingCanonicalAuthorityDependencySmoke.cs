@@ -22,8 +22,8 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
             "Decided Society/Governance canonical authority dependencies must remain closed.");
 
         Qa04ParticipationControlModeDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04ParticipationControlModeDependencyContractV1.Blockers.Count == 3,
-            "Canonical participation.control_mode dependency count drifted.");
+        Require(Qa04ParticipationControlModeDependencyContractV1.Blockers.Count == 0,
+            "Canonical participation.control_mode authority dependencies must remain closed.");
 
         Qa04InfrastructureServiceQueueDependencyContractV1.ValidateCanonicalContract();
         Require(Qa04InfrastructureServiceQueueDependencyContractV1.Blockers.Count == 0,
@@ -42,10 +42,8 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
         .SelectMany(static codes => codes)
         .ToArray();
 
-        Require(failureCodes.Length == 3,
-            "Canonical remaining authority dependency total must be three.");
-        Require(failureCodes.Distinct(StringComparer.Ordinal).Count() == failureCodes.Length,
-            "Canonical remaining authority failure codes must remain unique.");
+        Require(failureCodes.Length == 0,
+            "Canonical direct authority dependencies must all be closed.");
     }
 
     private static void Require(bool condition, string message)

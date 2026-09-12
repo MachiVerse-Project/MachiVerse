@@ -9,14 +9,15 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
     {
         Qa04ReferenceWorldMaterialContractV1.ValidateCanonicalContract();
 
-        Require(Qa04ReferenceWorldMaterialContractV1.Bindings.Count == 8,
-            "QA-04 material contract must cover all eight canonical reference classes.");
+        Require(Qa04ReferenceWorldMaterialContractV1.Bindings.Count == 9,
+            "QA-04 material contract must cover all nine canonical reference classes.");
         Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 2,
             "QA-04 dependency contract must expose only Society/Governance and Infrastructure blockers.");
         Require(!Qa04ReferenceWorldMaterialContractV1.AllProductionMaterializersAvailable,
             "QA-04 reference world must remain fail-closed while Society/Governance and Infrastructure are unresolved.");
 
         RequireAvailable("resident.persistent-identity", "resident.identity_lifecycle");
+        RequireAvailable("participation.control_mode", "participation.control_mode");
         RequireAvailable("physical.d0-presence", "physical.presence");
         RequireAvailable("environment.d0-cell-cohort", null);
         RequireAvailable("environment.d1-aggregate", null);
@@ -24,6 +25,10 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
         RequireState("infrastructure.active-record", Qa04ReferenceMaterialBindingStateV1.BlockedByRecordSchema);
         RequireAvailable("spatial.hot-terrain-brick", "spatial.terrain_geometry");
         RequireAvailable("transaction.active-cross-domain", null);
+
+        var participation = Qa04ReferenceWorldMaterialContractV1.Get(new StableToken("participation.control_mode"));
+        Require(participation.CanonicalCount == 1_000_000 && participation.ProductionMaterializerAvailable,
+            "QA-04 Participation control-mode material binding must expose the approved 1,000,000-record production authority.");
 
         var blocked = Qa04ReferenceWorldMaterialContractV1.Bindings
             .Where(static binding => !binding.ProductionMaterializerAvailable)
@@ -48,7 +53,7 @@ internal static class Qa04ReferenceWorldMaterialContractSmoke
             .Select(static code => code.Value)
             .ToArray();
         Require(dependencyCodes.SequenceEqual(expectedBlockers.OrderBy(static code => code, StringComparer.Ordinal), StringComparer.Ordinal),
-            "QA-04 material/dependency blocker sets must remain identical after Terrain release.");
+            "QA-04 material/dependency blocker sets must remain identical after Participation release.");
 
         var rejected = false;
         try
