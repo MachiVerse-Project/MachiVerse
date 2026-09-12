@@ -434,6 +434,12 @@ Snapshot bytes / time / memoryは、このproduction measurement前には確定�
 
 Approvalは#307でrecommended decision packageを明示採択し、本document statusを`Complete / normative benchmark authority`へ変更したcommitをdocumentationへmergeすることで成立させる。その後developへ同期し、初めて#265 implementationを開始する。
 
+Review時のapproval phrase例:
+
+```text
+#307 の recommended decision package で確定して進めて
+```
+
 ## 19. Non-goals / boundaries
 
 - transaction成立だけを目的にsparse synthetic poolを作らない
