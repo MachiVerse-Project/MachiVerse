@@ -6,10 +6,10 @@ internal static class Qa04CanonicalOperationBindingSmoke
     internal static void Run()
     {
         Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
-        Require(Qa04CanonicalOperationBindingV1.BoundFamilies.Count == 4,
-            "QA-04 canonical Operation binding must expose four authority-complete families.");
-        Require(Qa04CanonicalOperationBindingV1.PendingAuthorityFamilies.Count == 2,
-            "QA-04 canonical Operation binding must keep two authority-pending families fail-closed.");
+        Require(Qa04CanonicalOperationBindingV1.BoundFamilies.Count == 5,
+            "QA-04 canonical Operation binding must expose five authority-complete families.");
+        Require(Qa04CanonicalOperationBindingV1.PendingAuthorityFamilies.Count == 1,
+            "QA-04 canonical Operation binding must keep only Infrastructure authority-pending.");
 
         var descriptors = Qa04ReferenceLoadV1.OperationsForStep(1).ToArray();
         var supported = Qa04CanonicalOperationBindingV1.BoundFamilies
@@ -73,8 +73,14 @@ internal static class Qa04CanonicalOperationBindingSmoke
         Require(scheduler.ForEffectiveStep(2).Count == supported.Length,
             "QA-04 authority-complete Operation bindings must enter the ordinary scheduler without identity loss.");
 
+        var governanceDescriptor = descriptors.First(item => item.FamilyToken.Value == "governance-security");
+        var governance = Qa04CanonicalOperationBindingV1.Bind(governanceDescriptor, schedulingPolicyGeneration: 1);
+        Require(governance.Operation.OperationKind == "governance.incident.register" &&
+                governance.OwnerDomain.Value == "governance_security" &&
+                governance.Operation.OperationPayload.Length > 0,
+            "QA-04 governance-security family must bind to canonical governance incident registration.");
+
         RequirePending(descriptors, "infrastructure-service-delivery", "infrastructure-service-pool");
-        RequirePending(descriptors, "governance-security", "governance-information-claim-authority");
     }
 
     private static void RequirePending(
