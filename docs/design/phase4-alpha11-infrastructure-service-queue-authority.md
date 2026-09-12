@@ -1,14 +1,16 @@
 # Alpha 1.1 Infrastructure network service / ServiceQueue reference authority
 
-Status: **Proposed normative design / approval pending**
+Status: **Complete / normative benchmark authority**
 
 Tracking: #300, #240, #265
 
 ## 1. Purpose
 
-This document proposes the minimum benchmark-only authority package needed to turn the canonical `perf.reference.v1` queued infrastructure-service load into production records without fabricating references or bypassing schema validation.
+This document fixes the benchmark-only `perf.reference.v1` initial authority for the minimum Infrastructure package required to make the canonical queued service load production-authoritative.
 
-Current accepted Infrastructure material is the heterogeneous topology v2 package:
+This decision is intentionally limited to benchmark genesis semantics. It does not define a universal infrastructure ontology, realistic engineering capacities, general queue policy, or runtime allocation policy.
+
+Current accepted Infrastructure material before implementation is the heterogeneous topology v2 package:
 
 ```text
 network       100
@@ -19,9 +21,7 @@ accepted  120,100 / 500,000
 remaining 379,900
 ```
 
-The benchmark profile also fixes exactly 250,000 queued service requests. Those queue records cannot become authoritative until the services referenced by `service_ref` are actual records.
-
-The proposed package is therefore:
+The normative package fixed by this document is:
 
 ```text
 infrastructure.transport_service       10,000
@@ -33,30 +33,28 @@ infrastructure.service_queue          250,000
 total                                 290,000
 ```
 
-`infrastructure.facility_service` is intentionally excluded because its physical-facility authority is a separate unresolved dependency.
+`infrastructure.facility_service` is excluded because its physical-facility authority remains a separate dependency.
 
-This proposal defines only `perf.reference.v1` benchmark genesis semantics. It does not define a universal infrastructure ontology, realistic engineering capacities, or general queue policy.
+## 2. Existing authority reused
 
-## 2. Existing authority reused by this proposal
-
-The following are already authoritative and must be reused rather than duplicated:
+Implementation MUST reuse the already-authoritative records and identities:
 
 - 100 `infrastructure.network_topology /2.0` network records;
 - 20,000 topology node records;
 - 100,000 topology edge records;
 - canonical TileScope authority;
 - canonical Resident identity authority;
-- topology network kind selection:
+- existing topology network kind selector:
   - ordinal mod 4 = 0: transport;
   - ordinal mod 4 = 1: water;
   - ordinal mod 4 = 2: power;
   - ordinal mod 4 = 3: communication.
 
-The topology v2 target schema is explicitly registered by `StandardDomainRecordSchemaMigrationRegistryV1`, and standard payload reference validation accepts registered migration-target schemas. Service records therefore may reference the existing v2 network records through the ordinary production validation path.
+The topology v2 target schema is registered by `StandardDomainRecordSchemaMigrationRegistryV1`. Production payload validation therefore MUST resolve these references through the ordinary migration-aware record-schema path; permissive fixture resolvers are not acceptable.
 
 ## 3. Common network selector
 
-For service local ordinal `i` where `0 <= i < 10,000`:
+For service local ordinal `i`, where `0 <= i < 10,000`:
 
 ```text
 kind_local_network = i mod 25
@@ -67,30 +65,26 @@ power_network_ordinal         = 4 * kind_local_network + 2
 communication_network_ordinal = 4 * kind_local_network + 3
 ```
 
-The authoritative reference is:
+The network reference is the actual topology v2 network record returned by:
 
 ```text
-network_ref = infrastructure.network_topology[
-  Qa04InfrastructureNetworkMaterializerV1.NetworkId(network_ordinal)
-]
+Qa04InfrastructureNetworkMaterializerV1.NetworkId(network_ordinal)
 ```
 
-This selects only actual v2 records whose record kind is `network` and whose network kind matches the service partition.
+The resolved target MUST have record kind `network` and the service-compatible network kind.
 
 ## 4. Scope selector
 
-Water, power, and communication services use the same canonical TileScope as their target network.
-
-The existing network materializer uses:
+Water, power, and communication services use the same canonical TileScope as the selected network:
 
 ```text
 tile = floor(network_ordinal * 4096 / 100)
 service_scope_ref = TileScope[tile]
 ```
 
-No new spatial identity or geometry semantics are introduced.
+No new Spatial identity or geometry semantics are introduced.
 
-## 5. TransportService — 10,000
+## 5. TransportService authority — 10,000
 
 For local ordinal `i`:
 
@@ -100,7 +94,7 @@ network_local_service_ordinal = floor(i / 25)   // 0..399
 edge_ordinal = network_ordinal * 1000 + network_local_service_ordinal
 ```
 
-Proposed payload:
+Canonical payload:
 
 ```text
 network_ref       = actual transport network(network_ordinal)
@@ -113,11 +107,11 @@ availability_ppm  = 1000000
 status            = active
 ```
 
-The selected edge is owned by the same network under the already-proven topology closure. The one-edge route is a benchmark load fixture and is not a general route model.
+The route edge MUST be an actual edge owned by the same network. The one-edge route is benchmark-only fixture authority and is not a general transport-route model.
 
-## 6. WaterService — 10,000
+## 6. WaterService authority — 10,000
 
-Proposed payload:
+Canonical payload:
 
 ```text
 network_ref        = actual kind-matched water network
@@ -130,13 +124,11 @@ availability_ppm   = 1000000
 status             = active
 ```
 
-`demand_ml_per_step = 0` means no queued request has entered active allocation at genesis. Queue demand remains represented by the separate ServiceQueue state.
+`demand_ml_per_step = 0` means no queued request has entered active allocation at benchmark genesis. The fixed values are benchmark-only load values.
 
-The fixed values are benchmark-only load values; they do not claim realistic hydraulic behavior.
+## 7. PowerService authority — 10,000
 
-## 7. PowerService — 10,000
-
-Proposed payload:
+Canonical payload:
 
 ```text
 network_ref       = actual kind-matched power network
@@ -148,11 +140,11 @@ availability_ppm  = 1000000
 status            = active
 ```
 
-The fixed values are benchmark-only load values and do not define realistic generation or demand behavior.
+The fixed values are benchmark-only load values and do not define a realistic power model.
 
-## 8. CommunicationService — 10,000
+## 8. CommunicationService authority — 10,000
 
-Proposed payload:
+Canonical payload:
 
 ```text
 network_ref             = actual kind-matched communication network
@@ -164,11 +156,11 @@ availability_ppm        = 1000000
 status                  = active
 ```
 
-`queued_units` is derived from the canonical ServiceQueue mapping below. It is not an unrelated constant.
+`queued_units` MUST be derived from the canonical ServiceQueue mapping in this document.
 
 ## 9. Canonical network-service pool — 40,000
 
-Define one explicit benchmark-only ordered service pool, interleaved by service local ordinal:
+Define one explicit benchmark-only ordered pool:
 
 ```text
 for i = 0..9999:
@@ -178,17 +170,17 @@ for i = 0..9999:
   communication_service[i]
 ```
 
-The resulting pool has exactly 40,000 actual service references. This ordering is normative for `perf.reference.v1` only and must not depend on dictionary, filesystem, task, or runtime enumeration order.
+The resulting pool index is `0..39999`. This order is normative for `perf.reference.v1` and MUST NOT depend on dictionary, filesystem, task, or runtime enumeration order.
 
-## 10. ServiceQueue — 250,000
+## 10. ServiceQueue authority — 250,000
 
-The record identity remains the already-fixed specialized request identity:
+Record identity remains the existing specialized request identity:
 
 ```text
 record_id = Qa04ReferenceScenariosV1.InfrastructureServiceRequestId(q)
 ```
 
-For request local ordinal `q`, `0 <= q < 250,000`, propose:
+For request local ordinal `q`, where `0 <= q < 250,000`:
 
 ```text
 service_ref       = CanonicalNetworkServicePool[q mod 40000]
@@ -200,37 +192,28 @@ allocated_units   = 0
 status            = queued
 ```
 
-Consequences:
+Normative consequences:
 
 - every `service_ref` resolves to one actual network-service record;
-- every `requester_ref` resolves to one actual Resident record;
+- every `requester_ref` resolves to one actual Resident identity record;
 - every service receives deterministically six or seven queued requests;
-- communication `queued_units` is the exact sum of `requested_units` for queue records mapped to that communication service;
-- `allocated_units = 0` and `status = queued` represent requests waiting for allocation at benchmark genesis.
+- each service-pool entry with pool index `< 10000` receives seven requests, and each entry with index `>= 10000` receives six requests;
+- communication `queued_units` equals the exact sum of `requested_units` mapped to that communication service;
+- `allocated_units = 0` and `status = queued` represent waiting-for-allocation benchmark genesis state.
 
-`queued` is the benchmark initial state for these 250,000 records. It does not replace or restrict the general Phase 3 request lifecycle.
+`queued` is benchmark initial state only; it does not replace the general Phase 3 service-request lifecycle.
 
-## 11. Workload compatibility
+## 11. Workload compatibility boundary
 
-The standard Operation catalog already defines:
+The standard Operation catalog already defines `infrastructure.service.reserve` around requester, service reference, units, and eligible range. This world authority therefore supplies the actual requester/service surfaces needed for the pending `infrastructure-service-delivery` family.
 
-```text
-infrastructure.service.reserve
-  requester
-  service ref
-  units
-  eligible range
-```
+World authority and workload binding remain separate gates. Implementing this document MUST NOT automatically clear the workload parent blocker or mark the Operation family bound.
 
-The proposed world authority therefore supplies the missing actual requester/service target surfaces needed to design the pending `infrastructure-service-delivery` operation-family binding.
+Likewise, ServiceQueue may become an available transaction participant only after its actual authority and Snapshot/recovery proof succeed. The transaction parent blocker remains until the full transaction binding contract is satisfied.
 
-World authority and workload binding remain separate acceptance gates. Implementing this package does not automatically remove the workload parent blocker.
+## 12. Required implementation order
 
-Likewise, after ServiceQueue is actual and Snapshot/recovery-proven, it may become an available transaction participant partition. The transaction parent blocker remains until all required participant authority and binding logic are proven.
-
-## 12. Materialization dependency order
-
-After approval, implementation should follow:
+Implementation MUST follow this dependency order:
 
 ```text
 accepted topology v2 + TileScope + Resident
@@ -243,20 +226,20 @@ accepted topology v2 + TileScope + Resident
   -> production Snapshot/recovery semantic proof
 ```
 
-All required references must be validated against actual records and their actual allowed schemas. An exists-everywhere or smoke-only resolver is not acceptable for production proof.
+All references MUST resolve against actual records and allowed actual schemas. An exists-everywhere, synthetic-only, or permissive smoke resolver is forbidden for acceptance evidence.
 
-## 13. Acceptance impact after implementation/proof
+## 13. Acceptance impact
 
-Documentation approval alone changes no release state.
+Documentation integration alone changes no release state.
 
-Only after full canonical materialization plus production Snapshot encoding and semantic recovery rehash succeeds:
+Only after full canonical materialization, production Snapshot encoding, recovery decode, and semantic rehash succeed may release tracking change to:
 
 ```text
-Infrastructure accepted  = 120,100 -> 410,100 / 500,000
-Infrastructure remaining = 379,900 ->  89,900
+Infrastructure accepted  = 410,100 / 500,000
+Infrastructure remaining =  89,900
 ```
 
-The three ServiceQueue direct dependencies can then move to zero:
+At that point the three ServiceQueue direct dependencies may move to zero:
 
 ```text
 qa04.material.service-queue-service-authority-undefined
@@ -270,18 +253,18 @@ Potential direct canonical dependency count after proof:
 8 -> 5
 ```
 
-The remaining five are Participation 3 + DetailRegion 2. Infrastructure's parent reference-world blocker remains until the other 89,900 Infrastructure records are authoritative.
+The remaining five are Participation 3 + DetailRegion 2. The Infrastructure parent reference-world blocker remains until the other 89,900 Infrastructure records are authoritative.
 
 ## 14. Explicit non-decisions
 
-This proposal intentionally does not decide:
+This authority does not decide:
 
 - `infrastructure.facility_service`;
 - infrastructure dependency graph records;
 - information delivery/media/record/address records;
 - failure/recovery or lineage records;
 - general transport route or schedule semantics;
-- realistic hydraulic or electrical engineering values;
+- realistic hydraulic/electrical engineering values;
 - realistic communication capacity modeling;
 - general requester class taxonomy;
 - dynamic semantic-priority policy;
@@ -290,13 +273,14 @@ This proposal intentionally does not decide:
 - infrastructure-service Operation binding details beyond compatibility;
 - transaction participant binding details beyond authority availability.
 
-## 15. Approval boundary
+## 15. Normative boundary
 
-This document is **Proposed normative design / approval pending**.
+This document is approved normative benchmark authority for `perf.reference.v1`.
 
-Until explicitly approved and integrated through `documentation` and `develop`:
+After this document is integrated through `documentation` and synchronized into `develop`, PR #265 may implement exactly the semantics fixed above. Implementation MUST still remain fail-closed until actual materialization and production Snapshot/recovery proof succeed.
 
-- do not implement these semantic values in PR #265;
+Until that proof succeeds:
+
 - do not remove the three ServiceQueue blockers;
 - do not increase Infrastructure accepted material;
 - do not mark ServiceQueue transaction authority available;
