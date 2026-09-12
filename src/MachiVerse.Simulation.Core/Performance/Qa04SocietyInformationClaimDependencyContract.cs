@@ -16,15 +16,9 @@ public sealed record Qa04SocietyInformationClaimDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Exact fail-closed boundary for the canonical 25,000 society.information_claim records.
-///
-/// Alpha 1.1 fixes the descriptor range, non-specialized authoritative RecordId mapping, D2
-/// envelope, status=active, and deterministic content_digest source. The standard Ref selector
-/// table does not define which canonical actor pool owns claimant_ref/source_ref, the benchmark does
-/// not define claim_token vocabulary, and no profile-specific rule defines payload created_step.
-/// subject_refs/provenance_refs are required list fields but have no current semantic non-empty rule;
-/// they therefore do not justify synthetic targets. Governance workload binding must not invent the
-/// three missing authorities merely to satisfy InfoClaim(ordinal).
+/// Canonical 25,000 society.information_claim dependency boundary.
+/// Benchmark-only Resident claimant mapping, claim_token and payload created_step=0 are decided by
+/// the Alpha 1.1 Society/Governance amendment and production-proven by the canonical materializer.
 /// </summary>
 public static class Qa04SocietyInformationClaimDependencyContractV1
 {
@@ -36,23 +30,7 @@ public static class Qa04SocietyInformationClaimDependencyContractV1
     public static readonly StableToken CanonicalStatus = new("active");
 
     private static readonly IReadOnlyList<Qa04SocietyInformationClaimDependencyV1> BlockersValue =
-        Array.AsReadOnly(new[]
-        {
-            Blocker(
-                "society.info-claim.claimant-mapping",
-                Qa04SocietyInformationClaimDependencyKindV1.ClaimantAuthorityMapping,
-                "qa04.material.info-claim-claimant-undefined"),
-            Blocker(
-                "society.info-claim.claim-token-vocabulary",
-                Qa04SocietyInformationClaimDependencyKindV1.ClaimTokenVocabulary,
-                "qa04.material.info-claim-token-undefined"),
-            Blocker(
-                "society.info-claim.created-step-genesis",
-                Qa04SocietyInformationClaimDependencyKindV1.GenesisCreatedStep,
-                "qa04.material.info-claim-created-step-undefined"),
-        }
-        .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-        .ToArray());
+        Array.AsReadOnly(Array.Empty<Qa04SocietyInformationClaimDependencyV1>());
 
     public static IReadOnlyList<Qa04SocietyInformationClaimDependencyV1> Blockers => BlockersValue;
 
@@ -82,21 +60,10 @@ public static class Qa04SocietyInformationClaimDependencyContractV1
 
         var probe = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(CanonicalStartOrdinal);
         if (probe.PartitionId.Value != PartitionId || probe.Descriptor.RecordId.IsZero ||
-            ContentDigest(probe.Descriptor.RecordId).Length != 32 || CanonicalStatus.Value != "active")
+            ContentDigest(probe.Descriptor.RecordId).Length != 32 || CanonicalStatus.Value != "active" ||
+            BlockersValue.Count != 0)
             throw new InvalidDataException("qa04.society.info-claim-known-genesis-drift");
-
-        if (BlockersValue.Count != 3 ||
-            BlockersValue.Select(static blocker => blocker.Kind).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.society.info-claim-dependency-drift");
     }
-
-    private static Qa04SocietyInformationClaimDependencyV1 Blocker(
-        string dependencyId,
-        Qa04SocietyInformationClaimDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 
     private static void RequireField(
         DomainPayloadSchemaDescriptorV1 schema,
