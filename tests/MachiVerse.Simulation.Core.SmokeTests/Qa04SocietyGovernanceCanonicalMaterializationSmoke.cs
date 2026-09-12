@@ -22,6 +22,10 @@ internal static class Qa04SocietyGovernanceCanonicalMaterializationSmoke
                 materialization.PermissionLicenses.ItemCount == 70_000,
             "Canonical Society/Governance partition cardinality drifted.");
 
+        var recoveredRecordCount = Qa04SocietyGovernanceSnapshotRecoveryEvidenceV1.Verify(materialization);
+        Require(recoveredRecordCount == Qa04SocietyGovernanceSnapshotRecoveryEvidenceV1.CanonicalRecordCount,
+            "Canonical Society/Governance Snapshot/recovery proof must semantically recover all 195,000 records.");
+
         RequireUnique(materialization.Organizations.RecordsCanonical.Select(static record => record.RecordId), 10_000, "Organization");
         RequireUnique(materialization.Institutions.RecordsCanonical.Select(static record => record.RecordId), 5_000, "Institution");
         RequireUnique(materialization.ContractClaims.RecordsCanonical.Select(static record => record.RecordId), 60_000, "ContractClaim");
