@@ -428,7 +428,13 @@ Snapshot bytes / time / memoryは、このproduction measurement前には確定�
 7. Resident DetailLevel mirror
 8. full Snapshot/recovery/performance evidence inclusion
 
-## 18. Non-goals / boundaries
+## 18. Approval boundary
+
+このdocumentをmergeしただけではnormative approvalとみなさない。
+
+Approvalは#307でrecommended decision packageを明示採択し、本document statusを`Complete / normative benchmark authority`へ変更したcommitをdocumentationへmergeすることで成立させる。その後developへ同期し、初めて#265 implementationを開始する。
+
+## 19. Non-goals / boundaries
 
 - transaction成立だけを目的にsparse synthetic poolを作らない
 - Resident RecordIdをParticipation RecordIdとして直接再利用しない
