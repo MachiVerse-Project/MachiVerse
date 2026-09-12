@@ -10,14 +10,9 @@ public sealed record Qa04GovernanceInstitutionResolvedAuthorityV1(
     StableToken DecisionMethod);
 
 /// <summary>
-/// Mechanical materialization boundary for canonical perf.reference.v1 governance.institution
-/// records after the unresolved Institution authorities have been supplied explicitly.
-///
-/// The canonical Polity target is not caller-selectable: Alpha 1.1 fixes required relation refs to
-/// their canonical target pool using modulo mapping, and governance.polity already has actual
-/// authority. The institution_kind / decision_method vocabularies and office_refs semantics remain
-/// unresolved, so this type deliberately provides no parameterless canonical materializer and does
-/// not remove Qa04GovernanceInstitutionDependencyContractV1 blockers.
+/// Mechanical materialization boundary for canonical perf.reference.v1 governance.institution.
+/// Production canonical authority is supplied by Qa04SocietyGovernanceCanonicalAuthorityV1; this
+/// explicit-authority surface remains for mechanics and fail-closed Ref validation tests.
 /// </summary>
 public static class Qa04GovernanceInstitutionResolvedMaterializerV1
 {
@@ -30,16 +25,7 @@ public static class Qa04GovernanceInstitutionResolvedMaterializerV1
         Qa04GovernanceInstitutionDependencyContractV1.ValidateCanonicalContract();
         Qa04GovernancePolityMaterializerV1.ValidateCanonicalContract();
 
-        var blockers = Qa04GovernanceInstitutionDependencyContractV1.Blockers;
-        var expectedFailureCodes = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "qa04.material.institution-kind-vocabulary-undefined",
-            "qa04.material.decision-method-vocabulary-undefined",
-            "qa04.material.institution-office-mapping-undefined",
-        };
-        if (blockers.Count != 3 ||
-            !blockers.Select(static blocker => blocker.FailureCode.Value).ToHashSet(StringComparer.Ordinal)
-                .SetEquals(expectedFailureCodes))
+        if (Qa04GovernanceInstitutionDependencyContractV1.Blockers.Count != 0)
             throw new InvalidDataException("qa04.governance.institution-resolved-boundary-stale");
 
         if (CanonicalCount != 5_000 ||
@@ -59,11 +45,7 @@ public static class Qa04GovernanceInstitutionResolvedMaterializerV1
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(referenceResolver);
         ValidateCanonicalContract();
-        return CreateResolvedValidated(
-            localOrdinal,
-            RequireAuthority(authority),
-            referenceResolver,
-            out descriptorBinding);
+        return CreateResolvedValidated(localOrdinal, RequireAuthority(authority), referenceResolver, out descriptorBinding);
     }
 
     public static IEnumerable<DomainRecordEnvelopeV1<GovernanceInstitutionPayloadV1>> MaterializeResolved(
@@ -78,11 +60,7 @@ public static class Qa04GovernanceInstitutionResolvedMaterializerV1
         {
             var authority = authorityForLocalOrdinal(localOrdinal)
                 ?? throw new InvalidDataException("qa04.governance.institution-authority-required");
-            yield return CreateResolvedValidated(
-                localOrdinal,
-                RequireAuthority(authority),
-                referenceResolver,
-                out _);
+            yield return CreateResolvedValidated(localOrdinal, RequireAuthority(authority), referenceResolver, out _);
         }
     }
 
@@ -95,13 +73,11 @@ public static class Qa04GovernanceInstitutionResolvedMaterializerV1
 
     public static PartitionRecordRefV1 ResolveCanonicalPolityRef(ulong institutionLocalOrdinal)
     {
-        if (institutionLocalOrdinal >= CanonicalCount)
-            throw new ArgumentOutOfRangeException(nameof(institutionLocalOrdinal));
+        if (institutionLocalOrdinal >= CanonicalCount) throw new ArgumentOutOfRangeException(nameof(institutionLocalOrdinal));
 
         var politySlice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(GovernancePolityPayloadV1.PartitionId);
         var polityLocalOrdinal = institutionLocalOrdinal % Qa04GovernancePolityMaterializerV1.CanonicalCount;
-        var binding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(
-            checked(politySlice.StartOrdinal + polityLocalOrdinal));
+        var binding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(checked(politySlice.StartOrdinal + polityLocalOrdinal));
         if (binding.PartitionId.Value != GovernancePolityPayloadV1.PartitionId ||
             binding.PartitionLocalOrdinal != polityLocalOrdinal || binding.UsesSpecializedIdentity)
             throw new InvalidDataException("qa04.governance.institution-polity-binding-drift");
@@ -117,8 +93,7 @@ public static class Qa04GovernanceInstitutionResolvedMaterializerV1
         if (localOrdinal >= CanonicalCount) throw new ArgumentOutOfRangeException(nameof(localOrdinal));
 
         var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(GovernanceInstitutionPayloadV1.PartitionId);
-        descriptorBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(
-            checked(slice.StartOrdinal + localOrdinal));
+        descriptorBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(checked(slice.StartOrdinal + localOrdinal));
         if (descriptorBinding.PartitionId.Value != GovernanceInstitutionPayloadV1.PartitionId ||
             descriptorBinding.PartitionLocalOrdinal != localOrdinal || descriptorBinding.UsesSpecializedIdentity)
             throw new InvalidDataException("qa04.governance.institution-resolved-descriptor-binding-drift");
@@ -148,8 +123,7 @@ public static class Qa04GovernanceInstitutionResolvedMaterializerV1
             payload);
     }
 
-    private static Qa04GovernanceInstitutionResolvedAuthorityV1 RequireAuthority(
-        Qa04GovernanceInstitutionResolvedAuthorityV1 authority)
+    private static Qa04GovernanceInstitutionResolvedAuthorityV1 RequireAuthority(Qa04GovernanceInstitutionResolvedAuthorityV1 authority)
     {
         if (string.IsNullOrWhiteSpace(authority.InstitutionKind.Value))
             throw new InvalidDataException("qa04.governance.institution-kind-authority-required");
