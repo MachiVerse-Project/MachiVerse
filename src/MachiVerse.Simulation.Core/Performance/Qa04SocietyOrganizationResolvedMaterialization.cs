@@ -5,14 +5,9 @@ using MachiVerse.Simulation.Core.WorldState;
 namespace MachiVerse.Simulation.Core.Performance;
 
 /// <summary>
-/// Mechanical materialization boundary for canonical perf.reference.v1 society.organization records
-/// after an authoritative organization_class mapping has been supplied.
-///
-/// This type deliberately does not provide a parameterless/canonical materializer. Alpha 1.1 does
-/// not yet define the organization_class vocabulary or its ordinal mapping, so callers must provide
-/// that authority explicitly. Supplying a fixture mapping proves only the already-decided envelope,
-/// identity, lifecycle, and empty-permitted list semantics; it is not release evidence and does not
-/// release Qa04SocietyOrganizationDependencyContractV1's vocabulary blocker.
+/// Mechanical materialization boundary for canonical perf.reference.v1 society.organization records.
+/// The production canonical organization_class now comes from Qa04SocietyGovernanceCanonicalAuthorityV1;
+/// caller-supplied values remain useful for mechanics/negative tests but are not release authority.
 /// </summary>
 public static class Qa04SocietyOrganizationResolvedMaterializerV1
 {
@@ -28,10 +23,7 @@ public static class Qa04SocietyOrganizationResolvedMaterializerV1
     {
         Qa04SocietyOrganizationDependencyContractV1.ValidateCanonicalContract();
 
-        var blockers = Qa04SocietyOrganizationDependencyContractV1.Blockers;
-        if (blockers.Count != 1 ||
-            blockers[0].Kind != Qa04SocietyOrganizationDependencyKindV1.OrganizationClassVocabulary ||
-            blockers[0].FailureCode.Value != "qa04.material.organization-class-vocabulary-undefined")
+        if (Qa04SocietyOrganizationDependencyContractV1.Blockers.Count != 0)
             throw new InvalidDataException("qa04.society.organization-resolved-boundary-stale");
 
         if (CanonicalCount != 10_000 ||
