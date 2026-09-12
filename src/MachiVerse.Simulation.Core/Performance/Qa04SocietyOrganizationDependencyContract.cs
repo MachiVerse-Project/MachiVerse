@@ -14,13 +14,9 @@ public sealed record Qa04SocietyOrganizationDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Exact fail-closed boundary for the canonical 10,000 society.organization records.
-///
-/// Alpha 1.1 already fixes the descriptor range, authoritative non-specialized RecordId mapping,
-/// genesis revision, status/lifecycle = active, required Ref selector policy, optional Ref = NONE,
-/// and empty-permitted list behavior. The remaining semantic gap is the profile's canonical
-/// organization_class Token vocabulary. The benchmark genesis scalar source must not be used to
-/// invent arbitrary Token vocabulary.
+/// Canonical 10,000 society.organization dependency boundary.
+/// The benchmark-only organization_class authority is decided by the Alpha 1.1 Society/Governance
+/// amendment and production-proven through Qa04SocietyGovernanceCanonicalMaterializerV1.
 /// </summary>
 public static class Qa04SocietyOrganizationDependencyContractV1
 {
@@ -30,13 +26,7 @@ public static class Qa04SocietyOrganizationDependencyContractV1
     public static readonly StableToken CanonicalLifecycle = new("active");
 
     private static readonly IReadOnlyList<Qa04SocietyOrganizationDependencyV1> BlockersValue =
-        Array.AsReadOnly(new[]
-        {
-            new Qa04SocietyOrganizationDependencyV1(
-                new StableToken("society.organization.organization-class-vocabulary"),
-                Qa04SocietyOrganizationDependencyKindV1.OrganizationClassVocabulary,
-                new StableToken("qa04.material.organization-class-vocabulary-undefined")),
-        });
+        Array.AsReadOnly(Array.Empty<Qa04SocietyOrganizationDependencyV1>());
 
     public static IReadOnlyList<Qa04SocietyOrganizationDependencyV1> Blockers => BlockersValue;
 
@@ -61,11 +51,8 @@ public static class Qa04SocietyOrganizationDependencyContractV1
         RequireField(schema, "facility_refs", DomainPayloadFieldKindV1.RefList);
         RequireField(schema, "founded_step", DomainPayloadFieldKindV1.Step);
 
-        if (CanonicalLifecycle.Value != "active" || CanonicalFoundedStep != 0)
+        if (CanonicalLifecycle.Value != "active" || CanonicalFoundedStep != 0 || BlockersValue.Count != 0)
             throw new InvalidDataException("qa04.society.organization-genesis-state-drift");
-        if (BlockersValue.Count != 1 ||
-            BlockersValue[0].Kind != Qa04SocietyOrganizationDependencyKindV1.OrganizationClassVocabulary)
-            throw new InvalidDataException("qa04.society.organization-dependency-drift");
     }
 
     private static void RequireField(
