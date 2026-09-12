@@ -21,16 +21,12 @@ public sealed record Qa04CanonicalWorkloadDependencyV1(
 ///
 /// This contract is intentionally separate from Qa04ReferenceWorldDependencyContractV1: the world
 /// contract owns initial authoritative material, while this contract owns workload-to-runtime
-/// binding. It does not invent SameStepOrderKey fields, domain payloads, transaction participant
-/// material, or detail-transition identities that are not fixed by the existing design.
-///
-/// The parent blockers remain active until each full workload surface is authoritative. The
-/// operation binding currently closes four of six families. Transaction creation already has the
-/// exact 10,000 ACTIVE genesis set, 200-entry other-kind allocation, and 1,000-per-300-Step
-/// production turnover path; its only remaining sub-blocker is actual participant record authority.
-/// The detail binding closes the exact cadence/request mapping and now records the two remaining
-/// DetailRegion authority gaps explicitly: actual spatial.detail_regions materialization and the
-/// canonical genesis profile state.
+/// binding. Operation binding currently closes four of six families. Transaction creation already
+/// has the exact 10,000 ACTIVE genesis set, 200-entry other-kind allocation, and 1,000-per-300-Step
+/// production turnover path; its only remaining sub-blocker is actual Participation participant
+/// record authority. Detail-transition binding is now closed by the approved 4,096-record
+/// DetailRegion authority, all 1,424 canonical request bindings, and production Snapshot/recovery
+/// evidence.
 /// </summary>
 public static class Qa04CanonicalWorkloadDependencyContractV1
 {
@@ -44,10 +40,6 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
             "workload.transaction.creation-binding",
             Qa04CanonicalWorkloadDependencyKindV1.TransactionCreationBinding,
             "qa04.workload.transaction-creation-binding-undefined"),
-        Blocker(
-            "workload.detail-transition.request-binding",
-            Qa04CanonicalWorkloadDependencyKindV1.DetailTransitionBinding,
-            "qa04.workload.detail-transition-request-binding-undefined"),
     }
     .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
     .ToArray());
@@ -62,7 +54,7 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
 
-        if (BlockersValue.Count != 3)
+        if (BlockersValue.Count != 2)
             throw new InvalidDataException("qa04.workload.dependency-blocker-count-drift");
         if (BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count)
             throw new InvalidDataException("qa04.workload.dependency-blocker-id-duplicate");
@@ -163,7 +155,7 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
             Qa04CanonicalDetailTransitionBindingV1.CanonicalRequestCount != 1_424 ||
             Qa04DetailRegionAuthorityDependencyContractV1.CanonicalTileRegionCount != 4_096 ||
             Qa04DetailRegionAuthorityDependencyContractV1.CanonicalRequestedOverrideCount != 1_424 ||
-            Qa04DetailRegionAuthorityDependencyContractV1.Blockers.Count != 2)
+            Qa04DetailRegionAuthorityDependencyContractV1.Blockers.Count != 0)
             throw new InvalidDataException("qa04.workload.detail-transition-binding-progress-drift");
 
         var firstCadence = Qa04CanonicalDetailTransitionBindingV1.RequirementsForStep(300);
