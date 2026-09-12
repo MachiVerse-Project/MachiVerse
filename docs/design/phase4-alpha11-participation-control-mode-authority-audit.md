@@ -332,7 +332,7 @@ Develop tree / Participation domain / code searchでは、schema descriptor `par
 - secondary index `participation.control-by-resident`
 - runtime `ParticipationControlContextV1`
 
-したがってproduction implementationでは、既存generic domain-payload/Snapshot infrastructureへ接続できる**typed payload representationまたはequivalent canonical adapter**が必要になる可能性が高い。
+したがってproduction implementationでは、既存generic domain-payload/Snapshot infrastructureへ接続できる**typed payload representationまたはequivalent canonical adapter**の追加要否をimplementation時に確定する。
 
 これは新partition/schemaを作る意味ではない。StandardDomainPartitionRegistry v1と既存 `participation.control_mode` schemaをそのまま使用する。
 
