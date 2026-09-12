@@ -2,7 +2,7 @@
 
 Status: **Audit complete / normative proposal pending**
 
-Tracking: #303, #240, #265
+Tracking: #240, #265
 
 ## 1. Purpose
 
@@ -162,11 +162,11 @@ and not reverse the edge.
 Recommended exact values:
 
 ```text
-dependency_kind      = perf.power-supply
-minimum_service_ppm  = 1,000,000
+dependency_kind       = perf.power-supply
+minimum_service_ppm   = 1,000,000
 degradation_curve_ref = NONE
-fallback_refs         = []
-status                = active
+fallback_refs          = []
+status                 = active
 ```
 
 Rationale:
@@ -226,20 +226,75 @@ availability_ppm: Ratio
 status: Token
 ```
 
-Hard upstream authority:
+### 6.1 Confirmed design boundary
 
-- the exact semantic owner/target of `facility_ref` is not fixed for the benchmark package;
-- Phase 3 separates physical facility existence from Infrastructure service operation, so choosing an arbitrary Physical/Built record merely because it is type-compatible is forbidden.
+Phase 3 separates **physical facility existence** from **Infrastructure service operation/capacity**. `FacilityServiceState` represents services such as medical, administrative, retail, education, transport-terminal, and entertainment service, while effective capacity can depend on staff, equipment, rooms/beds/seats/desks/machines, utilities, schedule, and failures.
 
-Decision required after facility target authority is selected:
+Physical/Built separately owns actual structures/spaces/equipment. `BuiltStructure` includes buildings, bridges, utility physical structures, etc., and explicitly leaves service/network meaning to Infrastructure.
 
-- exact facility mapping;
-- `service_kind`;
-- capacity and genesis active load;
-- required resource refs or canonical empty-list decision;
-- availability and status.
+The already-accepted Infrastructure service package (#301) intentionally excluded all 15,000 `infrastructure.facility_service` records because **physical facility authority was separately required**. This is therefore an existing normative gate, not a newly introduced implementation preference.
 
-This slice must not be bundled into the dependency package.
+### 6.2 Current QA-04 physical authority is not a facility pool
+
+The current canonical QA-04 Physical class is `physical.d0-presence` with 500,000 descriptors. Its production materializer creates:
+
+```text
+physical.presence
+physical occupancy state
+collision shape
+```
+
+for each descriptor.
+
+That proves actual D0 physical presence/shape authority, but it does **not** materialize a canonical `built.structure` population or otherwise classify a subset as semantic facilities.
+
+Therefore the following shortcuts are forbidden:
+
+- use arbitrary `physical.presence` records as `facility_ref` merely because the field type is `Ref`;
+- use occupancy/collision-shape records as facilities;
+- use TileScope as facility identity;
+- infer that the first 15,000 Physical records are buildings/facilities;
+- derive a facility mapping from hash/order without an owning normative rule.
+
+A type-compatible non-zero Ref is not sufficient; `facility_ref` must point to an actual record that semantically owns the facility identity used by the benchmark.
+
+### 6.3 Hard upstream authority still required
+
+Before `facility_service` can become decision-ready, a normative upstream decision must establish at least:
+
+1. which existing/new canonical partition owns benchmark facility identity (for example, an explicitly materialized Built authority if that is adopted; this audit does **not** choose it);
+2. exact facility population available to the 15,000 service records;
+3. deterministic facility-to-service mapping and reuse/cardinality rules;
+4. the relation between facility identity and existing Physical presence/shape/space authority, if any;
+5. whether every facility-service target must have physical capacity/equipment evidence at genesis.
+
+Only after that upstream authority exists can this document safely propose:
+
+- `service_kind` vocabulary/mapping;
+- `capacity_per_step`;
+- `active_load`;
+- `required_resource_refs` or an explicit canonical empty-list rule;
+- `availability_ppm`;
+- `status`;
+- facility-service RecordId/envelope authority.
+
+No values for those fields are proposed here.
+
+### 6.4 Workload impact
+
+The normative Alpha 1.1 `infrastructure-service-delivery` Operation uses a stable service pool containing:
+
+```text
+transport_service
+water_service
+power_service
+communication_service
+facility_service
+```
+
+The first four pools are actual authority; `facility_service` is not. Consequently Operation authority is now **5 / 6**, and `infrastructure-service-delivery` must remain fail-closed until FacilityService authority and its production binding are real.
+
+This workload dependency does not justify inventing facility world semantics merely to reach 6 / 6.
 
 ## 7. `information.delivery` — 20,000
 
@@ -357,6 +412,7 @@ already actual:
   ServiceQueue
   Resident / TileScope
   selected Society/Governance authority
+  Physical D0 presence / occupancy / shape
 
 first decision-ready proposal:
   infrastructure.dependency 20,000
@@ -366,8 +422,12 @@ possible after separate semantic decisions:
   information.media_distribution
   information.record_store
 
+hard upstream facility-identity authority first:
+  canonical physical/built facility identity
+    -> infrastructure.facility_service 15,000
+    -> infrastructure-service-delivery Operation binding
+
 requires additional target-ownership decision:
-  infrastructure.facility_service
   information.address_place_index
 
 ordered after dependency/other remaining authority when those refs are used:
@@ -375,7 +435,7 @@ ordered after dependency/other remaining authority when those refs are used:
   infrastructure.lineage
 ```
 
-This ordering does not approve the dependency proposal.
+This ordering does not approve the dependency proposal or select a facility identity owner.
 
 ## 14. Release impact
 
@@ -386,7 +446,10 @@ Until production proof succeeds:
 - Infrastructure accepted remains `410,100 / 500,000`;
 - Infrastructure remaining remains `89,900`;
 - Infrastructure parent reference-world blocker remains active;
-- `referenceWorldMaterialized` remains `false`.
+- Operation authority remains `5 / 6` while FacilityService is unavailable;
+- workload Operation parent blocker remains active;
+- `referenceWorldMaterialized` remains `false`;
+- `authoritativeStepLoopAvailable` remains `false`.
 
 If and only if the 20,000 dependency proposal is approved, integrated, implemented, and production-proven, the intermediate accounting may become:
 
@@ -416,10 +479,13 @@ A semantic approval should explicitly adopt or replace:
 11. consumer DetailLevel mirror;
 12. production proof requirements.
 
+FacilityService is **not** included in that approval package. It requires a separate facility-identity authority decision first.
+
 Before explicit approval:
 
 - do not mark this document complete normative authority;
 - do not merge #304 as an authority decision;
-- do not implement these values in #265;
+- do not implement dependency candidate values in #265;
+- do not invent FacilityService facility identity/mapping in #265;
 - do not increase accepted Infrastructure count;
 - do not change release flags.
