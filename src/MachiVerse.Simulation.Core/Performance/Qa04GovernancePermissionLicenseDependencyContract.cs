@@ -16,14 +16,9 @@ public sealed record Qa04GovernancePermissionLicenseDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Exact fail-closed boundary for the canonical 70,000 governance.permission_license records.
-///
-/// Alpha 1.1 fixes the descriptor range, non-specialized authoritative RecordId mapping,
-/// D2 genesis envelope, subject selector (Resident), required spatial scope selector (canonical
-/// TileScope modulo mapping), status=active, optional effective_until=NONE, and the deterministic
-/// conditions_digest scalar source. The remaining semantic gaps are the canonical permission_kind
-/// vocabulary, actual PublicAuthority target authority, and the canonical genesis effective_from
-/// Step. None of those are synthesized by the generic scalar source.
+/// Canonical 70,000 governance.permission_license dependency boundary.
+/// Benchmark-only permission kind, actual PublicAuthority mapping and effective_from=0 are decided
+/// by the Alpha 1.1 Society/Governance amendment and production-proven by the canonical materializer.
 /// </summary>
 public static class Qa04GovernancePermissionLicenseDependencyContractV1
 {
@@ -37,23 +32,7 @@ public static class Qa04GovernancePermissionLicenseDependencyContractV1
     public static readonly StableToken CanonicalStatus = new("active");
 
     private static readonly IReadOnlyList<Qa04GovernancePermissionLicenseDependencyV1> BlockersValue =
-        Array.AsReadOnly(new[]
-        {
-            Blocker(
-                "governance.permission-license.permission-kind-vocabulary",
-                Qa04GovernancePermissionLicenseDependencyKindV1.PermissionKindVocabulary,
-                "qa04.material.permission-kind-vocabulary-undefined"),
-            Blocker(
-                "governance.permission-license.public-authority",
-                Qa04GovernancePermissionLicenseDependencyKindV1.PublicAuthorityTarget,
-                "qa04.material.permission-public-authority-undefined"),
-            Blocker(
-                "governance.permission-license.effective-from-genesis",
-                Qa04GovernancePermissionLicenseDependencyKindV1.GenesisEffectiveFrom,
-                "qa04.material.permission-effective-from-undefined"),
-        }
-        .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-        .ToArray());
+        Array.AsReadOnly(Array.Empty<Qa04GovernancePermissionLicenseDependencyV1>());
 
     public static IReadOnlyList<Qa04GovernancePermissionLicenseDependencyV1> Blockers => BlockersValue;
 
@@ -90,22 +69,11 @@ public static class Qa04GovernancePermissionLicenseDependencyContractV1
         var probe = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(CanonicalStartOrdinal);
         if (probe.PartitionId.Value != PartitionId || probe.Descriptor.RecordId.IsZero ||
             ConditionsDigest(probe.Descriptor.RecordId).Length != 32 || CanonicalStatus.Value != "active" ||
-            Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count != 3 ||
-            Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount != 4_096)
+            Qa04GovernancePublicAuthorityDependencyContractV1.Blockers.Count != 0 ||
+            Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount != 4_096 ||
+            BlockersValue.Count != 0)
             throw new InvalidDataException("qa04.governance.permission-license-known-genesis-drift");
-
-        if (BlockersValue.Count != 3 ||
-            BlockersValue.Select(static blocker => blocker.Kind).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.governance.permission-license-dependency-drift");
     }
-
-    private static Qa04GovernancePermissionLicenseDependencyV1 Blocker(
-        string dependencyId,
-        Qa04GovernancePermissionLicenseDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 
     private static void RequireField(
         DomainPayloadSchemaDescriptorV1 schema,
