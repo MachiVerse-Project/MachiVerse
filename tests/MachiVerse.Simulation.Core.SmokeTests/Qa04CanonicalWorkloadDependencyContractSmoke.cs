@@ -11,13 +11,11 @@ internal static class Qa04CanonicalWorkloadDependencyContractSmoke
         Qa04CanonicalWorkloadDependencyContractV1.ValidateCanonicalContract();
         Qa04CanonicalTransactionKindBindingV1.ValidateCanonicalContract();
 
-        Require(Qa04CanonicalWorkloadDependencyContractV1.Blockers.Count == 3,
+        Require(Qa04CanonicalWorkloadDependencyContractV1.Blockers.Count == 2,
             "QA-04 canonical workload dependency count drifted.");
 
         var expected = new[]
         {
-            ("workload.detail-transition.request-binding", Qa04CanonicalWorkloadDependencyKindV1.DetailTransitionBinding,
-                "qa04.workload.detail-transition-request-binding-undefined"),
             ("workload.operation.authority-binding", Qa04CanonicalWorkloadDependencyKindV1.OperationAuthorityBinding,
                 "qa04.workload.operation-authority-binding-undefined"),
             ("workload.transaction.creation-binding", Qa04CanonicalWorkloadDependencyKindV1.TransactionCreationBinding,
