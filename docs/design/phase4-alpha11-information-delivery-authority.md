@@ -4,6 +4,8 @@ Status: **Approved / normative benchmark authority**
 
 Tracking: #240
 
+Approval: explicit project-owner approval on 2026-09-12; recorded in #240
+
 Review history: #313 / `phase4-alpha11-information-delivery-authority-proposal.md`
 
 Implementation target: #265
