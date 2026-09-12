@@ -16,16 +16,8 @@ internal static class Qa04GovernanceInstitutionResolvedMaterializationSmoke
     {
         Qa04GovernanceInstitutionResolvedMaterializerV1.ValidateCanonicalContract();
 
-        var blockerCodes = Qa04GovernanceInstitutionDependencyContractV1.Blockers
-            .Select(static blocker => blocker.FailureCode.Value)
-            .ToHashSet(StringComparer.Ordinal);
-        Require(blockerCodes.SetEquals(new[]
-            {
-                "qa04.material.institution-kind-vocabulary-undefined",
-                "qa04.material.decision-method-vocabulary-undefined",
-                "qa04.material.institution-office-mapping-undefined",
-            }),
-            "Resolved Institution mechanics must not release the three canonical authority blockers.");
+        Require(Qa04GovernanceInstitutionDependencyContractV1.Blockers.Count == 0,
+            "Resolved Institution dependency contract must reflect the decided canonical authorities.");
 
         var resolver = new CanonicalPolityReferenceResolver();
         var records = Qa04GovernanceInstitutionResolvedMaterializerV1.MaterializeResolved(
