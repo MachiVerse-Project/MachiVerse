@@ -51,8 +51,12 @@ public static class Qa04ReferenceLoadV1
     public const ulong BurstEverySteps = 900;
     public const ulong BurstOperations = 50_000;
     public const ulong DetailTransitionEverySteps = 300;
+    public const ulong CanonicalInitialRecordCount = 6_760_000;
 
     private static readonly StableToken PerformanceDomain = new("performance");
+    private static readonly StableToken ParticipationDomain = new("participation");
+    private static readonly StableToken ParticipationControlModeClass = new("participation.control_mode");
+    private static readonly StableToken ParticipationControlModeCreationKind = new("perf.control-mode");
     private static readonly StableToken PositionPurpose = new("perf.reference.position.v1");
     private static readonly StableToken ActivityPurpose = new("perf.reference.activity.v1");
 
@@ -62,6 +66,7 @@ public static class Qa04ReferenceLoadV1
     public static readonly IReadOnlyList<Qa04ReferenceClassV1> RecordClasses = Array.AsReadOnly(new[]
     {
         new Qa04ReferenceClassV1(new StableToken("resident.persistent-identity"), 1_000_000),
+        new Qa04ReferenceClassV1(ParticipationControlModeClass, 1_000_000),
         new Qa04ReferenceClassV1(new StableToken("physical.d0-presence"), 500_000),
         new Qa04ReferenceClassV1(new StableToken("environment.d0-cell-cohort"), 1_000_000),
         new Qa04ReferenceClassV1(new StableToken("environment.d1-aggregate"), 250_000),
@@ -99,6 +104,10 @@ public static class Qa04ReferenceLoadV1
             throw new InvalidDataException("qa04.reference.duplicate-record-class");
         if (RecordClasses.Single(x => x.ClassToken.Value == "resident.persistent-identity").Count != 1_000_000)
             throw new InvalidDataException("qa04.reference.resident-count-drift");
+        if (RecordClasses.Single(x => x.ClassToken == ParticipationControlModeClass).Count != 1_000_000)
+            throw new InvalidDataException("qa04.reference.participation-control-mode-count-drift");
+        if (RecordClasses.Aggregate(0UL, static (sum, item) => checked(sum + item.Count)) != CanonicalInitialRecordCount)
+            throw new InvalidDataException("qa04.reference.canonical-record-total-drift");
         if (ResidentActivityMix.Sum(static x => (int)x.Percent) != 100)
             throw new InvalidDataException("qa04.reference.activity-mix-total");
         if (OperationFamilies.Sum(static x => (int)x.SharePermille) != 1_000)
@@ -141,17 +150,25 @@ public static class Qa04ReferenceLoadV1
         var definition = RecordClasses.SingleOrDefault(x => x.ClassToken == classToken)
             ?? throw new KeyNotFoundException($"Unknown QA-04 reference record class: {classToken.Value}");
         RequireOrdinal(ordinal, definition.Count, classToken.Value);
-        var id = DerivedIdentity.DeriveEntityId(
-            WorldId,
-            creationStep: 0,
-            PerformanceDomain,
-            OpaqueId128.Zero,
-            new StableToken($"perf/{classToken.Value}"),
-            ordinal);
+        var id = classToken == ParticipationControlModeClass
+            ? DerivedIdentity.DeriveEntityId(
+                WorldId,
+                creationStep: 0,
+                ParticipationDomain,
+                OpaqueId128.Zero,
+                ParticipationControlModeCreationKind,
+                ordinal)
+            : DerivedIdentity.DeriveEntityId(
+                WorldId,
+                creationStep: 0,
+                PerformanceDomain,
+                OpaqueId128.Zero,
+                new StableToken($"perf/{classToken.Value}"),
+                ordinal);
 
         var detail = classToken.Value switch
         {
-            "resident.persistent-identity" => ResidentDetailLevel(ordinal),
+            "resident.persistent-identity" or "participation.control_mode" => ResidentDetailLevel(ordinal),
             "physical.d0-presence" or "environment.d0-cell-cohort" or "spatial.hot-terrain-brick" => DetailLevelV1.D0Entity,
             "environment.d1-aggregate" => DetailLevelV1.D1LocalAggregate,
             _ => DetailLevelV1.D2RegionalAggregate,

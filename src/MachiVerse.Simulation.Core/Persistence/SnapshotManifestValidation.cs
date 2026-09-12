@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Persistence;
 
@@ -10,6 +11,14 @@ public sealed record LogicalSnapshotSection(
     ulong LogicalItemCount,
     byte[] LogicalContentDigest,
     bool Required);
+
+public sealed record RequiredAddonSnapshotMetadataV1(
+    string AddonId,
+    string MetadataSchemaId,
+    ushort MetadataSchemaMajor,
+    ushort MetadataSchemaMinor,
+    byte[] MetadataPayload,
+    byte[] MetadataSemanticDigest);
 
 public sealed record LogicalSnapshotManifest(
     ushort PersistenceSchemaMajor,
@@ -26,7 +35,11 @@ public sealed record LogicalSnapshotManifest(
     ulong MasterGeneration,
     IReadOnlyList<string> RequiredDomains,
     IReadOnlyList<LogicalSnapshotSection> Sections,
-    byte[] SnapshotDigest);
+    byte[] SnapshotDigest)
+{
+    public IReadOnlyList<RequiredAddonSnapshotMetadataV1> RequiredAddons { get; init; }
+        = Array.Empty<RequiredAddonSnapshotMetadataV1>();
+}
 
 public sealed record PhysicalSnapshotChunkDescriptor(
     uint ChunkIndex,
@@ -56,7 +69,7 @@ public static class SnapshotManifestValidation
             throw new InvalidDataException("persistence.snapshot.invalid-id");
         RequireHash(manifest.HistoryAnchorDigest, "history-anchor-digest");
         RequireHash(manifest.StateContinuityToken, "state-continuity-token");
-        if (manifest.WorldSeed.Length != 32)
+        if (manifest.WorldSeed is null || manifest.WorldSeed.Length != 32)
             throw new InvalidDataException("persistence.snapshot.invalid-world-seed");
         if (manifest.SimulationConfigGeneration == 0)
             throw new InvalidDataException("persistence.snapshot.invalid-config-generation");
@@ -64,6 +77,7 @@ public static class SnapshotManifestValidation
         RequireHash(manifest.SnapshotDigest, "snapshot-digest");
 
         ValidateSortedStableTokens(manifest.RequiredDomains, "required-domain");
+        ValidateRequiredAddons(manifest.RequiredAddons);
 
         var expected = expectedRequiredSectionIds
             .Select(static id => new StableToken(id).Value)
@@ -78,9 +92,11 @@ public static class SnapshotManifestValidation
         string? previous = null;
         for (var i = 0; i < manifest.Sections.Count; i++)
         {
-            var section = manifest.Sections[i];
+            var section = manifest.Sections[i] ?? throw new InvalidDataException("persistence.snapshot.section-null");
             var sectionId = new StableToken(section.SectionId).Value;
             _ = new StableToken(section.SchemaId);
+            if (section.SchemaMajor == 0)
+                throw new InvalidDataException($"persistence.snapshot.section-schema-version-invalid:{sectionId}");
             RequireHash(section.LogicalContentDigest, "section-logical-content-digest");
             if (!section.Required)
                 throw new InvalidDataException("persistence.snapshot.required-section-marked-optional");
@@ -102,7 +118,10 @@ public static class SnapshotManifestValidation
             throw new InvalidDataException("persistence.snapshot.no-physical-chunks");
 
         var sectionIds = logical.Sections.Select(static section => section.SectionId).ToArray();
-        var nextSectionIndex = 0;
+        var sectionIndex = sectionIds
+            .Select(static (id, index) => (Id: id, Index: index))
+            .ToDictionary(static value => value.Id, static value => value.Index, StringComparer.Ordinal);
+        var coveredLastIndex = -1;
 
         for (var i = 0; i < chunks.Count; i++)
         {
@@ -123,31 +142,56 @@ public static class SnapshotManifestValidation
             RequireHash(chunk.StoredPayloadDigest, "chunk-stored-payload-digest");
             SnapshotChunkFile.ValidateRelativePath(chunk.RelativePath, chunk.ChunkIndex);
 
-            if (nextSectionIndex >= sectionIds.Length || !string.Equals(sectionIds[nextSectionIndex], first, StringComparison.Ordinal))
-                throw new InvalidDataException("persistence.snapshot.chunk-section-coverage-gap");
-
-            var foundLast = false;
-            while (nextSectionIndex < sectionIds.Length)
-            {
-                var current = sectionIds[nextSectionIndex++];
-                if (string.Equals(current, last, StringComparison.Ordinal))
-                {
-                    foundLast = true;
-                    break;
-                }
-                if (string.CompareOrdinal(current, last) > 0)
-                    break;
-            }
-            if (!foundLast)
+            if (!sectionIndex.TryGetValue(first, out var firstIndex) ||
+                !sectionIndex.TryGetValue(last, out var lastIndex) ||
+                firstIndex > lastIndex)
                 throw new InvalidDataException("persistence.snapshot.chunk-section-range-mismatch");
+
+            if (i == 0)
+            {
+                if (firstIndex != 0)
+                    throw new InvalidDataException("persistence.snapshot.chunk-section-coverage-gap");
+            }
+            else
+            {
+                // A logical section may be fragmented across adjacent physical chunks. In that
+                // case the next chunk legitimately begins with the same section id as the previous
+                // chunk ended with. Otherwise it must begin at the immediately following section.
+                if (firstIndex < coveredLastIndex || firstIndex > checked(coveredLastIndex + 1))
+                    throw new InvalidDataException("persistence.snapshot.chunk-section-coverage-gap");
+            }
+
+            if (lastIndex < coveredLastIndex)
+                throw new InvalidDataException("persistence.snapshot.chunk-section-range-mismatch");
+            coveredLastIndex = lastIndex;
         }
 
-        if (nextSectionIndex != sectionIds.Length)
+        if (coveredLastIndex != sectionIds.Length - 1)
             throw new InvalidDataException("persistence.snapshot.chunk-section-coverage-incomplete");
+    }
+
+    private static void ValidateRequiredAddons(IReadOnlyList<RequiredAddonSnapshotMetadataV1> addons)
+    {
+        ArgumentNullException.ThrowIfNull(addons);
+        string? previous = null;
+        foreach (var addon in addons)
+        {
+            ArgumentNullException.ThrowIfNull(addon);
+            var addonId = new StableToken(addon.AddonId).Value;
+            _ = new StableToken(addon.MetadataSchemaId);
+            if (addon.MetadataSchemaMajor == 0)
+                throw new InvalidDataException($"persistence.snapshot.addon-schema-version-invalid:{addonId}");
+            ArgumentNullException.ThrowIfNull(addon.MetadataPayload);
+            RequireHash(addon.MetadataSemanticDigest, "addon-metadata-semantic-digest");
+            if (previous is not null && string.CompareOrdinal(previous, addonId) >= 0)
+                throw new InvalidDataException("persistence.snapshot.required-addons-not-ascii-ascending");
+            previous = addonId;
+        }
     }
 
     private static void ValidateSortedStableTokens(IReadOnlyList<string> values, string field)
     {
+        ArgumentNullException.ThrowIfNull(values);
         string? previous = null;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var raw in values)

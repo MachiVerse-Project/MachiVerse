@@ -121,13 +121,9 @@ Status: Complete
 - `phase4-cross-consistency-resolution.md`
 - `phase4-requirement-traceability-index.md`
 
-### Alpha 1.1 normative amendments
-
-- `phase4-alpha11-society-governance-reference-authority.md` — `perf.reference.v1` Society/Governance benchmark genesisのToken vocabulary / actual Ref mapping / payload Step authority（#295）
-
 Phase 4はIssue #16で管理し、Phase 1〜3の意味契約を、実装者が追加のarchitecture判断をほぼ必要としないdata structure / protocol / Config / persistence / algorithm / performance / observability / test / platform / implementation work packageへ具体化した。
 
-Phase 4 completion判定は `phase4-completion-review.md`、詳細設計全体の最終横断整合性と正本優先順位は `phase4-cross-consistency-resolution.md` を正本とする。Alpha 1.1固有のbenchmark fixture semanticsについては、上記Alpha 1.1 amendmentを該当profileの追加正本として扱う。
+Phase 4 completion判定は `phase4-completion-review.md`、詳細設計全体の最終横断整合性と正本優先順位は `phase4-cross-consistency-resolution.md` を正本とする。
 
 個別Phase 4文書に作業時点の `Status: In Progress` が残る場合、それはwork-log metadataであり、completion/final reviewと `phase4-cross-consistency-resolution.md` のfinal status matrixが最終statusを上書きする。
 
@@ -169,6 +165,5 @@ Generated DTO/libraryは正本ではない。
 4. `docs/protocols` でcomponent境界を確認し、wire実装時は `docs/protocols/schema` を参照する。
 5. 本directoryのPhase文書でcross-cutting/internal detailを確認する。
 6. 古い未決定/TODO/handoff記述とcompletion/final resolutionが競合する場合、completion/final resolutionを優先する。
-7. Alpha 1.1 benchmark固有の追加正本が存在する場合、そのprofile scopeでは該当amendmentを優先する。
 
 実装時にPhase 4契約の変更が必要になった場合、implementation内でsilent変更せずdesign amendment、schema/version、compatibility/migration、P4-08 testを合わせて更新する。

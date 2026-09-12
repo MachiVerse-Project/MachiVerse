@@ -88,36 +88,44 @@ internal static class Program
             throw new InvalidDataException("Simulation Core worker probe did not prove the requested worker count reached domain execution.");
 
         var failures = MergeFailures(probe.BlockingFailureCodes, IncompleteCode, StepLoopCode);
-        return NewResponse(request, "performance-benchmark-report-v1", false, failures, new
-        {
-            benchmark_profile_id = ReferenceProfile,
-            build_version = request.SourceCommit,
-            runtime_version = "assembled-core-process-foundation",
-            hardware_profile_digest = new string('0', 64),
-            config_digest = new string('0', 64),
-            worker_count = run.WorkerCount,
-            run_ordinal = run.RunOrdinal,
-            step_count = 0,
-            step_p50_ms = 1_000_000_000.0,
-            step_p95_ms = 1_000_000_000.0,
-            step_p99_ms = 1_000_000_000.0,
-            step_mean_60s_ms = 1_000_000_000.0,
-            domain_cpu_summary = new
+        return NewResponse(
+            request,
+            "performance-benchmark-report-v1",
+            probe.ReferenceWorldMaterialized,
+            probe.ReleaseEvidenceCapable,
+            failures,
+            false,
+            failures,
+            new
             {
-                measured = false,
-                configured_worker_count = probe.WorkerCount,
-                max_observed_probe_concurrency = probe.MaxObservedConcurrency,
-            },
-            max_memory_bytes = long.MaxValue,
-            persistence_commit_p95_ms = 1_000_000_000.0,
-            persistence_commit_p99_ms = 1_000_000_000.0,
-            snapshot_summary = new { cow_barrier_p95_ms = 1_000_000_000.0, measured = false },
-            publication_summary = new { measured = false },
-            final_state_digest = new string('f', 64),
-            accepted_operation_loss = 0,
-            hidden_solver_iteration_reduction = false,
-            failure_codes = failures,
-        });
+                benchmark_profile_id = ReferenceProfile,
+                build_version = request.SourceCommit,
+                runtime_version = "assembled-core-process-foundation",
+                hardware_profile_digest = new string('0', 64),
+                config_digest = new string('0', 64),
+                worker_count = run.WorkerCount,
+                run_ordinal = run.RunOrdinal,
+                step_count = 0,
+                step_p50_ms = 1_000_000_000.0,
+                step_p95_ms = 1_000_000_000.0,
+                step_p99_ms = 1_000_000_000.0,
+                step_mean_60s_ms = 1_000_000_000.0,
+                domain_cpu_summary = new
+                {
+                    measured = false,
+                    configured_worker_count = probe.WorkerCount,
+                    max_observed_probe_concurrency = probe.MaxObservedConcurrency,
+                },
+                max_memory_bytes = long.MaxValue,
+                persistence_commit_p95_ms = 1_000_000_000.0,
+                persistence_commit_p99_ms = 1_000_000_000.0,
+                snapshot_summary = new { cow_barrier_p95_ms = 1_000_000_000.0, measured = false },
+                publication_summary = new { measured = false },
+                final_state_digest = new string('f', 64),
+                accepted_operation_loss = 0,
+                hidden_solver_iteration_reduction = false,
+                failure_codes = failures,
+            });
     }
 
     private static async Task<Response> PersistenceAsync(Request request, string coreExecutable)
@@ -125,15 +133,23 @@ internal static class Program
         RequireProfile(request, PersistenceProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
         var failures = MergeFailures(inspection.BlockingFailureCodes, IncompleteCode, "qa04.target.persistence-stress-not-assembled");
-        return NewResponse(request, "persistence-stress-report-v1", false, failures, new
-        {
-            profile_id = PersistenceProfile,
-            crash_case_count = 0,
-            no_durable_fact_loss = false,
-            no_uncommitted_candidate_publication = false,
-            history_chain_valid = false,
-            failure_codes = failures,
-        });
+        return NewResponse(
+            request,
+            "persistence-stress-report-v1",
+            inspection.ReferenceWorldMaterialized,
+            inspection.ReleaseEvidenceCapable,
+            failures,
+            false,
+            failures,
+            new
+            {
+                profile_id = PersistenceProfile,
+                crash_case_count = 0,
+                no_durable_fact_loss = false,
+                no_uncommitted_candidate_publication = false,
+                history_chain_valid = false,
+                failure_codes = failures,
+            });
     }
 
     private static async Task<Response> PublicationAsync(Request request, string coreExecutable)
@@ -141,16 +157,24 @@ internal static class Program
         RequireProfile(request, PublicationProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
         var failures = MergeFailures(inspection.BlockingFailureCodes, IncompleteCode, "qa04.target.publication-stress-not-assembled");
-        return NewResponse(request, "publication-stress-report-v1", false, failures, new
-        {
-            profile_id = PublicationProfile,
-            gateway_count = 0,
-            view_subscribers = 0,
-            slow_consumers = 0,
-            slow_consumers_did_not_block_custody_or_result = false,
-            continuity_after_coalesce_resync = false,
-            failure_codes = failures,
-        });
+        return NewResponse(
+            request,
+            "publication-stress-report-v1",
+            inspection.ReferenceWorldMaterialized,
+            inspection.ReleaseEvidenceCapable,
+            failures,
+            false,
+            failures,
+            new
+            {
+                profile_id = PublicationProfile,
+                gateway_count = 0,
+                view_subscribers = 0,
+                slow_consumers = 0,
+                slow_consumers_did_not_block_custody_or_result = false,
+                continuity_after_coalesce_resync = false,
+                failure_codes = failures,
+            });
     }
 
     private static async Task<Response> SoakAsync(Request request, string coreExecutable)
@@ -158,17 +182,25 @@ internal static class Program
         RequireProfile(request, SoakProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
         var failures = MergeFailures(inspection.BlockingFailureCodes, IncompleteCode, "qa04.target.soak-not-assembled");
-        return NewResponse(request, "soak-report-v1", false, failures, new
-        {
-            test_case_id = SoakProfile,
-            duration_seconds = 0,
-            parallel_verifier_digest_matched = false,
-            max_post_warmup_memory_growth_percent = 100.0,
-            accepted_operation_loss = 0,
-            history_audit_chain_valid = false,
-            no_unrecoverable_queue_deadlock = false,
-            failure_codes = failures,
-        });
+        return NewResponse(
+            request,
+            "soak-report-v1",
+            inspection.ReferenceWorldMaterialized,
+            inspection.ReleaseEvidenceCapable,
+            failures,
+            false,
+            failures,
+            new
+            {
+                test_case_id = SoakProfile,
+                duration_seconds = 0,
+                parallel_verifier_digest_matched = false,
+                max_post_warmup_memory_growth_percent = 100.0,
+                accepted_operation_loss = 0,
+                history_audit_chain_valid = false,
+                no_unrecoverable_queue_deadlock = false,
+                failure_codes = failures,
+            });
     }
 
     private static async Task<Inspection> InspectCoreAsync(string coreExecutable)
@@ -220,7 +252,15 @@ internal static class Program
             ?? throw new InvalidDataException("Simulation Core QA-04 target response decoded to null.");
     }
 
-    private static Response NewResponse(Request request, string responseKind, bool passed, string[] failures, object report)
+    private static Response NewResponse(
+        Request request,
+        string responseKind,
+        bool referenceWorldMaterialized,
+        bool releaseEvidenceCapable,
+        string[] blockingFailureCodes,
+        bool passed,
+        string[] failures,
+        object report)
         => new()
         {
             SchemaVersion = "1.0",
@@ -230,6 +270,9 @@ internal static class Program
             SourceCommit = request.SourceCommit,
             Qa04ManifestSha256 = request.Qa04ManifestSha256,
             ProfileId = request.ProfileId,
+            ReferenceWorldMaterialized = referenceWorldMaterialized,
+            ReleaseEvidenceCapable = releaseEvidenceCapable,
+            BlockingFailureCodes = blockingFailureCodes,
             Passed = passed,
             FailureCodes = failures,
             Report = JsonSerializer.SerializeToElement(report, Json),
@@ -289,6 +332,9 @@ internal static class Program
         public string SourceCommit { get; set; } = "";
         public string Qa04ManifestSha256 { get; set; } = "";
         public string ProfileId { get; set; } = "";
+        public bool ReferenceWorldMaterialized { get; set; }
+        public bool ReleaseEvidenceCapable { get; set; }
+        public string[] BlockingFailureCodes { get; set; } = [];
         public bool Passed { get; set; }
         public string[] FailureCodes { get; set; } = [];
         public JsonElement Report { get; set; }

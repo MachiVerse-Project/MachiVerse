@@ -254,10 +254,19 @@ finally
     if (Directory.Exists(persistenceRoot)) Directory.Delete(persistenceRoot, recursive: true);
 }
 
+await PartitionStateHeaderAsyncStreamingSmoke.RunAsync();
 SnapshotManifestSmoke.Run();
 await PersistenceSnapshotSmoke.RunAsync();
 await PersistenceMigrationSmoke.RunAsync();
 await PortableWorldExportSmoke.RunAsync();
+await CanonicalSnapshotStage2Smoke.RunAsync();
+await SpatialTerrainGeometryStreamingSemanticVerifierSmoke.RunAsync();
+await SpatialTerrainGeometryStagedRecoveryInitializer.RunAsync();
+await Qa04CrossDomainTransactionV2PhysicalExact103CanaryInitializer.RunAsync();
+await CrossDomainTransactionSqliteAuthoritySmoke.RunAsync();
+await Qa04AcceptedOperationLossGuardSqliteSmoke.RunAsync();
+await Qa04BenchmarkRunMeasurementSessionInitializer.RunAsync();
+await Qa04ReducedCommitMeasurementInitializer.RunAsync();
 Qa04ReferenceLoadSmoke.Run();
 await Qa04RuntimeTargetSmoke.RunAsync();
 await Qa04CoreSubstateAuthoritySmoke.RunAsync();

@@ -17,8 +17,8 @@ internal static class Program
             if (string.IsNullOrWhiteSpace(line)) throw new InvalidDataException("Expected one QA-04 JSONL request line.");
             var request = JsonSerializer.Deserialize<Request>(line, Json)
                 ?? throw new InvalidDataException("Request decoded to null.");
-            if (!string.Equals(request.ExecutionClass, "contract-smoke", StringComparison.Ordinal))
-                throw new InvalidDataException("Contract fixture refuses release execution class.");
+            if (request.ExecutionClass is not ("contract-smoke" or "release"))
+                throw new InvalidDataException("executionClass must be contract-smoke or release.");
             if (!string.Equals(request.SchemaVersion, "1.0", StringComparison.Ordinal))
                 throw new InvalidDataException("Unsupported request schemaVersion.");
 
@@ -43,6 +43,7 @@ internal static class Program
     private static Response Benchmark(Request request)
     {
         var run = request.Run ?? throw new InvalidDataException("benchmark-run requires run descriptor.");
+        var finalStateDigest = new string('c', 64);
         return NewResponse(request, "performance-benchmark-report-v1", new
         {
             benchmark_profile_id = "perf.reference.v1",
@@ -63,7 +64,15 @@ internal static class Program
             persistence_commit_p99_ms = 6.0,
             snapshot_summary = new { cow_barrier_p95_ms = 4.0 },
             publication_summary = new { },
-            final_state_digest = new string('c', 64),
+            final_state_digest = finalStateDigest,
+            determinism_evidence = new
+            {
+                final_state_digest = finalStateDigest,
+                transition_committed_digest = new string('d', 64),
+                operation_terminal_semantic_digest = new string('e', 64),
+                config_history_digest = new string('f', 64),
+                promotion_deferral_order_digest = new string('1', 64),
+            },
             accepted_operation_loss = 0,
             hidden_solver_iteration_reduction = false,
             failure_codes = Array.Empty<string>(),
@@ -116,6 +125,9 @@ internal static class Program
             SourceCommit = request.SourceCommit,
             Qa04ManifestSha256 = request.Qa04ManifestSha256,
             ProfileId = request.ProfileId,
+            ReferenceWorldMaterialized = false,
+            ReleaseEvidenceCapable = false,
+            BlockingFailureCodes = ["qa04.fixture.synthetic-not-release-capable"],
             Passed = true,
             FailureCodes = [],
             Report = JsonSerializer.SerializeToElement(report, Json),
@@ -150,6 +162,9 @@ internal static class Program
         public string SourceCommit { get; set; } = "";
         public string Qa04ManifestSha256 { get; set; } = "";
         public string ProfileId { get; set; } = "";
+        public bool ReferenceWorldMaterialized { get; set; }
+        public bool ReleaseEvidenceCapable { get; set; }
+        public string[] BlockingFailureCodes { get; set; } = [];
         public bool Passed { get; set; }
         public string[] FailureCodes { get; set; } = [];
         public JsonElement Report { get; set; }

@@ -5,68 +5,10 @@ using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
-public sealed record Qa04ResidentIdentityLifecyclePayloadV1(
-    OpaqueId128 ResidentId,
-    StableToken Lifecycle,
-    ulong? BirthStep,
-    ulong? DeathStep,
-    IReadOnlyList<PartitionRecordRefV1> ParentRefs,
-    uint LineageGeneration,
-    StableToken ProfileToken)
-{
-    public byte[] CanonicalDigest()
-        => HashSuite.DomainHash("mv.qa04-resident-identity-lifecycle-payload.v1", writer =>
-        {
-            writer.WriteMapStart(7);
-            writer.WriteUnsigned(0); writer.WriteBytes(ResidentId.ToBytes());
-            writer.WriteUnsigned(1); writer.WriteAsciiText(Lifecycle.Value);
-            writer.WriteUnsigned(2); WriteOptionalStep(writer, BirthStep);
-            writer.WriteUnsigned(3); WriteOptionalStep(writer, DeathStep);
-            writer.WriteUnsigned(4);
-            writer.WriteArrayStart((ulong)ParentRefs.Count);
-            foreach (var parent in ParentRefs)
-            {
-                writer.WriteArrayStart(2);
-                writer.WriteAsciiText(parent.PartitionId.Value);
-                writer.WriteBytes(parent.RecordId.ToBytes());
-            }
-            writer.WriteUnsigned(5); writer.WriteUnsigned(LineageGeneration);
-            writer.WriteUnsigned(6); writer.WriteAsciiText(ProfileToken.Value);
-        });
-
-    internal IReadOnlyDictionary<string, object?> ToStandardPayload()
-    {
-        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["resident_id"] = ResidentId,
-            ["lifecycle"] = Lifecycle.Value,
-            ["parent_refs"] = ParentRefs,
-            ["lineage_generation"] = LineageGeneration,
-            ["profile_token"] = ProfileToken.Value,
-        };
-        if (BirthStep is { } birthStep) payload["birth_step"] = birthStep;
-        if (DeathStep is { } deathStep) payload["death_step"] = deathStep;
-        return payload;
-    }
-
-    private static void WriteOptionalStep(MvDcborWriter writer, ulong? step)
-    {
-        if (step is { } value)
-        {
-            writer.WriteArrayStart(1);
-            writer.WriteUnsigned(value);
-        }
-        else
-        {
-            writer.WriteArrayStart(0);
-        }
-    }
-}
-
 public sealed class Qa04ResidentIdentityMaterializationV1
 {
     internal Qa04ResidentIdentityMaterializationV1(
-        DomainPartitionStateV1<Qa04ResidentIdentityLifecyclePayloadV1> partition,
+        DomainPartitionStateV1<ResidentIdentityLifecyclePayloadV1> partition,
         PartitionStateHeaderV1 partitionHeader,
         WorldStateV1 worldState,
         ulong materializedRecordCount,
@@ -85,7 +27,7 @@ public sealed class Qa04ResidentIdentityMaterializationV1
         D3Count = d3Count;
     }
 
-    public DomainPartitionStateV1<Qa04ResidentIdentityLifecyclePayloadV1> Partition { get; }
+    public DomainPartitionStateV1<ResidentIdentityLifecyclePayloadV1> Partition { get; }
     public PartitionStateHeaderV1 PartitionHeader { get; }
     public WorldStateV1 WorldState { get; }
     public ulong MaterializedRecordCount { get; }
@@ -98,9 +40,10 @@ public sealed class Qa04ResidentIdentityMaterializationV1
 }
 
 /// <summary>
-/// Materializes the QA-04 Resident identity/lifecycle partition as real authoritative records.
-/// The returned WorldState keeps the other standard partitions canonically empty; therefore this
-/// slice is not, by itself, a complete QA-04 reference world and must never enable release evidence.
+/// Materializes the QA-04 Resident identity/lifecycle partition as real authoritative records using
+/// the production Resident P4-05 payload type. The returned WorldState keeps the other standard
+/// partitions canonically empty; therefore this slice is not, by itself, a complete QA-04 reference
+/// world and must never enable release evidence.
 /// </summary>
 public static class Qa04ReferenceWorldMaterializerV1
 {
@@ -143,8 +86,8 @@ public static class Qa04ReferenceWorldMaterializerV1
         if (recordCount is 0 or > CanonicalResidentCount)
             throw new ArgumentOutOfRangeException(nameof(recordCount));
 
-        var identity = StandardDomainPartitionRegistry.Get("resident.identity_lifecycle");
-        var partition = new DomainPartitionStateV1<Qa04ResidentIdentityLifecyclePayloadV1>(
+        var identity = StandardDomainPartitionRegistry.Get(ResidentIdentityLifecyclePayloadV1.PartitionId);
+        var partition = new DomainPartitionStateV1<ResidentIdentityLifecyclePayloadV1>(
             identity,
             CreateRecords(identity, recordCount));
         if (partition.ItemCount != recordCount)
@@ -160,7 +103,7 @@ public static class Qa04ReferenceWorldMaterializerV1
         var (d0, d1, d2, d3) = DetailCounts(recordCount);
 
         if (partitionHeader.ItemCount != recordCount ||
-            worldState.Partitions.Get("resident.identity_lifecycle").Header.ItemCount != recordCount)
+            worldState.Partitions.Get(ResidentIdentityLifecyclePayloadV1.PartitionId).Header.ItemCount != recordCount)
             throw new InvalidDataException("qa04.materialization.world-header-count-mismatch");
 
         return new Qa04ResidentIdentityMaterializationV1(
@@ -174,12 +117,12 @@ public static class Qa04ReferenceWorldMaterializerV1
             d3);
     }
 
-    public static DomainRecordEnvelopeV1<Qa04ResidentIdentityLifecyclePayloadV1> CreateResidentRecord(ulong ordinal)
+    public static DomainRecordEnvelopeV1<ResidentIdentityLifecyclePayloadV1> CreateResidentRecord(ulong ordinal)
     {
-        var identity = StandardDomainPartitionRegistry.Get("resident.identity_lifecycle");
+        var identity = StandardDomainPartitionRegistry.Get(ResidentIdentityLifecyclePayloadV1.PartitionId);
         var descriptor = Qa04ReferenceLoadV1.Record(ResidentReferenceClass, ordinal);
         var payload = CreatePayload(descriptor.RecordId);
-        return new DomainRecordEnvelopeV1<Qa04ResidentIdentityLifecyclePayloadV1>(
+        return new DomainRecordEnvelopeV1<ResidentIdentityLifecyclePayloadV1>(
             descriptor.RecordId,
             identity.RecordSchema,
             revision: 1,
@@ -190,7 +133,7 @@ public static class Qa04ReferenceWorldMaterializerV1
             payload);
     }
 
-    private static IEnumerable<DomainRecordEnvelopeV1<Qa04ResidentIdentityLifecyclePayloadV1>> CreateRecords(
+    private static IEnumerable<DomainRecordEnvelopeV1<ResidentIdentityLifecyclePayloadV1>> CreateRecords(
         DomainPartitionIdentityV1 identity,
         ulong count)
     {
@@ -198,7 +141,7 @@ public static class Qa04ReferenceWorldMaterializerV1
         {
             var descriptor = Qa04ReferenceLoadV1.Record(ResidentReferenceClass, ordinal);
             var payload = CreatePayload(descriptor.RecordId);
-            yield return new DomainRecordEnvelopeV1<Qa04ResidentIdentityLifecyclePayloadV1>(
+            yield return new DomainRecordEnvelopeV1<ResidentIdentityLifecyclePayloadV1>(
                 descriptor.RecordId,
                 identity.RecordSchema,
                 revision: 1,
@@ -210,7 +153,7 @@ public static class Qa04ReferenceWorldMaterializerV1
         }
     }
 
-    private static Qa04ResidentIdentityLifecyclePayloadV1 CreatePayload(OpaqueId128 residentId)
+    private static ResidentIdentityLifecyclePayloadV1 CreatePayload(OpaqueId128 residentId)
     {
         var lifecycle = new ResidentLifecycleStateV1(
             residentId,
@@ -218,7 +161,7 @@ public static class Qa04ReferenceWorldMaterializerV1
             BirthStep: null,
             DeathStep: null);
         lifecycle.Validate();
-        return new Qa04ResidentIdentityLifecyclePayloadV1(
+        return new ResidentIdentityLifecyclePayloadV1(
             residentId,
             InitialResidentLifecycle,
             BirthStep: null,
@@ -228,10 +171,10 @@ public static class Qa04ReferenceWorldMaterializerV1
             ResidentProfileToken);
     }
 
-    private static void ValidatePayload(Qa04ResidentIdentityLifecyclePayloadV1 payload)
+    private static void ValidatePayload(ResidentIdentityLifecyclePayloadV1 payload)
     {
         var validator = new StandardDomainPayloadCodecValidatorV1();
-        validator.Validate("resident.identity_lifecycle", payload.ToStandardPayload(), ReferenceResolver);
+        validator.Validate(ResidentIdentityLifecyclePayloadV1.PartitionId, payload.ToStandardPayload(), ReferenceResolver);
     }
 
     private static WorldStateV1 CreateResidentSliceWorldState(PartitionStateHeaderV1 residentHeader)
@@ -243,7 +186,7 @@ public static class Qa04ReferenceWorldMaterializerV1
             writer.WriteUnsigned(0); writer.WriteAsciiText(Qa04ReferenceLoadV1.BenchmarkProfileId);
         });
         var partitions = StandardDomainPartitionRegistry.Entries.Select(identity => new PartitionStateRefV1(
-            identity.PartitionId.Value == "resident.identity_lifecycle"
+            identity.PartitionId.Value == ResidentIdentityLifecyclePayloadV1.PartitionId
                 ? residentHeader
                 : CreateCanonicalEmptyHeader(identity)));
         return new WorldStateV1(

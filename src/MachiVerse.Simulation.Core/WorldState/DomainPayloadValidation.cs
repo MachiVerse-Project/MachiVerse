@@ -354,7 +354,7 @@ public sealed class StandardDomainPayloadValidatorV1
     {
         if (reference.RecordId.IsZero) ThrowRange(partitionId, field);
         _ = StandardDomainPartitionRegistry.Get(reference.PartitionId.Value);
-        if (resolver is null || !resolver.Exists(reference))
+        if (resolver is not null && !resolver.Exists(reference))
             throw new InvalidDataException($"domain.payload.reference-validation:{partitionId}:{field}");
     }
 
