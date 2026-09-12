@@ -24,17 +24,11 @@ public sealed record Qa04TransactionParticipantAuthorityCoverageV1(
 /// <summary>
 /// Machine-readable audit for the remaining perf.reference.v1 transaction-creation binding gap.
 ///
-/// The canonical workload fixes the initial ACTIVE count at 10,000, terminalizes and replaces
-/// exactly 1,000 slots at every nonzero 300-Step cadence boundary, and allocates the initial 200
-/// "other registered transactions" by descriptor TransactionId order round-robin across six
-/// registered production kinds. Qa04CrossDomainTransactionGenesisMaterializerV1 and
-/// Qa04CrossDomainTransactionTurnoverMaterializerV1 already implement those rules through the
-/// production assembler/state path. The only remaining creation dependency is actual participant
-/// record authority. Four of the eight owner partitions already have canonical QA-04 authority;
-/// participation.control_mode, society.contract_claim, governance.permission_license, and
-/// infrastructure.service_queue remain unavailable. Coverage is derived from the production
-/// transaction registry so the next authority work can be prioritized without guessing workload
-/// semantics.
+/// Canonical creation cardinality and production-kind allocation are already fixed and implemented.
+/// Six of the eight participant owner partitions now have canonical QA-04 authority. Only
+/// participation.control_mode and infrastructure.service_queue remain unavailable. Coverage is
+/// derived from the production transaction registry so the remaining authority work can be
+/// prioritized without inventing workload semantics.
 /// </summary>
 public static class Qa04TransactionCreationDependencyContractV1
 {
@@ -92,13 +86,13 @@ public static class Qa04TransactionCreationDependencyContractV1
         new StableToken("environment.hazard"),
         new StableToken("physical.presence"),
         new StableToken("resident.identity_lifecycle"),
+        new StableToken("society.contract_claim"),
+        new StableToken("governance.permission_license"),
     });
 
     public static IReadOnlyList<StableToken> MissingParticipantAuthorityPartitions { get; } = Array.AsReadOnly(new[]
     {
         new StableToken("participation.control_mode"),
-        new StableToken("society.contract_claim"),
-        new StableToken("governance.permission_license"),
         new StableToken("infrastructure.service_queue"),
     });
 
@@ -111,6 +105,7 @@ public static class Qa04TransactionCreationDependencyContractV1
         Qa04CrossDomainTransactionGenesisMaterializerV1.ValidateCanonicalContract();
         Qa04CrossDomainTransactionTurnoverMaterializerV1.ValidateCanonicalContract();
         Qa04ParticipationControlModeDependencyContractV1.ValidateCanonicalContract();
+        Qa04SocietyContractClaimDependencyContractV1.ValidateCanonicalContract();
         Qa04GovernancePermissionLicenseDependencyContractV1.ValidateCanonicalContract();
         Qa04InfrastructureServiceQueueDependencyContractV1.ValidateCanonicalContract();
 
@@ -166,8 +161,8 @@ public static class Qa04TransactionCreationDependencyContractV1
 
         if (CanonicalParticipantOwnerPartitions.Count != 8 ||
             CanonicalParticipantOwnerPartitions.Distinct().Count() != 8 ||
-            AvailableParticipantAuthorityPartitions.Count != 4 ||
-            MissingParticipantAuthorityPartitions.Count != 4 ||
+            AvailableParticipantAuthorityPartitions.Count != 6 ||
+            MissingParticipantAuthorityPartitions.Count != 2 ||
             AvailableParticipantAuthorityPartitions.Intersect(MissingParticipantAuthorityPartitions).Any() ||
             !AvailableParticipantAuthorityPartitions.Concat(MissingParticipantAuthorityPartitions).ToHashSet()
                 .SetEquals(CanonicalParticipantOwnerPartitions))
@@ -177,7 +172,8 @@ public static class Qa04TransactionCreationDependencyContractV1
 
         ValidateMissingAuthorityCoverage();
         if (Qa04ParticipationControlModeDependencyContractV1.Blockers.Count != 3 ||
-            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 3 ||
+            Qa04SocietyContractClaimDependencyContractV1.Blockers.Count != 0 ||
+            Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 0 ||
             Qa04InfrastructureServiceQueueDependencyContractV1.Blockers.Count != 3)
             throw new InvalidDataException("qa04.workload.transaction-participant-progress-drift");
 
@@ -235,8 +231,6 @@ public static class Qa04TransactionCreationDependencyContractV1
         var expectedCounts = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             ["participation.control_mode"] = 1,
-            ["society.contract_claim"] = 14,
-            ["governance.permission_license"] = 8,
             ["infrastructure.service_queue"] = 10,
         };
         foreach (var row in MissingAuthorityCoverage)
