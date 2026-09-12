@@ -201,7 +201,7 @@ public static class Qa04SocietyEmploymentCanonicalAuthorityV1
 
         var employerGroups = employmentRecords.GroupBy(static record => record.Payload.EmployerRef).ToArray();
         if ((ulong)employerGroups.Length != OrganizationCount ||
-            employerGroups.Any(static group => group.Count() != EmploymentsPerOrganization))
+            employerGroups.Any(static group => (ulong)group.Count() != EmploymentsPerOrganization))
             throw new InvalidDataException("qa04.society.employment-employer-cardinality-drift");
         if ((ulong)employmentRecords.Select(static record => record.Payload.WorkerRef).Distinct().Count() != CanonicalCount)
             throw new InvalidDataException("qa04.society.employment-worker-cardinality-drift");
@@ -256,7 +256,7 @@ public static class Qa04SocietyEmploymentCanonicalAuthorityV1
         ValidateIndex(byWorker, checked((int)CanonicalCount), CanonicalCount,
             "qa04.society.employment-by-worker-index-drift");
 
-        if (byEmployer.CanonicalEntries.Any(static entry => entry.Value.Count != EmploymentsPerOrganization) ||
+        if (byEmployer.CanonicalEntries.Any(static entry => (ulong)entry.Value.Count != EmploymentsPerOrganization) ||
             byWorker.CanonicalEntries.Any(static entry => entry.Value.Count != 1))
             throw new InvalidDataException("qa04.society.employment-secondary-index-cardinality-drift");
     }
