@@ -332,6 +332,7 @@ public static class DomainRuntimeExecutorV1
                         ct);
                     if (output.DomainToken != entry.DomainToken || output.BasisStep != frozenInput.BasisStep)
                         throw new InvalidDataException("domain-runtime.output-basis-mismatch");
+                    StandardDomainRegistryAuthorityV1.Generation1.RequireAuthorizedEmissions(output.Intents);
                     return output;
                 },
                 cancellationToken);

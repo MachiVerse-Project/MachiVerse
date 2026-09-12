@@ -1,0 +1,79 @@
+name: INT-03 running snapshot validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/**'
+      - '.github/workflows/int03-running-snapshot-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-running-snapshot-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  running-snapshot-process:
+    name: QA-04 running snapshot freeze / drain authority
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Simulation Core
+        run: dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+      - name: Prove running snapshot freeze / later Step / historical drain commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          persistence="$RUNNER_TEMP/qa04-running-snapshot-persistence"
+          request=$(python3 - "$persistence" <<'PY'
+          import json, sys
+          print(json.dumps({
+              'schemaVersion':'1.0',
+              'command':'running-snapshot-probe',
+              'workerCount':0,
+              'recordCount':0,
+              'persistenceRoot':sys.argv[1],
+          }, separators=(',', ':')))
+          PY
+          )
+          printf '%s\n' "$request" | "$core" qa04-target > "$RUNNER_TEMP/core-running-snapshot.json"
+          python3 - "$RUNNER_TEMP/core-running-snapshot.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['schemaVersion'] == '1.0', result
+          assert result['standardIntervalSteps'] == 18000, result
+          assert result['standardTriggerAt18000'] is True, result
+          assert result['frozenSnapshotStep'] == 30, result
+          assert result['laterFinalizedStepBeforeDrain'] == 31, result
+          assert result['finalizedStepAfterDrain'] == 31, result
+          assert result['frozenOperationCount'] == 0, result
+          assert result['frozenScheduledOperationCount'] == 0, result
+          for key in (
+              'snapshotIdDeterministic',
+              'singleInFlightEnforced',
+              'historicalCutCommittedAfterLaterStep',
+              'frozenHistoryAnchorStillDurable',
+              'snapshotCatalogPreservedFrozenCut',
+              'laterAuthorityPreservedAfterDrain',
+              'snapshotHistoryAppendedAtDrainHead',
+              'physicalSnapshotAtomicallyFinalized',
+              'reducedRunningSnapshotAuthorityAvailable',
+          ):
+              assert result[key] is True, (key, result)
+          assert result['snapshotCommitHistorySequence'] > result['frozenHistoryAnchorSequence'] + 1, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
+          assert 'qa04.target.canonical-103-section-snapshot-serialization-not-assembled' in result['blockingFailureCodes'], result
+          PY

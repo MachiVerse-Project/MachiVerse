@@ -1,0 +1,208 @@
+{
+  "schemaVersion": "1.0",
+  "benchmarkProfileId": "perf.reference.v1",
+  "worldSeed": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "workerCounts": [1, 4, 8, 16],
+  "processRunsPerWorker": 3,
+  "loggingLevel": "warn",
+  "warmupSteps": 9000,
+  "measurementSteps": 18000,
+  "cooldownSnapshotDrainExcluded": true,
+  "normalSnapshotDuringMeasurementRequired": true,
+  "referenceLoad": {
+    "initialWorldPopulation": {
+      "residentPersistentIdentity": 1000000,
+      "residentD0": 100000,
+      "residentD1": 300000,
+      "residentD2": 400000,
+      "residentD3": 200000,
+      "physicalD0Presence": 500000,
+      "environmentD0CellsCohorts": 1000000,
+      "environmentD1Aggregate": 250000,
+      "societyGovernanceActiveRecords": 2000000,
+      "infrastructureActiveRecords": 500000,
+      "hotTerrainBrickV1": 500000,
+      "activeCrossDomainTransaction": 10000
+    },
+    "spatialDistribution": {
+      "regionalTileRows": 64,
+      "regionalTileColumns": 64,
+      "denseD0Percent": 25.0,
+      "denseRegionCount": 4,
+      "uniformD0Percent": 75.0
+    },
+    "residentActivityPercent": {
+      "idleRoutine": 35.0,
+      "localMovement": 25.0,
+      "socialCommunication": 10.0,
+      "marketConsumption": 10.0,
+      "employmentWork": 10.0,
+      "infrastructureServiceUse": 5.0,
+      "healthMedical": 3.0,
+      "governanceSecurityInteraction": 2.0
+    },
+    "operationLoad": {
+      "steadyPerStep": 5000,
+      "burstEverySteps": 900,
+      "burstOperations": 50000,
+      "familyPercent": {
+        "participationControlResidentAction": 35.0,
+        "physicalItemMovementWork": 20.0,
+        "societyMarketPaymentContract": 20.0,
+        "infrastructureServiceDelivery": 15.0,
+        "governanceSecurity": 5.0,
+        "environmentSpatialAdminSynthetic": 5.0
+      }
+    },
+    "crossDomainTransactions": {
+      "steadyActiveTarget": 10000,
+      "creationEverySteps": 300,
+      "kindPercent": {
+        "marketSaleDelivery": 35.0,
+        "employmentWork": 20.0,
+        "foodConsumption": 10.0,
+        "informationTransmission": 10.0,
+        "medicalService": 5.0,
+        "construction": 5.0,
+        "miningExcavation": 3.0,
+        "crimeJustice": 3.0,
+        "borderCrossing": 3.0,
+        "infrastructureOutageCascade": 2.0,
+        "naturalDisasterCascade": 2.0,
+        "otherRegisteredTransactions": 2.0
+      }
+    },
+    "environmentLoad": {
+      "precipitationD0Percent": 10.0,
+      "surfaceFlowThresholdPercent": 1.0,
+      "hazardIntensityChangePercent": 0.1,
+      "hazardCadenceSteps": 30,
+      "contaminantTransportD0Percent": 2.0
+    },
+    "physicalCollisionPercent": {
+      "zeroContact": 80.0,
+      "oneToFourCandidates": 15.0,
+      "fiveToSixteenCandidates": 4.0,
+      "seventeenToSixtyFourCandidates": 1.0
+    },
+    "marketLoad": {
+      "marketScopes": 100,
+      "activeOrdersPerScopeAverage": 10000,
+      "ordersChangedPerCadencePercent": 5.0
+    },
+    "infrastructureLoad": {
+      "networkNodes": 20000,
+      "stableEdges": 100000,
+      "queuedServiceRequests": 250000,
+      "cascadingOutageEverySteps": 9000
+    },
+    "detailTransitionLoad": {
+      "everySteps": 300,
+      "promotionRegions": 6,
+      "promotionCandidateRecords": 30000,
+      "demotionRegions": 10,
+      "demotionCandidateRecords": 80000
+    }
+  },
+  "passCriteria": {
+    "worker16MedianP95StepMs": 33.333,
+    "stepP99Ms": 50.0,
+    "mean60sStepMs": 30.0,
+    "steadyMemoryTargetGiB": 22,
+    "maxMemoryGuardGiB": 28,
+    "sqliteCommitP95Ms": 4.0,
+    "sqliteCommitP99Ms": 8.0,
+    "snapshotCowBarrierP95Ms": 5.0,
+    "noAcceptedOperationLoss": true,
+    "noHiddenSolverIterationReduction": true
+  },
+  "persistenceProfile": {
+    "profileId": "perf.persistence.v1",
+    "compressedSnapshotGiB": 16,
+    "historyTailMinutes": 10,
+    "crashInjectionStages": [
+      "operation-acceptance",
+      "operation-scheduling",
+      "transition-commit",
+      "snapshot-commit",
+      "migration-generation-switch",
+      "audit-append"
+    ],
+    "crashInjectionPoints": [
+      "before-db-begin",
+      "mid-write",
+      "before-fsync-or-commit",
+      "immediately-after-commit",
+      "before-response-or-publication"
+    ],
+    "noDurableFactLoss": true,
+    "noUncommittedCandidatePublication": true
+  },
+  "publicationProfile": {
+    "profileId": "perf.publication.v1",
+    "gatewayCount": 1,
+    "viewSubscribers": 100,
+    "slowConsumers": 10,
+    "subscriberClassMix": {
+      "spectator": 60,
+      "diver": 35,
+      "moderator": 4,
+      "generalViewAdministrator": 1
+    },
+    "slowConsumersMustNotBlockCustodyOrResult": true,
+    "continuityAfterCoalesceResyncRequired": true
+  },
+  "soakProfile": {
+    "testCaseId": "performance.soak.24h",
+    "durationHours": 24,
+    "gatewayReconnectFailoverIntervalMinutes": 30,
+    "periodicSnapshotRecoveryCheckpoints": true,
+    "viewChurnAndSlowConsumerLoad": true,
+    "parallelVerifierDigestRequired": true,
+    "maxPostWarmupMemoryGrowthPercent": 10,
+    "noAcceptedOperationLoss": true,
+    "historyAuditChainValid": true,
+    "noUnrecoverableQueueDeadlock": true
+  },
+  "reportFields": [
+    "benchmark_profile_id",
+    "build_version",
+    "runtime_version",
+    "hardware_profile_digest",
+    "config_digest",
+    "worker_count",
+    "run_ordinal",
+    "step_count",
+    "step_p50_ms",
+    "step_p95_ms",
+    "step_p99_ms",
+    "domain_cpu_summary",
+    "max_memory_bytes",
+    "persistence_commit_p95_ms",
+    "snapshot_summary",
+    "publication_summary",
+    "final_state_digest",
+    "failure_codes"
+  ],
+  "adapterContract": {
+    "protocol": "jsonl",
+    "requestKinds": [
+      "benchmark-run",
+      "persistence-stress",
+      "publication-stress",
+      "soak-run"
+    ],
+    "responseKinds": [
+      "performance-benchmark-report-v1",
+      "persistence-stress-report-v1",
+      "publication-stress-report-v1",
+      "soak-report-v1"
+    ],
+    "authorityRules": [
+      "wall-clock metrics are diagnostic and never world-semantic input",
+      "performance failure never authorizes semantic shortcuts",
+      "target adapters must preserve the canonical profile seed/config/history",
+      "production component DLL or internal-type sharing is prohibited"
+    ]
+  }
+}

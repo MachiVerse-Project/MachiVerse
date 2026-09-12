@@ -1,0 +1,40 @@
+name: QA-04 performance harness validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa04-performance-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  qa-performance-harness:
+    name: QA-04 performance/soak harness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Verify performance and soak contract
+        run: dotnet run --project tools/MachiVerse.PerformanceHarness -- verify
+      - name: Materialize QA-04 execution plan
+        run: |
+          output="$RUNNER_TEMP/qa04-performance"
+          dotnet run --project tools/MachiVerse.PerformanceHarness -- materialize "$output"
+          test -s "$output/reference-run-matrix.json"
+          test -s "$output/reference-load-contract.json"
+          test -s "$output/benchmark-summary.json"
+          test -s "$output/persistence-profile.json"
+          test -s "$output/publication-profile.json"
+          test -s "$output/soak-plan.json"
+          test -s "$output/performance-report-contract.json"
+          test -s "$output/target-adapter-contract.json"

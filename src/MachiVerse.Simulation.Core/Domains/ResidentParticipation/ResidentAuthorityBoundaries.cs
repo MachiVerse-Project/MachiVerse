@@ -119,6 +119,12 @@ public static class ResidentPhysicalIntentFactoryV1
     private static readonly StableToken PhysicalDomain = new("physical_built");
     private static readonly StableToken PresencePartition = new("physical.presence");
     private static readonly StableToken MoveIntentKind = new("physical.intent.move");
+    private static readonly IReadOnlyList<DomainIntentCapabilityV1> Capabilities = Array.AsReadOnly(new[]
+    {
+        new DomainIntentCapabilityV1(ResidentDomain, PhysicalDomain, PresencePartition, MoveIntentKind),
+    });
+
+    public static IReadOnlyList<DomainIntentCapabilityV1> EmittedCapabilities => Capabilities;
 
     public static MutationIntentCandidateV1 CreateMoveIntent(
         ResidentPhysicalActionDecisionV1 decision,
