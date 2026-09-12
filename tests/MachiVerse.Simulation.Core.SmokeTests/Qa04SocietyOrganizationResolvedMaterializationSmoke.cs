@@ -14,10 +14,8 @@ internal static class Qa04SocietyOrganizationResolvedMaterializationSmoke
     {
         Qa04SocietyOrganizationResolvedMaterializerV1.ValidateCanonicalContract();
 
-        Require(Qa04SocietyOrganizationDependencyContractV1.Blockers.Count == 1 &&
-                Qa04SocietyOrganizationDependencyContractV1.Blockers[0].FailureCode.Value ==
-                    "qa04.material.organization-class-vocabulary-undefined",
-            "Resolved Organization materialization mechanics must not release the canonical vocabulary blocker.");
+        Require(Qa04SocietyOrganizationDependencyContractV1.Blockers.Count == 0,
+            "Resolved Organization dependency contract must reflect the decided canonical organization_class authority.");
 
         var records = Qa04SocietyOrganizationResolvedMaterializerV1.MaterializeResolved(
                 static localOrdinal => (localOrdinal & 1UL) == 0 ? FixtureClassA : FixtureClassB)
