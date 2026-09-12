@@ -1,6 +1,6 @@
 # Alpha 1.1 DetailRegion reference authority
 
-Status: Proposed / approval pending  
+Status: Complete / normative benchmark authority  
 Tracking: #305  
 Release tracking: #240  
 Implementation PR: #265
@@ -9,7 +9,7 @@ Implementation PR: #265
 
 `perf.reference.v1` canonical workload の detail-transition path が要求する `spatial.detail_regions` initial-world authority を、既存の canonical TileScope と既存 workload mapping を変更せずに定義する。
 
-本書は benchmark-only initial-world authority の proposal である。approval前に implementation、dependency blocker解除、release flag変更を行ってはならない。
+本書は benchmark-only initial-world authority の normative definition である。一般worldのdefault detail profileへこのbenchmark値を昇格してはならない。
 
 ## 2. Existing normative surface
 
@@ -50,7 +50,7 @@ TileScope[4095] <-> DetailRegion[4095]
 
 同じTileScopeを指す複数DetailRegion、またはcanonical TileScopeに対応しないbenchmark DetailRegionはinitial populationへ含めない。
 
-## 4. DetailRegion identity proposal
+## 4. DetailRegion identity authority
 
 TileIndex `t`, `0 <= t < 4096` に対し:
 
@@ -224,11 +224,11 @@ active_guards = []
 - canonical workload開始前のtransition Stepはないためinitial last transitionを0とする。
 - bound-resident / active-transaction guardをinitially activeとするcanonical benchmark authorityは存在しないためemptyを明示する。
 
-これらはproposal値であり、approvalによって初めてnormative benchmark authorityとなる。
+これらはnormative benchmark genesis値である。
 
 ## 9. Workload compatibility proof
 
-approval後のproduction implementationは、全1,424 canonical requirementsについて少なくとも次を検証する:
+production implementationは、全1,424 canonical requirementsについて少なくとも次を検証する:
 
 ```text
 region.DetailRegionId == DetailRegionId(requirement.TileIndex)
@@ -242,7 +242,7 @@ TileIndex reuseが将来発生した場合、このgenesis recipeをそのまま
 
 ## 10. Snapshot / recovery requirement
 
-approval後はproduction `DomainPartitionSnapshotAuthorityV1<SpatialDetailRegionsPayloadV1>` / generic Domain-partition codec pathを使用し、full 4,096 recordsについて:
+production implementationはproduction `DomainPartitionSnapshotAuthorityV1<SpatialDetailRegionsPayloadV1>` / generic Domain-partition codec pathを使用し、full 4,096 recordsについて:
 
 1. actual TileScope resolverを用いたencode validation
 2. canonical PartitionStateHeader生成
@@ -272,7 +272,7 @@ fixture/permissive resolverをrelease proofとして使用しない。
 
 ## 12. Dependency impact after successful implementation
 
-approval + documentation merge + develop sync + production implementation + current-head proofが全て成功した場合のみ:
+documentation merge + develop sync + production implementation + current-head proofが全て成功した場合のみ:
 
 ```text
 DetailRegion direct dependencies: 2 -> 0
@@ -290,21 +290,20 @@ Detail-transition workload parent blockerの解除は、actual production bindin
 - Society/Governance parent blockerを変更しない
 - Infrastructure parent blockerを変更しない
 
-## 13. Implementation order after approval
+## 13. Implementation order
 
-1. 本書をApproved normativeへ更新
-2. documentationへmerge
-3. developへsync
-4. #265 branchを最新develop authorityへ同期
-5. `Qa04DetailRegionCanonicalAuthorityV1` identity/genesis builder
-6. actual 4,096 TileScope resolver closure
-7. `SpatialDetailRegionsPayloadV1` 4,096-record materialization
-8. 1,424 canonical request binding proof
-9. full Snapshot/recovery proof
-10. fail-closed negative tests
-11. dependency contract 2 -> 0
-12. current-head full CI
-13. #240 / #265 checkpoint同期
+1. documentationへmerge
+2. developへsync
+3. #265 implementation branchへnormative authorityを反映
+4. `Qa04DetailRegionCanonicalAuthorityV1` identity/genesis builder
+5. actual 4,096 TileScope resolver closure
+6. `SpatialDetailRegionsPayloadV1` 4,096-record materialization
+7. 1,424 canonical request binding proof
+8. full Snapshot/recovery proof
+9. fail-closed negative tests
+10. dependency contract 2 -> 0
+11. current-head full CI
+12. #240 / #265 checkpoint同期
 
 ## 14. Non-goals / invariant boundaries
 
