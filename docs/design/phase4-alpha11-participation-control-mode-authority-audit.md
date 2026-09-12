@@ -1,31 +1,62 @@
-# Alpha 1.1 Participation control_mode authority audit
+# Alpha 1.1 Participation control_mode normative benchmark authority
 
-Status: Audit / normative proposal pending  
-Tracking: #307  
+Status: Complete / normative benchmark authority  
 Release tracking: #240  
-Implementation PR: #265
+Implementation PR: #265  
+Approval record: #240 issue comment `5644534723` / 2026-09-12
 
 ## 1. Purpose
 
-`perf.reference.v1` transaction genesisに残る最後のparticipant authorityである `participation.control_mode` について、既存schema/runtime semanticsとbenchmark initial population definitionの間にある未決定事項を明示し、explicit approval可能なdecision packageまで絞り込む。
+`perf.reference.v1` の `participation.control_mode` について、canonical initial-world population、RecordId、persistent StableToken vocabulary、genesis state、DetailLevel、production proof requirements を正本化する。
 
-本書はaudit / proposalであり、本書だけでは新しいpopulation/count/token/genesis値を正本化しない。
+本書の decision package は #240 で明示承認済みであり、以後 proposal ではなく Alpha 1.1 / INT-03 の normative benchmark authority として扱う。
 
-## 2. Current blocker surface
+## 2. Normative population
 
-`Qa04ParticipationControlModeDependencyContractV1` のremaining blockerは3件:
+Canonical Resident persistent identity は 1,000,000 records とする。
 
-1. canonical population authority
-2. mode Token vocabulary
-3. genesis control state
+`participation.control_mode` は canonical Resident 1件につき exactly one record を持つ。
 
-DetailRegionは #305 / #306 / #309 と #265 production proofで解消済み。direct canonical dependencyは現在この3件のみ。
+```text
+population = 1,000,000
+resident coverage = Resident ordinal 0..999,999 exactly once
+one effective mode / resident
+```
 
-Transaction participant authorityは現在7/8。`participation.control_mode`がactual authority化されれば8/8へ到達可能だが、normative decisionとproduction proof前にその状態へ更新してはならない。
+Sparse transaction-only poolは採用しない。Resident populationの一部だけにcontrol authorityを付与したり、pool外Residentをimplicit Autonomousとして扱ったりしてはならない。
 
-## 3. Existing schema authority
+## 3. Benchmark accounting
 
-`participation.control_mode` payload:
+従来のcanonical record total:
+
+```text
+5,760,000
+```
+
+`participation.control_mode` を追加した canonical total:
+
+```text
+5,760,000 + 1,000,000 = 6,760,000
+```
+
+Record cardinality impact:
+
+```text
++1,000,000
++17.36%
+```
+
++17.36% は record cardinality の算術影響のみを表す。Snapshot bytes / encode time / recovery time / memory を同率増加として外挿してはならず、production measurementで実測する。
+
+## 4. Existing schema authority
+
+Partition:
+
+```text
+participation.control_mode
+```
+
+Payload:
 
 ```text
 resident_ref: Ref
@@ -35,167 +66,23 @@ effective_from: Step
 input_authority_generation: uint32
 ```
 
-schema rule:
+Required invariant:
 
 ```text
 one effective mode / resident
 ```
 
-required secondary index:
+Required secondary index:
 
 ```text
 participation.control-by-resident
 ```
 
-partitionはStandardDomainPartitionRegistry v1のauthoritative partitionであり、新partition追加は不要。
+StandardDomainPartitionRegistry v1 の既存partition/schemaを使用し、新partitionを追加しない。
 
-## 4. Existing runtime semantic authority
+## 5. Record identity
 
-`ResidentControlModeV1`:
-
-```text
-Autonomous = 1
-DiverControlAvailable = 2
-DiverAbsentPolicy = 3
-BoundResidentDeceased = 4
-```
-
-`ParticipationControlContextFactoryV1` semantics:
-
-- active binding + available -> DiverControlAvailable
-- active binding + unavailable -> DiverAbsentPolicy
-- resident-deceased binding -> BoundResidentDeceased
-- otherwise -> Autonomous
-
-Phase 3 designも同じsemantic classesを `AUTONOMOUS`, `DIVER_CONTROL_AVAILABLE`, `DIVER_ABSENT_POLICY`, `BOUND_RESIDENT_DECEASED` として定義している。
-
-enum/runtime semanticは既に存在するが、persistent StableToken serialization vocabularyは未定義。
-
-## 5. Existing benchmark authority
-
-Canonical Resident persistent identity:
-
-```text
-1,000,000
-```
-
-Resident identity recordsはactual `resident.identity_lifecycle` authorityとしてmaterialize済み。
-
-`Qa04ReferenceLoadV1` の現行canonical record classes合計は:
-
-```text
-5,760,000 records
-```
-
-Resident DetailLevel distribution:
-
-```text
-D0 100,000
-D1 300,000
-D2 400,000
-D3 200,000
--------------
-   1,000,000
-```
-
-この1,000,000はResident population内部のdetail distributionであり、Resident persistent identityとは別の追加1,000,000 recordsではない。load accountingで二重計上しない。
-
-一方、`phase4-performance-benchmark-profile.md` のinitial-world population表はParticipation control-mode record countを独立state classとして列挙していない。またbenchmarkはDiver population / active Participation binding populationを定義していない。
-
-## 6. Transaction requirement
-
-Canonical cross-domain transaction genesisはParticipation participantについてactual canonical record pool:
-
-```text
-partition = participation.control_mode
-```
-
-を要求する。poolがmissing/emptyの場合はfail closedする。
-
-transaction materializerだけを見るとpool countは1以上なら構造的に成立する。しかしtransaction都合だけでworld-authority cardinalityを決めてはならない。
-
-## 7. Population alternatives
-
-### 7.1 Sparse transaction-only pool
-
-例:
-
-```text
-1 record
-10,000 records
-```
-
-これはtransaction genesisを少数recordで成立させられる一方、`one effective mode/resident`との関係、pool外Residentのcontrol authority、implicit Autonomous semanticsが未定義になる。
-
-**採用候補にしない。**
-
-### 7.2 Full per-Resident explicit authority
-
-Schema-faithful candidate:
-
-```text
-population = canonical Resident persistent identity count = 1,000,000
-one control-mode record per Resident
-```
-
-利点:
-
-- `one effective mode/resident`を直接満たせる
-- actual Resident Ref closureを完全に構成できる
-- transaction participant poolをactual world authorityとして利用できる
-- later binding/control changesのpersistent owner surfaceとして自然
-
-ただしbenchmark initial population表に明示されていない追加1,000,000 authoritative recordsとなるため、load-impact approvalなしに採用不可。
-
-**Audit recommendation: full per-Resident explicit authorityを採用候補とする。**
-
-## 8. Quantified record-load impact
-
-Full per-Resident candidateをinitial-world canonical recordsへ追加計上する場合:
-
-```text
-current canonical records      5,760,000
-control_mode candidate        +1,000,000
-----------------------------------------
-candidate canonical records    6,760,000
-```
-
-したがってrecord-count impactは:
-
-```text
-+1,000,000 records
-+17.36% vs current 5,760,000-record baseline
-```
-
-この **+17.36% はrecord cardinalityについてのみ確定する算術影響**である。
-
-Snapshot bytes / encode time / recovery time / steady memoryが同率で増えることを意味しない。既存schema/validation contractだけから1 control-mode recordのexact serialized byte costは固定できないため、Snapshot byte impactは現時点で **TBD** とする。推測値をacceptance基準へ使用しない。
-
-Hidden runtime stateとして別計上するとbenchmarkが実際のauthoritative material量を表さなくなるため、full案を採用するならcanonical totalも5,760,000 -> 6,760,000へ明示改定するのがaudit recommendation。
-
-## 9. Genesis candidate — review only
-
-Resident ordinal `r` 0..999,999 に対し:
-
-```text
-resident_ref = actual resident.identity_lifecycle record[r]
-binding_ref = NONE
-mode = Autonomous
-effective_from = 0
-```
-
-根拠:
-
-- benchmarkはDiver population / active binding populationを定義していない
-- runtime factoryはbinding semantics上のotherwise caseをAutonomousとする
-- synthetic binding / Diverをbenchmark都合で生成しない
-- Step 0 genesisとしてeffective_from=0が最小の追加semantic
-
-これはproposalであり、approval前に#265へ実装しない。
-
-## 10. Record identity decision
-
-### 10.1 Candidate A — Resident ordinal keyed
+Resident ordinal `r` 0..999,999 に対する canonical RecordId は次で導出する。
 
 ```text
 DerivedIdentity.DeriveEntityId(
@@ -207,39 +94,40 @@ DerivedIdentity.DeriveEntityId(
   localOrdinal=residentOrdinal)
 ```
 
-### 10.2 Existing QA-04 precedent
-
-Production DetailRegion authorityは既に次の構造を採用している:
+Canonical fields:
 
 ```text
-creatorDomain = spatial
-creatorEntityId = ZERO
-creationKind = perf.detail-region
-localOrdinal = tileIndex
+world_id       = perf.reference.v1 WorldId
+creation_step  = 0
+creator_domain = participation
+creator_entity = ZERO
+creation_kind  = perf.control-mode
+local_ordinal  = residentOrdinal
 ```
 
-つまり「owner domain + ZERO creator + benchmark-specific creation kind + canonical local ordinal」はactual domain-owned persistent authorityで使用済みのpattern。
+Resident RecordIdをParticipation RecordIdとして直接再利用しない。Residentとの関係はpayload `resident_ref`で保持する。
 
-またgeneric QA-04 record identityもStep 0 / ZERO creator / derivation token / local ordinalを使用する。
+このidentity patternは既存production DetailRegion authorityの `owner domain + ZERO creator + benchmark creation kind + canonical ordinal` と同型とする。
 
-### 10.3 Candidate B — Resident identity keyed
+## 6. Genesis payload
 
-Resident RecordIdをcreator inputへ含める別recipe。ただし`creatorEntityId`をsource relationとして使うsemanticを追加で正本化する必要がある。
+Resident ordinal `r` に対し、genesis payload は次で固定する。
 
-**Audit recommendation: Candidate A。**
+```text
+resident_ref               = corresponding actual resident.identity_lifecycle record[r]
+binding_ref                = NONE
+mode                       = autonomous
+effective_from             = 0
+input_authority_generation = 0
+```
 
-理由:
+Benchmark genesisではDiver population / active Participation bindingをsynthetic生成しない。
 
-- existing production QA-04 authority precedentと同型
-- Resident RecordIdをParticipation RecordIdとして再利用しない
-- source relationはpayload `resident_ref`へ保持できる
-- `creatorEntityId`へ新しいsource-relation semanticを持ち込まない
+`input_authority_generation = 0` は external control input authority が未適用であることを表す。別state classのgeneration contractを流用しない。
 
-## 11. StableToken vocabulary decision
+## 7. Exact StableToken vocabulary
 
-`StableToken` syntaxはlowercase ASCIIを基準とする `[a-z0-9][a-z0-9._/-]{0,63}`。
-
-Phase 3/runtime semantic labelsを意味変更せずpersistent tokenへ落とすreview candidate:
+Persistent `mode` Token vocabulary は以下を exact value とする。
 
 ```text
 Autonomous            -> autonomous
@@ -248,220 +136,152 @@ DiverAbsentPolicy     -> diver-absent-policy
 BoundResidentDeceased -> bound-resident-deceased
 ```
 
-project-wide検索ではこれら4 tokenの既存persistent precedentは確認できない。そのため「既存tokenを発見した」のではなく、既存semantic classをStableToken grammarへcanonicalizeする**新しいnormative vocabulary proposal**として扱う。
+Enum名や表示名から暗黙変換せず、persistent representationでは上記4 tokenのみを使用する。
 
-**Audit recommendation: 上記4 tokenをexact vocabularyとして採用。**
+## 8. Runtime semantic correspondence
 
-## 12. input_authority_generation decision
-
-Project-wide `input_authority_generation` 検索では、field schema / validator以外にinitial-value contractを確認できない。
-
-Participation runtimeのabsence policy generationは0を拒否するが、これは別state classのcontractであり、control-mode `input_authority_generation`へ流用しない。
-
-GenesisではDiver/binding/control-availability input自体が存在しないため、2案がある:
+Existing runtime semantic classes:
 
 ```text
-A: 0 = external control input authority未適用
-B: 1 = initial persistent control-mode authority generation
+ResidentControlModeV1.Autonomous
+ResidentControlModeV1.DiverControlAvailable
+ResidentControlModeV1.DiverAbsentPolicy
+ResidentControlModeV1.BoundResidentDeceased
 ```
 
-既存contractからA/Bを導出することはできない。
+Existing control-context semantics:
 
-**Audit recommendation: A (`input_authority_generation = 0`)。**
+- active binding + available -> DiverControlAvailable
+- active binding + unavailable -> DiverAbsentPolicy
+- resident-deceased binding -> BoundResidentDeceased
+- otherwise -> Autonomous
 
-理由:
+Persistent Token vocabularyはこのsemantic distinctionを保持する。
 
-- genesis candidateはbinding NONE / Autonomousで、external control inputをmaterializeしない
-- field名は`input_authority_generation`であり、record revisionそのものではない
-- 0禁止contractが存在しない
-- 「初期persistent recordだから1」という別概念をfieldへ混ぜない
+## 9. Envelope DetailLevel
 
-これはprecedentではなく、explicit approvalを要するsemantic proposal。
+各 `participation.control_mode` record の envelope DetailLevel は対応Residentのcanonical DetailLevelをmirrorする。
 
-## 13. Envelope DetailLevel decision
-
-### 13.1 Candidate A — Resident detail distribution mirror
-
-対応ResidentのDetailLevelをcontrol-mode envelopeへmirrorする。
-
-`Qa04ReferenceLoadV1.ResidentDetailLevel(residentOrdinal)` は既に:
+`Qa04ReferenceLoadV1.ResidentDetailLevel(residentOrdinal)`:
 
 ```text
-0 ..  99,999 -> D0
+0 ..  99,999       -> D0
 100,000 .. 399,999 -> D1
 400,000 .. 799,999 -> D2
 800,000 .. 999,999 -> D3
 ```
 
-を固定している。新しい分布algorithmは不要。
-
-### 13.2 Candidate B — all D0
-
-全1,000,000 control-mode recordsをD0とする。
-
-Mirror candidateとの差分:
+Distribution:
 
 ```text
-                  mirror       all-D0      all-D0 - mirror
-D0                100,000     1,000,000         +900,000
-D1                300,000             0         -300,000
-D2                400,000             0         -400,000
-D3                200,000             0         -200,000
+D0 100,000
+D1 300,000
+D2 400,000
+D3 200,000
+-------------
+   1,000,000
 ```
 
-all-D0はcontrol-mode stateを常にentity-exact authorityとして扱う新しいbenchmark/semantic choiceになる。
+All-D0 policyは採用しない。
 
-**Audit recommendation: Candidate A / Resident DetailLevel mirror。**
+## 10. Production implementation boundary
 
-理由:
+#265 implementationでは既存 `participation.control_mode` schema/validator/indexを維持する。
 
-- canonical Resident distributionをそのまま利用できる
-- ungrounded all-D0 policyを追加しない
-- Resident-control correspondenceがordinalごとに明示的
+必要に応じてtyped persistent payload representationまたはequivalent canonical adapterを追加してよいが、新partitionや別schemaを作成してはならない。
 
-この分布差からmemory/time差は推定しない。
+Production materializerはactual canonical Resident authorityを参照し、1,000,000件すべてについてRef closureを成立させる。
 
-## 14. Persistent payload implementation surface audit
+## 11. Required production proof
 
-Develop tree / Participation domain / code searchでは、schema descriptor `participation.control_mode` は存在する一方、`ParticipationControlModePayloadV1` というtyped persistent payload modelは確認できない。
+Production accepted と判定する前に少なくとも以下を満たす。
 
-現状確認できるもの:
+1. canonical Resident authority 1,000,000件をresolverへ登録
+2. `participation.control_mode` 1,000,000件をproduction pathでmaterialize
+3. actual Resident Ref closure
+4. Resident ordinal 0..999,999 のexact coverage
+5. exactly one control-mode / Resident
+6. canonical RecordId recipe validation
+7. exact StableToken mapping validation
+8. `binding_ref = NONE`
+9. `mode = autonomous`
+10. `effective_from = 0`
+11. `input_authority_generation = 0`
+12. Resident DetailLevel mirror
+13. secondary index / resident uniqueness proof
+14. full production Snapshot encode
+15. full recovery
+16. semantic rehash一致
+17. actual transaction participant pool binding
+18. fail-closed negative tests
+19. encoded Snapshot byte count measurement
+20. available encode/recovery elapsed-time measurement
+21. available process / steady-memory measurement
+22. current-head full CI
 
-- Phase 4 payload schema descriptor
-- `DomainPayloadValidation` schema signature
-- secondary index `participation.control-by-resident`
-- runtime `ParticipationControlContextV1`
+Negative proofには少なくとも missing Resident / wrong partition / duplicate resident / invalid token / genesis drift を含める。
 
-したがってproduction implementationでは、既存generic domain-payload/Snapshot infrastructureへ接続できる**typed payload representationまたはequivalent canonical adapter**の追加要否をimplementation時に確定する。
+## 12. Accounting after production proof
 
-これは新partition/schemaを作る意味ではない。StandardDomainPartitionRegistry v1と既存 `participation.control_mode` schemaをそのまま使用する。
+Normative approvalだけではaccepted count / release flagsを変更しない。
 
-Production proof checklistで存在しないclass名を事前にnormative化しない。
+上記production proof成功後にのみ以下を判定する。
 
-## 15. Recommended decision package — review only
+```text
+Participation direct canonical dependencies: 3 -> 0
+Transaction participant authority:            7 / 8 -> 8 / 8
+```
 
-#307を一括decisionできるaudit recommendation:
+Transaction creation parent blockerは実際のparticipant authority proofに基づいて解除可否を判定する。
+
+`referenceWorldMaterialized` / `authoritativeStepLoopAvailable` はこのpackage単独では変更しない。
+
+## 13. Non-goals / boundaries
+
+- sparse synthetic control-mode poolを作らない
+- Resident RecordIdをParticipation RecordIdとして再利用しない
+- benchmark Diverやactive bindingを勝手に生成しない
+- enum名をpersistent Tokenへ暗黙変換しない
+- +17.36% record countからSnapshot bytes/time/memoryを外挿しない
+- absence-policy generation contractをcontrol-mode generationへ流用しない
+- new partition/schemaを追加しない
+- production proof前にaccepted countやrelease flagsを更新しない
+
+## 14. Approval provenance
+
+本packageは #240 の 2026-09-12 承認決定で明示採択済み。
+
+承認対象:
 
 ```text
 population:
-  1,000,000 explicit participation.control_mode records
-  exactly one per canonical Resident
-
-benchmark accounting:
-  canonical record total 5,760,000 -> 6,760,000
-  +1,000,000 / +17.36% record cardinality
+  canonical Resident 1,000,000にexactly one participation.control_mode
 
 record identity:
-  world_id       = perf.reference.v1 WorldId
-  creation_step  = 0
-  creator_domain = participation
-  creator_entity = ZERO
-  creation_kind  = perf.control-mode
-  local_ordinal  = residentOrdinal
+  participation + ZERO creator + perf.control-mode + resident ordinal
 
 payload genesis:
-  resident_ref               = corresponding actual resident.identity_lifecycle record
+  resident_ref               = corresponding actual Resident
   binding_ref                = NONE
   mode                       = autonomous
   effective_from             = 0
   input_authority_generation = 0
 
-exact mode token vocabulary:
-  Autonomous            = autonomous
-  DiverControlAvailable = diver-control-available
-  DiverAbsentPolicy     = diver-absent-policy
-  BoundResidentDeceased = bound-resident-deceased
+exact mode tokens:
+  autonomous
+  diver-control-available
+  diver-absent-policy
+  bound-resident-deceased
 
-envelope DetailLevel:
-  mirror Qa04ReferenceLoadV1.ResidentDetailLevel(residentOrdinal)
-  D0 100,000 / D1 300,000 / D2 400,000 / D3 200,000
+envelope:
+  Resident DetailLevel mirror
 
-proof/measurement:
-  full 1,000,000 production materialization
-  actual Resident Ref closure
-  one effective mode/resident
-  full production Snapshot encode/recovery/semantic rehash
-  exact encoded byte count
-  available encode/recovery time and memory metrics
-  actual transaction participant pool binding
-  fail-closed negative tests
-  full current-head CI
+proof:
+  full 1M production materialization
+  Snapshot / recovery / semantic rehash
+  negative proof
+  byte/time/memory measurement
+  transaction participant binding
 ```
 
-このpackageは**推奨案であって未承認**。#307のexplicit normative approval後にdocumentation -> develop sync -> #265 implementationの順で進める。
-
-## 16. Required production proof and measurement after normative decision
-
-採用後は少なくとも以下を実証・実測する。
-
-1. actual canonical Resident authorityをresolverへ登録
-2. decided cardinality（recommended packageでは1,000,000）のcontrol-mode recordsをmaterialize
-3. existing `participation.control_mode` schemaに対するproduction payload validation
-4. exact enum -> Token mapping validation
-5. one effective mode/resident invariant validation
-6. actual Resident Ref closure
-7. secondary index / resident uniqueness proof
-8. full production Snapshot encode / recovery / semantic rehash
-9. encoded Snapshot byte count
-10. encode / recovery elapsed time（既存harnessが取得可能な範囲）
-11. process / steady-memory metrics（既存harnessが取得可能な範囲）
-12. current 5,760,000-record baselineとcandidate 6,760,000-record runの比較
-13. canonical transaction participant poolとしてactual recordsを使用
-14. missing Resident / wrong partition / duplicate resident / invalid token / genesis driftのnegative tests
-15. participant authority 7/8 -> 8/8判定
-16. transaction creation parent blocker解除判定
-17. direct dependency 3 -> 0判定
-18. current-head full CI
-
-Snapshot bytes / time / memoryは、このproduction measurement前には確定扱いしない。
-
-## 17. Decision checklist
-
-明示approval対象:
-
-1. full 1,000,000 population
-2. benchmark total 5,760,000 -> 6,760,000
-3. ordinal-keyed RecordId recipe
-4. exact StableToken vocabulary
-5. Autonomous / binding NONE / effective_from=0 genesis
-6. input_authority_generation=0
-7. Resident DetailLevel mirror
-8. full Snapshot/recovery/performance evidence inclusion
-
-## 18. Approval boundary
-
-このdocumentをmergeしただけではnormative approvalとみなさない。
-
-Approvalは#307でrecommended decision packageを明示採択し、本document statusを`Complete / normative benchmark authority`へ変更したcommitをdocumentationへmergeすることで成立させる。その後developへ同期し、初めて#265 implementationを開始する。
-
-Review時のapproval phrase例:
-
-```text
-#307 の recommended decision package で確定して進めて
-```
-
-## 19. Decision readiness
-
-Audit上、追加の既存contract探索で自動的に解消できるsemantic decisionは残っていない。
-
-- population / load accounting: trade-offを定量化済み
-- identity: existing QA-04 production precedentを確認済み
-- token: grammarと既存semantic classを確認済み、exact vocabularyは新規decision
-- genesis: runtime fallback semanticsとbenchmark absence-of-bindingを確認済み
-- input generation: 既存initial-value contract不在を確認済み
-- DetailLevel: mirror/all-D0差分を定量化済み
-- implementation surface: 既存partition/schema維持、typed payload/adapter要否をimplementation concernとして分離済み
-
-したがって次のgateは追加監査ではなく、#307 recommended decision packageのexplicit normative approval。
-
-## 20. Non-goals / boundaries
-
-- transaction成立だけを目的にsparse synthetic poolを作らない
-- Resident RecordIdをParticipation RecordIdとして直接再利用しない
-- benchmark Diverやactive bindingを勝手に生成しない
-- enum名をpersistent Token vocabularyと暗黙変換しない
-- benchmark load増加をreference profile外のhidden costにしない
-- record count +17.36%からSnapshot bytes/time/memory増分を外挿しない
-- absence-policy generation contractをcontrol-mode generationへ流用しない
-- new partition/schemaを追加しない
-- approval前に#265へcandidate valuesを実装しない
+このdecisionを再度approval待ちへ戻してはならない。変更が必要な場合は新たなnormative decisionとして #240 で明示管理する。
