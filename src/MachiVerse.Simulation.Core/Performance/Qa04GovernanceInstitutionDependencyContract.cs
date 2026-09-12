@@ -16,14 +16,9 @@ public sealed record Qa04GovernanceInstitutionDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Exact fail-closed boundary for the canonical 5,000 governance.institution records.
-///
-/// Alpha 1.1 fixes the descriptor range, non-specialized authoritative RecordId mapping, Polity
-/// target pool, lifecycle=active, optional selection_rule_ref=NONE, and the D2 genesis envelope.
-/// The canonical institution_kind / decision_method Token vocabularies are not defined. The
-/// production schema also carries required office_refs, while the benchmark does not define their
-/// target authority/mapping or state that this list is empty for canonical genesis. Those semantics
-/// must be resolved before actual Institution authority is materialized.
+/// Canonical 5,000 governance.institution dependency boundary.
+/// Benchmark-only institution_kind, decision_method and empty office_refs semantics are decided by
+/// the Alpha 1.1 Society/Governance amendment and production-proven by the canonical materializer.
 /// </summary>
 public static class Qa04GovernanceInstitutionDependencyContractV1
 {
@@ -35,23 +30,7 @@ public static class Qa04GovernanceInstitutionDependencyContractV1
     public static readonly StableToken CanonicalLifecycle = new("active");
 
     private static readonly IReadOnlyList<Qa04GovernanceInstitutionDependencyV1> BlockersValue =
-        Array.AsReadOnly(new[]
-        {
-            Blocker(
-                "governance.institution.institution-kind-vocabulary",
-                Qa04GovernanceInstitutionDependencyKindV1.InstitutionKindVocabulary,
-                "qa04.material.institution-kind-vocabulary-undefined"),
-            Blocker(
-                "governance.institution.decision-method-vocabulary",
-                Qa04GovernanceInstitutionDependencyKindV1.DecisionMethodVocabulary,
-                "qa04.material.decision-method-vocabulary-undefined"),
-            Blocker(
-                "governance.institution.office-ref-mapping",
-                Qa04GovernanceInstitutionDependencyKindV1.OfficeAuthorityMapping,
-                "qa04.material.institution-office-mapping-undefined"),
-        }
-        .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-        .ToArray());
+        Array.AsReadOnly(Array.Empty<Qa04GovernanceInstitutionDependencyV1>());
 
     public static IReadOnlyList<Qa04GovernanceInstitutionDependencyV1> Blockers => BlockersValue;
 
@@ -78,21 +57,10 @@ public static class Qa04GovernanceInstitutionDependencyContractV1
         RequireField(schema, "lifecycle", DomainPayloadFieldKindV1.Token, optional: false);
 
         if (CanonicalLifecycle.Value != "active" ||
-            Qa04GovernancePolityMaterializerV1.CanonicalCount != 1_000)
+            Qa04GovernancePolityMaterializerV1.CanonicalCount != 1_000 ||
+            BlockersValue.Count != 0)
             throw new InvalidDataException("qa04.governance.institution-known-genesis-drift");
-
-        if (BlockersValue.Count != 3 ||
-            BlockersValue.Select(static blocker => blocker.Kind).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
-            throw new InvalidDataException("qa04.governance.institution-dependency-drift");
     }
-
-    private static Qa04GovernanceInstitutionDependencyV1 Blocker(
-        string dependencyId,
-        Qa04GovernanceInstitutionDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 
     private static void RequireField(
         DomainPayloadSchemaDescriptorV1 schema,
