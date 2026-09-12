@@ -17,7 +17,7 @@ internal static class Qa04ParticipationControlModeCanonicalMaterializationSmoke
                 materialization.TransactionParticipantRecordIds.Count == 1_000_000,
             "Canonical participation.control_mode authority must materialize exactly 1,000,000 records.");
 
-        var records = materialization.Partition.RecordsCanonical;
+        var records = materialization.Partition.RecordsCanonical.ToArray();
         Require(records.Count(static record => record.DetailLevel == DetailLevelV1.D0Entity) == 100_000 &&
                 records.Count(static record => record.DetailLevel == DetailLevelV1.D1LocalAggregate) == 300_000 &&
                 records.Count(static record => record.DetailLevel == DetailLevelV1.D2RegionalAggregate) == 400_000 &&
