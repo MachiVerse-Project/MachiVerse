@@ -15,14 +15,9 @@ public sealed record Qa04SocietyContractClaimDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Exact fail-closed boundary for the canonical 60,000 society.contract_claim records.
-/// The descriptor range and production payload schema are already fixed. Alpha 1.1 also fixes the
-/// common status=active genesis rule, optional fields remain absent unless a more-specific semantic
-/// rule exists, and the required terms_digest is derived from the canonical generic genesis scalar
-/// source. The benchmark still lacks a canonical contract_kind vocabulary and a canonical
-/// actual-record mapping for party_refs. Those two decisions are required before contract material
-/// can be accepted; optional amount/quantity/claimant/obligor/due fields are not used to hide either
-/// authority gap.
+/// Canonical 60,000 society.contract_claim dependency boundary.
+/// Benchmark-only contract_kind and one-Resident party mapping are decided by the Alpha 1.1
+/// Society/Governance amendment and production-proven by the canonical materializer.
 /// </summary>
 public static class Qa04SocietyContractClaimDependencyContractV1
 {
@@ -34,19 +29,7 @@ public static class Qa04SocietyContractClaimDependencyContractV1
     public static readonly StableToken CanonicalStatus = new("active");
 
     private static readonly IReadOnlyList<Qa04SocietyContractClaimDependencyV1> BlockersValue =
-        Array.AsReadOnly(new[]
-        {
-            Blocker(
-                "society.contract-claim.contract-kind-vocabulary",
-                Qa04SocietyContractClaimDependencyKindV1.ContractKindVocabulary,
-                "qa04.material.contract-kind-vocabulary-undefined"),
-            Blocker(
-                "society.contract-claim.party-ref-mapping",
-                Qa04SocietyContractClaimDependencyKindV1.PartyAuthorityMapping,
-                "qa04.material.contract-party-mapping-undefined"),
-        }
-        .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-        .ToArray());
+        Array.AsReadOnly(Array.Empty<Qa04SocietyContractClaimDependencyV1>());
 
     public static IReadOnlyList<Qa04SocietyContractClaimDependencyV1> Blockers => BlockersValue;
 
@@ -78,14 +61,9 @@ public static class Qa04SocietyContractClaimDependencyContractV1
 
         var probe = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(CanonicalStartOrdinal);
         if (probe.PartitionId.Value != PartitionId || probe.Descriptor.RecordId.IsZero ||
-            CanonicalStatus.Value != "active" || TermsDigest(probe.Descriptor.RecordId).Length != 32)
+            CanonicalStatus.Value != "active" || TermsDigest(probe.Descriptor.RecordId).Length != 32 ||
+            BlockersValue.Count != 0)
             throw new InvalidDataException("qa04.society.contract-claim-known-genesis-drift");
-
-        if (BlockersValue.Count != 2 ||
-            BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Any(static blocker => !Enum.IsDefined(blocker.Kind)))
-            throw new InvalidDataException("qa04.society.contract-claim-dependency-drift");
     }
 
     private static void RequireField(
@@ -99,10 +77,4 @@ public static class Qa04SocietyContractClaimDependencyContractV1
         if (field.Kind != kind || field.Optional != optional)
             throw new InvalidDataException($"qa04.society.contract-claim-field-drift:{fieldName}");
     }
-
-    private static Qa04SocietyContractClaimDependencyV1 Blocker(
-        string dependencyId,
-        Qa04SocietyContractClaimDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 }
