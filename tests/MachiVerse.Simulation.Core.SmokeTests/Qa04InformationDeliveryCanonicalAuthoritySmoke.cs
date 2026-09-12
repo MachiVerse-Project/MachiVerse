@@ -94,9 +94,14 @@ internal static class Qa04InformationDeliveryCanonicalAuthoritySmoke
 
         var missingContent = first.Payload with
         {
-            ContentRef = new PartitionRecordRefV1(SocietyInformationClaimPayloadV1.PartitionId, OpaqueId128.Zero),
+            ContentRef = new PartitionRecordRefV1(
+                SocietyInformationClaimPayloadV1.PartitionId,
+                OpaqueId128.Parse("ffffffffffffffffffffffffffffffff")),
         };
-        ExpectInvalid(() => ValidateMutated(first, missingContent, materialization),
+        ExpectInvalid(() => new StandardDomainPayloadCodecValidatorV1().Validate(
+                InformationDeliveryPayloadV1.PartitionId,
+                missingContent.ToStandardPayload(),
+                materialization.References),
             "Missing content_ref must fail closed.");
 
         var wrongSender = first.Payload with { SenderRef = first.Payload.RecipientRefs[0] };
