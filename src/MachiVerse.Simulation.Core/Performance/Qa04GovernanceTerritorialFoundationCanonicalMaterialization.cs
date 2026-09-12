@@ -115,8 +115,6 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
     {
         ValidateCanonicalContract();
 
-        // Reuse the already production-proven Society/Governance materialization because its resolver
-        // contains the actual Polity, TileScope and PublicAuthority records required by this package.
         var existing = Qa04SocietyGovernanceCanonicalMaterializerV1.MaterializeCanonical();
         var references = existing.References;
         var polities = Qa04GovernancePolityMaterializerV1.MaterializeCanonicalPartition();
@@ -263,7 +261,7 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
             "qa04.governance.jurisdiction-relation-duplicate");
 
         var polityCounts = material.GroupBy(static record => record.Payload.PolityRef).Select(static group => group.Count()).ToArray();
-        if (polityCounts.Length != PolityCount || polityCounts.Any(static count => count != 10))
+        if ((ulong)polityCounts.Length != PolityCount || polityCounts.Any(static count => count != 10))
             throw new InvalidDataException("qa04.governance.jurisdiction-polity-cardinality-drift");
 
         ValidateThreeTwoScopeDistribution(
@@ -284,7 +282,7 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
             "qa04.governance.territorial-claim-relation-duplicate");
 
         var polityCounts = material.GroupBy(static record => record.Payload.ClaimantPolityRef).Select(static group => group.Count()).ToArray();
-        if (polityCounts.Length != PolityCount || polityCounts.Any(static count => count != 10))
+        if ((ulong)polityCounts.Length != PolityCount || polityCounts.Any(static count => count != 10))
             throw new InvalidDataException("qa04.governance.territorial-claim-polity-cardinality-drift");
 
         ValidateThreeTwoScopeDistribution(
@@ -305,7 +303,7 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
             "qa04.governance.effective-control-relation-duplicate");
 
         var controllerCounts = material.GroupBy(static record => record.Payload.ControllerRef).Select(static group => group.Count()).ToArray();
-        if (controllerCounts.Length != PublicAuthorityCountUsed || controllerCounts.Any(static count => count != 1))
+        if ((ulong)controllerCounts.Length != PublicAuthorityCountUsed || controllerCounts.Any(static count => count != 1))
             throw new InvalidDataException("qa04.governance.effective-control-controller-cardinality-drift");
 
         var scopes = material.GroupBy(static record => record.Payload.ScopeRef).ToArray();
@@ -340,34 +338,28 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
         ArgumentNullException.ThrowIfNull(effectiveControls);
 
         var jurisdictionByScope = DerivedRecordIndexV1<OpaqueId128>.Rebuild(
-            "governance.jurisdiction-by-scope",
-            jurisdictions,
+            "governance.jurisdiction-by-scope", jurisdictions,
             static record => new[] { record.Payload.ScopeRef.RecordId });
         var jurisdictionByPolity = DerivedRecordIndexV1<OpaqueId128>.Rebuild(
-            "governance.jurisdiction-by-polity",
-            jurisdictions,
+            "governance.jurisdiction-by-polity", jurisdictions,
             static record => new[] { record.Payload.PolityRef.RecordId });
         ValidateIndex(jurisdictionByScope, 4_096, JurisdictionCount, "qa04.governance.jurisdiction-by-scope-index-drift");
         ValidateIndex(jurisdictionByPolity, checked((int)PolityCount), JurisdictionCount, "qa04.governance.jurisdiction-by-polity-index-drift");
 
         var claimByScope = DerivedRecordIndexV1<OpaqueId128>.Rebuild(
-            "governance.claim-by-scope",
-            territorialClaims,
+            "governance.claim-by-scope", territorialClaims,
             static record => new[] { record.Payload.ScopeRef.RecordId });
         var claimByPolity = DerivedRecordIndexV1<OpaqueId128>.Rebuild(
-            "governance.claim-by-polity",
-            territorialClaims,
+            "governance.claim-by-polity", territorialClaims,
             static record => new[] { record.Payload.ClaimantPolityRef.RecordId });
         ValidateIndex(claimByScope, 4_096, TerritorialClaimCount, "qa04.governance.claim-by-scope-index-drift");
         ValidateIndex(claimByPolity, checked((int)PolityCount), TerritorialClaimCount, "qa04.governance.claim-by-polity-index-drift");
 
         var controlByScope = DerivedRecordIndexV1<OpaqueId128>.Rebuild(
-            "governance.control-by-scope",
-            effectiveControls,
+            "governance.control-by-scope", effectiveControls,
             static record => new[] { record.Payload.ScopeRef.RecordId });
         var controlByController = DerivedRecordIndexV1<OpaqueId128>.Rebuild(
-            "governance.control-by-controller",
-            effectiveControls,
+            "governance.control-by-controller", effectiveControls,
             static record => new[] { record.Payload.ControllerRef.RecordId });
         ValidateIndex(controlByScope, 4_096, EffectiveControlCount, "qa04.governance.control-by-scope-index-drift");
         ValidateIndex(controlByController, checked((int)PublicAuthorityCountUsed), EffectiveControlCount, "qa04.governance.control-by-controller-index-drift");
@@ -436,16 +428,12 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
         return records;
     }
 
-    private static DomainRecordEnvelopeV1<TPayload> CreateEnvelope<TPayload>(
-        ulong localOrdinal,
-        string partitionId,
-        TPayload payload)
+    private static DomainRecordEnvelopeV1<TPayload> CreateEnvelope<TPayload>(ulong localOrdinal, string partitionId, TPayload payload)
     {
         var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(partitionId);
         var binding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(checked(slice.StartOrdinal + localOrdinal));
         if (binding.PartitionId.Value != partitionId ||
-            binding.PartitionLocalOrdinal != localOrdinal ||
-            binding.UsesSpecializedIdentity ||
+            binding.PartitionLocalOrdinal != localOrdinal || binding.UsesSpecializedIdentity ||
             binding.Descriptor.DetailLevel != DetailLevelV1.D2RegionalAggregate)
             throw new InvalidDataException($"qa04.governance.territorial-foundation-descriptor-binding-drift:{partitionId}");
 
@@ -460,10 +448,7 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
             payload);
     }
 
-    private static void ValidateEnvelope<TPayload>(
-        ulong localOrdinal,
-        string partitionId,
-        DomainRecordEnvelopeV1<TPayload> record)
+    private static void ValidateEnvelope<TPayload>(ulong localOrdinal, string partitionId, DomainRecordEnvelopeV1<TPayload> record)
     {
         var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(partitionId);
         var binding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(checked(slice.StartOrdinal + localOrdinal));
@@ -500,22 +485,13 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
         IDomainRecordSchemaResolverV1 references)
     {
         foreach (var record in polities.RecordsCanonical)
-            RequireResolved(
-                new PartitionRecordRefV1(GovernancePolityPayloadV1.PartitionId, record.RecordId),
-                record.RecordSchema,
-                references,
+            RequireResolved(new PartitionRecordRefV1(GovernancePolityPayloadV1.PartitionId, record.RecordId), record.RecordSchema, references,
                 "qa04.governance.territorial-foundation-polity-reference-missing");
         foreach (var record in tileScopes.RecordsCanonical)
-            RequireResolved(
-                new PartitionRecordRefV1(SpatialScopeRegistryPayloadV1.PartitionId, record.RecordId),
-                record.RecordSchema,
-                references,
+            RequireResolved(new PartitionRecordRefV1(SpatialScopeRegistryPayloadV1.PartitionId, record.RecordId), record.RecordSchema, references,
                 "qa04.governance.territorial-foundation-scope-reference-missing");
         foreach (var record in publicAuthorities.RecordsCanonical.Take(checked((int)PublicAuthorityCountUsed)))
-            RequireResolved(
-                new PartitionRecordRefV1(GovernancePublicAuthorityPayloadV1.PartitionId, record.RecordId),
-                record.RecordSchema,
-                references,
+            RequireResolved(new PartitionRecordRefV1(GovernancePublicAuthorityPayloadV1.PartitionId, record.RecordId), record.RecordSchema, references,
                 "qa04.governance.territorial-foundation-authority-reference-missing");
     }
 
@@ -526,8 +502,7 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
         string error)
     {
         if (!references.Exists(reference) ||
-            !references.TryGetRecordSchema(reference, out var actualSchema) ||
-            actualSchema != expectedSchema)
+            !references.TryGetRecordSchema(reference, out var actualSchema) || actualSchema != expectedSchema)
             throw new InvalidDataException(error);
     }
 
@@ -535,18 +510,12 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
     {
         var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            [GovernanceJurisdictionPayloadV1.PartitionId] = new[]
-            {
-                "governance.jurisdiction-by-scope", "governance.jurisdiction-by-polity",
-            },
-            [GovernanceTerritorialClaimPayloadV1.PartitionId] = new[]
-            {
-                "governance.claim-by-scope", "governance.claim-by-polity",
-            },
-            [GovernanceEffectiveControlPayloadV1.PartitionId] = new[]
-            {
-                "governance.control-by-scope", "governance.control-by-controller",
-            },
+            [GovernanceJurisdictionPayloadV1.PartitionId] =
+                new[] { "governance.jurisdiction-by-scope", "governance.jurisdiction-by-polity" },
+            [GovernanceTerritorialClaimPayloadV1.PartitionId] =
+                new[] { "governance.claim-by-scope", "governance.claim-by-polity" },
+            [GovernanceEffectiveControlPayloadV1.PartitionId] =
+                new[] { "governance.control-by-scope", "governance.control-by-controller" },
         };
 
         foreach (var pair in expected)
@@ -558,12 +527,9 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
         }
     }
 
-    private static void ValidateThreeTwoScopeDistribution(
-        IReadOnlyDictionary<PartitionRecordRefV1, int> counts,
-        string error)
+    private static void ValidateThreeTwoScopeDistribution(IReadOnlyDictionary<PartitionRecordRefV1, int> counts, string error)
     {
-        if (counts.Count != 4_096)
-            throw new InvalidDataException(error);
+        if (counts.Count != 4_096) throw new InvalidDataException(error);
         var three = 0;
         var two = 0;
         foreach (var pair in counts)
@@ -572,8 +538,7 @@ public static class Qa04GovernanceTerritorialFoundationCanonicalAuthorityV1
             else if (pair.Value == 2) two++;
             else throw new InvalidDataException(error);
         }
-        if (three != 1_808 || two != 2_288)
-            throw new InvalidDataException(error);
+        if (three != 1_808 || two != 2_288) throw new InvalidDataException(error);
     }
 
     private static void EnsureUniqueIds(IEnumerable<OpaqueId128> ids, string error)
