@@ -440,7 +440,21 @@ Review時のapproval phrase例:
 #307 の recommended decision package で確定して進めて
 ```
 
-## 19. Non-goals / boundaries
+## 19. Decision readiness
+
+Audit上、追加の既存contract探索で自動的に解消できるsemantic decisionは残っていない。
+
+- population / load accounting: trade-offを定量化済み
+- identity: existing QA-04 production precedentを確認済み
+- token: grammarと既存semantic classを確認済み、exact vocabularyは新規decision
+- genesis: runtime fallback semanticsとbenchmark absence-of-bindingを確認済み
+- input generation:既存initial-value contract不在を確認済み
+- DetailLevel: mirror/all-D0差分を定量化済み
+- implementation surface:既存partition/schema維持、typed payload/adapter要否をimplementation concernとして分離済み
+
+したがって次のgateは追加監査ではなく、#307 recommended decision packageのexplicit normative approval。
+
+## 20. Non-goals / boundaries
 
 - transaction成立だけを目的にsparse synthetic poolを作らない
 - Resident RecordIdをParticipation RecordIdとして直接再利用しない
