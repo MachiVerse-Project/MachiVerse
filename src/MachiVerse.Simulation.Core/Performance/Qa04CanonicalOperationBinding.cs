@@ -23,9 +23,9 @@ public sealed record Qa04CanonicalOperationBindingResultV1(
 /// Binds the canonical perf.reference.v1 Operation descriptor families whose target authorities are
 /// already materialized to the ordinary StandardOperationV1 / scheduling identity surface.
 ///
-/// Infrastructure remains fail-closed until the canonical service pool exists. Governance remains
-/// fail-closed until the canonical InformationClaim authority required by incident registration
-/// exists. Those two unresolved families keep the parent workload blocker active.
+/// Infrastructure remains fail-closed until the complete canonical service pool exists. Governance
+/// now binds against the production InformationClaim authority already materialized by the accepted
+/// Society/Governance package. The remaining Infrastructure family keeps the parent workload blocker active.
 /// </summary>
 public static class Qa04CanonicalOperationBindingV1
 {
@@ -47,9 +47,11 @@ public static class Qa04CanonicalOperationBindingV1
     private static readonly StableToken ResidentDomain = new("resident");
     private static readonly StableToken PhysicalDomain = new("physical_built");
     private static readonly StableToken SocietyDomain = new("society_economy");
+    private static readonly StableToken GovernanceDomain = new("governance_security");
     private static readonly StableToken EnvironmentDomain = new("environment");
     private static readonly StableToken Buy = new("buy");
     private static readonly StableToken Sell = new("sell");
+    private static readonly StableToken GovernanceIncident = new("perf.incident");
     private static readonly StableToken SyntheticHazard = new("perf.synthetic-hazard");
 
     private static readonly IReadOnlyDictionary<StableToken, ushort> DomainRankByToken =
@@ -62,19 +64,23 @@ public static class Qa04CanonicalOperationBindingV1
         new StableToken(ResidentFamily),
         new StableToken(PhysicalFamily),
         new StableToken(MarketFamily),
+        new StableToken(GovernanceFamily),
         new StableToken(EnvironmentFamily),
     });
 
     public static IReadOnlyList<StableToken> PendingAuthorityFamilies { get; } = Array.AsReadOnly(new[]
     {
         new StableToken(InfrastructureFamily),
-        new StableToken(GovernanceFamily),
     });
 
     public static void ValidateCanonicalContract()
     {
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
+        Qa04SocietyInformationClaimDependencyContractV1.ValidateCanonicalContract();
+
+        if (Qa04SocietyInformationClaimDependencyContractV1.Blockers.Count != 0)
+            throw new InvalidDataException("qa04.workload.governance-information-claim-authority-stale");
 
         var canonicalFamilies = Qa04ReferenceLoadV1.OperationFamilies
             .Select(static family => family.FamilyToken)
@@ -84,7 +90,7 @@ public static class Qa04CanonicalOperationBindingV1
         if (BoundFamilies.Intersect(PendingAuthorityFamilies).Any())
             throw new InvalidDataException("qa04.workload.operation-binding-family-overlap");
 
-        foreach (var domain in new[] { ResidentDomain, PhysicalDomain, SocietyDomain, EnvironmentDomain })
+        foreach (var domain in new[] { ResidentDomain, PhysicalDomain, SocietyDomain, GovernanceDomain, EnvironmentDomain })
         {
             if (!DomainRankByToken.ContainsKey(domain))
                 throw new InvalidDataException($"qa04.workload.operation-domain-rank-missing:{domain.Value}");
@@ -106,11 +112,10 @@ public static class Qa04CanonicalOperationBindingV1
             ResidentFamily => BindResident(descriptor, schedulingPolicyGeneration),
             PhysicalFamily => BindPhysical(descriptor, schedulingPolicyGeneration),
             MarketFamily => BindMarket(descriptor, schedulingPolicyGeneration),
-            EnvironmentFamily => BindEnvironment(descriptor, schedulingPolicyGeneration),
             InfrastructureFamily => throw new InvalidDataException(
                 "qa04.workload.operation-authority-binding-undefined:infrastructure-service-pool"),
-            GovernanceFamily => throw new InvalidDataException(
-                "qa04.workload.operation-authority-binding-undefined:governance-information-claim-authority"),
+            GovernanceFamily => BindGovernance(descriptor, schedulingPolicyGeneration),
+            EnvironmentFamily => BindEnvironment(descriptor, schedulingPolicyGeneration),
             _ => throw new InvalidDataException(
                 $"qa04.workload.operation-family-unregistered:{descriptor.FamilyToken.Value}"),
         };
@@ -231,6 +236,43 @@ public static class Qa04CanonicalOperationBindingV1
             operationKind: "society.market.order-place",
             SocietyDomain,
             marketRef,
+            payloadWriter.ToArray());
+    }
+
+    private static Qa04CanonicalOperationBindingResultV1 BindGovernance(
+        Qa04OperationDescriptorV1 descriptor,
+        ulong schedulingPolicyGeneration)
+    {
+        var resident = Qa04ReferenceLoadV1.Record(ResidentClass, descriptor.FamilyOrdinal);
+        var residentRef = new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, resident.RecordId);
+        var scopeRef = Qa04SpatialTileScopeAuthorityV1.ScopeRef(
+            Qa04ReferenceLoadV1.RegionalTileIndex(resident.RecordId));
+
+        var claimSlice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(SocietyInformationClaimPayloadV1.PartitionId);
+        var claimLocalOrdinal = descriptor.FamilyOrdinal % claimSlice.Count;
+        var claimBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(
+            checked(claimSlice.StartOrdinal + claimLocalOrdinal));
+        if (claimBinding.PartitionId.Value != SocietyInformationClaimPayloadV1.PartitionId ||
+            claimBinding.PartitionLocalOrdinal != claimLocalOrdinal ||
+            claimBinding.UsesSpecializedIdentity)
+            throw new InvalidDataException("qa04.workload.governance-information-claim-ref-drift");
+        var claimRef = new PartitionRecordRefV1(claimBinding.PartitionId, claimBinding.Descriptor.RecordId);
+
+        var payloadWriter = new MvDcborWriter();
+        payloadWriter.WriteArrayStart(4);
+        payloadWriter.WriteAsciiText(GovernanceIncident.Value);
+        payloadWriter.WriteArrayStart(1);
+        WriteRecordRef(payloadWriter, residentRef);
+        WriteRecordRef(payloadWriter, scopeRef);
+        payloadWriter.WriteArrayStart(1);
+        WriteRecordRef(payloadWriter, claimRef);
+
+        return BindResolved(
+            descriptor,
+            schedulingPolicyGeneration,
+            operationKind: "governance.incident.register",
+            GovernanceDomain,
+            residentRef,
             payloadWriter.ToArray());
     }
 
