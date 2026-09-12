@@ -9,14 +9,9 @@ public sealed record Qa04SocietyContractClaimResolvedAuthorityV1(
     IReadOnlyList<PartitionRecordRefV1> PartyRefs);
 
 /// <summary>
-/// Mechanical materialization boundary for canonical perf.reference.v1 society.contract_claim
-/// records after the unresolved contract_kind and party_refs authorities have been supplied.
-///
-/// This type deliberately does not choose a canonical contract_kind or party target pool. The
-/// common active status, absent optional fields, deterministic terms_digest, descriptor identity,
-/// and D2 genesis envelope are already fixed and are materialized here. Party refs must be nonempty,
-/// canonical, and resolvable as actual records through the supplied production reference resolver.
-/// Fixture mappings prove mechanics only and do not release the two ContractClaim blockers.
+/// Mechanical materialization boundary for canonical perf.reference.v1 society.contract_claim.
+/// Production canonical authority is supplied by Qa04SocietyGovernanceCanonicalAuthorityV1; this
+/// explicit-authority surface remains for mechanics and negative Ref validation tests.
 /// </summary>
 public static class Qa04SocietyContractClaimResolvedMaterializerV1
 {
@@ -28,15 +23,7 @@ public static class Qa04SocietyContractClaimResolvedMaterializerV1
     {
         Qa04SocietyContractClaimDependencyContractV1.ValidateCanonicalContract();
 
-        var blockers = Qa04SocietyContractClaimDependencyContractV1.Blockers;
-        var expectedFailureCodes = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "qa04.material.contract-kind-vocabulary-undefined",
-            "qa04.material.contract-party-mapping-undefined",
-        };
-        if (blockers.Count != 2 ||
-            !blockers.Select(static blocker => blocker.FailureCode.Value).ToHashSet(StringComparer.Ordinal)
-                .SetEquals(expectedFailureCodes))
+        if (Qa04SocietyContractClaimDependencyContractV1.Blockers.Count != 0)
             throw new InvalidDataException("qa04.society.contract-claim-resolved-boundary-stale");
 
         if (CanonicalCount != 60_000 ||
@@ -55,11 +42,7 @@ public static class Qa04SocietyContractClaimResolvedMaterializerV1
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(referenceResolver);
         ValidateCanonicalContract();
-        return CreateResolvedValidated(
-            localOrdinal,
-            RequireAuthority(authority),
-            referenceResolver,
-            out descriptorBinding);
+        return CreateResolvedValidated(localOrdinal, RequireAuthority(authority), referenceResolver, out descriptorBinding);
     }
 
     public static IEnumerable<DomainRecordEnvelopeV1<SocietyContractClaimPayloadV1>> MaterializeResolved(
@@ -74,11 +57,7 @@ public static class Qa04SocietyContractClaimResolvedMaterializerV1
         {
             var authority = authorityForLocalOrdinal(localOrdinal)
                 ?? throw new InvalidDataException("qa04.society.contract-claim-authority-required");
-            yield return CreateResolvedValidated(
-                localOrdinal,
-                RequireAuthority(authority),
-                referenceResolver,
-                out _);
+            yield return CreateResolvedValidated(localOrdinal, RequireAuthority(authority), referenceResolver, out _);
         }
     }
 
@@ -98,8 +77,7 @@ public static class Qa04SocietyContractClaimResolvedMaterializerV1
         if (localOrdinal >= CanonicalCount) throw new ArgumentOutOfRangeException(nameof(localOrdinal));
 
         var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(SocietyContractClaimPayloadV1.PartitionId);
-        descriptorBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(
-            checked(slice.StartOrdinal + localOrdinal));
+        descriptorBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(checked(slice.StartOrdinal + localOrdinal));
         if (descriptorBinding.PartitionId.Value != SocietyContractClaimPayloadV1.PartitionId ||
             descriptorBinding.PartitionLocalOrdinal != localOrdinal || descriptorBinding.UsesSpecializedIdentity)
             throw new InvalidDataException("qa04.society.contract-claim-resolved-descriptor-binding-drift");
@@ -132,8 +110,7 @@ public static class Qa04SocietyContractClaimResolvedMaterializerV1
             payload);
     }
 
-    private static Qa04SocietyContractClaimResolvedAuthorityV1 RequireAuthority(
-        Qa04SocietyContractClaimResolvedAuthorityV1 authority)
+    private static Qa04SocietyContractClaimResolvedAuthorityV1 RequireAuthority(Qa04SocietyContractClaimResolvedAuthorityV1 authority)
     {
         if (string.IsNullOrWhiteSpace(authority.ContractKind.Value))
             throw new InvalidDataException("qa04.society.contract-kind-authority-required");
