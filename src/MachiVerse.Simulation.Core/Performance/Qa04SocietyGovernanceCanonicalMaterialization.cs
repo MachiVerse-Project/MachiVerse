@@ -161,9 +161,8 @@ public static class Qa04SocietyGovernanceCanonicalMaterializerV1
 
     private static void SeedPolityAuthority(CanonicalReferenceResolver resolver)
     {
-        for (ulong ordinal = 0; ordinal < Qa04GovernancePolityMaterializerV1.CanonicalCount; ordinal++)
+        foreach (var record in Qa04GovernancePolityMaterializerV1.MaterializeCanonical())
         {
-            var record = Qa04GovernancePolityMaterializerV1.Create(ordinal, out _);
             resolver.Add(
                 new PartitionRecordRefV1(GovernancePolityPayloadV1.PartitionId, record.RecordId),
                 record.RecordSchema);
@@ -172,9 +171,8 @@ public static class Qa04SocietyGovernanceCanonicalMaterializerV1
 
     private static void SeedTileScopeAuthority(CanonicalReferenceResolver resolver)
     {
-        for (ushort tile = 0; tile < Qa04SpatialTileScopeAuthorityV1.CanonicalScopeCount; tile++)
+        foreach (var record in Qa04SpatialTileScopeAuthorityV1.MaterializeCanonical().RecordsCanonical)
         {
-            var record = Qa04SpatialTileScopeAuthorityV1.MaterializeTile(tile);
             resolver.Add(
                 new PartitionRecordRefV1(SpatialScopeRegistryPayloadV1.PartitionId, record.RecordId),
                 record.RecordSchema);
