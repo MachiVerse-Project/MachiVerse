@@ -1,14 +1,14 @@
-# Alpha 1.1 Society/Governance remaining authority audit
+# Alpha 1.1 MembershipRole正本仕様・Society/Governance残authority監査
 
-Status: **Audit / normative proposal pending**
+Status: **Complete / normative benchmark authority（MembershipRole 80,000のみ）; 他683,900は未承認の監査**
 
-Tracking: #298, #240, #265
+Tracking: #240, #265（旧 #298 は統合済み）
 
 ## Purpose
 
 This document records the remaining `perf.reference.v1` Society/Governance authority surface after the first benchmark-only authority package was implemented and production Snapshot/recovery evidence was established.
 
-It is an audit and decision checklist, not a semantic decision. Values, mappings, Token vocabularies, numeric genesis values, nested payloads, and dependency edges that are not already fixed by an existing normative document remain undefined until explicitly approved.
+[Issue #240の2026-09-12承認決定](https://github.com/MachiVerse-Project/MachiVerse/issues/240#issuecomment-5644534723)により、MembershipRole 80,000 recommended packageだけをbenchmark正本仕様として採択した。他683,900のvalues / mapping / Token / genesis / nested payload / dependencyは本書では決定しない。
 
 Current accepted Society/Governance material:
 
@@ -35,7 +35,7 @@ The accepted 195,000-record package above has actual reference closure and produ
 
 | Partition | Count | Initial authority still requiring explicit decision |
 |---|---:|---|
-| `society.membership_role` | 80,000 | organization/member target pools; role/authority Token sets; joined Step; ended-state policy; status |
+| `society.membership_role` | 80,000 | #240で承認済み。本書の正本packageに従いproduction proof待ち |
 | `society.employment` | 80,000 | employer/worker targets; job Token; status; started Step; wage; pay period; obligation refs |
 | `society.property_right` | 50,000 | asset/holder target pools; right kind; share; effective Step; optional claim/effective-until policy |
 | `society.currency_money` | 100 | currency Token; issuer target; supply; status; policy refs; unit scale |
@@ -85,7 +85,7 @@ The implementation must not satisfy these fields with fabricated records or an e
 
 ### 4. `governance.security_incident.incident_kind` is also a workload dependency
 
-A decided canonical incident kind would not only enable the 45,000 initial SecurityIncident records; it is also relevant to closing the pending governance-security Operation family. The world-record decision and workload binding must nevertheless remain separate acceptance checks.
+#240の現行checkpointではgovernance-security Operation workload bindingは別gateで完了済み。一方45,000 SecurityIncidentのreference-world authorityは未完了であり、workload bindingの成功だけでworld-record semanticsを採択しない。
 
 ## Required decision categories
 
@@ -104,9 +104,9 @@ For each partition, a normative proposal must explicitly state all applicable ca
 11. materialization dependency order;
 12. production Snapshot/recovery evidence required before accepted-count increase.
 
-## First decision-ready Society package — `society.membership_role` 80,000
+## 承認済みSociety package — `society.membership_role` 80,000
 
-This subsection is a **review-only proposal**, not normative authority.
+本節は#240で承認済みのnormative benchmark authorityである。
 
 ### Why this slice is first
 
@@ -129,7 +129,7 @@ The required target pools already exist as production authority:
 
 Unlike FinanceAccount, HistoryLineage, Diplomacy, or LawRule, this slice requires no digest, no unresolved nested AST, and no still-missing upstream partition.
 
-### Recommended deterministic mapping — review only
+### 承認済みdeterministic mapping
 
 For local ordinal `i = 0..79,999`:
 
@@ -152,9 +152,9 @@ Properties:
 - therefore the `(organization_ref, member_ref)` pair is unique for all 80,000 records;
 - list ordering is canonical trivially because `role_tokens` has one token and `authority_tokens` is empty.
 
-`perf.member` is a new benchmark-only candidate Token. Repository search found no existing `perf.member` authority; therefore its use requires explicit normative adoption and is not inferred from existing code.
+`perf.member` は#240で明示採択したbenchmark-only Tokenであり、一般世界のrole taxonomyを確定しない。
 
-### Candidate semantic rationale
+### 承認済みfixtureの意味
 
 - `[perf.member]` represents only the minimum benchmark relation needed to make membership records non-empty and reproducible; it is not a universal role taxonomy.
 - `authority_tokens = []` deliberately does not assign organization-level authority to every benchmark member.
@@ -169,7 +169,7 @@ Use the existing QA-04 descriptor RecordId and envelope rules for this partition
 
 If an implementation-side descriptor gap is discovered, stop and return that identity/envelope surface to normative review rather than inventing a new recipe in #265.
 
-### Required production proof after approval
+### 必須production proof
 
 1. exact 80,000 MembershipRole records;
 2. actual Organization Ref closure;
@@ -194,15 +194,15 @@ The Society/Governance parent reference-world blocker remains active at that int
 
 ## Governance foundation priority after MembershipRole
 
-For Governance, the most strategically valuable next decision remains `governance.security_incident`, because `incident_kind` is also an unresolved governance-security workload dependency. However, that partition still needs an explicit incident Token, subject/scope selectors, severity, fact refs, step/status semantics, and should not be bundled into MembershipRole merely to close the workload gate.
+`governance.security_incident` のreference-world populationはincident Token、subject/scope selectors、severity、fact refs、Step/statusの明示決定が必要なままである。別gateで完了したgovernance-security workload bindingと混同せず、MembershipRoleに含めて採択しない。
 
 `governance.jurisdiction` is another foundation candidate because JudicialCase and BorderControl can depend on it. `governance.law_rule` remains isolated behind the canonical PredicateAst/EffectAst authority gate.
 
 ## Proposed work decomposition — process only
 
-### Package A1 — MembershipRole decision
+### Package A1 — 承認済みMembershipRole統合・実装
 
-Review and explicitly accept/replace the 80,000-record package above.
+既存#299をdocumentationへ統合し、developへPR同期した後に既存#265で上記80,000-record packageを実装・検証する。
 
 ### Package A2 — remaining Society
 
@@ -237,30 +237,15 @@ Documentation approval alone does not increase accepted counts.
 
 This audit intentionally does **not** decide general-world employment/job taxonomy, general ownership/property taxonomy, general currency/finance policy, production recipe ontology, education/culture/reputation ontology, tax/diplomacy/security/legal/military taxonomy, realistic initial distributions/economic quantities, universal status transitions, or RuleAst business semantics.
 
-The MembershipRole proposal does not decide those unrelated surfaces.
+MembershipRoleの承認はこれらの無関係な仕様を決定しない。
 
-## Approval boundary
+## 承認範囲と統合境界
 
-Explicit adoption is required for at least:
+#240は80,000 population、`Organization[i mod 10,000]`、`Resident[i]`（i=0..79,999）、`[perf.member]`、authority []、joined 0、ended NONE、active、既存descriptor/envelopeの利用とproduction proofを採択した。
 
-1. 80,000 MembershipRole population;
-2. `Organization[i mod 10,000]` mapping;
-3. `Resident[i]` mapping for `i=0..79,999`;
-4. role Token `[perf.member]`;
-5. `authority_tokens = []`;
-6. `joined_step = 0`;
-7. `ended_step = NONE`;
-8. `status = active`;
-9. reuse of existing descriptor/envelope authority;
-10. production proof requirements.
+identity / envelopeに既存正本で定義されていない不足を発見した場合は、新しいrecipeを推測せずその部分の正本判断へ戻す。
 
-Before explicit approval:
-
-- do not mark this document complete normative authority;
-- do not merge #299 as the MembershipRole authority decision;
-- do not implement these candidate semantics in #265;
-- do not increase accepted counts;
-- do not change parent blockers or release flags.
+production proof成功前にaccepted count / parent blocker / release flagsを更新しない。他683,900のauthorityは別途明示決定とproduction proofを必要とする。
 
 ## Current release boundary
 
