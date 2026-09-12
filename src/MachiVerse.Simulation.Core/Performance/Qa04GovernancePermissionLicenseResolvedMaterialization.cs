@@ -11,16 +11,10 @@ public sealed record Qa04GovernancePermissionLicenseResolvedAuthorityV1(
     ulong? EffectiveFrom);
 
 /// <summary>
-/// Mechanical materialization boundary for canonical perf.reference.v1 governance.permission_license
-/// records after the unresolved PublicAuthority target, permission_kind vocabulary, and payload
-/// effective_from have been supplied explicitly.
-///
-/// Alpha 1.1 fixes the subject target pool to Resident and required spatial scope to canonical
-/// TileScope, both using canonical modulo mapping, plus status=active, effective_until=NONE,
-/// deterministic conditions_digest, descriptor identity, and the D2 genesis envelope. This type
-/// deliberately does not choose any of the remaining three authorities. Supplied refs must close
-/// against actual records through the production reference resolver. Fixture authorities prove
-/// mechanics only and do not release the remaining PermissionLicense blockers.
+/// Mechanical materialization boundary for canonical perf.reference.v1 governance.permission_license.
+/// Production canonical PublicAuthority/kind/effective_from authority is supplied by
+/// Qa04SocietyGovernanceCanonicalAuthorityV1; this explicit-authority surface remains for mechanics
+/// and fail-closed production Ref validation tests.
 /// </summary>
 public static class Qa04GovernancePermissionLicenseResolvedMaterializerV1
 {
@@ -34,16 +28,7 @@ public static class Qa04GovernancePermissionLicenseResolvedMaterializerV1
         Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
         Qa04SpatialTileScopeAuthorityV1.ValidateCanonicalContract();
 
-        var blockers = Qa04GovernancePermissionLicenseDependencyContractV1.Blockers;
-        var expectedFailureCodes = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "qa04.material.permission-kind-vocabulary-undefined",
-            "qa04.material.permission-public-authority-undefined",
-            "qa04.material.permission-effective-from-undefined",
-        };
-        if (blockers.Count != 3 ||
-            !blockers.Select(static blocker => blocker.FailureCode.Value).ToHashSet(StringComparer.Ordinal)
-                .SetEquals(expectedFailureCodes))
+        if (Qa04GovernancePermissionLicenseDependencyContractV1.Blockers.Count != 0)
             throw new InvalidDataException("qa04.governance.permission-license-resolved-boundary-stale");
 
         if (CanonicalCount != 70_000 ||
@@ -64,11 +49,7 @@ public static class Qa04GovernancePermissionLicenseResolvedMaterializerV1
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(referenceResolver);
         ValidateCanonicalContract();
-        return CreateResolvedValidated(
-            localOrdinal,
-            RequireAuthority(authority),
-            referenceResolver,
-            out descriptorBinding);
+        return CreateResolvedValidated(localOrdinal, RequireAuthority(authority), referenceResolver, out descriptorBinding);
     }
 
     public static IEnumerable<DomainRecordEnvelopeV1<GovernancePermissionLicensePayloadV1>> MaterializeResolved(
@@ -83,11 +64,7 @@ public static class Qa04GovernancePermissionLicenseResolvedMaterializerV1
         {
             var authority = authorityForLocalOrdinal(localOrdinal)
                 ?? throw new InvalidDataException("qa04.governance.permission-license-authority-required");
-            yield return CreateResolvedValidated(
-                localOrdinal,
-                RequireAuthority(authority),
-                referenceResolver,
-                out _);
+            yield return CreateResolvedValidated(localOrdinal, RequireAuthority(authority), referenceResolver, out _);
         }
     }
 
@@ -105,9 +82,7 @@ public static class Qa04GovernancePermissionLicenseResolvedMaterializerV1
 
         var residentOrdinal = permissionLocalOrdinal % Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount;
         var residentRecord = Qa04ReferenceWorldMaterializerV1.CreateResidentRecord(residentOrdinal);
-        return new PartitionRecordRefV1(
-            ResidentIdentityLifecyclePayloadV1.PartitionId,
-            residentRecord.RecordId);
+        return new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, residentRecord.RecordId);
     }
 
     public static PartitionRecordRefV1 ResolveCanonicalScopeRef(ulong permissionLocalOrdinal)
@@ -128,8 +103,7 @@ public static class Qa04GovernancePermissionLicenseResolvedMaterializerV1
         if (localOrdinal >= CanonicalCount) throw new ArgumentOutOfRangeException(nameof(localOrdinal));
 
         var slice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(GovernancePermissionLicensePayloadV1.PartitionId);
-        descriptorBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(
-            checked(slice.StartOrdinal + localOrdinal));
+        descriptorBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(checked(slice.StartOrdinal + localOrdinal));
         if (descriptorBinding.PartitionId.Value != GovernancePermissionLicensePayloadV1.PartitionId ||
             descriptorBinding.PartitionLocalOrdinal != localOrdinal || descriptorBinding.UsesSpecializedIdentity)
             throw new InvalidDataException("qa04.governance.permission-license-resolved-descriptor-binding-drift");
@@ -161,8 +135,7 @@ public static class Qa04GovernancePermissionLicenseResolvedMaterializerV1
             payload);
     }
 
-    private static Qa04GovernancePermissionLicenseResolvedAuthorityV1 RequireAuthority(
-        Qa04GovernancePermissionLicenseResolvedAuthorityV1 authority)
+    private static Qa04GovernancePermissionLicenseResolvedAuthorityV1 RequireAuthority(Qa04GovernancePermissionLicenseResolvedAuthorityV1 authority)
     {
         if (authority.AuthorityRef.RecordId.IsZero)
             throw new InvalidDataException("qa04.governance.permission-license-public-authority-required");
