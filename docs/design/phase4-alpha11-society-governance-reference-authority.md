@@ -1,25 +1,25 @@
 # Alpha 1.1 — Society / Governance reference authority
 
-Status: **Proposed normative design / approval pending**  
+Status: **Decided normative design / implementation pending**  
 Tracking: #295  
 Parent tracking: #240  
-Implementation follow-up: Draft PR #265 after documentation approval/integration
+Implementation follow-up: Draft PR #265 after documentation integration
 
 ## 1. Purpose
 
-This document proposes the minimum benchmark-specific authority needed to materialize the remaining `perf.reference.v1` Society / Governance genesis slices without inventing general gameplay taxonomy.
+This document fixes the minimum benchmark-specific authority needed to materialize the remaining `perf.reference.v1` Society / Governance genesis slices without defining a general gameplay taxonomy.
 
 The values in this document are **benchmark fixture semantics only**. They do not define universal Organization categories, universal Institution kinds, universal decision systems, universal contract taxonomies, or universal permission taxonomies for MachiVerse.
 
-The proposal follows the existing Phase 3 rule that Organization and Governance structures must not be reduced to one universal fixed classification system. It also follows the Phase 4 benchmark precedent that explicit `perf.*` vocabulary may be fixed for one reproducible profile.
+The design follows the existing Phase 3 rule that Organization and Governance structures must not be reduced to one universal fixed classification system. It also follows the Phase 4 benchmark precedent that explicit `perf.*` vocabulary may be fixed for one reproducible profile.
 
-Until this proposal is approved and integrated into the documentation authority, Simulation code must continue to fail closed on the corresponding dependency contracts.
+This decision becomes Simulation implementation authority after integration through the `documentation` responsibility path and synchronization into `develop`. Documentation integration by itself does not release machine-readable implementation blockers.
 
 ## 2. Scope
 
-This proposal closes only the currently unresolved benchmark authority for these genesis slices:
+This decision closes the normative benchmark authority for these genesis slices:
 
-| partition | count | proposed unresolved authority |
+| partition | count | decided authority |
 |---|---:|---|
 | `society.organization` | 10,000 | `organization_class` |
 | `governance.institution` | 5,000 | kind / decision / office genesis semantics |
@@ -32,7 +32,7 @@ Existing descriptor ranges, RecordId rules, envelope revision, D2 detail, `activ
 
 ## 3. Benchmark-only vocabulary
 
-The following `StableToken` values are proposed for `perf.reference.v1` only:
+The following `StableToken` values are fixed for `perf.reference.v1` only:
 
 ```text
 organization_class  = perf.organization
@@ -137,7 +137,7 @@ status           = active
 
 The Institution, Resident, and TileScope references must resolve to actual records with the expected production schemas. Missing targets fail closed.
 
-The existing canonical holder and TileScope selector decisions are not changed by this document; this proposal only supplies the previously unresolved Institution/token/effective-step authority.
+The existing canonical holder and TileScope selector decisions are not changed by this document; this decision supplies the previously unresolved Institution/token/effective-step authority.
 
 ## 9. `governance.permission_license` genesis authority
 
@@ -159,7 +159,7 @@ PublicAuthority, Resident, and TileScope references must resolve to actual produ
 
 ## 10. Dependency-chain order
 
-After this proposal becomes normative, implementation must preserve actual authority ordering:
+Implementation must preserve actual authority ordering:
 
 ```text
 Organization
@@ -178,13 +178,13 @@ No downstream partition may satisfy reference closure using smoke-only fixture r
 
 ## 11. Expected dependency impact
 
-Current direct canonical sub-dependencies in #240:
+Current direct canonical sub-dependencies in #240 at the time of this decision:
 
 ```text
 23
 ```
 
-This proposal covers the following 15 Society/Governance dependencies:
+This decision covers the following 15 Society/Governance dependencies:
 
 ```text
 Organization      1
@@ -197,7 +197,7 @@ PermissionLicense 3
 total            15
 ```
 
-If and only if the documentation decision is integrated **and** production implementation, negative tests, actual Ref closure, and Snapshot/runtime proof succeed, the machine-readable dependency total may move:
+If and only if production implementation, negative tests, actual Ref closure, and Snapshot/runtime proof succeed, the machine-readable dependency total may move:
 
 ```text
 23 -> 8
@@ -207,7 +207,7 @@ Documentation merge alone does not remove implementation blockers.
 
 ## 12. Explicit non-decisions
 
-This proposal does not decide:
+This decision does not define:
 
 - general Organization taxonomy;
 - general Institution taxonomy;
@@ -223,11 +223,11 @@ This proposal does not decide:
 
 Those remain governed by their own requirements and future normative work.
 
-## 13. Acceptance gate
+## 13. Implementation acceptance gate
 
-This proposal becomes implementation authority only after explicit project approval and integration through the `documentation` responsibility path.
+This document is normative after integration through the `documentation` responsibility path and synchronization into `develop`.
 
-After integration, Simulation follow-up must:
+Simulation follow-up must:
 
 1. replace the corresponding fail-closed unresolved dependency entries with these exact benchmark rules;
 2. add/adjust negative tests so missing actual Ref targets still fail closed;
@@ -235,4 +235,4 @@ After integration, Simulation follow-up must:
 4. run current-head Simulation Core smoke, runtime target, multi-Gateway, and relevant full production proof;
 5. update #240 counts only after production evidence succeeds.
 
-Until then, #265 remains Draft and the unresolved dependency contracts stay active.
+Until the production proof completes, #265 remains Draft, the unresolved implementation dependency contracts stay active, and documentation integration alone must not change accepted material counts or release flags.
