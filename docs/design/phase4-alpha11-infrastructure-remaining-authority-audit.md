@@ -1,6 +1,6 @@
-# Alpha 1.1 Infrastructure remaining 89,900 authority audit
+# Alpha 1.1 Infrastructure dependency正本仕様・残authority監査
 
-Status: **Audit complete / normative proposal pending**
+Status: **Complete / normative benchmark authority（dependency 20,000のみ）; 他69,900は未承認の監査**
 
 Tracking: #240, #265
 
@@ -8,7 +8,7 @@ Tracking: #240, #265
 
 This document audits the remaining `perf.reference.v1` Infrastructure / Information benchmark material after the accepted topology, network-service, and ServiceQueue authority.
 
-It does **not** assign new benchmark genesis semantics. Its purpose is to separate existing actual authority surfaces from decisions still required before implementation and to make the smallest dependency-closed next package reviewable without treating the proposal as approval.
+[Issue #240の2026-09-12承認決定](https://github.com/MachiVerse-Project/MachiVerse/issues/240#issuecomment-5644534723)により、§5のdependency 20,000 recommended packageだけをbenchmark正本仕様として採択した。§6〜12の他69,900は未承認の監査であり、FacilityServiceのfacility identityやInformationDelivery等のmapping / Token / digest / genesisを確定しない。
 
 Current post-proof decomposition:
 
@@ -95,11 +95,11 @@ Existing surfaces:
 - actual Transport / Water / Power / Communication service records;
 - actual ServiceQueue records where semantically appropriate.
 
-The Ref side is now sufficiently closed to formulate one concrete benchmark-only proposal. Exact values remain review-only until explicit approval.
+Ref closureを構成できる§5のexact valuesは#240で承認済み。一般世界の普遍仕様ではなくbenchmark fixtureに限定する。
 
-## 5. Recommended dependency package — review only
+## 5. 承認済みdependency package — normative benchmark authority
 
-This subsection is a **proposal, not normative authority**.
+本節は#240承認済みの正本仕様である。documentation統合→develop同期の完了後、既存#265へ実装する。
 
 ### 5.1 Cardinality and identity
 
@@ -108,7 +108,7 @@ population = 20,000
 local ordinal d = 0..19,999
 ```
 
-Recommended record identity follows the already-used QA-04 benchmark authority pattern:
+承認済みrecord identityは次のとおり。It follows the already-used QA-04 benchmark authority pattern:
 
 ```text
 DerivedIdentity.DeriveEntityId(
@@ -157,9 +157,9 @@ downstream = consumer_ref
 
 and not reverse the edge.
 
-### 5.3 Proposed benchmark genesis payload
+### 5.3 承認済みbenchmark genesis payload
 
-Recommended exact values:
+承認済みexact values:
 
 ```text
 dependency_kind       = perf.power-supply
@@ -174,14 +174,14 @@ Rationale:
 - `perf.power-supply` makes the benchmark-only nature explicit and matches the Phase 3 power-dependency examples without creating a general dependency taxonomy;
 - accepted PowerService genesis is `availability_ppm = 1,000,000`, so `minimum_service_ppm = 1,000,000` makes the initial state internally satisfied;
 - runtime outage cascade is currently binary failure propagation rather than a general degradation-curve evaluator, so no synthetic degradation authority is invented;
-- no accepted fallback service authority exists for these relations, so the candidate uses an explicit empty fallback list rather than fake refs;
-- all participating services are accepted as `active` at benchmark genesis, so `active` is the proposed dependency status.
+- no accepted fallback service authority exists for these relations, so the approved fixture uses an explicit empty fallback list rather than fake refs;
+- all participating services are accepted as `active` at benchmark genesis, so `active` is the approved dependency status.
 
 `minimum_service_ppm = 1,000,000` is a benchmark fixture threshold only. It MUST NOT be generalized into a claim that real water or communication systems universally require 100% nominal electrical service.
 
-### 5.4 Envelope proposal
+### 5.4 承認済みEnvelope
 
-To avoid inventing a new detail distribution, recommended envelope detail is the actual `consumer_ref` record's DetailLevel.
+To avoid inventing a new detail distribution, approved envelope detail is the actual `consumer_ref` record's DetailLevel.
 
 Other genesis envelope fields follow the standard initial-authority pattern:
 
@@ -194,9 +194,9 @@ lineage_ref   = NONE
 
 Mirroring the consumer envelope is preferred over forcing all 20,000 dependency records to D0 because the latter would add an unrelated entity-exact detail policy.
 
-### 5.5 Required production proof after approval
+### 5.5 必須production proof
 
-After normative approval and `documentation -> develop` integration, #265 would need to prove at minimum:
+`documentation -> develop`統合後、#265で少なくとも以下を実証する:
 
 1. exact 20,000 record materialization;
 2. actual Water / Communication / Power Ref closure;
@@ -414,7 +414,7 @@ already actual:
   selected Society/Governance authority
   Physical D0 presence / occupancy / shape
 
-first decision-ready proposal:
+approved package; production proof pending:
   infrastructure.dependency 20,000
 
 possible after separate semantic decisions:
@@ -435,11 +435,11 @@ ordered after dependency/other remaining authority when those refs are used:
   infrastructure.lineage
 ```
 
-This ordering does not approve the dependency proposal or select a facility identity owner.
+dependencyは#240で承認済み。この順序はfacility identity ownerや他sliceを採択するものではない。
 
 ## 14. Release impact
 
-This audit/proposal changes no accepted counts or release flags.
+本正本化はaccepted countやrelease flagsを変更しない。
 
 Until production proof succeeds:
 
@@ -451,7 +451,7 @@ Until production proof succeeds:
 - `referenceWorldMaterialized` remains `false`;
 - `authoritativeStepLoopAvailable` remains `false`.
 
-If and only if the 20,000 dependency proposal is approved, integrated, implemented, and production-proven, the intermediate accounting may become:
+承認済み20,000 dependencyを統合・実装しproduction proofが成功した場合にのみ、実績値を次へ更新できる:
 
 ```text
 Infrastructure accepted  = 430,100 / 500,000
@@ -460,32 +460,10 @@ Infrastructure remaining =  69,900
 
 The parent blocker still remains active at that intermediate point.
 
-## 15. Approval boundary
+## 15. 承認範囲と統合境界
 
-The recommended dependency package is intentionally **review only**.
+#240の承認は§5の10k Water + 10k Communication、actual PowerServiceへのordinal mapping、provider→consumer、exact Token / Ratio / optional fields / status、identity recipe、consumer DetailLevel mirror、production proof要件に限定する。
 
-A semantic approval should explicitly adopt or replace:
+FacilityService / InformationDelivery / MediaDistribution / RecordStore / AddressPlaceIndex / FailureRecovery / Lineageは未承認である。型互換Refやruntimeの例からworld semanticsを推測しない。特にFacilityServiceのidentity owner/mappingは別途決定が必要である。
 
-1. the 10k Water + 10k Communication consumer split;
-2. PowerService as provider pool;
-3. ordinal one-to-one mapping;
-4. provider->consumer runtime orientation;
-5. `perf.power-supply` Token;
-6. `minimum_service_ppm = 1,000,000`;
-7. `degradation_curve_ref = NONE`;
-8. `fallback_refs = []`;
-9. `status = active`;
-10. record identity recipe;
-11. consumer DetailLevel mirror;
-12. production proof requirements.
-
-FacilityService is **not** included in that approval package. It requires a separate facility-identity authority decision first.
-
-Before explicit approval:
-
-- do not mark this document complete normative authority;
-- do not merge #304 as an authority decision;
-- do not implement dependency candidate values in #265;
-- do not invent FacilityService facility identity/mapping in #265;
-- do not increase accepted Infrastructure count;
-- do not change release flags.
+#304をdocumentationへ統合し、developへPR同期した後に#265でdependencyを実装する。production proof前にaccepted countを加算せず、Infrastructure parent blockerと最後のOperation familyのfail-closedを維持する。
