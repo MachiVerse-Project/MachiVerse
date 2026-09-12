@@ -1,16 +1,22 @@
 # Alpha 1.1 Society/Governance残authority監査
 
-Status: **MembershipRole 80,000 production-proven; Governance Jurisdiction 10,000 recommended decision package / review only; 他673,900は未決定**
+Status: **MembershipRole 80,000 production-proven; Governance territorial foundation 40,000 recommended decision packages / review only; 他643,900は未決定**
 
 Tracking: #240, #265
 
 ## Purpose
 
-This document records the remaining `perf.reference.v1` Society/Governance authority surface after the first benchmark-only authority package and MembershipRole were implemented and production Snapshot/recovery evidence was established.
+This document records the remaining `perf.reference.v1` Society/Governance authority surface after the already-approved benchmark packages were implemented and production Snapshot/recovery evidence was established.
 
-MembershipRole 80,000 is already normative and production-proven. This revision does not change that authority. It adds a **review-only** recommended package for `governance.jurisdiction` 10,000. The Jurisdiction package MUST NOT be treated as normative, merged into production authority, or counted as accepted until an explicit #240 approval is recorded and the required production proof succeeds.
+MembershipRole 80,000 is already normative and production-proven. This revision does not change that authority. It adds three **review-only** Governance foundation recommendations:
 
-Current accepted Society/Governance material:
+- `governance.jurisdiction`: 10,000;
+- `governance.territorial_claim`: 10,000;
+- `governance.effective_control`: 20,000.
+
+Each recommendation is independently approvable. None is normative, mergeable into production authority, or countable as accepted until #240 records explicit approval for that slice and the required production proof succeeds.
+
+## Current accepted material
 
 ```text
 Market              1,000,100
@@ -28,7 +34,7 @@ accepted              1,316,100 / 2,000,000
 remaining               683,900
 ```
 
-The accepted material above has actual reference closure and production Snapshot semantic recovery evidence. This audit proposal does not itself change accepted counts or release flags.
+The accepted material above has actual reference closure and production Snapshot semantic recovery evidence. This proposal itself does not change accepted counts or release flags.
 
 ## Remaining surface
 
@@ -53,9 +59,9 @@ The accepted material above has actual reference closure and production Snapshot
 | Partition | Count | Initial authority still requiring explicit decision |
 |---|---:|---|
 | `governance.law_rule` | 30,000 | jurisdiction target; priority/specificity; effective Step; status; canonical `PredicateAst` and `EffectAst` |
-| `governance.jurisdiction` | 10,000 | **recommended package below; explicit #240 approval required** |
-| `governance.territorial_claim` | 10,000 | claimant Polity/Scope selectors; claim kind; strength; effective Step; basis refs |
-| `governance.effective_control` | 20,000 | controller/Scope target; control/security capacity; effective Step; basis refs |
+| `governance.jurisdiction` | 10,000 | **recommended below; explicit #240 approval required** |
+| `governance.territorial_claim` | 10,000 | **recommended below; explicit #240 approval required** |
+| `governance.effective_control` | 20,000 | **recommended below; explicit #240 approval required** |
 | `governance.tax_fiscal` | 50,000 | Polity selector; tax kind/base Token; rate; optional claim/debtor/due policy; status |
 | `governance.diplomacy` | 10,000 | party target pools/cardinality; relation kind; status; effective Step; instrument refs; terms digest |
 | `governance.security_incident` | 45,000 | incident kind; subject refs; Scope selector; occurred Step; fact refs; status; severity |
@@ -75,22 +81,27 @@ Payload contracts define field types, required/optional shape, canonical seriali
 
 ### 2. Actual references require production authority
 
-The implementation must not satisfy required Ref fields with fabricated records or an exists-everywhere resolver. Investigation depends on SecurityIncident/PublicAuthority, JudicialCase and BorderControl depend on Jurisdiction, and many Society records still need explicit target-pool decisions.
+The implementation must not satisfy required Ref fields with fabricated records or an exists-everywhere resolver. Investigation depends on SecurityIncident/PublicAuthority; JudicialCase and BorderControl depend on Jurisdiction; many Society records still need explicit target-pool decisions.
 
 ### 3. `governance.law_rule` remains a distinct nested-payload gate
 
-`GovernanceLawRulePayloadV1` carries canonical nested `PredicateAst` and `EffectAst`. Jurisdiction approval does not decide those AST semantics.
+`GovernanceLawRulePayloadV1` carries canonical nested `PredicateAst` and `EffectAst`. None of the foundation recommendations below decides those AST semantics.
 
-### 4. Jurisdiction now has real upstream Ref authority
+### 4. The territorial foundation now has real upstream Ref authority
 
 The current production profile already has:
 
-- `governance.polity`: exactly 1,000 accepted records using the QA-04 Society/Governance descriptor identity;
-- Spatial `TileScope`: exactly 4,096 production records for the 64x64 regional tile set, each with an independently derivable `scope_ref`;
-- `governance.jurisdiction`: exactly 10,000 descriptor slots in the Society/Governance decomposition;
-- typed `GovernanceJurisdictionPayloadV1` and production Snapshot codec support.
+- `governance.polity`: exactly 1,000 accepted records using QA-04 Society/Governance descriptor identity;
+- `governance.public_authority`: exactly 25,000 accepted records with actual Institution closure;
+- Spatial `TileScope`: exactly 4,096 production records for the 64x64 regional tile set with independently derivable `scope_ref`;
+- decomposition slots for Jurisdiction 10,000, TerritorialClaim 10,000, and EffectiveControl 20,000;
+- typed payloads and Snapshot codecs for all three partitions.
 
-Therefore Jurisdiction is no longer blocked by missing Ref identity or Snapshot schema. What remains undecided is the benchmark-specific deterministic mapping and Token/Step vocabulary.
+Therefore these three slices are not blocked by missing Ref identity or Snapshot schema. Their remaining gap is benchmark-specific deterministic mapping, Token/Step values, list policy, and numeric genesis values.
+
+### 5. SecurityIncident remains separate
+
+`governance.security_incident` has `incident_kind`, `subject_refs`, `scope_ref`, `occurred_step`, `fact_event_refs`, `status`, and `severity_ppm`. The existing governance-security workload binding does not define the reference-world target pools or initial-world incident semantics, so this audit does not infer them.
 
 ## Required decision categories
 
@@ -123,15 +134,15 @@ ended_step       = NONE
 status           = active
 ```
 
-Its 80,000-record production proof has completed; it contributes to the current accepted count shown above. Nothing in the Jurisdiction proposal changes MembershipRole semantics.
+Its 80,000-record production proof has completed and contributes to the current accepted count.
 
-## Recommended Governance package — `governance.jurisdiction` 10,000
+# Recommended Governance territorial foundation
 
-**Status: review only / approval required.**
+All sections below are **review only / approval required**. The schema and generic Governance design do not select these `perf.reference.v1` values; they are explicit benchmark-fixture recommendations, not inferred domain rules.
 
-### Exact payload surface
+## Package G1 — `governance.jurisdiction` 10,000
 
-The production payload is:
+Exact payload:
 
 ```text
 polity_ref: Ref
@@ -142,11 +153,7 @@ effective_from: Step
 effective_until: Step?
 ```
 
-The schema and generic Governance design do not themselves select the `perf.reference.v1` values below. The following values are therefore a recommended benchmark fixture, not an inferred domain rule.
-
-### Recommended deterministic mapping
-
-For Jurisdiction local ordinal `i = 0..9,999`:
+Recommended local ordinal mapping for `i = 0..9,999`:
 
 ```text
 polity_ref        = Polity[i mod 1,000]
@@ -157,133 +164,233 @@ effective_from    = 0
 effective_until   = NONE
 ```
 
-Identity/envelope:
+Envelope uses the existing QA-04 descriptor RecordId, revision 1, created Step 0, retired NONE, D2, lineage NONE. No new identity recipe is introduced.
+
+Properties:
+
+- every Ref resolves to actual accepted/canonical production authority;
+- each Polity receives exactly 10 Jurisdiction records;
+- TileScope ordinals `0..1,807` receive 3 records and `1,808..4,095` receive 2;
+- all 10,000 `(polity_ref, scope_ref)` pairs are unique because `lcm(1,000, 4,096) = 512,000 > 10,000`;
+- the one-token `subject_classes` list has trivial canonical ordering;
+- `effective_until = NONE` introduces no invented expiry event.
+
+Token boundary:
+
+- `perf.regional-jurisdiction` is only the QA-04 minimal regional jurisdiction fixture;
+- `perf.subject` is only the QA-04 catch-all subject-class fixture;
+- neither Token defines a universal jurisdiction or legal-subject taxonomy;
+- the mapping does not imply that real polities have ten jurisdictions or that jurisdiction boundaries must coincide with TileScope boundaries.
+
+Required proof after approval:
+
+1. full 10,000 materialization;
+2. descriptor/envelope identity proof;
+3. actual Polity and TileScope Ref closure;
+4. exact 10-per-Polity and 3/2-per-TileScope distribution;
+5. unique relation pairs;
+6. exact Token/Step/NONE semantics;
+7. production payload validation;
+8. `governance.jurisdiction-by-scope` and `governance.jurisdiction-by-polity` index proof;
+9. Snapshot encode/recovery/semantic rehash;
+10. negative proof for missing/wrong Ref, wrong Token, duplicate relation/identity, effective-period drift, collection-order drift;
+11. current-head full CI.
+
+After G1 proof only:
 
 ```text
-record_id    = existing QA-04 Society/Governance descriptor RecordId
-revision     = 1
-created_step = 0
-retired_step = NONE
-detail_level = D2
-lineage_ref  = NONE
+accepted  = 1,326,100 / 2,000,000
+remaining =   673,900
 ```
 
-No new RecordId recipe is introduced. If current implementation reveals a descriptor/envelope gap, stop and return that gap to normative review.
+## Package G2 — `governance.territorial_claim` 10,000
 
-### Mapping properties
+Exact payload:
 
-This mapping is intentionally simple and benchmark-only:
+```text
+claimant_polity_ref: Ref
+scope_ref: Ref
+claim_kind: Token
+strength_ppm: Ratio
+effective_from: Step
+effective_until: Step?
+basis_refs: RefList
+```
 
-- every `polity_ref` resolves to one of the 1,000 actual accepted Polity records;
-- every `scope_ref` resolves to one of the 4,096 actual canonical TileScope records;
-- each Polity receives exactly 10 Jurisdiction records;
-- TileScope ordinals `0..1,807` receive three Jurisdiction records each;
-- TileScope ordinals `1,808..4,095` receive two Jurisdiction records each;
-- every `(polity_ref, scope_ref)` pair is unique for all 10,000 records because a repeated pair would require an ordinal difference divisible by both 1,000 and 4,096, whose least common multiple is 512,000, larger than the package population;
-- `subject_classes` contains one token, so canonical collection ordering is trivial;
-- `effective_until = NONE` avoids inventing benchmark expiry events at genesis.
+Recommended local ordinal mapping for `i = 0..9,999`:
 
-### Recommended Token meaning and boundary
+```text
+claimant_polity_ref = Polity[i mod 1,000]
+scope_ref           = TileScope[i mod 4,096]
+claim_kind           = perf.territorial-claim
+strength_ppm         = 1,000,000
+effective_from       = 0
+effective_until      = NONE
+basis_refs           = []
+```
 
-`perf.regional-jurisdiction` and `perf.subject` are **benchmark-only fixture Tokens**.
+Envelope uses the existing QA-04 descriptor RecordId, revision 1, created Step 0, retired NONE, D2, lineage NONE.
 
-- `perf.regional-jurisdiction` means only “the QA-04 reference profile's minimal regional jurisdiction record”. It does not define a universal jurisdiction taxonomy.
-- `perf.subject` is the reference profile's single catch-all subject-class fixture. It does not define the simulation's general legal subject ontology and does not assert that real jurisdictions have only one subject class.
-- The mapping does not imply that all real polities have ten jurisdictions or that jurisdiction boundaries must coincide with regional TileScope boundaries.
-- Overlap is permitted by the generic Governance design; this package deliberately exercises multiple jurisdiction records over the same TileScope without deciding TerritorialClaim or EffectiveControl semantics.
+Properties:
 
-### Dependency order
+- all claimant and scope Refs resolve to actual production authority;
+- each Polity receives exactly 10 claim records;
+- TileScope distribution is the same deterministic 3/2 split as G1;
+- all 10,000 `(claimant_polity_ref, scope_ref)` pairs are unique;
+- `strength_ppm = 1,000,000` represents a full-strength benchmark claim, not recognized sovereignty or effective control;
+- `basis_refs = []` explicitly means the genesis benchmark does not fabricate evidence/instrument records;
+- overlapping claims remain allowed by the generic Governance model and do not imply control.
 
-Production materialization for this package must consume only already-existing authority:
+`perf.territorial-claim` is benchmark-only and does not define a general claim taxonomy.
+
+Required proof after approval:
+
+1. full 10,000 materialization;
+2. actual Polity/TileScope closure;
+3. exact 10-per-Polity, 3/2-per-TileScope distribution, unique pairs;
+4. exact Token/strength/Step/NONE/empty-basis semantics;
+5. ratio bounds and payload validation;
+6. expected claim-by-scope and claim-by-polity index proof;
+7. Snapshot encode/recovery/semantic rehash;
+8. negative proof for missing/wrong Ref, out-of-range strength, wrong Token, duplicate relation/identity, unexpected basis/effective-until drift;
+9. current-head full CI.
+
+After G1+G2 proof:
+
+```text
+accepted  = 1,336,100 / 2,000,000
+remaining =   663,900
+```
+
+G2 may also be approved/proven independently; accepted accounting must move only for actually proven slices.
+
+## Package G3 — `governance.effective_control` 20,000
+
+Exact payload:
+
+```text
+controller_ref: Ref
+scope_ref: Ref
+control_ppm: Ratio
+security_capacity_ppm: Ratio
+effective_from: Step
+basis_refs: RefList
+```
+
+The generic payload contract requires scope aggregate control to remain bounded. With 20,000 records distributed over 4,096 TileScopes, each scope receives 4 or 5 records. Therefore a constant 1,000,000 control value per record is invalid as a benchmark recommendation.
+
+Recommended local ordinal mapping for `i = 0..19,999`:
+
+```text
+controller_ref = PublicAuthority[i]
+scope_ordinal  = i mod 4,096
+scope_ref      = TileScope[scope_ordinal]
+records_on_scope = (scope_ordinal < 3,616) ? 5 : 4
+control_ppm             = 1,000,000 / records_on_scope
+security_capacity_ppm   = 1,000,000 / records_on_scope
+effective_from           = 0
+basis_refs               = []
+```
+
+Therefore:
+
+```text
+TileScope 0..3,615   => 5 records each, control/security = 200,000 ppm each
+TileScope 3,616..4,095 => 4 records each, control/security = 250,000 ppm each
+```
+
+Envelope uses the existing QA-04 descriptor RecordId, revision 1, created Step 0, retired NONE, D2, lineage NONE.
+
+Properties:
+
+- controller Refs use the first 20,000 of the 25,000 actual accepted PublicAuthority records, each exactly once;
+- all scope Refs resolve to canonical TileScope authority;
+- every TileScope has aggregate `control_ppm = 1,000,000` exactly;
+- this proposal also keeps aggregate benchmark `security_capacity_ppm = 1,000,000` exactly for symmetry;
+- all `(controller_ref, scope_ref)` pairs are unique because controller_ref is unique in the 20,000-record package;
+- `basis_refs = []` does not fabricate claim/evidence dependencies;
+- this does not assert that a territorial claim implies effective control or vice versa.
+
+Required proof after approval:
+
+1. full 20,000 materialization;
+2. actual PublicAuthority and TileScope closure;
+3. exact 20,000 unique controller refs from PublicAuthority ordinals 0..19,999;
+4. exact 3,616 scopes with 5 records and 480 scopes with 4 records;
+5. exact 200,000/250,000 ppm rule;
+6. exact 1,000,000 aggregate control ppm per TileScope;
+7. production payload validation and ratio bounds;
+8. expected control-by-scope/controller index proof;
+9. Snapshot encode/recovery/semantic rehash;
+10. negative proof for missing/wrong controller/scope Ref, aggregate overflow, ppm drift, duplicate relation/identity, unexpected basis refs;
+11. current-head full CI.
+
+After G1+G2+G3 proof:
+
+```text
+accepted  = 1,356,100 / 2,000,000
+remaining =   643,900
+```
+
+G3 may be approved/proven independently; accounting changes only after its own production proof succeeds.
+
+## Common dependency order and non-decisions
+
+Production materialization for these packages may consume only already-existing authority:
 
 1. Society/Governance descriptor decomposition;
-2. accepted `governance.polity` 1,000 authority;
-3. canonical Spatial TileScope 4,096 authority;
-4. Jurisdiction 10,000 materialization;
-5. Jurisdiction Snapshot/recovery semantic proof.
+2. accepted `governance.polity` 1,000;
+3. accepted `governance.public_authority` 25,000 where G3 needs it;
+4. canonical Spatial TileScope 4,096;
+5. approved G1/G2/G3 materializers;
+6. per-partition Snapshot/recovery proof.
 
-This package must not synthesize TerritorialClaim, EffectiveControl, LawRule, JudicialCase, or BorderControl records merely to satisfy downstream relationships.
+The implementation must not synthesize LawRule, JudicialCase, BorderControl, SecurityIncident, Investigation, Enforcement, or other missing records merely to satisfy downstream relationships.
 
-### Required production proof after approval
-
-Before the 10,000 records can contribute to accepted accounting, #265 must prove at current head:
-
-1. exact 10,000 Jurisdiction records;
-2. exact production descriptor RecordId/envelope binding;
-3. actual Polity Ref closure against all 1,000 accepted Polity records;
-4. actual TileScope Ref closure against all 4,096 canonical TileScope records;
-5. exact 10 Jurisdictions per Polity;
-6. exact TileScope distribution: 1,808 scopes with 3 and 2,288 scopes with 2;
-7. unique `(polity_ref, scope_ref)` pairs;
-8. exact `perf.regional-jurisdiction`, `[perf.subject]`, Step 0, and `effective_until = NONE` semantics;
-9. full production payload validation;
-10. expected secondary-index coverage for `governance.jurisdiction-by-scope` and `governance.jurisdiction-by-polity`;
-11. full production Snapshot encode / recovery / semantic rehash;
-12. negative proof for missing/wrong Polity Ref, missing/wrong Scope Ref, wrong Token, duplicate relation/identity, effective-period drift, and collection-order drift;
-13. current-head full CI.
-
-Only after explicit normative approval, documentation integration, develop sync, and successful production proof may accepted accounting move by 10,000:
-
-```text
-Society/Governance accepted = 1,326,100 / 2,000,000
-Society/Governance remaining =   673,900
-```
-
-The Society/Governance parent reference-world blocker remains active at that intermediate point.
-
-### Downstream effect if accepted
-
-A proven Jurisdiction authority removes the missing-Jurisdiction Ref prerequisite for later `governance.judicial_case` and `governance.border_control` work. It does **not** decide those partitions' own Tokens, mappings, statuses, Steps, nested values, or other dependencies. `governance.law_rule` also remains separately blocked by its canonical PredicateAst/EffectAst authority.
-
-## Governance foundation priority after Jurisdiction
-
-After Jurisdiction, the next foundation candidates remain SecurityIncident and the control/territorial surfaces needed by downstream Investigation, JudicialCase, Enforcement, and BorderControl. They require separate explicit authority decisions.
+Approval of G1 removes the missing-Jurisdiction Ref prerequisite for later JudicialCase and BorderControl work, but does not decide those partitions' own semantics. G2 and G3 establish separate claim/control surfaces; they do not imply equivalence between claim and control.
 
 ## Proposed work decomposition — process only
 
-### Package B1 — Jurisdiction decision
+### Package G — territorial foundation
 
-Review the 10,000-record recommendation above. If #240 explicitly approves it, convert only this section to normative authority, merge documentation, sync documentation to develop, and implement/prove it in existing #265.
+Review G1/G2/G3 independently. For each explicitly approved slice: convert only that slice to normative authority, merge the existing documentation PR, sync documentation to develop, then implement/prove it in existing #265. Do not increase accepted counts before production proof.
 
-### Package A2 — remaining Society
+### Package A — remaining Society
 
 Resolve Employment, PropertyRight, CurrencyMoney, FinanceAccount, BusinessProduction, LogisticsObligation, Education, Culture, Reputation, and Society lineage according to their actual dependency surfaces.
 
-### Package B2 — remaining Governance foundation
+### Package B — remaining Governance foundation
 
-Resolve SecurityIncident, TerritorialClaim, EffectiveControl, and other required foundations before dependent Investigation, JudicialCase, Enforcement, BorderControl, or lineage materialization.
+Resolve SecurityIncident and other required foundations before dependent Investigation, JudicialCase, Enforcement, BorderControl, or lineage materialization.
 
 ### Package C — LawRule nested authority
 
 Resolve canonical benchmark RuleAst representation independently. Do not accept LawRule until its nested semantic Snapshot path is production-proven.
 
-### Package D — downstream Governance materialization
-
-After foundation authority exists, materialize dependent Governance partitions using only actual registered records and run production Snapshot/recovery semantic proof.
-
 ## Acceptance rules
 
-For a partition to contribute to the Society/Governance accepted count, all of the following must be true:
+A partition contributes to the Society/Governance accepted count only when all are true:
 
-- its benchmark authority is normatively decided;
-- its deterministic descriptor-to-payload mapping is implemented;
-- every required Ref resolves to an actual record with the expected schema;
-- missing authority and unresolved Ref cases fail closed;
-- the full canonical record count is materialized through the production payload codec;
-- the full partition passes production Snapshot encode and semantic recovery rehash against its canonical header;
+- benchmark authority is normatively decided;
+- deterministic descriptor-to-payload mapping is implemented;
+- required Refs resolve to actual records with expected schema;
+- missing authority and unresolved Refs fail closed;
+- full canonical count materializes through production payload codec;
+- full partition passes Snapshot encode and semantic recovery rehash;
+- required negative proofs pass;
 - current-head CI is green.
 
 Documentation proposal or approval alone does not increase accepted counts.
 
 ## Non-decisions
 
-This audit intentionally does **not** decide general-world employment/job taxonomy, general ownership/property taxonomy, general currency/finance policy, production recipe ontology, education/culture/reputation ontology, tax/diplomacy/security/legal/military taxonomy, realistic initial distributions/economic quantities, universal status transitions, TerritorialClaim/EffectiveControl semantics, or RuleAst business semantics.
+This audit intentionally does **not** decide general-world employment/job taxonomy, ownership/property taxonomy, currency/finance policy, production recipe ontology, education/culture/reputation ontology, tax/diplomacy/security/legal/military taxonomy, realistic initial distributions/economic quantities, universal status transitions, SecurityIncident semantics, or RuleAst business semantics.
 
-The Jurisdiction recommendation is limited to the QA-04 `perf.reference.v1` benchmark fixture and does not define general simulation law/governance behavior.
+G1/G2/G3 are limited to the QA-04 `perf.reference.v1` benchmark fixture and do not define general simulation law/governance behavior.
 
 ## Current release boundary
 
-Until the Jurisdiction recommendation is explicitly approved, implemented, and production-proven:
+Until any recommended package is explicitly approved, implemented, and production-proven:
 
 ```text
 Society/Governance accepted = 1,316,100 / 2,000,000
