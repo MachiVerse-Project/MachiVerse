@@ -1,0 +1,92 @@
+name: INT-03 release evidence runner validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-release-evidence-runner-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evidence-runner-contract:
+    name: QA-04 external adapter / release evidence contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build runner and contract fixture adapter
+        run: |
+          dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
+          dotnet build tests/MachiVerse.PerformanceAdapter.ContractFixture/MachiVerse.PerformanceAdapter.ContractFixture.csproj --configuration Release
+      - name: Verify runner contract
+        run: dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- verify
+      - name: Materialize canonical QA-04 plan
+        run: dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release -- materialize "$RUNNER_TEMP/qa04-plan"
+      - name: Execute contract-smoke JSONL adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          adapter="$GITHUB_WORKSPACE/tests/MachiVerse.PerformanceAdapter.ContractFixture/bin/Release/net10.0/MachiVerse.PerformanceAdapter.ContractFixture"
+          commit=1111111111111111111111111111111111111111
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- \
+            run contract-smoke "$commit" "$adapter" "$RUNNER_TEMP/qa04-plan" "$RUNNER_TEMP/qa04-smoke"
+          python3 - "$RUNNER_TEMP/qa04-smoke/qa04-evidence-fragment.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as handle:
+              fragment = json.load(handle)
+          assert fragment['executionClass'] == 'contract-smoke', fragment
+          assert fragment['releaseEligible'] is False, fragment
+          assert len(fragment['performanceReports']) == 3, fragment
+          assert fragment['soak']['durationSeconds'] < 86400, fragment
+          PY
+      - name: Prove contract-smoke cannot be applied as release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=1111111111111111111111111111111111111111
+          base="$RUNNER_TEMP/base-evidence.json"
+          out="$RUNNER_TEMP/applied-evidence.json"
+          dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release -- template "$base"
+          set +e
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- \
+            apply "$RUNNER_TEMP/qa04-smoke/qa04-evidence-fragment.json" "$base" "$out"
+          status=$?
+          set -e
+          if [[ "$status" == 0 ]]; then
+            echo "contract-smoke evidence was incorrectly accepted as release evidence" >&2
+            exit 1
+          fi
+          set +e
+          dotnet run --project tools/MachiVerse.ReleaseAcceptance --configuration Release -- \
+            evaluate "$base" "$RUNNER_TEMP/record.json" "$commit"
+          evaluate_status=$?
+          set -e
+          if [[ "$evaluate_status" != 2 ]]; then
+            echo "Expected untouched template to remain INCOMPLETE; evaluator exit=$evaluate_status" >&2
+            exit 1
+          fi
+      - name: Prove fixture refuses release execution class
+        shell: bash
+        run: |
+          set -euo pipefail
+          adapter="$GITHUB_WORKSPACE/tests/MachiVerse.PerformanceAdapter.ContractFixture/bin/Release/net10.0/MachiVerse.PerformanceAdapter.ContractFixture"
+          commit=1111111111111111111111111111111111111111
+          set +e
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- \
+            run release "$commit" "$adapter" "$RUNNER_TEMP/qa04-plan" "$RUNNER_TEMP/qa04-fake-release"
+          status=$?
+          set -e
+          if [[ "$status" == 0 ]]; then
+            echo "Contract fixture must never synthesize release evidence" >&2
+            exit 1
+          fi

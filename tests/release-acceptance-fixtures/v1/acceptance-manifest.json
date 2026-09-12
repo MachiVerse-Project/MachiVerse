@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "1.0",
+  "testSuiteVersion": "p4-08.v1",
+  "qa04ManifestSha256": "5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423",
+  "requiredSuiteIds": [
+    "simulation-core.standard",
+    "gateway.standard",
+    "general-view.standard",
+    "administration-view.standard",
+    "qa-01.contract",
+    "qa-02.determinism-replay",
+    "qa-03.crash-fuzz-security",
+    "qa-04.performance-soak-contract",
+    "int-01.single-gateway-e2e",
+    "int-02.multi-gateway-failover",
+    "p4-08.addendum"
+  ],
+  "requiredTestCaseIds": [
+    "performance.soak.24h",
+    "protocol.view.slow-client",
+    "persistence.history.hash-chain",
+    "observability.audit.hash-chain",
+    "security.internal-mtls.required",
+    "schema.protobuf.compile",
+    "schema.protobuf.registry-complete",
+    "determinism.protobuf-not-hash-source"
+  ],
+  "requiredPerformanceProfiles": [
+    "perf.reference.v1",
+    "perf.persistence.v1",
+    "perf.publication.v1"
+  ],
+  "soak": {
+    "testCaseId": "performance.soak.24h",
+    "minimumDurationSeconds": 86400,
+    "maxPostWarmupMemoryGrowthPercent": 10.0,
+    "parallelVerifierDigestRequired": true,
+    "noAcceptedOperationLoss": true,
+    "historyAuditChainValid": true,
+    "noUnrecoverableQueueDeadlock": true
+  },
+  "nonWaivableFailureCodes": [
+    "determinism.divergence",
+    "operation.accepted-loss",
+    "operation.double-apply",
+    "persistence.history-corruption-undetected",
+    "transaction.partial-commit",
+    "security.unauthorized-mutation-bypass",
+    "security.credential-leakage",
+    "protocol.required-compatibility-failure",
+    "world.view-camera-authority",
+    "world.telemetry-authority",
+    "world.wall-clock-authority"
+  ],
+  "releaseRecordFields": [
+    "build_version",
+    "source_commit",
+    "schema_registry_digest",
+    "algorithm_registry_digest",
+    "config_schema_digest",
+    "test_suite_version",
+    "passed_test_ids",
+    "performance_report_refs",
+    "determinism_digest_summary",
+    "known_waivers",
+    "result"
+  ]
+}

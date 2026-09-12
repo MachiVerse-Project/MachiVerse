@@ -10,6 +10,10 @@ var configPath = Environment.GetEnvironmentVariable("MACHIVERSE_GATEWAY_CONFIG")
 var gatewayConfig = GatewayConfigLoader.LoadFile(configPath);
 var alphaCoreOptions = AlphaCoreLinkOptions.TryFromEnvironment();
 var alphaCoreState = new AlphaCoreLinkState();
+var allowConcurrentAlphaViewSessions = string.Equals(
+    Environment.GetEnvironmentVariable("MACHIVERSE_ALPHA_MULTI_VIEW"),
+    "1",
+    StringComparison.Ordinal);
 
 builder.Services.AddSingleton(gatewayConfig);
 builder.Services.AddSingleton(alphaCoreState);
@@ -30,7 +34,7 @@ if (alphaCoreOptions is not null)
     builder.Services.AddSingleton<ConfirmedProjectionCache>();
     builder.Services.AddSingleton<ResyncCoordinator>();
     builder.Services.AddSingleton<AlphaCoreOperationRouter>();
-    builder.Services.AddSingleton<AlphaViewSessionControl>();
+    builder.Services.AddSingleton(new AlphaViewSessionControl(allowConcurrentAlphaViewSessions));
     builder.Services.AddSingleton(new MasterAuthorityTracker(alphaCoreOptions.GatewayLogicalId));
     builder.Services.AddSingleton<AlphaViewBridge>();
     builder.Services.AddSingleton<AlphaAdminBridge>();

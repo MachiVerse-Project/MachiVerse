@@ -86,5 +86,13 @@ internal static class PersistenceSnapshotSmoke
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+
+        CoreSnapshotSectionWireContractSmoke.Run();
+        CoreSnapshotPrimarySectionsSmoke.Run();
+        CoreSnapshotSecondarySectionsSmoke.Run();
+        await RunningSnapshotCoordinatorSmoke.RunAsync();
+        await CanonicalSnapshotReassemblySmoke.RunAsync();
+        await RunningCanonicalSnapshotCommitSmoke.RunAsync();
+        await CoreSnapshotOwnerMaterialSmoke.RunAsync();
     }
 }
