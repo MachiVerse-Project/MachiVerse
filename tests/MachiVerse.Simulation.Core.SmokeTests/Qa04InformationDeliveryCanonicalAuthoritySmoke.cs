@@ -30,8 +30,9 @@ internal static class Qa04InformationDeliveryCanonicalAuthoritySmoke
         for (var i = 0; i < records.Count; i++)
         {
             var record = records[i];
-            Require(record.Payload.ContentRef.PartitionId.Value == SocietyInformationClaimPayloadV1.PartitionId &&
-                    claims.TryGetValue(record.Payload.ContentRef.RecordId, out var claim),
+            Require(record.Payload.ContentRef.PartitionId.Value == SocietyInformationClaimPayloadV1.PartitionId,
+                "Every canonical Delivery content_ref must target society.information_claim.");
+            Require(claims.TryGetValue(record.Payload.ContentRef.RecordId, out var claim),
                 "Every canonical Delivery content_ref must resolve to an actual InformationClaim.");
             Require(record.Payload.SenderRef == claim!.Payload.ClaimantRef,
                 "Every canonical Delivery sender_ref must equal the referenced InformationClaim claimant_ref.");
@@ -69,14 +70,16 @@ internal static class Qa04InformationDeliveryCanonicalAuthoritySmoke
 
         var first = records[0];
         var second = records[1];
+        var firstContentRefBefore = first.Payload.ContentRef;
+        var firstContentDigestBefore = first.Payload.ContentDigest.ToArray();
         var delivered = materialization.RuntimeDeliveries[0].MarkDelivered();
         Require(delivered.Status == InformationDeliveryStatusV1.Delivered &&
                 delivered.DeliveryId == materialization.RuntimeDeliveries[0].DeliveryId &&
                 delivered.SourceRef == materialization.RuntimeDeliveries[0].SourceRef &&
                 delivered.DestinationRef == materialization.RuntimeDeliveries[0].DestinationRef &&
                 delivered.ClaimRef == materialization.RuntimeDeliveries[0].ClaimRef &&
-                first.Payload.ContentRef == records[0].Payload.ContentRef &&
-                CryptographicOperations.FixedTimeEquals(first.Payload.ContentDigest, records[0].Payload.ContentDigest),
+                first.Payload.ContentRef == firstContentRefBefore &&
+                CryptographicOperations.FixedTimeEquals(first.Payload.ContentDigest, firstContentDigestBefore),
             "Queued -> Delivered runtime transition must not mutate persistent content identity.");
 
         ExpectInvalid(() => new StandardDomainPayloadCodecValidatorV1().Validate(
