@@ -4,6 +4,8 @@ Status: **Approved / adopted by #240; retained as review history**
 
 Tracking: #240
 
+Approval: explicit project-owner approval on 2026-09-12; recorded in #240
+
 Normative authority: `phase4-alpha11-information-delivery-authority.md`
 
 Implementation PR: #265
