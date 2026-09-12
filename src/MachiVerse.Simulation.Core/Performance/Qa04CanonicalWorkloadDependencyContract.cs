@@ -21,12 +21,12 @@ public sealed record Qa04CanonicalWorkloadDependencyV1(
 ///
 /// This contract is intentionally separate from Qa04ReferenceWorldDependencyContractV1: the world
 /// contract owns initial authoritative material, while this contract owns workload-to-runtime
-/// binding. Operation binding currently closes four of six families. Transaction creation already
-/// has the exact 10,000 ACTIVE genesis set, 200-entry other-kind allocation, and 1,000-per-300-Step
-/// production turnover path; its only remaining sub-blocker is actual Participation participant
-/// record authority. Detail-transition binding is now closed by the approved 4,096-record
-/// DetailRegion authority, all 1,424 canonical request bindings, and production Snapshot/recovery
-/// evidence.
+/// binding. Operation binding currently closes five of six families; only the complete canonical
+/// Infrastructure service pool remains authority-pending. Transaction creation already has the exact
+/// 10,000 ACTIVE genesis set, 200-entry other-kind allocation, and 1,000-per-300-Step production
+/// turnover path; its only remaining sub-blocker is actual Participation participant record authority.
+/// Detail-transition binding is now closed by the approved 4,096-record DetailRegion authority, all
+/// 1,424 canonical request bindings, and production Snapshot/recovery evidence.
 /// </summary>
 public static class Qa04CanonicalWorkloadDependencyContractV1
 {
@@ -96,6 +96,7 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
         var expectedBoundFamilies = new[]
         {
             "environment-spatial-admin-synthetic",
+            "governance-security",
             "participation-control-resident-action",
             "physical-item-movement-work",
             "society-market-payment-contract",
@@ -109,7 +110,6 @@ public static class Qa04CanonicalWorkloadDependencyContractV1
             .ToArray();
         var expectedPendingFamilies = new[]
         {
-            "governance-security",
             "infrastructure-service-delivery",
         };
         if (!pendingFamilies.SequenceEqual(expectedPendingFamilies, StringComparer.Ordinal))
