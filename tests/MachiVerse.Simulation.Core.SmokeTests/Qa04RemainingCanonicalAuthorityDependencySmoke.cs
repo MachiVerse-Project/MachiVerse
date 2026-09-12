@@ -30,8 +30,8 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
             "Canonical infrastructure.service_queue authority dependencies must remain closed.");
 
         Qa04DetailRegionAuthorityDependencyContractV1.ValidateCanonicalContract();
-        Require(Qa04DetailRegionAuthorityDependencyContractV1.Blockers.Count == 2,
-            "Canonical spatial.detail_regions dependency count drifted.");
+        Require(Qa04DetailRegionAuthorityDependencyContractV1.Blockers.Count == 0,
+            "Canonical spatial.detail_regions authority dependencies must remain closed.");
 
         var failureCodes = new[]
         {
@@ -42,8 +42,8 @@ internal static class Qa04RemainingCanonicalAuthorityDependencySmoke
         .SelectMany(static codes => codes)
         .ToArray();
 
-        Require(failureCodes.Length == 5,
-            "Canonical remaining authority dependency total must be five.");
+        Require(failureCodes.Length == 3,
+            "Canonical remaining authority dependency total must be three.");
         Require(failureCodes.Distinct(StringComparer.Ordinal).Count() == failureCodes.Length,
             "Canonical remaining authority failure codes must remain unique.");
     }
