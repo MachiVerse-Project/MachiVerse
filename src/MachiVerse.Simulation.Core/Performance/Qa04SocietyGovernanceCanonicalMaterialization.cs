@@ -14,7 +14,8 @@ public sealed class Qa04SocietyGovernanceCanonicalMaterializationV1
         DomainPartitionStateV1<SocietyContractClaimPayloadV1> contractClaims,
         DomainPartitionStateV1<SocietyInformationClaimPayloadV1> informationClaims,
         DomainPartitionStateV1<GovernancePublicAuthorityPayloadV1> publicAuthorities,
-        DomainPartitionStateV1<GovernancePermissionLicensePayloadV1> permissionLicenses)
+        DomainPartitionStateV1<GovernancePermissionLicensePayloadV1> permissionLicenses,
+        IDomainRecordSchemaResolverV1 references)
     {
         Organizations = organizations;
         Institutions = institutions;
@@ -22,6 +23,7 @@ public sealed class Qa04SocietyGovernanceCanonicalMaterializationV1
         InformationClaims = informationClaims;
         PublicAuthorities = publicAuthorities;
         PermissionLicenses = permissionLicenses;
+        References = references;
     }
 
     public DomainPartitionStateV1<SocietyOrganizationPayloadV1> Organizations { get; }
@@ -30,6 +32,7 @@ public sealed class Qa04SocietyGovernanceCanonicalMaterializationV1
     public DomainPartitionStateV1<SocietyInformationClaimPayloadV1> InformationClaims { get; }
     public DomainPartitionStateV1<GovernancePublicAuthorityPayloadV1> PublicAuthorities { get; }
     public DomainPartitionStateV1<GovernancePermissionLicensePayloadV1> PermissionLicenses { get; }
+    public IDomainRecordSchemaResolverV1 References { get; }
 
     public ulong MaterializedRecordCount
         => checked(
@@ -87,6 +90,7 @@ public static class Qa04SocietyGovernanceCanonicalMaterializerV1
         var organizationRecords = Qa04SocietyOrganizationResolvedMaterializerV1.MaterializeResolved(
                 static _ => Qa04SocietyGovernanceCanonicalAuthorityV1.OrganizationClass)
             .ToArray();
+        resolver.AddAll(SocietyOrganizationPayloadV1.PartitionId, organizationRecords);
         var organizations = Partition(SocietyOrganizationPayloadV1.PartitionId, organizationRecords);
 
         var institutionRecords = Qa04GovernanceInstitutionResolvedMaterializerV1.MaterializeResolved(
@@ -105,6 +109,7 @@ public static class Qa04SocietyGovernanceCanonicalMaterializerV1
                     new[] { Qa04SocietyGovernanceCanonicalAuthorityV1.ResolveResidentRef(localOrdinal) }),
                 resolver)
             .ToArray();
+        resolver.AddAll(SocietyContractClaimPayloadV1.PartitionId, contractClaimRecords);
         var contractClaims = Partition(SocietyContractClaimPayloadV1.PartitionId, contractClaimRecords);
 
         var informationClaimRecords = Qa04SocietyInformationClaimResolvedMaterializerV1.MaterializeResolved(
@@ -114,6 +119,7 @@ public static class Qa04SocietyGovernanceCanonicalMaterializerV1
                     Qa04SocietyGovernanceCanonicalAuthorityV1.GenesisStep),
                 resolver)
             .ToArray();
+        resolver.AddAll(SocietyInformationClaimPayloadV1.PartitionId, informationClaimRecords);
         var informationClaims = Partition(SocietyInformationClaimPayloadV1.PartitionId, informationClaimRecords);
 
         var publicAuthorityRecords = Qa04GovernancePublicAuthorityResolvedMaterializerV1.MaterializeResolved(
@@ -133,6 +139,7 @@ public static class Qa04SocietyGovernanceCanonicalMaterializerV1
                     Qa04SocietyGovernanceCanonicalAuthorityV1.GenesisStep),
                 resolver)
             .ToArray();
+        resolver.AddAll(GovernancePermissionLicensePayloadV1.PartitionId, permissionLicenseRecords);
         var permissionLicenses = Partition(GovernancePermissionLicensePayloadV1.PartitionId, permissionLicenseRecords);
 
         var materialization = new Qa04SocietyGovernanceCanonicalMaterializationV1(
@@ -141,7 +148,8 @@ public static class Qa04SocietyGovernanceCanonicalMaterializerV1
             contractClaims,
             informationClaims,
             publicAuthorities,
-            permissionLicenses);
+            permissionLicenses,
+            resolver);
         if (materialization.MaterializedRecordCount != CanonicalMaterializedCount)
             throw new InvalidDataException("qa04.society-governance.canonical-materialization-total-mismatch");
 
