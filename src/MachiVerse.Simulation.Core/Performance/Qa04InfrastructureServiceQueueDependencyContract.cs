@@ -16,13 +16,13 @@ public sealed record Qa04InfrastructureServiceQueueDependencyV1(
     StableToken FailureCode);
 
 /// <summary>
-/// Exact fail-closed boundary for the canonical 250,000 infrastructure.service_queue records.
+/// Progress contract for the canonical 250,000 infrastructure.service_queue records.
 ///
-/// Alpha 1.1 fixes the queue record count and one-to-one specialized request identity helper, while
-/// the production payload schema fixes the canonical queue key. The initial world does not define
-/// which actual service records own each request, which actual requester pool/mapping is used, or
-/// the canonical eligible_step / semantic_priority / requested_units / allocated_units / status
-/// genesis state. Generic scalar hashing cannot invent those coupled queue semantics.
+/// The three formerly undefined surfaces are now fixed by the approved Alpha 1.1 benchmark
+/// authority and implemented through Qa04InfrastructureServiceQueueCanonicalMaterializerV1:
+/// actual network-service authority, actual Resident requester mapping, and canonical queue genesis
+/// state. Production Snapshot/recovery evidence covers all 290,000 service+queue records, so this
+/// direct dependency contract is intentionally closed while retaining the historical enum surface.
 /// </summary>
 public static class Qa04InfrastructureServiceQueueDependencyContractV1
 {
@@ -31,23 +31,7 @@ public static class Qa04InfrastructureServiceQueueDependencyContractV1
     public const ulong CanonicalCount = Qa04InfrastructureReferenceDecompositionV1.ServiceQueueCount;
 
     private static readonly IReadOnlyList<Qa04InfrastructureServiceQueueDependencyV1> BlockersValue =
-        Array.AsReadOnly(new[]
-        {
-            Blocker(
-                "infrastructure.service-queue.service-authority",
-                Qa04InfrastructureServiceQueueDependencyKindV1.ServiceAuthority,
-                "qa04.material.service-queue-service-authority-undefined"),
-            Blocker(
-                "infrastructure.service-queue.requester-ref-mapping",
-                Qa04InfrastructureServiceQueueDependencyKindV1.RequesterAuthorityMapping,
-                "qa04.material.service-queue-requester-mapping-undefined"),
-            Blocker(
-                "infrastructure.service-queue.genesis-state",
-                Qa04InfrastructureServiceQueueDependencyKindV1.GenesisQueueState,
-                "qa04.material.service-queue-genesis-state-undefined"),
-        }
-        .OrderBy(static blocker => blocker.DependencyId.Value, StringComparer.Ordinal)
-        .ToArray());
+        Array.AsReadOnly(Array.Empty<Qa04InfrastructureServiceQueueDependencyV1>());
 
     public static IReadOnlyList<Qa04InfrastructureServiceQueueDependencyV1> Blockers => BlockersValue;
 
@@ -55,6 +39,7 @@ public static class Qa04InfrastructureServiceQueueDependencyContractV1
     {
         Qa04InfrastructureReferenceDecompositionV1.ValidateCanonicalContract();
         Qa04ReferenceScenariosV1.ValidateCanonicalContract();
+        Qa04InfrastructureServiceQueueCanonicalMaterializerV1.ValidateCanonicalContract();
 
         var slice = Qa04InfrastructureReferenceDecompositionV1.Get("service_queue");
         if (slice.StartOrdinal != CanonicalStartOrdinal || slice.Count != CanonicalCount || !slice.UsesSpecializedIdentity)
@@ -81,18 +66,9 @@ public static class Qa04InfrastructureServiceQueueDependencyContractV1
         if (firstId.IsZero || lastId.IsZero || firstId == lastId)
             throw new InvalidDataException("qa04.infrastructure.service-queue-specialized-identity-drift");
 
-        if (BlockersValue.Count != 3 ||
-            BlockersValue.Select(static blocker => blocker.Kind).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.DependencyId).Distinct().Count() != BlockersValue.Count ||
-            BlockersValue.Select(static blocker => blocker.FailureCode).Distinct().Count() != BlockersValue.Count)
+        if (BlockersValue.Count != 0)
             throw new InvalidDataException("qa04.infrastructure.service-queue-dependency-drift");
     }
-
-    private static Qa04InfrastructureServiceQueueDependencyV1 Blocker(
-        string dependencyId,
-        Qa04InfrastructureServiceQueueDependencyKindV1 kind,
-        string failureCode)
-        => new(new StableToken(dependencyId), kind, new StableToken(failureCode));
 
     private static void RequireField(
         DomainPayloadSchemaDescriptorV1 schema,
