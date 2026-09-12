@@ -234,7 +234,7 @@ public static class Qa04InformationDeliveryCanonicalAuthorityV1
             partition,
             static record => record.Payload.RecipientRefs.Select(static reference => reference.RecordId));
         var recipientEntries = recipientIndex.CanonicalEntries.ToArray();
-        if (recipientEntries.Length != CanonicalCount ||
+        if (recipientEntries.Length != checked((int)CanonicalCount) ||
             recipientEntries.Any(static entry => entry.Value.Count != 1))
             throw new InvalidDataException("qa04.information.delivery-recipient-index-rebuild-drift");
 
@@ -246,7 +246,7 @@ public static class Qa04InformationDeliveryCanonicalAuthorityV1
         var statusEntries = statusIndex.CanonicalEntries.ToArray();
         if (statusEntries.Length != 1 ||
             !string.Equals(statusEntries[0].Key, Queued.Value, StringComparison.Ordinal) ||
-            statusEntries[0].Value.Count != CanonicalCount)
+            statusEntries[0].Value.Count != checked((int)CanonicalCount))
             throw new InvalidDataException("qa04.information.delivery-status-index-rebuild-drift");
     }
 
