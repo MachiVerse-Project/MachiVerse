@@ -127,6 +127,8 @@ public static class Qa04InfrastructureServiceReserveApplicationV1
             expected.ScheduledOperation.OperationId != binding.ScheduledOperation.OperationId ||
             expected.ScheduledOperation.EffectiveStep != binding.ScheduledOperation.EffectiveStep ||
             !expected.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(binding.OrderKey.ToDatabaseBytes()) ||
+            !expected.ScheduledOperation.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(
+                binding.ScheduledOperation.OrderKey.ToDatabaseBytes()) ||
             expected.BoundDescriptor.InjectionStep != binding.BoundDescriptor.InjectionStep ||
             expected.BoundDescriptor.FamilyToken != binding.BoundDescriptor.FamilyToken ||
             expected.BoundDescriptor.FamilyOrdinal != binding.BoundDescriptor.FamilyOrdinal ||
