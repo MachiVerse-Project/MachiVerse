@@ -63,7 +63,13 @@ internal static class Qa04GovernanceIncidentApplicationSmoke
         var references = Resolver.For(residentRef, scopeRef, claimRef);
 
         var result = Qa04GovernanceIncidentApplicationV1.Apply(binding, current, references);
-        var expectedId = Qa04GovernanceIncidentApplicationV1.CreatedRecordId(descriptor);
+        var expectedId = DerivedIdentity.DeriveEntityId(
+            Qa04ReferenceLoadV1.WorldId,
+            effectiveStep,
+            new StableToken("governance_security"),
+            descriptor.OperationId,
+            new StableToken("perf.governance-incident-operation"),
+            localOrdinal: 0);
         var expectedSeverity = checked((uint)(500_000UL + descriptor.FamilyOrdinal % 500_001UL));
         var created = result.CreatedIncident;
 
