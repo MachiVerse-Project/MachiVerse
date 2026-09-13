@@ -54,7 +54,15 @@ internal static class Qa04PhysicalMoveApplicationSmoke
             "physical move must preserve non-target Presence records exactly");
 
         var replayFromSamePreState = Qa04PhysicalMoveApplicationV1.Apply(binding, current, references);
-        Require(replayFromSamePreState.AppliedRecord == result.AppliedRecord,
+        Require(
+            replayFromSamePreState.AppliedRecord.RecordId == result.AppliedRecord.RecordId &&
+            replayFromSamePreState.AppliedRecord.RecordSchema == result.AppliedRecord.RecordSchema &&
+            replayFromSamePreState.AppliedRecord.Revision == result.AppliedRecord.Revision &&
+            replayFromSamePreState.AppliedRecord.CreatedStep == result.AppliedRecord.CreatedStep &&
+            replayFromSamePreState.AppliedRecord.RetiredStep == result.AppliedRecord.RetiredStep &&
+            replayFromSamePreState.AppliedRecord.DetailLevel == result.AppliedRecord.DetailLevel &&
+            replayFromSamePreState.AppliedRecord.LineageRef == result.AppliedRecord.LineageRef &&
+            replayFromSamePreState.AppliedRecord.Payload == result.AppliedRecord.Payload,
             "physical move replay from the same pre-state must be deterministic");
 
         var otherDescriptor = Qa04ReferenceLoadV1.OperationsForStep(1)
