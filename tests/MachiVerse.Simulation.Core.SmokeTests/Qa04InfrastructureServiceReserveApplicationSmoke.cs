@@ -90,6 +90,25 @@ internal static class Qa04InfrastructureServiceReserveApplicationSmoke
                 references),
             "qa04.infrastructure.service-reserve-binding-drift");
 
+        var scheduledKey = binding.ScheduledOperation.OrderKey;
+        var tamperedScheduledOrderKey = new SameStepOrderKey(
+            scheduledKey.Phase,
+            scheduledKey.DomainRank,
+            scheduledKey.ConflictScopeDigest,
+            checked(scheduledKey.SemanticPriority + 1),
+            scheduledKey.IntentId);
+        var tamperedScheduledBinding = binding with
+        {
+            ScheduledOperation = binding.ScheduledOperation with { OrderKey = tamperedScheduledOrderKey },
+        };
+        ExpectInvalid(
+            () => Qa04InfrastructureServiceReserveApplicationV1.Apply(
+                Qa04ReferenceLoadV1.WorldId,
+                tamperedScheduledBinding,
+                empty,
+                references),
+            "qa04.infrastructure.service-reserve-binding-drift");
+
         ExpectInvalid(
             () => Qa04InfrastructureServiceReserveApplicationV1.Apply(
                 Qa04ReferenceLoadV1.WorldId,
