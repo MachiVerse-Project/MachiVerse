@@ -7,5 +7,6 @@ internal static class Qa04OperationMutationSmokeInitializer
     {
         Qa04ResidentActionApplicationSmoke.Run();
         Qa04PhysicalMoveApplicationSmoke.Run();
+        Qa04MarketOrderApplicationSmoke.Run();
     }
 }
