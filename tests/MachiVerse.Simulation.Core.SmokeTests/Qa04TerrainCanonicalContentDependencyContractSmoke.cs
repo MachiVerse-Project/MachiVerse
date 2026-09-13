@@ -12,8 +12,8 @@ internal static class Qa04TerrainCanonicalContentDependencyContractSmoke
             "Implemented Terrain canonical generation inputs must expose no unresolved subdependencies.");
         Require(Qa04TerrainCanonicalContentDependencyContractV1.FailureCodes.Count == 0,
             "Implemented Terrain canonical generation inputs must expose no unresolved failure codes.");
-        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 1,
-            "Full Terrain production proof must leave only the Infrastructure world blocker after Society/Governance acceptance.");
+        Require(Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 0,
+            "Full Terrain production proof must remain compatible with the completed reference-world authority.");
         Require(Qa04TerrainBrickDescriptorMaterializerV1.InitialRecordRevision == 1,
             "Common Domain initial revision must remain fixed for Terrain content binding.");
 
