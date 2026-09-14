@@ -104,7 +104,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
 
         var references = new RegistryResolver();
         var basisState = BuildBasisState(effectiveStep, initial, references);
-        Require(basisState.Partitions.CanonicalEntries.Count == StandardDomainPartitionRegistry.StandardPartitionCount,
+        Require(basisState.Partitions.CanonicalEntries.Count() == StandardDomainPartitionRegistry.StandardPartitionCount,
             "Gate2 production closure requires the full 97-partition WorldState surface.");
 
         var scheduler = new OperationSchedulerStateV1(
@@ -121,8 +121,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             frozen,
             CreateProductionRuntimes(),
             workerCount: 4);
-        Require(runtimeOutputs.Count == 8 &&
-                runtimeOutputs.All(output => output.BasisStep == effectiveStep),
+        Require(runtimeOutputs.Count == 8 && runtimeOutputs.All(output => output.BasisStep == effectiveStep),
             "Gate2 production closure must execute the ordinary eight-domain runtime path.");
 
         var mutation = Qa04CanonicalOperationMutationBatchV1.Apply(
@@ -147,8 +146,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
         Require(preparation.Candidate.DomainOutputs.Count == 8 &&
                 preparation.Candidate.PartitionCandidates.Count == 6 &&
                 preparation.Candidate.FrozenInput.ScheduledOperations.Count == bindings.Length &&
-                !preparation.Candidate.IsPublishable &&
-                !preparation.PreparedState.IsPublishable,
+                !preparation.Candidate.IsPublishable && !preparation.PreparedState.IsPublishable,
             "Gate2 production preparation authority drifted before COMMIT.");
 
         var root = Path.Combine(Path.GetTempPath(), "machiverse-qa04-production-step-" + Guid.NewGuid().ToString("N"));
@@ -164,10 +162,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             foreach (var binding in bindings)
             {
                 var admission = await Qa04CanonicalOperationDurableAdmissionV1.AdmitAndScheduleAsync(
-                    store,
-                    binding,
-                    policy,
-                    nextSchedulableStep: effectiveStep);
+                    store, binding, policy, nextSchedulableStep: effectiveStep);
                 Require(admission.Passed,
                     "Gate2 production workload did not cross durable ACCEPTED/SCHEDULED authority.");
             }
@@ -184,10 +179,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                     "operation.succeeded"))
                 .ToArray();
             var finalized = await Qa04CanonicalOperationStepFinalizationV1.CommitAndPublishAsync(
-                store,
-                scheduler,
-                preparation,
-                terminals);
+                store, scheduler, preparation, terminals);
 
             var verification = finalized.PostCommitVerification
                 ?? throw new InvalidOperationException("Gate2 production post-COMMIT verification missing.");
@@ -220,8 +212,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             cancellationToken.ThrowIfCancellationRequested();
             if (context.FrozenInput.ScheduledOperations.Count != checked((int)Qa04ReferenceLoadV1.SteadyOperationsPerStep))
                 throw new InvalidDataException("qa04.production-step.runtime-workload-count-drift");
-            return ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>(
-                Array.Empty<MutationIntentCandidateV1>());
+            return ValueTask.FromResult<IReadOnlyList<MutationIntentCandidateV1>>(Array.Empty<MutationIntentCandidateV1>());
         }
 
         static ValueTask<IReadOnlyList<PartitionCandidateV1>> NoResidentPartitionCandidates(
@@ -229,8 +220,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromResult<IReadOnlyList<PartitionCandidateV1>>(
-                Array.Empty<PartitionCandidateV1>());
+            return ValueTask.FromResult<IReadOnlyList<PartitionCandidateV1>>(Array.Empty<PartitionCandidateV1>());
         }
 
         return
@@ -246,9 +236,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
         ];
     }
 
-    private static async Task InitializePersistenceAtStepOneAsync(
-        SqlitePersistenceStore store,
-        WorldStateV1 basisState)
+    private static async Task InitializePersistenceAtStepOneAsync(SqlitePersistenceStore store, WorldStateV1 basisState)
     {
         var genesis = HistoryRecordMaterial.Create(
             Qa04ReferenceLoadV1.WorldId,
@@ -267,8 +255,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 writer.WriteUnsigned(2); writer.WriteUnsigned(0);
             });
         var initialContinuity = HistoryIntegrity.ComputeGenesisContinuityToken(
-            Qa04ReferenceLoadV1.WorldId,
-            genesis.RecordDigest);
+            Qa04ReferenceLoadV1.WorldId, genesis.RecordDigest);
         await store.InitializeWorldMetadataAsync(
             new WorldPersistenceMetadataSeed(
                 Qa04ReferenceLoadV1.WorldId,
@@ -297,10 +284,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 writer.WriteUnsigned(2); writer.WriteBytes(basisState.Diagnostic.StateDigest);
             });
         var continuity = HistoryIntegrity.ComputeTransitionContinuityToken(
-            Qa04ReferenceLoadV1.WorldId,
-            resultingStep: 1,
-            initialContinuity,
-            transition.RecordDigest);
+            Qa04ReferenceLoadV1.WorldId, resultingStep: 1, initialContinuity, transition.RecordDigest);
         _ = await store.PersistTransitionCommitAsync(
             effectiveStep: 0,
             resultingStep: 1,
@@ -316,9 +300,6 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
         Qa04CanonicalOperationMutationStateV1 initial,
         IDomainRecordSchemaResolverV1 references)
     {
-        // Materialize the resident slice actually referenced by this Step. Completion of the other
-        // production reference-world classes is required above through the canonical material
-        // contract and is not replaced by a synthetic/reduced completion claim here.
         var template = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(
             Qa04ReferenceLoadV1.SteadyOperationsPerStep).WorldState;
         var replacements = new Dictionary<string, PartitionStateHeaderV1>(StringComparer.Ordinal)
@@ -351,6 +332,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 payload => StandardDomainPayloadCanonicalDigestV1.Compute(
                     EnvironmentHazardPayloadV1.PartitionId, payload.ToStandardPayload(), references: references)),
         };
+
         var partitions = template.Partitions.CanonicalEntries
             .Select(entry => replacements.TryGetValue(entry.Header.PartitionId.Value, out var replacement)
                 ? new PartitionStateRefV1(replacement)
@@ -379,11 +361,8 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
 
     private sealed class RegistryResolver : IDomainRecordSchemaResolverV1
     {
-        public bool Exists(PartitionRecordRefV1 reference)
-            => !reference.RecordId.IsZero && TryResolve(reference, out _);
-
-        public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
-            => TryResolve(reference, out schema);
+        public bool Exists(PartitionRecordRefV1 reference) => !reference.RecordId.IsZero && TryResolve(reference, out _);
+        public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema) => TryResolve(reference, out schema);
 
         private static bool TryResolve(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
         {
