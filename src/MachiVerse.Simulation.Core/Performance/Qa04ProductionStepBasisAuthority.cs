@@ -22,17 +22,30 @@ public static class Qa04ProductionStepBasisAuthorityV1
         ArgumentNullException.ThrowIfNull(durableOperations);
 
         ValidateSchedulerAndDurableShape(partitionAuthorityState.Header.Step, scheduler, durableOperations);
-
-        var state = new WorldStateV1(
-            partitionAuthorityState.Header,
-            partitionAuthorityState.Partitions,
-            OperationSchedulerSubstateV1.Canonicalize(scheduler, partitionAuthorityState.Header.Step),
-            DurableOperationSubstateV1.Canonicalize(durableOperations),
-            partitionAuthorityState.DetailState,
-            partitionAuthorityState.DomainRegistryState,
-            partitionAuthorityState.Diagnostic.ConfigDigest);
-
+        var operationState = DurableOperationSubstateV1.Canonicalize(durableOperations);
+        var state = BindCoreAuthorityCore(partitionAuthorityState, scheduler, operationState);
         ValidateBoundCoreAuthority(state, scheduler, durableOperations);
+        return state;
+    }
+
+    public static WorldStateV1 BindCoreAuthorityV2(
+        WorldStateV1 partitionAuthorityState,
+        OperationSchedulerStateV1 scheduler,
+        IReadOnlyCollection<DurableOperationStateV1> durableOperations,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactions)
+    {
+        ArgumentNullException.ThrowIfNull(partitionAuthorityState);
+        ArgumentNullException.ThrowIfNull(scheduler);
+        ArgumentNullException.ThrowIfNull(durableOperations);
+        ArgumentNullException.ThrowIfNull(crossDomainTransactions);
+
+        ValidateSchedulerAndDurableShape(partitionAuthorityState.Header.Step, scheduler, durableOperations);
+        var operationState = CoreOperationStateSubstateV2.Canonicalize(
+            durableOperations,
+            crossDomainTransactions,
+            partitionAuthorityState.Header.Step);
+        var state = BindCoreAuthorityCore(partitionAuthorityState, scheduler, operationState);
+        ValidateBoundCoreAuthorityV2(state, scheduler, durableOperations, crossDomainTransactions);
         return state;
     }
 
@@ -48,7 +61,47 @@ public static class Qa04ProductionStepBasisAuthorityV1
         ValidateSchedulerAndDurableShape(state.Header.Step, scheduler, durableOperations);
         var expectedScheduler = OperationSchedulerSubstateV1.Canonicalize(scheduler, state.Header.Step);
         var expectedOperations = DurableOperationSubstateV1.Canonicalize(durableOperations);
+        ValidateBoundCoreAuthorityCore(state, expectedScheduler, expectedOperations);
+    }
 
+    public static void ValidateBoundCoreAuthorityV2(
+        WorldStateV1 state,
+        OperationSchedulerStateV1 scheduler,
+        IReadOnlyCollection<DurableOperationStateV1> durableOperations,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactions)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(scheduler);
+        ArgumentNullException.ThrowIfNull(durableOperations);
+        ArgumentNullException.ThrowIfNull(crossDomainTransactions);
+
+        ValidateSchedulerAndDurableShape(state.Header.Step, scheduler, durableOperations);
+        var expectedScheduler = OperationSchedulerSubstateV1.Canonicalize(scheduler, state.Header.Step);
+        var expectedOperations = CoreOperationStateSubstateV2.Canonicalize(
+            durableOperations,
+            crossDomainTransactions,
+            state.Header.Step);
+        ValidateBoundCoreAuthorityCore(state, expectedScheduler, expectedOperations);
+    }
+
+    private static WorldStateV1 BindCoreAuthorityCore(
+        WorldStateV1 partitionAuthorityState,
+        OperationSchedulerStateV1 scheduler,
+        WorldSubstateRefV1 operationState)
+        => new(
+            partitionAuthorityState.Header,
+            partitionAuthorityState.Partitions,
+            OperationSchedulerSubstateV1.Canonicalize(scheduler, partitionAuthorityState.Header.Step),
+            operationState,
+            partitionAuthorityState.DetailState,
+            partitionAuthorityState.DomainRegistryState,
+            partitionAuthorityState.Diagnostic.ConfigDigest);
+
+    private static void ValidateBoundCoreAuthorityCore(
+        WorldStateV1 state,
+        WorldSubstateRefV1 expectedScheduler,
+        WorldSubstateRefV1 expectedOperations)
+    {
         if (state.SchedulerState.Schema != expectedScheduler.Schema ||
             !CryptographicOperations.FixedTimeEquals(
                 state.SchedulerState.CanonicalDigest,
