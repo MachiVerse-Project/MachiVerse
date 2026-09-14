@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.Runtime;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
@@ -11,12 +12,17 @@ public sealed record Qa04CanonicalOperationStepFinalizationResultV1(
     DurableStepReceiptV1 DurableReceipt,
     AuthoritativeStepWorldStateV1 AuthoritativeState,
     IReadOnlyList<DurableOperationStateV1> TerminalOperations,
-    byte[] ResultingContinuityToken);
+    byte[] ResultingContinuityToken)
+{
+    public Qa04CanonicalOperationPostCommitVerificationV1? PostCommitVerification { get; init; }
+}
 
 /// <summary>
-/// Gate-2 Steps 6-8 bridge. It requires the actual frozen canonical Operation set to become terminal
-/// in the same SQLite transition transaction, keeps the scheduler frozen until that COMMIT succeeds,
-/// verifies the durable recovery/Operation state after COMMIT, and only then publishes State(S+1).
+/// Gate-2 Steps 6-12 bridge. It requires the actual frozen canonical Operation set to become
+/// terminal in the same SQLite transition transaction, binds the projected Scheduler/Operation
+/// core substates into the ordinary StepCandidate before COMMIT, keeps the scheduler frozen until
+/// that COMMIT succeeds, publishes only after the durable boundary, and then re-verifies the
+/// published State(S+1) against the complete committed Operation catalog and all 97 partitions.
 /// Terminal result semantics are supplied by the caller; this bridge does not invent result codes.
 /// </summary>
 public static class Qa04CanonicalOperationStepFinalizationV1
@@ -33,34 +39,98 @@ public static class Qa04CanonicalOperationStepFinalizationV1
         ArgumentNullException.ThrowIfNull(preparation);
         ArgumentNullException.ThrowIfNull(terminalOperations);
 
-        var candidate = preparation.Candidate;
-        var prepared = preparation.PreparedState;
-        if (candidate.WorldId != Qa04ReferenceLoadV1.WorldId)
+        var step5Candidate = preparation.Candidate;
+        var step5Prepared = preparation.PreparedState;
+        var basisState = preparation.BasisState
+            ?? throw new InvalidDataException("qa04.full-step.finalization-basis-state-missing");
+        if (step5Candidate.WorldId != Qa04ReferenceLoadV1.WorldId)
             throw new InvalidDataException("qa04.full-step.finalization-world-id-drift");
-        if (!candidate.CommitDecision.CanCommit)
+        if (!step5Candidate.CommitDecision.CanCommit)
             throw new InvalidDataException("qa04.full-step.finalization-candidate-not-commit-eligible");
-        if (candidate.IsPublishable || prepared.IsPublishable)
+        if (step5Candidate.IsPublishable || step5Prepared.IsPublishable)
             throw new InvalidDataException("qa04.full-step.finalization-premature-authority");
-        if (prepared.CandidateId != candidate.CandidateId ||
-            prepared.BasisStep != candidate.BasisStep ||
-            prepared.TargetStep != candidate.TargetStep)
+        if (basisState.Header.WorldId != step5Candidate.WorldId ||
+            basisState.Header.Step != step5Candidate.BasisStep ||
+            !CryptographicOperations.FixedTimeEquals(
+                basisState.Diagnostic.StateDigest,
+                step5Prepared.BasisStateDigest))
+            throw new InvalidDataException("qa04.full-step.finalization-basis-state-drift");
+        if (step5Prepared.CandidateId != step5Candidate.CandidateId ||
+            step5Prepared.BasisStep != step5Candidate.BasisStep ||
+            step5Prepared.TargetStep != step5Candidate.TargetStep)
             throw new InvalidDataException("qa04.full-step.finalization-prepared-candidate-drift");
+        if (step5Candidate.CoreSubstateCandidates.Count != 0 ||
+            step5Candidate.TransactionCandidates.Count != 0)
+            throw new InvalidDataException("qa04.full-step.finalization-step5-authority-surface-drift");
 
-        var orderedTerminal = ValidateTerminalCoverage(candidate, terminalOperations);
+        var orderedTerminal = ValidateTerminalCoverage(step5Candidate, terminalOperations);
         var before = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
-        if (before.FinalizedStep != candidate.BasisStep)
+        if (before.FinalizedStep != step5Candidate.BasisStep)
             throw new InvalidDataException("qa04.full-step.finalization-persistence-basis-drift");
-        if (before.ConfigGeneration != candidate.ConfigGeneration ||
-            !CryptographicOperations.FixedTimeEquals(before.ConfigDigest, candidate.ConfigDigest))
+        if (before.ConfigGeneration != step5Candidate.ConfigGeneration ||
+            !CryptographicOperations.FixedTimeEquals(before.ConfigDigest, step5Candidate.ConfigDigest))
             throw new InvalidDataException("qa04.full-step.finalization-persistence-config-drift");
 
         var anchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
         if (anchor.Sequence == ulong.MaxValue)
             throw new InvalidDataException("qa04.full-step.finalization-history-sequence-overflow");
+        var transitionSequence = checked(anchor.Sequence + 1UL);
+
+        // Scheduler and Operation authority for State(S+1) is not inferred from the Step-5 domain
+        // outputs. Project it through the standard core-substate contracts from the actual frozen
+        // scheduler and the complete committed SQLite Operation catalog immediately before COMMIT.
+        var durableBefore = await store.ListOperationStatesCanonicalAsync(cancellationToken).ConfigureAwait(false);
+        var schedulerCore = OperationSchedulerSubstateV1.CreatePostFinalizationCandidate(
+            basisState,
+            scheduler,
+            step5Candidate.FrozenInput);
+        var operationCore = DurableOperationSubstateV1.CreatePostTransitionCandidate(
+            basisState,
+            durableBefore,
+            orderedTerminal,
+            step5Candidate.BasisStep,
+            transitionSequence);
+        var coreCandidates = new[] { schedulerCore, operationCore }
+            .OrderBy(static candidate => candidate.Kind)
+            .ToArray();
+
+        var candidate = StepCandidateV1.Build(
+            step5Candidate.CandidateId,
+            basisState,
+            step5Candidate.FrozenInput,
+            preparation.DomainOutputs.Outputs,
+            step5Candidate.ConflictResolutions,
+            invariantResults: step5Candidate.InvariantResults,
+            coreSubstateCandidates: coreCandidates);
+        RequirePartitionCandidateStability(step5Candidate, candidate);
+        if (!candidate.CommitDecision.CanCommit ||
+            candidate.CoreSubstateCandidates.Count != 2 ||
+            candidate.CoreSubstateCandidates.Select(static core => core.Kind).ToHashSet().SetEquals(
+                new[] { StepCoreSubstateKindV1.Scheduler, StepCoreSubstateKindV1.Operation }) is false)
+            throw new InvalidDataException("qa04.full-step.finalization-core-candidate-drift");
+
+        var partitionMaterials = candidate.PartitionCandidates
+            .Select(partition => new StepPartitionStateMaterialV1(
+                step5Prepared.ResultingState.Partitions.Get(partition.PartitionId.Value).Header))
+            .ToArray();
+        var coreMaterials = coreCandidates
+            .Select(static core => new StepCoreSubstateStateMaterialV1(core.Kind, core.ResultingState))
+            .ToArray();
+        var prepared = StepStateApplicationV1.Prepare(
+            basisState,
+            candidate,
+            partitionMaterials,
+            coreMaterials);
+        if (prepared.IsPublishable ||
+            prepared.CandidateId != candidate.CandidateId ||
+            prepared.BasisStep != candidate.BasisStep ||
+            prepared.TargetStep != candidate.TargetStep)
+            throw new InvalidDataException("qa04.full-step.finalization-core-preparation-drift");
+
         var transition = CreateTransitionHistory(
             candidate,
             prepared,
-            checked(anchor.Sequence + 1UL),
+            transitionSequence,
             anchor.Digest);
         var resultingContinuity = HistoryIntegrity.ComputeTransitionContinuityToken(
             candidate.WorldId,
@@ -126,13 +196,28 @@ public static class Qa04CanonicalOperationStepFinalizationV1
                 prepared.BasisStateDigest))
             throw new InvalidDataException("qa04.full-step.finalization-published-state-drift");
 
+        // Steps 9-12: verify semantic/digest authority after COMMIT against all 97 partitions, the
+        // complete durable Operation catalog, and the reopened scheduler. No result is returned if
+        // any one of these authorities disagrees with State(S+1).
+        var durableCatalog = await store.ListOperationStatesCanonicalAsync(cancellationToken).ConfigureAwait(false);
+        var verification = Qa04CanonicalOperationPostCommitVerifierV1.Verify(
+            preparation,
+            prepared,
+            receipt,
+            authoritative.State,
+            scheduler,
+            durableCatalog);
+
         return new Qa04CanonicalOperationStepFinalizationResultV1(
             preparation,
             material,
             receipt,
             authoritative,
             Array.AsReadOnly(durableOperations.ToArray()),
-            resultingContinuity.ToArray());
+            resultingContinuity.ToArray())
+        {
+            PostCommitVerification = verification,
+        };
     }
 
     private static IReadOnlyList<TerminalOperationCommit> ValidateTerminalCoverage(
@@ -160,6 +245,27 @@ public static class Qa04CanonicalOperationStepFinalizationV1
         }
 
         return Array.AsReadOnly(ordered);
+    }
+
+    private static void RequirePartitionCandidateStability(
+        StepCandidateV1 step5Candidate,
+        StepCandidateV1 finalCandidate)
+    {
+        if (step5Candidate.PartitionCandidates.Count != finalCandidate.PartitionCandidates.Count)
+            throw new InvalidDataException("qa04.full-step.finalization-partition-candidate-count-drift");
+        var expected = step5Candidate.PartitionCandidates.ToDictionary(static item => item.PartitionId);
+        foreach (var actual in finalCandidate.PartitionCandidates)
+        {
+            if (!expected.TryGetValue(actual.PartitionId, out var original) ||
+                actual.OwnerDomain != original.OwnerDomain ||
+                actual.BasisRevision != original.BasisRevision ||
+                actual.CandidateRevision != original.CandidateRevision ||
+                actual.BasisStep != original.BasisStep ||
+                actual.TargetStep != original.TargetStep ||
+                !CryptographicOperations.FixedTimeEquals(actual.ChangeSetDigest, original.ChangeSetDigest) ||
+                !CryptographicOperations.FixedTimeEquals(actual.CandidateDigest, original.CandidateDigest))
+                throw new InvalidDataException($"qa04.full-step.finalization-partition-candidate-drift:{actual.PartitionId.Value}");
+        }
     }
 
     private static HistoryRecordMaterial CreateTransitionHistory(
