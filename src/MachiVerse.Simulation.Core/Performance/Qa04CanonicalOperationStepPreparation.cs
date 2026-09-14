@@ -8,7 +8,14 @@ namespace MachiVerse.Simulation.Core.Performance;
 public sealed record Qa04CanonicalOperationStepPreparationResultV1(
     Qa04CanonicalOperationDomainOutputBatchV1 DomainOutputs,
     StepCandidateV1 Candidate,
-    PreparedStepWorldStateV1 PreparedState);
+    PreparedStepWorldStateV1 PreparedState)
+{
+    /// <summary>
+    /// Exact State(S) used to build the Step-5 candidate. Finalization needs this same authority to
+    /// bind the standard scheduler/Operation core-substate candidates before SQLite COMMIT.
+    /// </summary>
+    public WorldStateV1 BasisState { get; init; } = null!;
+}
 
 /// <summary>
 /// Gate-2 Steps 3-5 bridge from the six actual typed mutation partition results to the ordinary
@@ -95,7 +102,10 @@ public static class Qa04CanonicalOperationStepPreparationV1
         return new Qa04CanonicalOperationStepPreparationResultV1(
             domainOutputs,
             candidate,
-            prepared);
+            prepared)
+        {
+            BasisState = basisState,
+        };
     }
 
     private static void RequireFrozenOperationMatch(
