@@ -24,6 +24,8 @@ public sealed record Qa04CanonicalOperationStepFinalizationResultV1(
 /// that COMMIT succeeds, publishes only after the durable boundary, and then re-verifies the
 /// published State(S+1) against the complete committed Operation catalog and all 97 partitions.
 /// Terminal result semantics are supplied by the caller; this bridge does not invent result codes.
+/// When persistent CrossDomainTransaction authority is supplied, core.operation-state /2.0 is
+/// preserved across the transition instead of collapsing to the operation-only v1 authority.
 /// </summary>
 public static class Qa04CanonicalOperationStepFinalizationV1
 {
@@ -32,7 +34,8 @@ public static class Qa04CanonicalOperationStepFinalizationV1
         OperationSchedulerStateV1 scheduler,
         Qa04CanonicalOperationStepPreparationResultV1 preparation,
         IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<CrossDomainTransactionStateV1>? crossDomainTransactions = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -84,12 +87,36 @@ public static class Qa04CanonicalOperationStepFinalizationV1
             basisState,
             scheduler,
             step5Candidate.FrozenInput);
-        var operationCore = DurableOperationSubstateV1.CreatePostTransitionCandidate(
-            basisState,
-            durableBefore,
-            orderedTerminal,
-            step5Candidate.BasisStep,
-            transitionSequence);
+        StepCoreSubstateCandidateV1 operationCore;
+        if (crossDomainTransactions is null)
+        {
+            operationCore = DurableOperationSubstateV1.CreatePostTransitionCandidate(
+                basisState,
+                durableBefore,
+                orderedTerminal,
+                step5Candidate.BasisStep,
+                transitionSequence);
+        }
+        else
+        {
+            var expectedBasisOperation = CoreOperationStateSubstateV2.Canonicalize(
+                durableBefore,
+                crossDomainTransactions,
+                step5Candidate.BasisStep);
+            if (basisState.OperationState.Schema != expectedBasisOperation.Schema ||
+                !CryptographicOperations.FixedTimeEquals(
+                    basisState.OperationState.CanonicalDigest,
+                    expectedBasisOperation.CanonicalDigest))
+                throw new InvalidDataException("qa04.full-step.finalization-operation-v2-basis-drift");
+
+            operationCore = CoreOperationStateSubstateV2.CreatePostTransitionCandidate(
+                basisState,
+                durableBefore,
+                crossDomainTransactions,
+                orderedTerminal,
+                step5Candidate.BasisStep,
+                transitionSequence);
+        }
         var coreCandidates = new[] { schedulerCore, operationCore }
             .OrderBy(static candidate => candidate.Kind)
             .ToArray();
@@ -197,8 +224,8 @@ public static class Qa04CanonicalOperationStepFinalizationV1
             throw new InvalidDataException("qa04.full-step.finalization-published-state-drift");
 
         // Steps 9-12: verify semantic/digest authority after COMMIT against all 97 partitions, the
-        // complete durable Operation catalog, and the reopened scheduler. No result is returned if
-        // any one of these authorities disagrees with State(S+1).
+        // complete durable Operation catalog, optional persistent transaction authority, and the
+        // reopened scheduler. No result is returned if any one of these authorities disagrees.
         var durableCatalog = await store.ListOperationStatesCanonicalAsync(cancellationToken).ConfigureAwait(false);
         var verification = Qa04CanonicalOperationPostCommitVerifierV1.Verify(
             preparation,
@@ -206,7 +233,8 @@ public static class Qa04CanonicalOperationStepFinalizationV1
             receipt,
             authoritative.State,
             scheduler,
-            durableCatalog);
+            durableCatalog,
+            crossDomainTransactions);
 
         return new Qa04CanonicalOperationStepFinalizationResultV1(
             preparation,
