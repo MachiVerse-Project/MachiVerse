@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -16,6 +17,33 @@ public sealed record Qa04CanonicalOperationStepPreparationResultV1(
 /// </summary>
 public static class Qa04CanonicalOperationStepPreparationV1
 {
+    public static Qa04CanonicalOperationStepPreparationResultV1 Prepare(
+        OpaqueId128 candidateId,
+        WorldStateV1 basisState,
+        FrozenStepInputV1 frozenInput,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+        IDomainRecordSchemaResolverV1 references,
+        IEnumerable<InvariantResultV1>? invariantResults = null)
+    {
+        ArgumentNullException.ThrowIfNull(orderedBindings);
+        ArgumentNullException.ThrowIfNull(mutationResult);
+        ArgumentNullException.ThrowIfNull(references);
+
+        RequireFrozenOperationMatch(frozenInput, orderedBindings, mutationResult);
+        var partitionBatch = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.Bind(
+            basisState,
+            orderedBindings,
+            mutationResult,
+            references);
+        return Prepare(
+            candidateId,
+            basisState,
+            frozenInput,
+            partitionBatch,
+            invariantResults);
+    }
+
     public static Qa04CanonicalOperationStepPreparationResultV1 Prepare(
         OpaqueId128 candidateId,
         WorldStateV1 basisState,
@@ -68,5 +96,32 @@ public static class Qa04CanonicalOperationStepPreparationV1
             domainOutputs,
             candidate,
             prepared);
+    }
+
+    private static void RequireFrozenOperationMatch(
+        FrozenStepInputV1 frozenInput,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult)
+    {
+        ArgumentNullException.ThrowIfNull(frozenInput);
+        if (frozenInput.ScheduledOperations.Count != orderedBindings.Count ||
+            mutationResult.AppliedOperationIds.Count != orderedBindings.Count)
+            throw new InvalidDataException("qa04.full-step.step-preparation-operation-coverage-drift");
+
+        for (var index = 0; index < orderedBindings.Count; index++)
+        {
+            var binding = orderedBindings[index]
+                ?? throw new InvalidDataException("qa04.full-step.step-preparation-binding-null");
+            var scheduled = frozenInput.ScheduledOperations[index];
+            if (binding.ScheduledOperation.EffectiveStep != frozenInput.BasisStep ||
+                scheduled.OperationId != binding.SourceDescriptor.OperationId ||
+                scheduled.OperationId != mutationResult.AppliedOperationIds[index] ||
+                scheduled.EffectiveStep != binding.ScheduledOperation.EffectiveStep ||
+                !scheduled.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(
+                    binding.OrderKey.ToDatabaseBytes()))
+            {
+                throw new InvalidDataException("qa04.full-step.step-preparation-frozen-operation-drift");
+            }
+        }
     }
 }
