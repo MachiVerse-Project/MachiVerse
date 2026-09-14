@@ -14,9 +14,6 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04ProductionAuthoritativeStepClosureSmoke
 {
-    private const string ResidentFamily = "participation-control-resident-action";
-    private const string PhysicalFamily = "physical-item-movement-work";
-
     internal static async Task RunAsync()
     {
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
@@ -31,81 +28,27 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             "Gate2 production closure requires the exact 5,000-operation steady workload.");
 
         var effectiveStep = bindings[0].ScheduledOperation.EffectiveStep;
-        Require(effectiveStep == 1 && bindings.All(binding => binding.ScheduledOperation.EffectiveStep == effectiveStep),
-            "Gate2 production workload must be effective at State(S)=1.");
+        Require(effectiveStep == Qa04ProductionReferenceWorldAssemblerV1.CanonicalBasisStep &&
+                bindings.All(binding => binding.ScheduledOperation.EffectiveStep == effectiveStep),
+            "Gate2 production workload must be effective at canonical State(S)=1.");
 
-        var residentBindings = bindings
-            .Where(static binding => binding.SourceDescriptor.FamilyToken.Value == ResidentFamily)
-            .ToArray();
-        var physicalBindings = bindings
-            .Where(static binding => binding.SourceDescriptor.FamilyToken.Value == PhysicalFamily)
-            .ToArray();
-
-        var controlIdentity = StandardDomainPartitionRegistry.Get(ParticipationControlModePayloadV1.PartitionId);
-        var controlModes = new DomainPartitionStateV1<ParticipationControlModePayloadV1>(
-            controlIdentity,
-            residentBindings.Select(binding =>
-            {
-                var ordinal = binding.SourceDescriptor.FamilyOrdinal;
-                var resident = Qa04ReferenceLoadV1.Record(new StableToken("resident.persistent-identity"), ordinal);
-                return new DomainRecordEnvelopeV1<ParticipationControlModePayloadV1>(
-                    Qa04ParticipationControlModeCanonicalAuthorityV1.RecordId(ordinal),
-                    controlIdentity.RecordSchema,
-                    revision: 1,
-                    createdStep: 0,
-                    retiredStep: null,
-                    Qa04ReferenceLoadV1.ResidentDetailLevel(ordinal),
-                    lineageRef: null,
-                    new ParticipationControlModePayloadV1(
-                        new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, resident.RecordId),
-                        BindingRef: null,
-                        Qa04ParticipationControlModeCanonicalAuthorityV1.Autonomous,
-                        Qa04ParticipationControlModeCanonicalAuthorityV1.InitialEffectiveFrom,
-                        Qa04ParticipationControlModeCanonicalAuthorityV1.InitialInputAuthorityGeneration));
-            }));
-
-        var physicalRecords = physicalBindings
-            .Select(binding =>
-            {
-                var ordinal = binding.SourceDescriptor.FamilyOrdinal;
-                return Qa04PhysicalD0MaterializerV1.Create(
-                    ordinal,
-                    Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.CreateCanonicalPresenceBinding(ordinal),
-                    Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.CreateCanonicalTerrainBinding);
-            })
-            .ToArray();
-        var presence = new DomainPartitionStateV1<PhysicalPresencePayloadV1>(
-            StandardDomainPartitionRegistry.Get(PhysicalPresencePayloadV1.PartitionId),
-            physicalRecords.Select(static material => material.Presence));
-
-        var markets = Enumerable.Range(0, checked((int)Qa04MarketMaterializerV1.CanonicalMarketStateCount))
-            .Select(scope => Qa04MarketMaterializerV1.CreateMarketState(
-                checked((uint)scope),
-                Qa04SpatialTileScopeAuthorityV1.ScopeRef,
-                out _))
-            .ToArray();
-
-        var initial = new Qa04CanonicalOperationMutationStateV1(
-            new DomainPartitionStateV1<InfrastructureServiceQueuePayloadV1>(
-                StandardDomainPartitionRegistry.Get(InfrastructureServiceQueuePayloadV1.PartitionId),
-                Array.Empty<DomainRecordEnvelopeV1<InfrastructureServiceQueuePayloadV1>>()),
-            controlModes,
-            new DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>(
-                StandardDomainPartitionRegistry.Get(ResidentBehaviorStatePayloadV1.PartitionId),
-                Array.Empty<DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>>()),
-            presence,
-            new SocietyMarketTransactionPartitionStateV2(markets),
-            new DomainPartitionStateV1<GovernanceSecurityIncidentPayloadV1>(
-                StandardDomainPartitionRegistry.Get(GovernanceSecurityIncidentPayloadV1.PartitionId),
-                Array.Empty<DomainRecordEnvelopeV1<GovernanceSecurityIncidentPayloadV1>>()),
-            new DomainPartitionStateV1<EnvironmentHazardPayloadV1>(
-                StandardDomainPartitionRegistry.Get(EnvironmentHazardPayloadV1.PartitionId),
-                Array.Empty<DomainRecordEnvelopeV1<EnvironmentHazardPayloadV1>>()));
-
-        var references = new RegistryResolver();
-        var partitionAuthorityState = BuildPartitionAuthorityState(effectiveStep, initial, references);
+        var assembly = Qa04ProductionReferenceWorldAssemblerV1.AssembleCanonical(effectiveStep);
+        var initial = assembly.MutationState;
+        var references = assembly.References;
+        var partitionAuthorityState = assembly.PartitionAuthorityState;
+        var activeTransactions = assembly.ActiveTransactions;
         Require(partitionAuthorityState.Partitions.CanonicalEntries.Count() == StandardDomainPartitionRegistry.StandardPartitionCount,
             "Gate2 production closure requires the full 97-partition WorldState surface.");
+        Require(assembly.Validation.ResidentCount == Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount &&
+                assembly.Validation.ParticipationControlModeCount == Qa04ParticipationControlModeCanonicalAuthorityV1.CanonicalCount &&
+                assembly.Validation.PhysicalPresenceCount == Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount &&
+                assembly.Validation.EnvironmentD0Count == Qa04EnvironmentReferenceDecompositionV1.CanonicalD0Count &&
+                assembly.Validation.EnvironmentD1Count == Qa04EnvironmentReferenceDecompositionV1.CanonicalD1Count &&
+                assembly.Validation.SocietyGovernanceCount == Qa04SocietyGovernanceReferenceDecompositionV1.CanonicalCount &&
+                assembly.Validation.InfrastructureInformationCount == Qa04InfrastructureReferenceDecompositionV1.CanonicalCount &&
+                assembly.Validation.ActiveTransactionCount == Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount &&
+                assembly.Validation.CanonicalInitialRecordCount == Qa04ReferenceLoadV1.CanonicalInitialRecordCount,
+            "Gate2 production State(S) did not satisfy the full reference-world authority contract.");
 
         var scheduler = new OperationSchedulerStateV1(
             nextSchedulableStep: effectiveStep,
@@ -136,15 +79,23 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 "Gate2 production durable catalog must contain all scheduled canonical Operations before State(S) freeze.");
 
             ExpectInvalid(
-                () => Qa04ProductionStepBasisAuthorityV1.ValidateBoundCoreAuthority(
-                    partitionAuthorityState, scheduler, durableBefore),
+                () => Qa04ProductionStepBasisAuthorityV1.ValidateBoundCoreAuthorityV2(
+                    partitionAuthorityState,
+                    scheduler,
+                    durableBefore,
+                    activeTransactions),
                 "qa04.production-step.scheduler-substate-mismatch");
 
-            var basisState = Qa04ProductionStepBasisAuthorityV1.BindCoreAuthority(
+            var basisState = Qa04ProductionStepBasisAuthorityV1.BindCoreAuthorityV2(
                 partitionAuthorityState,
                 scheduler,
-                durableBefore);
-            Qa04ProductionStepBasisAuthorityV1.ValidateBoundCoreAuthority(basisState, scheduler, durableBefore);
+                durableBefore,
+                activeTransactions);
+            Qa04ProductionStepBasisAuthorityV1.ValidateBoundCoreAuthorityV2(
+                basisState,
+                scheduler,
+                durableBefore,
+                activeTransactions);
             await PersistStepOneAsync(store, basisState, initialContinuity);
 
             var recoveryAtBasis = await store.ReadRecoveryHeadAsync();
@@ -196,7 +147,11 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                     "operation.succeeded"))
                 .ToArray();
             var finalized = await Qa04CanonicalOperationStepFinalizationV1.CommitAndPublishAsync(
-                store, scheduler, preparation, terminals);
+                store,
+                scheduler,
+                preparation,
+                terminals,
+                crossDomainTransactions: activeTransactions);
 
             var verification = finalized.PostCommitVerification
                 ?? throw new InvalidOperationException("Gate2 production post-COMMIT verification missing.");
@@ -212,7 +167,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 "Gate2 production full-runtime post-COMMIT authority closure failed.");
 
             Console.WriteLine(
-                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} resultingStep={verification.ResultingStep}");
+                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep}");
         }
         finally
         {
@@ -325,65 +280,6 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             Array.Empty<TerminalOperationCommit>());
     }
 
-    private static WorldStateV1 BuildPartitionAuthorityState(
-        ulong basisStep,
-        Qa04CanonicalOperationMutationStateV1 initial,
-        IDomainRecordSchemaResolverV1 references)
-    {
-        var template = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(
-            Qa04ReferenceLoadV1.SteadyOperationsPerStep).WorldState;
-        var replacements = new Dictionary<string, PartitionStateHeaderV1>(StringComparer.Ordinal)
-        {
-            [InfrastructureServiceQueuePayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
-                initial.InfrastructureServiceQueue, 1, basisStep, DetailLevelV1.D0Entity,
-                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
-                    InfrastructureServiceQueuePayloadV1.PartitionId, payload.ToStandardPayload(), references: references)),
-            [ParticipationControlModePayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
-                initial.ParticipationControlMode, 1, basisStep, DetailLevelV1.D0Entity,
-                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
-                    ParticipationControlModePayloadV1.PartitionId, payload.ToStandardPayload(), references: references)),
-            [ResidentBehaviorStatePayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
-                initial.ResidentBehaviorState, 1, basisStep, DetailLevelV1.D0Entity,
-                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
-                    ResidentBehaviorStatePayloadV1.PartitionId, payload.ToStandardPayload(), references: references)),
-            [PhysicalPresencePayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
-                initial.PhysicalPresence, 1, basisStep, DetailLevelV1.D0Entity,
-                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
-                    PhysicalPresencePayloadV1.PartitionId, payload.ToStandardPayload(), references: references)),
-            [SocietyMarketTransactionRecordSchemaV2.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
-                initial.MarketTransaction.State, 1, basisStep, DetailLevelV1.D2RegionalAggregate,
-                payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload, references)),
-            [GovernanceSecurityIncidentPayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
-                initial.GovernanceSecurityIncident, 1, basisStep, DetailLevelV1.D0Entity,
-                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
-                    GovernanceSecurityIncidentPayloadV1.PartitionId, payload.ToStandardPayload(), references: references)),
-            [EnvironmentHazardPayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
-                initial.EnvironmentHazard, 1, basisStep, DetailLevelV1.D0Entity,
-                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
-                    EnvironmentHazardPayloadV1.PartitionId, payload.ToStandardPayload(), references: references)),
-        };
-
-        var partitions = template.Partitions.CanonicalEntries
-            .Select(entry => replacements.TryGetValue(entry.Header.PartitionId.Value, out var replacement)
-                ? new PartitionStateRefV1(replacement)
-                : entry)
-            .ToArray();
-        return new WorldStateV1(
-            new WorldStateHeaderV1(
-                template.Header.WorldId,
-                basisStep,
-                template.Header.WorldSeedDigest,
-                template.Header.ConfigGeneration,
-                template.Header.MasterGeneration,
-                template.Header.RateGeneration),
-            new OrderedPartitionDirectoryV1(partitions),
-            template.SchedulerState,
-            template.OperationState,
-            template.DetailState,
-            template.DomainRegistryState,
-            template.Diagnostic.ConfigDigest);
-    }
-
     private static void ExpectInvalid(Action action, string expectedMessage)
     {
         try
@@ -401,28 +297,5 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
-    }
-
-    private sealed class RegistryResolver : IDomainRecordSchemaResolverV1
-    {
-        public bool Exists(PartitionRecordRefV1 reference) => !reference.RecordId.IsZero && TryResolve(reference, out _);
-        public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema) => TryResolve(reference, out schema);
-
-        private static bool TryResolve(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
-        {
-            schema = default!;
-            if (reference.RecordId.IsZero) return false;
-            try
-            {
-                schema = reference.PartitionId.Value == SocietyMarketTransactionRecordSchemaV2.PartitionId
-                    ? SocietyMarketTransactionRecordSchemaV2.RecordSchema
-                    : StandardDomainPartitionRegistry.Get(reference.PartitionId.Value).RecordSchema;
-                return true;
-            }
-            catch (KeyNotFoundException)
-            {
-                return false;
-            }
-        }
     }
 }
