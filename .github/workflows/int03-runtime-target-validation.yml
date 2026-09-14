@@ -63,12 +63,15 @@ jobs:
           assert inspect['reducedAuthoritativeStepLoopAvailable'] is True, inspect
           assert inspect['runningSnapshotBridgeAvailable'] is True, inspect
           assert inspect['referenceWorldMaterialized'] is True, inspect
-          assert inspect['authoritativeStepLoopAvailable'] is False, inspect
+          assert inspect['authoritativeStepLoopAvailable'] is True, inspect
           assert inspect['releaseEvidenceCapable'] is False, inspect
+          assert 'qa04.target.authoritative-step-loop-not-assembled' not in inspect['blockingFailureCodes'], inspect
+          assert 'qa04.target.reference-world-not-materialized' not in inspect['blockingFailureCodes'], inspect
           assert worker['workerCount'] == 16, worker
           assert worker['domainCount'] == 8, worker
           assert worker['maxObservedConcurrency'] == 8, worker
           assert worker['workerCountAppliedToDomainExecutor'] is True, worker
+          assert worker['referenceWorldMaterialized'] is True, worker
           assert worker['releaseEvidenceCapable'] is False, worker
           PY
       - name: Materialize canonical 1,000,000 Resident identity records
@@ -246,7 +249,7 @@ jobs:
           assert 'qa04.target.reference-world-other-partitions-not-materialized' in result['blockingFailureCodes'], result
           assert 'qa04.target.authoritative-full-step-loop-not-assembled' in result['blockingFailureCodes'], result
           PY
-      - name: Prove external adapter reaches Core and fails closed
+      - name: Prove external adapter reaches Core and fails closed after Gate 2
         shell: bash
         run: |
           set -euo pipefail
@@ -261,8 +264,11 @@ jobs:
               response = json.load(f)
           assert response['executionClass'] == 'release', response
           assert response['responseKind'] == 'performance-benchmark-report-v1', response
+          assert response['referenceWorldMaterialized'] is True, response
+          assert response['releaseEvidenceCapable'] is False, response
           assert response['passed'] is False, response
-          assert 'qa04.target.authoritative-step-loop-not-assembled' in response['failureCodes'], response
+          assert 'qa04.target.authoritative-step-loop-not-assembled' not in response['failureCodes'], response
+          assert 'qa04.measurement.step-sample-count' in response['failureCodes'], response
           assert response['report']['worker_count'] == 4, response
           assert response['report']['step_count'] == 0, response
           PY
