@@ -21,13 +21,16 @@ public sealed record Qa04ProductionCoreSnapshotSectionProofV1(
 public static class Qa04ProductionCoreSnapshotSectionProofRunnerV1
 {
     public static async Task<Qa04ProductionCoreSnapshotSectionProofV1> VerifyAsync(
-        WorldStateV1 authoritativeState,
+        AuthoritativeStepWorldStateV1 authoritative,
         SqlitePersistenceStore store,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(authoritativeState);
+        ArgumentNullException.ThrowIfNull(authoritative);
         ArgumentNullException.ThrowIfNull(store);
+        if (!authoritative.IsPublishable)
+            throw new InvalidDataException("qa04.gate3.core-sections.authoritative-state-not-publishable");
 
+        var authoritativeState = authoritative.State;
         var recoveryCut = await store.ReadSnapshotRecoveryCutAsync(cancellationToken).ConfigureAwait(false);
         if (recoveryCut.FinalizedStep != authoritativeState.Header.Step)
             throw new InvalidDataException("qa04.gate3.core-sections.finalized-step-mismatch");
