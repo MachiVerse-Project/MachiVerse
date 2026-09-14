@@ -1,3 +1,4 @@
+using MachiVerse.Simulation.Core.Domains;
 using MachiVerse.Simulation.Core.Domains.Environment;
 using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
 using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
@@ -27,13 +28,17 @@ public sealed record Qa04CanonicalOperationPartitionCandidateBatchV1(
 /// </summary>
 public static class Qa04CanonicalOperationPartitionCandidateBinderV1
 {
+    private const string ChangeSetHashDomain = "mv.qa04.partition-change-set.v1";
+
     public static Qa04CanonicalOperationPartitionCandidateBatchV1 Bind(
         WorldStateV1 basisState,
-        Qa04CanonicalOperationMutationBatchResultV1 mutationResult)
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+        IDomainRecordSchemaResolverV1 references)
     {
         ArgumentNullException.ThrowIfNull(basisState);
         ArgumentNullException.ThrowIfNull(mutationResult);
         ArgumentNullException.ThrowIfNull(mutationResult.State);
+        ArgumentNullException.ThrowIfNull(references);
 
         if (basisState.Header.WorldId != Qa04ReferenceLoadV1.WorldId)
             throw new InvalidDataException("qa04.full-step.partition-candidate-world-id-drift");
@@ -51,28 +56,43 @@ public static class Qa04CanonicalOperationPartitionCandidateBinderV1
                 basisState,
                 targetStep,
                 state.InfrastructureServiceQueue,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    InfrastructureServiceQueuePayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
             BindStandard(
                 basisState,
                 targetStep,
                 state.ResidentBehaviorState,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    ResidentBehaviorStatePayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
             BindStandard(
                 basisState,
                 targetStep,
                 state.PhysicalPresence,
-                static payload => payload.CanonicalDigest()),
-            BindMarket(basisState, targetStep, state.MarketTransaction),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    PhysicalPresencePayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
+            BindMarket(basisState, targetStep, state.MarketTransaction, references),
             BindStandard(
                 basisState,
                 targetStep,
                 state.GovernanceSecurityIncident,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    GovernanceSecurityIncidentPayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
             BindStandard(
                 basisState,
                 targetStep,
                 state.EnvironmentHazard,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    EnvironmentHazardPayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
         }
         .OrderBy(static item => item.Candidate.PartitionId.Value, StringComparer.Ordinal)
         .ToArray();
@@ -114,21 +134,25 @@ public static class Qa04CanonicalOperationPartitionCandidateBinderV1
     private static Qa04CanonicalOperationPartitionMutationV1 BindMarket(
         WorldStateV1 basisState,
         ulong targetStep,
-        SocietyMarketTransactionPartitionStateV2 resultingState)
+        SocietyMarketTransactionPartitionStateV2 resultingState,
+        IDomainRecordSchemaResolverV1 references)
     {
         ArgumentNullException.ThrowIfNull(resultingState);
+        ArgumentNullException.ThrowIfNull(references);
         SocietyMarketTransactionPartitionIdentityV2.ValidateCanonicalContract();
+        if (resultingState.State.Identity != SocietyMarketTransactionPartitionIdentityV2.Identity)
+            throw new InvalidDataException("qa04.full-step.partition-candidate-market-identity-drift");
 
         var basisHeader = basisState.Partitions.Get(SocietyMarketTransactionRecordSchemaV2.PartitionId).Header;
         RequireBasisIdentity(basisHeader, SocietyMarketTransactionPartitionIdentityV2.Identity);
         var resultingRevision = NextRevision(basisHeader);
-        var authority = SocietyMarketTransactionSnapshotAuthorityV2.CreateCanonical(
-            resultingState,
+        var resultingHeader = PartitionStateHeaderV1.CreateCanonical(
+            resultingState.State,
             resultingRevision,
             targetStep,
-            basisHeader.DetailLevel);
-        authority.VerifyBoundAuthority();
-        return BindHeader(basisState, basisHeader, authority.Header, targetStep);
+            basisHeader.DetailLevel,
+            payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload, references));
+        return BindHeader(basisState, basisHeader, resultingHeader, targetStep);
     }
 
     private static Qa04CanonicalOperationPartitionMutationV1 BindHeader(
@@ -142,26 +166,96 @@ public static class Qa04CanonicalOperationPartitionCandidateBinderV1
         if (resultingHeader.BasisStep != targetStep || resultingHeader.DetailLevel != basisHeader.DetailLevel)
             throw new InvalidDataException("qa04.full-step.partition-candidate-header-drift");
 
-        var changeSetDigest = StepPartitionStateMaterialV1.ComputeChangeSetDigest(
+        var changeSetDigest = ComputeQa04ChangeSetDigest(
             basisHeader,
             resultingHeader,
             basisState.Header.Step,
             targetStep);
-        var candidate = new PartitionCandidateV1(
-            basisHeader.PartitionId,
-            basisHeader.OwnerDomain,
-            basisHeader.Revision,
-            basisState.Header.Step,
+        var candidate = CreateOwnerCandidate(
+            basisState,
+            basisHeader.PartitionId.Value,
             changeSetDigest);
         var material = new StepPartitionStateMaterialV1(resultingHeader);
 
         if (candidate.CandidateRevision != resultingHeader.Revision ||
+            candidate.BasisRevision != basisHeader.Revision ||
+            candidate.BasisStep != basisState.Header.Step ||
             candidate.TargetStep != targetStep ||
             candidate.PartitionId != resultingHeader.PartitionId ||
-            candidate.OwnerDomain != resultingHeader.OwnerDomain)
+            candidate.OwnerDomain != resultingHeader.OwnerDomain ||
+            !candidate.ChangeSetDigest.AsSpan().SequenceEqual(changeSetDigest))
             throw new InvalidDataException("qa04.full-step.partition-candidate-binding-drift");
 
         return new Qa04CanonicalOperationPartitionMutationV1(candidate, material);
+    }
+
+    private static PartitionCandidateV1 CreateOwnerCandidate(
+        WorldStateV1 basisState,
+        string partitionId,
+        ReadOnlySpan<byte> changeSetDigest)
+        => partitionId switch
+        {
+            InfrastructureServiceQueuePayloadV1.PartitionId =>
+                InfrastructureInformationPartitionCandidateFactoryV1.Create(
+                    basisState,
+                    partitionId,
+                    changeSetDigest),
+            ResidentBehaviorStatePayloadV1.PartitionId =>
+                ResidentParticipationPartitionCandidateFactoryV1.CreateResident(
+                    basisState,
+                    partitionId,
+                    changeSetDigest),
+            PhysicalPresencePayloadV1.PartitionId =>
+                PhysicalBuiltPartitionCandidateFactoryV1.Create(
+                    basisState,
+                    partitionId,
+                    changeSetDigest),
+            SocietyMarketTransactionRecordSchemaV2.PartitionId =>
+                SocietyEconomyPartitionCandidateFactoryV1.Create(
+                    basisState,
+                    partitionId,
+                    changeSetDigest),
+            GovernanceSecurityIncidentPayloadV1.PartitionId =>
+                GovernanceSecurityPartitionCandidateFactoryV1.Create(
+                    basisState,
+                    partitionId,
+                    changeSetDigest),
+            EnvironmentHazardPayloadV1.PartitionId =>
+                DomainOwnedPartitionCandidateFactoryV1.CreateEnvironment(
+                    basisState,
+                    partitionId,
+                    changeSetDigest),
+            _ => throw new InvalidDataException($"qa04.full-step.partition-candidate-owner-unregistered:{partitionId}"),
+        };
+
+    private static byte[] ComputeQa04ChangeSetDigest(
+        PartitionStateHeaderV1 basisHeader,
+        PartitionStateHeaderV1 resultingHeader,
+        ulong basisStep,
+        ulong targetStep)
+    {
+        if (targetStep != checked(basisStep + 1UL))
+            throw new InvalidDataException("qa04.full-step.partition-candidate-target-step-drift");
+        if (basisHeader.PartitionId != resultingHeader.PartitionId ||
+            basisHeader.OwnerDomain != resultingHeader.OwnerDomain ||
+            basisHeader.Schema != resultingHeader.Schema)
+            throw new InvalidDataException("qa04.full-step.partition-candidate-transition-identity-drift");
+        if (resultingHeader.Revision != checked(basisHeader.Revision + 1UL))
+            throw new InvalidDataException("qa04.full-step.partition-candidate-revision-drift");
+        if (basisHeader.CanonicalDigest.Length != 32 || resultingHeader.CanonicalDigest.Length != 32)
+            throw new InvalidDataException("qa04.full-step.partition-candidate-partition-digest-length");
+
+        return HashSuite.DomainHash(ChangeSetHashDomain, writer =>
+        {
+            writer.WriteMapStart(7);
+            writer.WriteUnsigned(0); writer.WriteAsciiText(basisHeader.PartitionId.Value);
+            writer.WriteUnsigned(1); writer.WriteUnsigned(basisHeader.Revision);
+            writer.WriteUnsigned(2); writer.WriteUnsigned(basisStep);
+            writer.WriteUnsigned(3); writer.WriteBytes(basisHeader.CanonicalDigest);
+            writer.WriteUnsigned(4); writer.WriteUnsigned(resultingHeader.Revision);
+            writer.WriteUnsigned(5); writer.WriteUnsigned(targetStep);
+            writer.WriteUnsigned(6); writer.WriteBytes(resultingHeader.CanonicalDigest);
+        });
     }
 
     private static void RequireBasisIdentity(
