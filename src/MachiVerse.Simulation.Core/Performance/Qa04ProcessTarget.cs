@@ -76,7 +76,9 @@ public static class Qa04ProcessTargetV1
         Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceWorldMaterialContractV1.ValidateCanonicalContract();
+        Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
         var referenceWorldMaterialized = ReferenceWorldMaterialized();
+        var authoritativeStepLoopAvailable = AuthoritativeStepLoopAvailable(referenceWorldMaterialized);
         return new Qa04ProcessInspectionV1
         {
             SchemaVersion = "1.0",
@@ -95,9 +97,10 @@ public static class Qa04ProcessTargetV1
             ReducedAuthoritativeStepLoopAvailable = true,
             RunningSnapshotBridgeAvailable = true,
             ReferenceWorldMaterialized = referenceWorldMaterialized,
-            AuthoritativeStepLoopAvailable = referenceWorldMaterialized,
+            AuthoritativeStepLoopAvailable = authoritativeStepLoopAvailable,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes = CurrentBlockingFailureCodes(),
+            BlockingFailureCodes = CurrentBlockingFailureCodes(
+                authoritativeStepLoopAvailable ? [] : ["qa04.target.authoritative-step-loop-not-assembled"]),
         };
     }
 
@@ -181,6 +184,13 @@ public static class Qa04ProcessTargetV1
         Qa04ReferenceWorldMaterialContractV1.ValidateCanonicalContract();
         return Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 0 &&
                Qa04ReferenceWorldMaterialContractV1.AllProductionMaterializersAvailable;
+    }
+
+    private static bool AuthoritativeStepLoopAvailable(bool referenceWorldMaterialized)
+    {
+        Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
+        return referenceWorldMaterialized &&
+               Qa04CanonicalOperationBindingV1.CanonicalBindings.Count == Qa04ReferenceLoadV1.CanonicalOperationFamilyCount;
     }
 
     private static string[] CurrentBlockingFailureCodes(params string[] additional)
