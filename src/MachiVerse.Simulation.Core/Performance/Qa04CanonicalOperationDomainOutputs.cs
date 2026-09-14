@@ -16,9 +16,11 @@ public sealed record Qa04CanonicalOperationDomainOutputBatchV1(
     IReadOnlyList<DomainCandidateOutputV1> Outputs);
 
 /// <summary>
-/// Gate-2 Step 3 boundary. Places the six QA-04 local partition candidates onto the standard
-/// eight-domain output surface. This stage does not invent MutationIntent values, build a
-/// StepCandidate, cross SQLite COMMIT, or publish State(S+1).
+/// Gate-2 Step 3 boundary. Places the six QA-04 typed mutation results onto the standard
+/// eight-domain output surface. The operation-bound partition candidate is first validated as the
+/// receipt-side authority, then rebound to the ordinary Step partition change-set digest defined by
+/// StepPartitionStateMaterialV1 so the same resulting state can pass StepStateApplicationV1.Prepare.
+/// This stage does not invent MutationIntent values, cross SQLite COMMIT, or publish State(S+1).
 /// </summary>
 public static class Qa04CanonicalOperationDomainOutputBinderV1
 {
@@ -59,33 +61,50 @@ public static class Qa04CanonicalOperationDomainOutputBinderV1
             ArgumentNullException.ThrowIfNull(mutation.Candidate);
             ArgumentNullException.ThrowIfNull(mutation.Material);
 
-            var candidate = mutation.Candidate;
-            var partitionId = candidate.PartitionId.Value;
+            var receiptCandidate = mutation.Candidate;
+            var partitionId = receiptCandidate.PartitionId.Value;
             if (!ExpectedOwners.TryGetValue(partitionId, out var expectedOwner))
                 throw new InvalidDataException($"qa04.full-step.domain-output-partition-unregistered:{partitionId}");
-            if (candidate.OwnerDomain != expectedOwner)
+            if (receiptCandidate.OwnerDomain != expectedOwner)
                 throw new InvalidDataException($"qa04.full-step.domain-output-owner-drift:{partitionId}");
-            if (candidate.BasisStep != basisState.Header.Step || candidate.TargetStep != targetStep)
+            if (receiptCandidate.BasisStep != basisState.Header.Step || receiptCandidate.TargetStep != targetStep)
                 throw new InvalidDataException($"qa04.full-step.domain-output-candidate-step-drift:{partitionId}");
 
             var basisHeader = basisState.Partitions.Get(partitionId).Header;
-            if (basisHeader.OwnerDomain != candidate.OwnerDomain ||
-                basisHeader.Revision != candidate.BasisRevision ||
-                candidate.CandidateRevision != checked(candidate.BasisRevision + 1UL))
+            if (basisHeader.OwnerDomain != receiptCandidate.OwnerDomain ||
+                basisHeader.Revision != receiptCandidate.BasisRevision ||
+                receiptCandidate.CandidateRevision != checked(receiptCandidate.BasisRevision + 1UL))
             {
                 throw new InvalidDataException($"qa04.full-step.domain-output-candidate-basis-drift:{partitionId}");
             }
 
             var resultingHeader = mutation.Material.ResultingHeader;
-            if (resultingHeader.PartitionId != candidate.PartitionId ||
-                resultingHeader.OwnerDomain != candidate.OwnerDomain ||
-                resultingHeader.Revision != candidate.CandidateRevision ||
+            if (resultingHeader.PartitionId != receiptCandidate.PartitionId ||
+                resultingHeader.OwnerDomain != receiptCandidate.OwnerDomain ||
+                resultingHeader.Revision != receiptCandidate.CandidateRevision ||
                 resultingHeader.BasisStep != targetStep)
             {
                 throw new InvalidDataException($"qa04.full-step.domain-output-material-drift:{partitionId}");
             }
 
-            if (!candidateByPartition.TryAdd(partitionId, candidate))
+            var stepChangeSetDigest = StepPartitionStateMaterialV1.ComputeChangeSetDigest(
+                basisHeader,
+                resultingHeader,
+                basisState.Header.Step,
+                targetStep);
+            var stepCandidate = new PartitionCandidateV1(
+                receiptCandidate.PartitionId,
+                receiptCandidate.OwnerDomain,
+                receiptCandidate.BasisRevision,
+                receiptCandidate.BasisStep,
+                stepChangeSetDigest);
+            if (stepCandidate.CandidateRevision != resultingHeader.Revision ||
+                !stepCandidate.ChangeSetDigest.AsSpan().SequenceEqual(stepChangeSetDigest))
+            {
+                throw new InvalidDataException($"qa04.full-step.domain-output-step-candidate-drift:{partitionId}");
+            }
+
+            if (!candidateByPartition.TryAdd(partitionId, stepCandidate))
                 throw new InvalidDataException($"qa04.full-step.domain-output-duplicate-partition:{partitionId}");
         }
 
