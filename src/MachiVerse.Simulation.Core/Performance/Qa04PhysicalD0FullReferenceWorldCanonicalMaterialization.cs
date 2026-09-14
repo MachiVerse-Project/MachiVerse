@@ -131,9 +131,7 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
                 new PartitionRecordRefV1(PhysicalOccupancyRecordSchemaV2.PartitionId, record.RecordId),
                 record.RecordSchema);
             if (record.Payload is PhysicalCollisionShapePayloadV2 shape)
-            {
                 shapeCounts[shape.ShapeKind] = checked(shapeCounts.GetValueOrDefault(shape.ShapeKind) + 1UL);
-            }
         }
 
         var validator = new StandardDomainPayloadCodecValidatorV1();
@@ -151,6 +149,20 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
                 references);
         }
 
+        var firstFiftyThousand = Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.MaterializeCanonical();
+        foreach (var approved in firstFiftyThousand.Presences.RecordsCanonical)
+        {
+            if (!physical.Presence.TryGet(approved.RecordId, out var full) || full is null ||
+                full.RecordSchema != approved.RecordSchema ||
+                full.Revision != approved.Revision ||
+                full.CreatedStep != approved.CreatedStep ||
+                full.RetiredStep != approved.RetiredStep ||
+                full.DetailLevel != approved.DetailLevel ||
+                full.LineageRef != approved.LineageRef ||
+                full.Payload != approved.Payload)
+                throw new InvalidDataException("qa04.physical.full-reference-world-first-50000-compatibility-drift");
+        }
+
         RequireShapeCount(shapeCounts, PhysicalOccupancyRecordSchemaV2.SphereShapeKind, 250_000);
         RequireShapeCount(shapeCounts, PhysicalOccupancyRecordSchemaV2.CapsuleShapeKind, 100_000);
         RequireShapeCount(shapeCounts, PhysicalOccupancyRecordSchemaV2.OrientedBoxShapeKind, 100_000);
@@ -158,7 +170,8 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
         RequireShapeCount(shapeCounts, PhysicalOccupancyRecordSchemaV2.TriangleMeshStaticShapeKind, 5_000);
         RequireShapeCount(shapeCounts, PhysicalOccupancyRecordSchemaV2.TerrainSdfRefShapeKind, 5_000);
         if (subjects.Count != checked((int)CanonicalPhysicalCount) ||
-            shapeCounts.Count != 6 || shapeCounts.Values.Aggregate(0UL, checked((sum, value) => sum + value)) != CanonicalPhysicalCount)
+            shapeCounts.Count != 6 ||
+            shapeCounts.Values.Aggregate(0UL, static (sum, value) => checked(sum + value)) != CanonicalPhysicalCount)
             throw new InvalidDataException("qa04.physical.full-reference-world-population-drift");
 
         var presenceHeader = PartitionStateHeaderV1.CreateCanonical(
@@ -199,7 +212,7 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
         var y = checked((long)row * width + checked((long)Math.Floor(v * width)));
         var z = Qa04TerrainCanonicalContentSourceV1.HeightMm(x, y);
 
-        var binding = new Qa04PhysicalPresenceGenesisBindingV1(
+        return new Qa04PhysicalPresenceGenesisBindingV1(
             new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, resident.RecordId),
             Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.TileFrameRef(descriptor.RegionalTileIndex),
             new Vec3Int64V1(x, y, z),
@@ -208,12 +221,6 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
             ZeroVector,
             ContainmentRef: null,
             Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.PresenceMode);
-
-        if (physicalOrdinal < Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.CanonicalPhysicalCount &&
-            binding != Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.CreateCanonicalPresenceBinding(physicalOrdinal))
-            throw new InvalidDataException("qa04.physical.full-reference-world-first-50000-compatibility-drift");
-
-        return binding;
     }
 
     private static void RequireShapeCount(IReadOnlyDictionary<string, ulong> counts, string shapeKind, ulong expected)
