@@ -14,6 +14,25 @@ internal static class CoreOperationStateSnapshotV2Smoke
             "core.operation-state v2 schema identity drifted.");
         Require(authority.LogicalItemCount == 1, "v2 logical item count must include transaction state.");
 
+        var operation = new DurableOperationStateV1(
+            OpaqueId128.Parse("0000000000000000000000000006a300"),
+            Enumerable.Repeat((byte)0x31, 32).ToArray(),
+            DurableOperationLifecycleV1.ScheduledDurable,
+            AcceptedSequence: 1,
+            ScheduledSequence: 2,
+            EffectiveStep: 2,
+            TerminalSequence: null,
+            TerminalStatus: null,
+            ResultCode: null,
+            RichResultPayload: null);
+        var combinedAuthority = CoreOperationStateSnapshotAuthorityV2.Create([operation], [state], basisStep: 2);
+        var liveSubstate = CoreOperationStateSubstateV2.Canonicalize([operation], [state], basisStep: 2);
+        Require(liveSubstate.Schema == CoreOperationStateSnapshotAuthorityV2.Schema &&
+                liveSubstate.CanonicalDigest.SequenceEqual(combinedAuthority.CanonicalDigest),
+            "live core.operation-state /2.0 must share the production Snapshot semantic authority.");
+        Require(liveSubstate.Schema != DurableOperationSubstateV1.Canonicalize([operation]).Schema,
+            "core.operation-state /2.0 must not collapse to the operation-only v1 schema.");
+
         var encoded = CoreOperationStateSnapshotWireCodecV2.Encode(2, [], [state]);
         var decoded = CoreOperationStateSnapshotWireCodecV2.Decode(encoded);
         Require(decoded.BasisStep == 2 && decoded.Operations.Count == 0 && decoded.Transactions.Count == 1,
