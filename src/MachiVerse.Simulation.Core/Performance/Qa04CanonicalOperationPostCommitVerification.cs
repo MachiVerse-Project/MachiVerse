@@ -17,7 +17,9 @@ public sealed record Qa04CanonicalOperationPostCommitVerificationV1(
 /// Gate-2 Steps 9-12 post-COMMIT authority verifier. It does not create authority: it only accepts
 /// the already-published State(S+1) when its full partition diagnostic, the six typed mutation
 /// results, the scheduler substate, and the complete durable Operation catalog all agree with the
-/// committed SQLite/runtime authority. Any drift fails closed.
+/// committed SQLite/runtime authority. When persistent CrossDomainTransaction state is supplied,
+/// the Operation core substate is verified through the canonical core.operation-state /2.0
+/// authority rather than the operation-only v1 authority. Any drift fails closed.
 /// </summary>
 public static class Qa04CanonicalOperationPostCommitVerifierV1
 {
@@ -27,7 +29,8 @@ public static class Qa04CanonicalOperationPostCommitVerifierV1
         DurableStepReceiptV1 receipt,
         WorldStateV1 publishedState,
         OperationSchedulerStateV1 scheduler,
-        IReadOnlyList<DurableOperationStateV1> durableOperationCatalog)
+        IReadOnlyList<DurableOperationStateV1> durableOperationCatalog,
+        IReadOnlyCollection<CrossDomainTransactionStateV1>? crossDomainTransactions = null)
     {
         ArgumentNullException.ThrowIfNull(step5Preparation);
         ArgumentNullException.ThrowIfNull(finalPrepared);
@@ -89,7 +92,12 @@ public static class Qa04CanonicalOperationPostCommitVerifierV1
             publishedState.SchedulerState,
             "qa04.full-step.post-commit-scheduler-substate-drift");
 
-        var operationAuthority = DurableOperationSubstateV1.Canonicalize(durableOperationCatalog);
+        var operationAuthority = crossDomainTransactions is null
+            ? DurableOperationSubstateV1.Canonicalize(durableOperationCatalog)
+            : CoreOperationStateSubstateV2.Canonicalize(
+                durableOperationCatalog,
+                crossDomainTransactions,
+                publishedState.Header.Step);
         RequireSubstateMatch(
             operationAuthority,
             publishedState.OperationState,
