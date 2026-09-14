@@ -76,7 +76,7 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
         ScheduledOperations = Array.AsReadOnly(scheduledOperations.Select(CloneScheduledOperation).ToArray());
         CrossDomainTransactions = crossDomainTransactions is null
             ? null
-            : Array.AsReadOnly(crossDomainTransactions.ToArray());
+            : Array.AsReadOnly(crossDomainTransactions.Select(CloneCrossDomainTransaction).ToArray());
         _supplemental = supplemental;
     }
 
@@ -271,5 +271,52 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
             scheduled.OperationId,
             scheduled.EffectiveStep,
             SameStepOrderKey.FromDatabaseBytes(scheduled.OrderKey.ToDatabaseBytes()));
+    }
+
+    private static CrossDomainTransactionStateV1 CloneCrossDomainTransaction(CrossDomainTransactionStateV1 state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return new CrossDomainTransactionStateV1(
+            state.TransactionId,
+            state.TransactionKind,
+            state.Lifecycle,
+            state.CreatedStep,
+            state.UpdatedStep,
+            state.TerminalStep,
+            CloneCausality(state.RootCausality),
+            state.SubjectIds,
+            state.Participants.Select(ClonePersistentTransactionParticipant),
+            state.InvariantResults.Select(CloneInvariantResult));
+    }
+
+    private static PersistentTransactionParticipantV1 ClonePersistentTransactionParticipant(
+        PersistentTransactionParticipantV1 participant)
+    {
+        ArgumentNullException.ThrowIfNull(participant);
+        return new PersistentTransactionParticipantV1(
+            participant.DomainToken,
+            participant.PartitionId,
+            participant.IntentIds,
+            participant.Required,
+            participant.Outcome,
+            participant.CandidateEffectDigest,
+            participant.DiagnosticCode);
+    }
+
+    private static InvariantResultV1 CloneInvariantResult(InvariantResultV1 result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return new InvariantResultV1(
+            result.InvariantId,
+            result.Severity,
+            result.Outcome,
+            result.ParticipantRefs.Select(CloneCausality),
+            result.DiagnosticCode);
+    }
+
+    private static CausalityRefV1 CloneCausality(CausalityRefV1 causality)
+    {
+        ArgumentNullException.ThrowIfNull(causality);
+        return new CausalityRefV1(causality.Kind, causality.Id, causality.BasisStep);
     }
 }
