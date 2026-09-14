@@ -79,6 +79,9 @@ public static class Qa04ProcessTargetV1
         Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
         var referenceWorldMaterialized = ReferenceWorldMaterialized();
         var authoritativeStepLoopAvailable = AuthoritativeStepLoopAvailable(referenceWorldMaterialized);
+        var additionalBlockers = authoritativeStepLoopAvailable
+            ? Array.Empty<string>()
+            : new[] { "qa04.target.authoritative-step-loop-not-assembled" };
         return new Qa04ProcessInspectionV1
         {
             SchemaVersion = "1.0",
@@ -99,8 +102,7 @@ public static class Qa04ProcessTargetV1
             ReferenceWorldMaterialized = referenceWorldMaterialized,
             AuthoritativeStepLoopAvailable = authoritativeStepLoopAvailable,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes = CurrentBlockingFailureCodes(
-                authoritativeStepLoopAvailable ? [] : ["qa04.target.authoritative-step-loop-not-assembled"]),
+            BlockingFailureCodes = CurrentBlockingFailureCodes(additionalBlockers),
         };
     }
 
