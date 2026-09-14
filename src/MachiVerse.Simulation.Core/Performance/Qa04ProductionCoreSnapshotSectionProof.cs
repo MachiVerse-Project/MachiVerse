@@ -60,6 +60,8 @@ public static class Qa04ProductionCoreSnapshotSectionProofRunnerV1
                 FrozenDomainRegistrySnapshotOwnerV1.Freeze(authoritativeState.Header.Step, registry),
             });
 
+        ProveTransactionCutIsolation(ownerCut, transactions);
+
         var sections = CoreSnapshotProductionSectionProviderV1.CreateAllSixV2(ownerCut);
         CoreSnapshotProductionSectionProviderV1.VerifyAllSixV2(
             sections,
@@ -74,5 +76,24 @@ public static class Qa04ProductionCoreSnapshotSectionProofRunnerV1
             recoveryCut.DurableOperations.Count,
             recoveryCut.ScheduledOperations.Count,
             transactions.Count);
+    }
+
+    private static void ProveTransactionCutIsolation(
+        CoreSnapshotOwnerMaterialCutV1 ownerCut,
+        IReadOnlyList<CrossDomainTransactionStateV1> sourceTransactions)
+    {
+        if (sourceTransactions.Count == 0 || sourceTransactions[0].Participants.Count == 0)
+            throw new InvalidDataException("qa04.gate3.core-sections.transaction-freeze-proof-material-missing");
+
+        var frozenAuthority = ownerCut.RecomputeOperationAuthorityV2();
+        sourceTransactions[0].RootCausality.Id[0] ^= 0xFF;
+        sourceTransactions[0].Participants[0].CandidateEffectDigest[0] ^= 0xFF;
+        var authorityAfterSourceMutation = ownerCut.RecomputeOperationAuthorityV2();
+
+        if (frozenAuthority.Schema != authorityAfterSourceMutation.Schema ||
+            !CryptographicOperations.FixedTimeEquals(
+                frozenAuthority.CanonicalDigest,
+                authorityAfterSourceMutation.CanonicalDigest))
+            throw new InvalidDataException("qa04.gate3.core-sections.transaction-freeze-isolation-failed");
     }
 }
