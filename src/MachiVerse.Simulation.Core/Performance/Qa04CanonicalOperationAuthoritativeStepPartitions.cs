@@ -6,6 +6,7 @@ using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Domains.Resident;
 using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
+using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
