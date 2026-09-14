@@ -107,6 +107,13 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
             .ToArray();
         var topologyState = new InfrastructureNetworkTopologyPartitionStateV2(topologyRecords);
         var topologyReferences = new ExactReferenceResolver(scopeResolver);
+        foreach (var organization in Qa04SocietyOrganizationResolvedMaterializerV1.MaterializeResolved(
+                     static _ => Qa04SocietyGovernanceCanonicalAuthorityV1.OrganizationClass))
+        {
+            topologyReferences.Add(
+                new PartitionRecordRefV1(SocietyOrganizationPayloadV1.PartitionId, organization.RecordId),
+                organization.RecordSchema);
+        }
         foreach (var record in topologyState.RecordSet.RecordsCanonical)
             topologyReferences.Add(
                 new PartitionRecordRefV1(InfrastructureNetworkTopologyRecordSchemaV2.PartitionId, record.RecordId),
