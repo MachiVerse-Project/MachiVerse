@@ -12,6 +12,13 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
 {
+    private const string InfrastructureFamily = "infrastructure-service-delivery";
+    private const string ResidentFamily = "participation-control-resident-action";
+    private const string PhysicalFamily = "physical-item-movement-work";
+    private const string MarketFamily = "society-market-payment-contract";
+    private const string GovernanceFamily = "governance-security";
+    private const string EnvironmentFamily = "environment-spatial-admin-synthetic";
+
     public static void Run()
     {
         var bindings = Qa04ReferenceLoadV1.OperationsForStep(1)
@@ -28,11 +35,11 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         var basisStep = effectiveStep - 1UL;
 
         var residentBinding = bindings.Single(static value =>
-            value.SourceDescriptor.FamilyToken.Value == "participation-control-resident-action");
+            value.SourceDescriptor.FamilyToken.Value == ResidentFamily);
         var physicalBinding = bindings.Single(static value =>
-            value.SourceDescriptor.FamilyToken.Value == "physical-item-movement-work");
+            value.SourceDescriptor.FamilyToken.Value == PhysicalFamily);
         var marketBinding = bindings.Single(static value =>
-            value.SourceDescriptor.FamilyToken.Value == "society-market-payment-contract");
+            value.SourceDescriptor.FamilyToken.Value == MarketFamily);
 
         var residentOrdinal = residentBinding.SourceDescriptor.FamilyOrdinal;
         var resident = Qa04ReferenceLoadV1.Record(new StableToken("resident.persistent-identity"), residentOrdinal);
@@ -102,6 +109,7 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
 
         var bound = Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
             basisState,
+            bindings,
             mutation,
             references);
         Require(bound.BasisStep == basisStep && bound.TargetStep == effectiveStep,
@@ -130,28 +138,37 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
 
         foreach (var item in bound.Partitions)
         {
-            var basisHeader = basisState.Partitions.Get(item.Candidate.PartitionId.Value).Header;
+            var partitionId = item.Candidate.PartitionId.Value;
+            var basisHeader = basisState.Partitions.Get(partitionId).Header;
             var resultingHeader = item.Material.ResultingHeader;
+            var family = FamilyForPartition(partitionId);
+            var operationIds = bindings
+                .Where(binding => binding.SourceDescriptor.FamilyToken.Value == family)
+                .Select(static binding => binding.SourceDescriptor.OperationId)
+                .ToArray();
             var expectedDigest = ComputeQa04ChangeSetDigest(
                 basisHeader,
                 resultingHeader,
                 basisStep,
-                effectiveStep);
+                effectiveStep,
+                operationIds);
 
+            Require(operationIds.Length > 0 && operationIds.Distinct().Count() == operationIds.Length,
+                $"Gate2 operation-id binding drift: {partitionId}");
             Require(item.Candidate.BasisRevision == basisHeader.Revision,
-                $"Gate2 candidate basis revision drift: {item.Candidate.PartitionId.Value}");
+                $"Gate2 candidate basis revision drift: {partitionId}");
             Require(item.Candidate.CandidateRevision == basisHeader.Revision + 1UL,
-                $"Gate2 candidate revision drift: {item.Candidate.PartitionId.Value}");
+                $"Gate2 candidate revision drift: {partitionId}");
             Require(item.Candidate.BasisStep == basisStep && item.Candidate.TargetStep == effectiveStep,
-                $"Gate2 candidate step drift: {item.Candidate.PartitionId.Value}");
+                $"Gate2 candidate step drift: {partitionId}");
             Require(resultingHeader.Revision == item.Candidate.CandidateRevision &&
                     resultingHeader.BasisStep == effectiveStep &&
                     resultingHeader.DetailLevel == basisHeader.DetailLevel,
-                $"Gate2 resulting header drift: {item.Candidate.PartitionId.Value}");
-            Require(resultingHeader.ItemCount == expectedItemCounts[item.Candidate.PartitionId.Value],
-                $"Gate2 resulting item count drift: {item.Candidate.PartitionId.Value}");
+                $"Gate2 resulting header drift: {partitionId}");
+            Require(resultingHeader.ItemCount == expectedItemCounts[partitionId],
+                $"Gate2 resulting item count drift: {partitionId}");
             Require(expectedDigest.AsSpan().SequenceEqual(item.Candidate.ChangeSetDigest),
-                $"Gate2 QA-04 canonical change-set digest drift: {item.Candidate.PartitionId.Value}");
+                $"Gate2 QA-04 canonical change-set digest drift: {partitionId}");
         }
 
         var marketBound = bound.Partitions.Single(static item =>
@@ -169,6 +186,7 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
 
         var replay = Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
             basisState,
+            bindings,
             mutation,
             references);
         Require(replay.Partitions.Count == bound.Partitions.Count,
@@ -186,13 +204,40 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         ExpectInvalid(
             () => Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
                 basisState,
+                bindings,
                 mutation with { EffectiveStep = effectiveStep + 1UL },
                 references),
             "qa04.full-step.partition-candidate-effective-step-drift");
 
+        var receiptDrift = mutation with
+        {
+            AppliedOperationIds = Array.AsReadOnly(mutation.AppliedOperationIds.Reverse().ToArray()),
+        };
         ExpectInvalid(
             () => Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
                 basisState,
+                bindings,
+                receiptDrift,
+                references),
+            "qa04.full-step.partition-candidate-receipt-order-drift");
+
+        var reversedBindings = bindings.Reverse().ToArray();
+        var reversedReceipt = mutation with
+        {
+            AppliedOperationIds = Array.AsReadOnly(mutation.AppliedOperationIds.Reverse().ToArray()),
+        };
+        ExpectInvalid(
+            () => Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
+                basisState,
+                reversedBindings,
+                reversedReceipt,
+                references),
+            "qa04.full-step.partition-candidate-order-not-canonical");
+
+        ExpectInvalid(
+            () => Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
+                basisState,
+                bindings,
                 mutation,
                 new RegistryResolver(residentRef)),
             expectedMessage: null);
@@ -273,18 +318,36 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         PartitionStateHeaderV1 basisHeader,
         PartitionStateHeaderV1 resultingHeader,
         ulong basisStep,
-        ulong targetStep)
-        => HashSuite.DomainHash("mv.qa04.partition-change-set.v1", writer =>
+        ulong targetStep,
+        IReadOnlyList<OpaqueId128> operationIds)
+        => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {
-            writer.WriteMapStart(7);
+            writer.WriteMapStart(9);
             writer.WriteUnsigned(0); writer.WriteAsciiText(basisHeader.PartitionId.Value);
-            writer.WriteUnsigned(1); writer.WriteUnsigned(basisHeader.Revision);
-            writer.WriteUnsigned(2); writer.WriteUnsigned(basisStep);
-            writer.WriteUnsigned(3); writer.WriteBytes(basisHeader.CanonicalDigest);
-            writer.WriteUnsigned(4); writer.WriteUnsigned(resultingHeader.Revision);
+            writer.WriteUnsigned(1); writer.WriteAsciiText(basisHeader.OwnerDomain.Value);
+            writer.WriteUnsigned(2); writer.WriteUnsigned(basisHeader.Revision);
+            writer.WriteUnsigned(3); writer.WriteUnsigned(resultingHeader.Revision);
+            writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
             writer.WriteUnsigned(5); writer.WriteUnsigned(targetStep);
-            writer.WriteUnsigned(6); writer.WriteBytes(resultingHeader.CanonicalDigest);
+            writer.WriteUnsigned(6); writer.WriteBytes(basisHeader.CanonicalDigest);
+            writer.WriteUnsigned(7); writer.WriteBytes(resultingHeader.CanonicalDigest);
+            writer.WriteUnsigned(8);
+            writer.WriteArrayStart(checked((ulong)operationIds.Count));
+            foreach (var operationId in operationIds)
+                writer.WriteBytes(operationId.ToBytes());
         });
+
+    private static string FamilyForPartition(string partitionId)
+        => partitionId switch
+        {
+            InfrastructureServiceQueuePayloadV1.PartitionId => InfrastructureFamily,
+            ResidentBehaviorStatePayloadV1.PartitionId => ResidentFamily,
+            PhysicalPresencePayloadV1.PartitionId => PhysicalFamily,
+            SocietyMarketTransactionRecordSchemaV2.PartitionId => MarketFamily,
+            GovernanceSecurityIncidentPayloadV1.PartitionId => GovernanceFamily,
+            EnvironmentHazardPayloadV1.PartitionId => EnvironmentFamily,
+            _ => throw new InvalidDataException($"Unknown Gate2 partition in smoke: {partitionId}"),
+        };
 
     private static Qa04PhysicalD0RecordMaterialV1 PhysicalMaterial(ulong ordinal)
         => Qa04PhysicalD0MaterializerV1.Create(ordinal, PhysicalPresenceBinding(ordinal), TerrainBinding);
