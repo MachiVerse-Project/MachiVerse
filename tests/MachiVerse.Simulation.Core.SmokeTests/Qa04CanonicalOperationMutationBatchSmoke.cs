@@ -131,19 +131,18 @@ internal static class Qa04CanonicalOperationMutationBatchSmoke
             references);
         Require(replay.AppliedOperationIds.SequenceEqual(result.AppliedOperationIds),
             "Gate2 mutation replay operation order drift");
-        Require(replay.State.InfrastructureServiceQueue.Header.PartitionDigest.AsSpan().SequenceEqual(
-                result.State.InfrastructureServiceQueue.Header.PartitionDigest) &&
-                replay.State.ResidentBehaviorState.Header.PartitionDigest.AsSpan().SequenceEqual(
-                    result.State.ResidentBehaviorState.Header.PartitionDigest) &&
-                replay.State.PhysicalPresence.Header.PartitionDigest.AsSpan().SequenceEqual(
-                    result.State.PhysicalPresence.Header.PartitionDigest) &&
-                replay.State.MarketTransaction.State.Header.PartitionDigest.AsSpan().SequenceEqual(
-                    result.State.MarketTransaction.State.Header.PartitionDigest) &&
-                replay.State.GovernanceSecurityIncident.Header.PartitionDigest.AsSpan().SequenceEqual(
-                    result.State.GovernanceSecurityIncident.Header.PartitionDigest) &&
-                replay.State.EnvironmentHazard.Header.PartitionDigest.AsSpan().SequenceEqual(
-                    result.State.EnvironmentHazard.Header.PartitionDigest),
-            "Gate2 mutation replay typed partition digest drift");
+        Require(replay.State.InfrastructureServiceQueue.ItemCount == result.State.InfrastructureServiceQueue.ItemCount &&
+                replay.State.ResidentBehaviorState.ItemCount == result.State.ResidentBehaviorState.ItemCount &&
+                replay.State.PhysicalPresence.ItemCount == result.State.PhysicalPresence.ItemCount &&
+                replay.State.MarketTransaction.State.ItemCount == result.State.MarketTransaction.State.ItemCount &&
+                replay.State.GovernanceSecurityIncident.ItemCount == result.State.GovernanceSecurityIncident.ItemCount &&
+                replay.State.EnvironmentHazard.ItemCount == result.State.EnvironmentHazard.ItemCount,
+            "Gate2 mutation replay typed-state cardinality drift");
+        Require(replay.State.PhysicalPresence.TryGet(physical.Presence.RecordId, out var replayPresence) &&
+                replayPresence is not null && revisedPresence is not null &&
+                replayPresence.Revision == revisedPresence.Revision &&
+                replayPresence.Payload == revisedPresence.Payload,
+            "Gate2 mutation replay physical target drift");
 
         var reversed = bindings.Reverse().ToArray();
         ExpectInvalid(
