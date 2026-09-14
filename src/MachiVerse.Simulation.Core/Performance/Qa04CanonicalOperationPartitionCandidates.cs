@@ -170,7 +170,7 @@ public static class Qa04CanonicalOperationPartitionCandidateBinderV1
     {
         if (basisHeader.PartitionId != resultingIdentity.PartitionId ||
             basisHeader.OwnerDomain != resultingIdentity.OwnerDomain ||
-            basisHeader.Schema != resultingIdentity.RecordSchema)
+            basisHeader.Schema != resultingIdentity.PartitionSchema)
         {
             throw new InvalidDataException(
                 $"qa04.full-step.partition-candidate-basis-identity:{resultingIdentity.PartitionId.Value}");
