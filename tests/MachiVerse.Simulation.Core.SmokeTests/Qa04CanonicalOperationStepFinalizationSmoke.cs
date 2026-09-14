@@ -416,7 +416,7 @@ internal static class Qa04CanonicalOperationStepFinalizationSmoke
             new PartitionRecordRefV1("resident.identity_lifecycle", Id(checked((byte)(1 + ordinal % 200)))),
             new PartitionRecordRefV1("spatial.world_frame", Id(0xF0)),
             new Vec3Int64V1(1000, 2000, 3000),
-            new MachiVerse.Simulation.Core.Domains.QuaternionQ30V1(0, 0, 0, 1 << 30),
+            new MachiVerse.Simulation.Core.WorldState.QuaternionQ30V1(0, 0, 0, 1 << 30),
             new Vec3Int64V1(0, 0, 0),
             new Vec3Int64V1(0, 0, 0),
             null,
