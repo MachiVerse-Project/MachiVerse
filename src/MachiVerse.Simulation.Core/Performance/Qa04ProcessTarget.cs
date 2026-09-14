@@ -190,7 +190,8 @@ public static class Qa04ProcessTargetV1
     {
         Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
         return referenceWorldMaterialized &&
-               Qa04CanonicalOperationBindingV1.CanonicalBindings.Count == Qa04ReferenceLoadV1.CanonicalOperationFamilyCount;
+               Qa04CanonicalOperationBindingV1.PendingAuthorityFamilies.Count == 0 &&
+               Qa04CanonicalOperationBindingV1.BoundFamilies.Count == Qa04ReferenceLoadV1.OperationFamilies.Count;
     }
 
     private static string[] CurrentBlockingFailureCodes(params string[] additional)
