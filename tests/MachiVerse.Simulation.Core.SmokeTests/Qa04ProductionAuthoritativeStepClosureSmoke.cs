@@ -166,8 +166,18 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                     scheduler.NextSchedulableStep == effectiveStep + 1UL,
                 "Gate2 production full-runtime post-COMMIT authority closure failed.");
 
+            var gate3Core = await Qa04ProductionCoreSnapshotSectionProofRunnerV1.VerifyAsync(
+                finalized.AuthoritativeState,
+                store);
+            Require(gate3Core.BasisStep == verification.ResultingStep &&
+                    gate3Core.CoreSectionCount == 6 &&
+                    gate3Core.DurableOperationCount == bindings.Length &&
+                    gate3Core.ScheduledOperationCount == 0 &&
+                    gate3Core.CrossDomainTransactionCount == activeTransactions.Count,
+                "Gate3 Step1 production six-Core-section proof failed.");
+
             Console.WriteLine(
-                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep}");
+                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount}");
         }
         finally
         {
