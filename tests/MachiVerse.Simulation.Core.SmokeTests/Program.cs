@@ -272,6 +272,8 @@ Qa04InfrastructureServiceReserveApplicationSmoke.Run();
 Qa04ResidentActionApplicationSmoke.Run();
 Qa04PhysicalMoveApplicationSmoke.Run();
 Qa04MarketOrderApplicationSmoke.Run();
+Qa04CanonicalOperationMutationBatchSmoke.Run();
+Qa04CanonicalOperationPartitionCandidatesSmoke.Run();
 await Qa04RuntimeTargetSmoke.RunAsync();
 await Qa04CoreSubstateAuthoritySmoke.RunAsync();
 Sim04WorldStateSmoke.Run();
