@@ -71,12 +71,7 @@ public static class Qa04ProcessTargetV1
 
     private static Qa04ProcessInspectionV1 Inspect()
     {
-        Qa04ReferenceLoadV1.ValidateCanonicalContract();
-        Qa04ReferenceScenariosV1.ValidateCanonicalContract();
-        Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
-        Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
-        Qa04ReferenceWorldMaterialContractV1.ValidateCanonicalContract();
-        Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
+        ValidateGate2CapabilityContracts();
         var referenceWorldMaterialized = ReferenceWorldMaterialized();
         var authoritativeStepLoopAvailable = AuthoritativeStepLoopAvailable(referenceWorldMaterialized);
         var additionalBlockers = authoritativeStepLoopAvailable
@@ -178,6 +173,16 @@ public static class Qa04ProcessTargetV1
             ReleaseEvidenceCapable = false,
             BlockingFailureCodes = CurrentBlockingFailureCodes(),
         };
+    }
+
+    private static void ValidateGate2CapabilityContracts()
+    {
+        Qa04ReferenceLoadV1.ValidateCanonicalContract();
+        Qa04ReferenceScenariosV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldMaterialContractV1.ValidateCanonicalContract();
+        Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
     }
 
     private static bool ReferenceWorldMaterialized()
