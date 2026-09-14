@@ -95,10 +95,9 @@ public static class Qa04ProcessTargetV1
             ReducedAuthoritativeStepLoopAvailable = true,
             RunningSnapshotBridgeAvailable = true,
             ReferenceWorldMaterialized = referenceWorldMaterialized,
-            AuthoritativeStepLoopAvailable = false,
+            AuthoritativeStepLoopAvailable = referenceWorldMaterialized,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes = CurrentBlockingFailureCodes(
-                "qa04.target.authoritative-step-loop-not-assembled"),
+            BlockingFailureCodes = CurrentBlockingFailureCodes(),
         };
     }
 
