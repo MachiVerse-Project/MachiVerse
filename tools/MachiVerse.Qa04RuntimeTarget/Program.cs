@@ -8,7 +8,7 @@ internal static class Program
     private const string PersistenceProfile = "perf.persistence.v1";
     private const string PublicationProfile = "perf.publication.v1";
     private const string SoakProfile = "performance.soak.24h";
-    private const string StepLoopCode = "qa04.target.authoritative-step-loop-not-assembled";
+    private const string BenchmarkMeasurementCode = "qa04.measurement.step-sample-count";
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -73,6 +73,7 @@ internal static class Program
         if (!string.Equals(run.BenchmarkProfileId, ReferenceProfile, StringComparison.Ordinal))
             throw new InvalidDataException("benchmark-run benchmarkProfileId mismatch.");
 
+        var inspection = await InspectCoreAsync(coreExecutable);
         var probe = await InvokeCoreAsync<WorkerProbe>(coreExecutable, new
         {
             schemaVersion = "1.0",
@@ -88,12 +89,12 @@ internal static class Program
             probe.ReleaseEvidenceCapable)
             throw new InvalidDataException("Simulation Core worker probe did not prove the requested worker count and reference-world readiness boundary.");
 
-        var failures = MergeFailures(probe.BlockingFailureCodes, StepLoopCode);
+        var failures = MergeFailures(inspection.BlockingFailureCodes, probe.BlockingFailureCodes, BenchmarkMeasurementCode);
         return NewResponse(
             request,
             "performance-benchmark-report-v1",
-            probe.ReferenceWorldMaterialized,
-            probe.ReleaseEvidenceCapable,
+            inspection.ReferenceWorldMaterialized,
+            inspection.ReleaseEvidenceCapable,
             failures,
             false,
             failures,
@@ -215,13 +216,13 @@ internal static class Program
         if (!string.Equals(inspection.SchemaVersion, "1.0", StringComparison.Ordinal) ||
             !string.Equals(inspection.ProfileId, ReferenceProfile, StringComparison.Ordinal) ||
             inspection.StandardDomainCount != 8 || inspection.StandardPartitionCount != 97 ||
-            !inspection.ReferenceWorldMaterialized || inspection.AuthoritativeStepLoopAvailable || inspection.ReleaseEvidenceCapable)
+            !inspection.ReferenceWorldMaterialized || !inspection.AuthoritativeStepLoopAvailable || inspection.ReleaseEvidenceCapable)
             throw new InvalidDataException("Simulation Core QA-04 target inspection boundary is inconsistent.");
         if (!inspection.CanonicalWorkerCounts.SequenceEqual(new[] { 1, 4, 8, 16 }))
             throw new InvalidDataException("Simulation Core QA-04 canonical worker set drifted.");
-        if (!inspection.BlockingFailureCodes.Contains(StepLoopCode, StringComparer.Ordinal) ||
+        if (inspection.BlockingFailureCodes.Contains("qa04.target.authoritative-step-loop-not-assembled", StringComparer.Ordinal) ||
             inspection.BlockingFailureCodes.Contains("qa04.target.reference-world-not-materialized", StringComparer.Ordinal))
-            throw new InvalidDataException("Simulation Core QA-04 target blocking boundary drifted after reference-world completion.");
+            throw new InvalidDataException("Simulation Core QA-04 target blocking boundary drifted after Gate 2 completion.");
         return inspection;
     }
 
@@ -288,12 +289,15 @@ internal static class Program
             throw new InvalidDataException($"profileId must be {expected} for {request.RequestKind}.");
     }
 
-    private static string[] MergeFailures(IEnumerable<string> existing, params string[] required)
-        => existing.Concat(required)
+    private static string[] MergeFailures(params IEnumerable<string>[] sources)
+        => sources.SelectMany(static source => source)
             .Where(static code => !string.IsNullOrWhiteSpace(code))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static code => code, StringComparer.Ordinal)
             .ToArray();
+
+    private static string[] MergeFailures(IEnumerable<string> existing, params string[] required)
+        => MergeFailures(existing, required);
 
     private static void RequireLowerHex(string value, int length, string field)
     {
