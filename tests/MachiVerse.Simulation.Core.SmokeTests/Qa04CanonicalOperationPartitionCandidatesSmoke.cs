@@ -8,7 +8,6 @@ using MachiVerse.Simulation.Core.Domains.Resident;
 using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Persistence;
-using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
@@ -92,8 +91,8 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             marketState,
             incidents,
             hazards);
-        var basisState = BuildBasisState(basisStep, initial);
         var references = new RegistryResolver();
+        var basisState = BuildBasisState(basisStep, initial, references);
         var mutation = Qa04CanonicalOperationMutationBatchV1.Apply(
             Qa04ReferenceLoadV1.WorldId,
             effectiveStep,
@@ -101,7 +100,10 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             initial,
             references);
 
-        var bound = Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(basisState, mutation);
+        var bound = Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
+            basisState,
+            mutation,
+            references);
         Require(bound.BasisStep == basisStep && bound.TargetStep == effectiveStep,
             "Gate2 partition candidate batch step drift");
         Require(bound.Partitions.Count == 6,
@@ -112,6 +114,9 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             "Gate2 partition candidates must be canonical partition-id order");
         Require(bound.Partitions.Select(static item => item.Candidate.PartitionId).Distinct().Count() == 6,
             "Gate2 partition candidates must be unique by partition");
+        Require(bound.Partitions.All(static item =>
+                item.Candidate.PartitionId.Value != ParticipationControlModePayloadV1.PartitionId),
+            "Gate2 must not emit a participation.control_mode candidate");
 
         var expectedItemCounts = new Dictionary<string, ulong>(StringComparer.Ordinal)
         {
@@ -127,7 +132,7 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         {
             var basisHeader = basisState.Partitions.Get(item.Candidate.PartitionId.Value).Header;
             var resultingHeader = item.Material.ResultingHeader;
-            var expectedDigest = StepPartitionStateMaterialV1.ComputeChangeSetDigest(
+            var expectedDigest = ComputeQa04ChangeSetDigest(
                 basisHeader,
                 resultingHeader,
                 basisStep,
@@ -146,22 +151,26 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             Require(resultingHeader.ItemCount == expectedItemCounts[item.Candidate.PartitionId.Value],
                 $"Gate2 resulting item count drift: {item.Candidate.PartitionId.Value}");
             Require(expectedDigest.AsSpan().SequenceEqual(item.Candidate.ChangeSetDigest),
-                $"Gate2 canonical change-set digest drift: {item.Candidate.PartitionId.Value}");
+                $"Gate2 QA-04 canonical change-set digest drift: {item.Candidate.PartitionId.Value}");
         }
 
         var marketBound = bound.Partitions.Single(static item =>
             item.Candidate.PartitionId.Value == SocietyMarketTransactionRecordSchemaV2.PartitionId);
         var marketBasisHeader = basisState.Partitions.Get(SocietyMarketTransactionRecordSchemaV2.PartitionId).Header;
-        var expectedMarketHeader = SocietyMarketTransactionSnapshotAuthorityV2.CreateCanonical(
-            mutation.State.MarketTransaction,
+        var expectedMarketHeader = PartitionStateHeaderV1.CreateCanonical(
+            mutation.State.MarketTransaction.State,
             marketBasisHeader.Revision + 1UL,
             effectiveStep,
-            marketBasisHeader.DetailLevel).Header;
+            marketBasisHeader.DetailLevel,
+            payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload, references));
         Require(expectedMarketHeader.CanonicalDigest.AsSpan().SequenceEqual(
                 marketBound.Material.ResultingHeader.CanonicalDigest),
-            "Gate2 Market candidate must use the existing v2 canonical digest authority");
+            "Gate2 Market candidate must use the existing v2 canonical digest authority with references");
 
-        var replay = Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(basisState, mutation);
+        var replay = Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
+            basisState,
+            mutation,
+            references);
         Require(replay.Partitions.Count == bound.Partitions.Count,
             "Gate2 partition candidate replay count drift");
         for (var index = 0; index < bound.Partitions.Count; index++)
@@ -177,37 +186,65 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         ExpectInvalid(
             () => Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
                 basisState,
-                mutation with { EffectiveStep = effectiveStep + 1UL }),
+                mutation with { EffectiveStep = effectiveStep + 1UL },
+                references),
             "qa04.full-step.partition-candidate-effective-step-drift");
+
+        ExpectInvalid(
+            () => Qa04CanonicalOperationPartitionCandidateBinderV1.Bind(
+                basisState,
+                mutation,
+                new RegistryResolver(residentRef)),
+            expectedMessage: null);
     }
 
     private static WorldStateV1 BuildBasisState(
         ulong basisStep,
-        Qa04CanonicalOperationMutationStateV1 initial)
+        Qa04CanonicalOperationMutationStateV1 initial,
+        IDomainRecordSchemaResolverV1 references)
     {
         var template = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(1).WorldState;
         var replacements = new Dictionary<string, PartitionStateHeaderV1>(StringComparer.Ordinal)
         {
             [InfrastructureServiceQueuePayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
                 initial.InfrastructureServiceQueue, 1, basisStep, DetailLevelV1.D0Entity,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    InfrastructureServiceQueuePayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
             [ParticipationControlModePayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
                 initial.ParticipationControlMode, 1, basisStep, DetailLevelV1.D0Entity,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    ParticipationControlModePayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
             [ResidentBehaviorStatePayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
                 initial.ResidentBehaviorState, 1, basisStep, DetailLevelV1.D0Entity,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    ResidentBehaviorStatePayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
             [PhysicalPresencePayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
                 initial.PhysicalPresence, 1, basisStep, DetailLevelV1.D0Entity,
-                static payload => payload.CanonicalDigest()),
-            [SocietyMarketTransactionRecordSchemaV2.PartitionId] = SocietyMarketTransactionSnapshotAuthorityV2.CreateCanonical(
-                initial.MarketTransaction, 1, basisStep, DetailLevelV1.D2RegionalAggregate).Header,
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    PhysicalPresencePayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
+            [SocietyMarketTransactionRecordSchemaV2.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
+                initial.MarketTransaction.State, 1, basisStep, DetailLevelV1.D2RegionalAggregate,
+                payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload, references)),
             [GovernanceSecurityIncidentPayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
                 initial.GovernanceSecurityIncident, 1, basisStep, DetailLevelV1.D0Entity,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    GovernanceSecurityIncidentPayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
             [EnvironmentHazardPayloadV1.PartitionId] = PartitionStateHeaderV1.CreateCanonical(
                 initial.EnvironmentHazard, 1, basisStep, DetailLevelV1.D0Entity,
-                static payload => payload.CanonicalDigest()),
+                payload => StandardDomainPayloadCanonicalDigestV1.Compute(
+                    EnvironmentHazardPayloadV1.PartitionId,
+                    payload.ToStandardPayload(),
+                    references: references)),
         };
 
         var partitions = template.Partitions.CanonicalEntries
@@ -231,6 +268,23 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             template.DomainRegistryState,
             template.Diagnostic.ConfigDigest);
     }
+
+    private static byte[] ComputeQa04ChangeSetDigest(
+        PartitionStateHeaderV1 basisHeader,
+        PartitionStateHeaderV1 resultingHeader,
+        ulong basisStep,
+        ulong targetStep)
+        => HashSuite.DomainHash("mv.qa04.partition-change-set.v1", writer =>
+        {
+            writer.WriteMapStart(7);
+            writer.WriteUnsigned(0); writer.WriteAsciiText(basisHeader.PartitionId.Value);
+            writer.WriteUnsigned(1); writer.WriteUnsigned(basisHeader.Revision);
+            writer.WriteUnsigned(2); writer.WriteUnsigned(basisStep);
+            writer.WriteUnsigned(3); writer.WriteBytes(basisHeader.CanonicalDigest);
+            writer.WriteUnsigned(4); writer.WriteUnsigned(resultingHeader.Revision);
+            writer.WriteUnsigned(5); writer.WriteUnsigned(targetStep);
+            writer.WriteUnsigned(6); writer.WriteBytes(resultingHeader.CanonicalDigest);
+        });
 
     private static Qa04PhysicalD0RecordMaterialV1 PhysicalMaterial(ulong ordinal)
         => Qa04PhysicalD0MaterializerV1.Create(ordinal, PhysicalPresenceBinding(ordinal), TerrainBinding);
@@ -259,7 +313,7 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         return OpaqueId128.FromBytes(bytes);
     }
 
-    private static void ExpectInvalid(Action action, string expectedMessage)
+    private static void ExpectInvalid(Action action, string? expectedMessage)
     {
         try
         {
@@ -268,7 +322,7 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         }
         catch (InvalidDataException ex)
         {
-            if (ex.Message != expectedMessage)
+            if (expectedMessage is not null && ex.Message != expectedMessage)
                 throw new InvalidOperationException($"Unexpected Gate2 partition-candidate rejection: {ex.Message}");
         }
     }
@@ -278,13 +332,20 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    private sealed class RegistryResolver : IDomainRecordSchemaResolverV1
+    private sealed class RegistryResolver(PartitionRecordRefV1? denied = null) : IDomainRecordSchemaResolverV1
     {
         public bool Exists(PartitionRecordRefV1 reference)
-            => !reference.RecordId.IsZero && TryResolve(reference, out _);
+            => denied != reference && !reference.RecordId.IsZero && TryResolve(reference, out _);
 
         public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
-            => TryResolve(reference, out schema);
+        {
+            if (denied == reference)
+            {
+                schema = default!;
+                return false;
+            }
+            return TryResolve(reference, out schema);
+        }
 
         private static bool TryResolve(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
         {
@@ -292,7 +353,9 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             if (reference.RecordId.IsZero) return false;
             try
             {
-                schema = StandardDomainPartitionRegistry.Get(reference.PartitionId.Value).RecordSchema;
+                schema = reference.PartitionId.Value == SocietyMarketTransactionRecordSchemaV2.PartitionId
+                    ? SocietyMarketTransactionRecordSchemaV2.RecordSchema
+                    : StandardDomainPartitionRegistry.Get(reference.PartitionId.Value).RecordSchema;
                 return true;
             }
             catch (KeyNotFoundException)
