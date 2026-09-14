@@ -2,9 +2,11 @@
 
 ## Scope
 
-This document defines the **benchmark-only** bridge used by Issue #240 / PR #265 to convert the already-authoritative QA-04 Gate 1 typed mutation result into runtime `PartitionCandidateV1` values.
+This document defines the **benchmark-only assembly boundary** used by Issue #240 / PR #265 to convert the already-authoritative QA-04 Gate 1 typed mutation result into ordinary runtime `PartitionCandidateV1` plus `StepPartitionStateMaterialV1` values.
 
-It does **not** define a general `PartitionChangeSetV1` wire/schema, does not change the standard domain registry, and does not by itself make the full authoritative Step loop available.
+It introduces no new partition-change-set hash contract. The bridge MUST reuse the existing Step runtime authority in `StepPartitionStateMaterialV1.ComputeChangeSetDigest` and the existing owner-specific candidate factories.
+
+It does not change the standard domain registry and does not by itself make the full authoritative Step loop available.
 
 ## Preconditions
 
@@ -15,12 +17,12 @@ For basis Step `S` and target/effective Step `T`:
 - `Qa04CanonicalOperationMutationBatchV1` has produced the typed post-state for `T` from the canonical scheduled Operations;
 - each candidate uses the basis partition header already present in `WorldStateV1`;
 - `basis_revision != ulong.MaxValue`;
-- the candidate revision is exactly `basis_revision + 1`;
+- the resulting/candidate revision is exactly `basis_revision + 1`;
 - the candidate target Step is exactly `T`.
 
 ## Candidate partitions
 
-A six-family QA-04 mutation batch produces exactly one candidate for each mutated partition:
+A six-family QA-04 mutation batch produces exactly one candidate/material pair for each mutated partition:
 
 | Operation family | Candidate partition | Owner |
 |---|---|---|
@@ -35,16 +37,9 @@ A six-family QA-04 mutation batch produces exactly one candidate for each mutate
 
 Candidates MUST be constructed through the existing owner-specific candidate factories. The bridge MUST NOT bypass owner validation with a direct `PartitionCandidateV1` construction.
 
-## Canonical post-state digest
+## Canonical resulting partition state
 
-The bridge MUST compute a canonical post-state `PartitionStateHeaderV1` for each mutated typed partition using `PartitionStateHeaderV1.CreateCanonical` with:
-
-- `revision = basis_revision + 1`;
-- `basisStep = T`;
-- `detailLevel = basis partition header detail level`;
-- the actual Gate 2 typed post-state records.
-
-For these five v1 partitions:
+For the five standard v1 typed states:
 
 - `infrastructure.service_queue`;
 - `resident.behavior_state`;
@@ -52,56 +47,57 @@ For these five v1 partitions:
 - `governance.security_incident`;
 - `environment.hazard`;
 
-payload digests MUST be produced by the existing `StandardDomainPayloadCanonicalDigestV1` authority from each payload's standard field mapping. Reference validation remains fail-closed.
+the bridge MUST derive the resulting `PartitionStateHeaderV1` from the actual typed post-state with `PartitionStateHeaderV1.CreateCanonical`, using:
 
-For `society.market_transaction`, the Gate 1 actual mutation state is the explicit v2 materialization target. Its payload digest MUST use `SocietyMarketTransactionPayloadCanonicalDigestV2.Compute`. The v2 partition identity preserves the registered partition identity and partition schema while using the approved v2 record schema; this bridge does not flip `StandardDomainPartitionRegistry` away from v1.
+- `revision = basis_revision + 1`;
+- `basisStep = T`;
+- `detailLevel = basis partition header detail level`;
+- each payload type's existing canonical digest authority (`CanonicalDigest()` / the underlying standard domain payload canonical digest).
 
-The post-state header MUST reject any record with `created_step > T` or `retired_step > T`, as required by `PartitionStateHeaderV1.CreateCanonical`.
+For `society.market_transaction`, the Gate 1 actual mutation state is the approved explicit v2 materialization target. The bridge MUST use `SocietyMarketTransactionSnapshotAuthorityV2.CreateCanonical`, verify that authority, and use its resulting header. The v2 partition identity preserves the registered partition id/owner/partition schema while using the approved v2 record schema; the bridge does not flip `StandardDomainPartitionRegistry` away from v1.
 
-## QA-04 transition digest
+The resulting header construction MUST retain the existing lifecycle checks, including rejection of records with `created_step > T` or `retired_step > T`.
 
-The runtime `PartitionCandidateV1` currently carries only a 32-byte `changeSetDigest`, while the general domain-specific `PartitionChangeSetV1` representation is not concretely defined by the current implementation. For QA-04 Gate 2 only, the candidate `changeSetDigest` is therefore the following deterministic transition binding.
+## Existing transition/change-set authority
 
-Hash domain:
-
-```text
-mv.qa04.partition-change-set.v1
-```
-
-Normalized DCBOR payload:
+The candidate `changeSetDigest` MUST be exactly:
 
 ```text
-map(7) {
-  0: partition_id                 ; ASCII StableToken
-  1: basis_revision               ; uint64
-  2: basis_step                   ; uint64 S
-  3: basis_partition_digest       ; bytes32, WorldState header canonical_digest
-  4: candidate_revision           ; uint64 = basis_revision + 1
-  5: target_step                  ; uint64 T = S + 1
-  6: post_partition_digest        ; bytes32, canonical post-state header digest
-}
+StepPartitionStateMaterialV1.ComputeChangeSetDigest(
+    basis_header,
+    resulting_header,
+    basis_world_step = S,
+    target_world_step = T)
 ```
 
-The digest is:
+No QA-04-specific replacement hash domain is introduced.
 
-```text
-HashSuite.DomainHash("mv.qa04.partition-change-set.v1", normalized_payload)
-```
-
-This value binds the exact authoritative basis partition to the exact canonical typed post-state without inventing a general change-set schema.
+The existing runtime authority binds, under `mv.step-partition-change-set.v1`, the basis/resulting partition identity, revisions, partition basis Steps, world basis/target Steps, basis/resulting canonical partition digests, resulting detail level, and resulting item count. The Gate 2 bridge MUST consume this authority unchanged so that `StepStateApplicationV1.Prepare` can later validate the exact same candidate/material pair.
 
 ## Candidate construction
 
 For each of the six partitions, the bridge MUST:
 
 1. resolve the basis header from `basisState.Partitions`;
-2. verify basis owner/partition identity against the existing registry/factory authority;
-3. compute the canonical post-state header as defined above;
-4. compute `changeSetDigest` from the QA-04 transition digest;
-5. call the existing owner-specific `PartitionCandidateV1` factory with the basis `WorldStateV1` and computed digest;
-6. verify the returned candidate has the expected partition, owner, basis revision, candidate revision, basis Step, target Step, and change-set digest.
+2. verify basis partition id, owner, and partition schema against the actual typed resulting-state identity;
+3. derive and verify the canonical resulting header as defined above;
+4. compute `changeSetDigest` using `StepPartitionStateMaterialV1.ComputeChangeSetDigest`;
+5. call the existing owner-specific candidate factory with the basis `WorldStateV1`, exact partition id, and computed digest;
+6. create `StepPartitionStateMaterialV1` from the exact resulting header;
+7. verify candidate partition/owner, basis revision, candidate revision, basis Step, target Step, and digest against the basis/resulting headers.
 
-The returned six candidates MUST be unique by partition id and presented in canonical partition-id ordinal ordering when exposed as a batch result.
+The returned six candidate/material pairs MUST be unique by partition id and exposed in canonical partition-id ordinal order.
+
+## Owner-specific factories
+
+The bridge MUST route candidate construction through the existing factories:
+
+- Infrastructure -> `InfrastructureInformationPartitionCandidateFactoryV1.Create`;
+- Resident -> `ResidentParticipationPartitionCandidateFactoryV1.CreateResident`;
+- Physical/Built -> `PhysicalBuiltPartitionCandidateFactoryV1.Create`;
+- Society/Economy -> `SocietyEconomyPartitionCandidateFactoryV1.Create`;
+- Governance/Security -> `GovernanceSecurityPartitionCandidateFactoryV1.Create`;
+- Environment -> `DomainOwnedPartitionCandidateFactoryV1.CreateEnvironment`.
 
 ## Fail-closed conditions
 
@@ -111,23 +107,22 @@ The bridge MUST reject at least:
 - mutation effective Step other than `basisState.Header.Step + 1`;
 - missing basis partition;
 - basis revision overflow;
-- post-state partition identity drift;
-- post-state owner drift;
+- resulting typed-state partition identity/owner/partition-schema drift;
 - record lifecycle Step beyond target Step;
-- payload/reference canonical-digest validation failure;
-- wrong Market v2 identity/schema contract;
+- canonical payload/resulting-header derivation failure;
+- wrong Market v2 identity/schema/authority contract;
 - duplicate or missing candidate partition;
 - candidate owner/revision/Step drift from the owner factory result;
-- any 32-byte digest length violation.
+- candidate `changeSetDigest` differing from `StepPartitionStateMaterialV1.ComputeChangeSetDigest`.
 
 ## Non-generalization boundary
 
-This authority is limited to the six QA-04 Gate 1 mutation targets and the Issue #240 Gate 2 full-Step assembly. It does not define:
+This authority is limited to assembling the six QA-04 Gate 1 mutation targets into existing generic Step runtime candidate/material authority. It does not define:
 
-- the general domain `PartitionChangeSetV1` representation;
+- a new general `PartitionChangeSetV1` representation;
 - a generic delta encoding for arbitrary partitions;
 - a new standard partition or record schema;
 - an automatic v1 -> v2 registry migration for `society.market_transaction`;
-- COMMIT, durable terminal Operation transition, or State(S+1) publication semantics.
+- domain-output assembly, `StepCandidateV1` construction, COMMIT, durable terminal Operation transition, or State(S+1) publication semantics.
 
-Until the later Gate 2 stages connect candidates through all eight domain outputs, `StepCandidateV1`, durable SQLite COMMIT, and State(S+1) publication, `authoritativeStepLoopAvailable` remains `false`. `releaseEvidenceCapable` also remains `false`.
+Until later Gate 2 stages connect these candidate/material pairs through all eight domain outputs, `StepCandidateV1`, durable SQLite COMMIT, and State(S+1) publication, `authoritativeStepLoopAvailable` remains `false`. `releaseEvidenceCapable` also remains `false`.
