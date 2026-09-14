@@ -89,7 +89,9 @@ internal static class Program
             probe.ReleaseEvidenceCapable)
             throw new InvalidDataException("Simulation Core worker probe did not prove the requested worker count and reference-world readiness boundary.");
 
-        var failures = MergeFailures(inspection.BlockingFailureCodes, probe.BlockingFailureCodes, BenchmarkMeasurementCode);
+        var failures = MergeFailures(
+            inspection.BlockingFailureCodes.Concat(probe.BlockingFailureCodes),
+            BenchmarkMeasurementCode);
         return NewResponse(
             request,
             "performance-benchmark-report-v1",
@@ -289,15 +291,12 @@ internal static class Program
             throw new InvalidDataException($"profileId must be {expected} for {request.RequestKind}.");
     }
 
-    private static string[] MergeFailures(params IEnumerable<string>[] sources)
-        => sources.SelectMany(static source => source)
+    private static string[] MergeFailures(IEnumerable<string> existing, params string[] required)
+        => existing.Concat(required)
             .Where(static code => !string.IsNullOrWhiteSpace(code))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static code => code, StringComparer.Ordinal)
             .ToArray();
-
-    private static string[] MergeFailures(IEnumerable<string> existing, params string[] required)
-        => MergeFailures(existing, required);
 
     private static void RequireLowerHex(string value, int length, string field)
     {
