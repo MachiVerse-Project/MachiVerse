@@ -31,6 +31,14 @@ public static class CoreSnapshotProductionSectionProviderV1
         return Array.AsReadOnly(sections);
     }
 
+    public static IReadOnlyList<CanonicalSnapshotSectionMaterialV1> CreateAllSixV2(CoreSnapshotOwnerMaterialCutV1 cut)
+    {
+        ArgumentNullException.ThrowIfNull(cut);
+        if (!cut.HasOperationAuthorityV2 || cut.CrossDomainTransactions is null)
+            throw new InvalidDataException("snapshot-core.production-operation-v2-material-missing");
+        return CreateAllSixV2(cut, cut.CrossDomainTransactions);
+    }
+
     public static IReadOnlyList<CanonicalSnapshotSectionMaterialV1> CreateAllSixV2(
         CoreSnapshotOwnerMaterialCutV1 cut,
         IReadOnlyList<CrossDomainTransactionStateV1> transactions)
