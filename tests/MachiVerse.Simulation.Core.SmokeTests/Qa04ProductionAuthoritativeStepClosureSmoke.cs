@@ -14,8 +14,21 @@ using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04ProductionAuthoritativeStepClosureSmoke
 {
+    private const string ProductionOptInVariable = "MACHIVERSE_QA04_PRODUCTION_CLOSURE";
+
     internal static async Task RunAsync()
     {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable(ProductionOptInVariable),
+                "1",
+                StringComparison.Ordinal))
+        {
+            Console.WriteLine(
+                $"qa04-production-authoritative-step-skip reason=explicit-opt-in-required env={ProductionOptInVariable}");
+            return;
+        }
+
+        Console.WriteLine("[qa04-production] contracts start");
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceWorldMaterialContractV1.RequireAllProductionMaterializersAvailable();
         Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
@@ -32,6 +45,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 bindings.All(binding => binding.ScheduledOperation.EffectiveStep == effectiveStep),
             "Gate2 production workload must be effective at canonical State(S)=1.");
 
+        Console.WriteLine("[qa04-production] reference-world assembly start");
         var assembly = Qa04ProductionReferenceWorldAssemblerV1.AssembleCanonical(effectiveStep);
         var initial = assembly.MutationState;
         var references = assembly.References;
@@ -49,6 +63,8 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 assembly.Validation.ActiveTransactionCount == Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount &&
                 assembly.Validation.CanonicalInitialRecordCount == Qa04ReferenceLoadV1.CanonicalInitialRecordCount,
             "Gate2 production State(S) did not satisfy the full reference-world authority contract.");
+        Console.WriteLine(
+            $"[qa04-production] reference-world assembly complete records={assembly.Validation.CanonicalInitialRecordCount} transactions={activeTransactions.Count}");
 
         var scheduler = new OperationSchedulerStateV1(
             nextSchedulableStep: effectiveStep,
@@ -64,6 +80,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             await using var store = await SqlitePersistenceStore.OpenOrCreateAsync(paths);
             var initialContinuity = await InitializePersistenceGenesisAsync(store, partitionAuthorityState);
 
+            Console.WriteLine($"[qa04-production] durable admission start operations={bindings.Length}");
             var policy = Qa04CanonicalOperationDurableAdmissionV1.CreateCanonicalPolicy(1);
             foreach (var binding in bindings)
             {
@@ -72,6 +89,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 Require(admission.Passed,
                     "Gate2 production workload did not cross durable ACCEPTED/SCHEDULED authority.");
             }
+            Console.WriteLine($"[qa04-production] durable admission complete operations={bindings.Length}");
 
             var durableBefore = await store.ListOperationStatesCanonicalAsync();
             Require(durableBefore.Count == bindings.Length &&
@@ -96,7 +114,14 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 scheduler,
                 durableBefore,
                 activeTransactions);
-            await PersistStepOneAsync(store, basisState, initialContinuity);
+
+            Console.WriteLine("[qa04-production] basis durability start");
+            _ = await Qa04ProductionBasisPersistenceV1.PersistAsync(
+                store,
+                basisState,
+                initialContinuity,
+                activeTransactions);
+            Console.WriteLine("[qa04-production] basis durability complete");
 
             var recoveryAtBasis = await store.ReadRecoveryHeadAsync();
             Require(recoveryAtBasis.FinalizedStep == effectiveStep,
@@ -106,6 +131,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             Require(frozen.ScheduledOperations.Count == bindings.Length,
                 "Gate2 production closure must freeze all 5,000 canonical Operations.");
 
+            Console.WriteLine("[qa04-production] domain runtime start");
             var runtimeOutputs = await DomainRuntimeExecutorV1.ExecuteAsync(
                 StandardDomainExecutionPlanV1.Create(),
                 basisState,
@@ -114,7 +140,9 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 workerCount: 4);
             Require(runtimeOutputs.Count == 8 && runtimeOutputs.All(output => output.BasisStep == effectiveStep),
                 "Gate2 production closure must execute the ordinary eight-domain runtime path.");
+            Console.WriteLine($"[qa04-production] domain runtime complete domains={runtimeOutputs.Count}");
 
+            Console.WriteLine("[qa04-production] typed mutation start");
             var mutation = Qa04CanonicalOperationMutationBatchV1.Apply(
                 Qa04ReferenceLoadV1.WorldId,
                 effectiveStep,
@@ -125,6 +153,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 "Gate2 production closure must apply every canonical Operation through a typed handler.");
             Require(mutation.AppliedCountByFamily.Count == 6,
                 "Gate2 production closure must apply all six canonical Operation families.");
+            Console.WriteLine($"[qa04-production] typed mutation complete changes={mutation.Changes.Count} families={mutation.AppliedCountByFamily.Count}");
 
             var preparation = Qa04ProductionAuthoritativeStepPreparationV1.Prepare(
                 OpaqueId128.Parse("0000000000000000000000000000f213"),
@@ -146,6 +175,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                     (int)CoreOperationResultStatusV1.Success,
                     "operation.succeeded"))
                 .ToArray();
+            Console.WriteLine("[qa04-production] authoritative COMMIT start");
             var finalized = await Qa04CanonicalOperationStepFinalizationV1.CommitAndPublishAsync(
                 store,
                 scheduler,
@@ -165,7 +195,9 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                     scheduler.FreezeStep is null &&
                     scheduler.NextSchedulableStep == effectiveStep + 1UL,
                 "Gate2 production full-runtime post-COMMIT authority closure failed.");
+            Console.WriteLine($"[qa04-production] authoritative COMMIT complete resultingStep={verification.ResultingStep}");
 
+            Console.WriteLine("[qa04-production] Gate3 Step1 six-Core recovery proof start");
             var gate3Core = await Qa04ProductionCoreSnapshotSectionProofRunnerV1.VerifyAsync(
                 finalized.AuthoritativeState,
                 store);
@@ -251,43 +283,6 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 state.Header.MasterGeneration),
             genesis);
         return initialContinuity;
-    }
-
-    private static async Task PersistStepOneAsync(
-        SqlitePersistenceStore store,
-        WorldStateV1 basisState,
-        byte[] initialContinuity)
-    {
-        var anchor = await store.ReadHistoryAnchorAsync();
-        var transition = HistoryRecordMaterial.Create(
-            Qa04ReferenceLoadV1.WorldId,
-            checked(anchor.Sequence + 1),
-            anchor.Digest,
-            recordType: "transition.committed.v1",
-            payloadSchemaId: "persistence.transition-committed",
-            payloadSchemaMajor: 1,
-            payloadSchemaMinor: 0,
-            payloadBytes: basisState.Diagnostic.StateDigest,
-            writeNormalizedPayload: writer =>
-            {
-                writer.WriteMapStart(3);
-                writer.WriteUnsigned(0); writer.WriteUnsigned(0);
-                writer.WriteUnsigned(1); writer.WriteUnsigned(1);
-                writer.WriteUnsigned(2); writer.WriteBytes(basisState.Diagnostic.StateDigest);
-            });
-        var continuity = HistoryIntegrity.ComputeTransitionContinuityToken(
-            Qa04ReferenceLoadV1.WorldId,
-            resultingStep: 1,
-            initialContinuity,
-            transition.RecordDigest);
-        _ = await store.PersistTransitionCommitAsync(
-            effectiveStep: 0,
-            resultingStep: 1,
-            continuity,
-            basisState.Header.ConfigGeneration,
-            basisState.Diagnostic.ConfigDigest,
-            transition,
-            Array.Empty<TerminalOperationCommit>());
     }
 
     private static void ExpectInvalid(Action action, string expectedMessage)
