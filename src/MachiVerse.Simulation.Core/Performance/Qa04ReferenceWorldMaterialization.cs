@@ -180,11 +180,7 @@ public static class Qa04ReferenceWorldMaterializerV1
     private static WorldStateV1 CreateResidentSliceWorldState(PartitionStateHeaderV1 residentHeader)
     {
         var seedDigest = SHA256.HashData(Qa04ReferenceLoadV1.WorldSeed.ToBytes());
-        var configDigest = HashSuite.DomainHash("mv.qa04-reference-world-config.v1", writer =>
-        {
-            writer.WriteMapStart(1);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(Qa04ReferenceLoadV1.BenchmarkProfileId);
-        });
+        var configDigest = Qa04ReferenceConfigAuthorityV1.CreateCanonical().Digest;
         var partitions = StandardDomainPartitionRegistry.Entries.Select(identity => new PartitionStateRefV1(
             identity.PartitionId.Value == ResidentIdentityLifecyclePayloadV1.PartitionId
                 ? residentHeader
