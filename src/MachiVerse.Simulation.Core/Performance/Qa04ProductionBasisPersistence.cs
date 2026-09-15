@@ -6,10 +6,10 @@ using MachiVerse.Simulation.Core.WorldState;
 namespace MachiVerse.Simulation.Core.Performance;
 
 /// <summary>
-/// Persists the canonical QA-04 State(S)=1 basis cut. Persistent CrossDomainTransaction authority
-/// is committed in the same SQLite transition as the finalized-step/config/recovery head so a
-/// later running Snapshot recovery cut observes the same core.operation-state /2.0 authority as
-/// the live WorldState.
+/// Persists the canonical QA-04 State(S)=1 basis cut. The canonical ACTIVE
+/// CrossDomainTransaction set is genesis authority (CreatedStep=UpdatedStep=0) and therefore must
+/// already be durable before the 0 -> 1 transition begins. This bridge advances only the recovery
+/// head to State(S)=1 and proves that the genesis transaction authority survives unchanged.
 /// </summary>
 public static class Qa04ProductionBasisPersistenceV1
 {
@@ -33,6 +33,9 @@ public static class Qa04ProductionBasisPersistenceV1
         if (recoveryBefore.FinalizedStep != 0 ||
             !CryptographicOperations.FixedTimeEquals(recoveryBefore.ContinuityToken, initialContinuity.Span))
             throw new InvalidDataException("qa04.production-basis.recovery-head-drift");
+
+        await RequireDurableGenesisTransactionsAsync(store, crossDomainTransactions, cancellationToken)
+            .ConfigureAwait(false);
 
         var durableOperations = await store.ListOperationStatesCanonicalAsync(cancellationToken).ConfigureAwait(false);
         var expectedOperation = CoreOperationStateSubstateV2.Canonicalize(
@@ -68,7 +71,7 @@ public static class Qa04ProductionBasisPersistenceV1
             initialContinuity.Span,
             transition.RecordDigest);
 
-        var result = await store.PersistTransitionCommitWithCanonicalCrossDomainTransactionsAsync(
+        var result = await store.PersistTransitionCommitAsync(
             effectiveStep: 0,
             resultingStep: basisState.Header.Step,
             continuity,
@@ -76,13 +79,51 @@ public static class Qa04ProductionBasisPersistenceV1
             basisState.Diagnostic.ConfigDigest,
             transition,
             Array.Empty<TerminalOperationCommit>(),
-            crossDomainTransactions,
             cancellationToken).ConfigureAwait(false);
 
+        await RequireDurableGenesisTransactionsAsync(store, crossDomainTransactions, cancellationToken)
+            .ConfigureAwait(false);
         var recoveryAfter = await store.ReadSnapshotRecoveryCutAsync(cancellationToken).ConfigureAwait(false);
         if (recoveryAfter.FinalizedStep != basisState.Header.Step ||
             recoveryAfter.CrossDomainTransactions.Count != crossDomainTransactions.Count)
             throw new InvalidDataException("qa04.production-basis.snapshot-recovery-cut-drift");
         return result;
+    }
+
+    private static async Task RequireDurableGenesisTransactionsAsync(
+        SqlitePersistenceStore store,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> expectedTransactions,
+        CancellationToken cancellationToken)
+    {
+        var expected = expectedTransactions.OrderBy(static state => state.TransactionId).ToArray();
+        if (expected.Length == 0 || expected.Select(static state => state.TransactionId).Distinct().Count() != expected.Length)
+            throw new InvalidDataException("qa04.production-basis.genesis-transaction-set-invalid");
+        foreach (var state in expected)
+        {
+            if (!state.IsActive || state.Lifecycle != TransactionLifecycleV1.Active ||
+                state.CreatedStep != 0 || state.UpdatedStep != 0 || state.TerminalStep is not null)
+                throw new InvalidDataException("qa04.production-basis.genesis-transaction-state-invalid");
+        }
+
+        var durable = await store.ListActiveCrossDomainTransactionStatesCanonicalAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (durable.Count != expected.Length)
+            throw new InvalidDataException("qa04.production-basis.genesis-transaction-count-drift");
+
+        for (var index = 0; index < expected.Length; index++)
+        {
+            var expectedState = expected[index];
+            var actual = durable[index];
+            var expectedWire = CrossDomainTransactionPersistentWireV1.Encode(expectedState);
+            var expectedDigest = expectedState.CanonicalDigest();
+            if (actual.TransactionId != expectedState.TransactionId ||
+                actual.Lifecycle != expectedState.Lifecycle ||
+                actual.CreatedStep != expectedState.CreatedStep ||
+                actual.UpdatedStep != expectedState.UpdatedStep ||
+                actual.TerminalStep != expectedState.TerminalStep ||
+                !actual.StateWire.AsSpan().SequenceEqual(expectedWire) ||
+                !CryptographicOperations.FixedTimeEquals(actual.StateDigest, expectedDigest))
+                throw new InvalidDataException("qa04.production-basis.genesis-transaction-authority-drift");
+        }
     }
 }
