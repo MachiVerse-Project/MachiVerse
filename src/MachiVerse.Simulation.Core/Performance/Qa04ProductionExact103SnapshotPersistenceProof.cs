@@ -13,15 +13,18 @@ public sealed record Qa04ProductionExact103SnapshotPersistenceProofV1(
     int ChunkCount,
     ulong DomainLogicalRecordCount,
     byte[] SnapshotDigest,
-    byte[] PhysicalManifestDigest);
+    byte[] PhysicalManifestDigest)
+{
+    public byte[] RecoveredStateDigest { get; init; } = Array.Empty<byte>();
+}
 
 /// <summary>
 /// Gate3 Step 3 proof seam. Freezes the already-published production State(S+1) against a fresh
 /// same-SQLite-read recovery cut, composes exactly 6 Core + 97 Domain streaming sections, drains all
 /// fragments to durable production chunk/manifest files, atomically publishes the physical Snapshot,
 /// records the exact logical/physical digests in SQLite, and reads those durable authorities back.
-/// Gate3 Step 4 is then invoked from the committed durable authorities only; semantic rehash remains
-/// intentionally deferred to Gate3 Step 5.
+/// Gate3 Steps 4-5 are then invoked from the committed durable authorities only; the recovered
+/// semantic rehash is compared with the authoritative State(S+1) only after recovery completes.
 /// </summary>
 public static class Qa04ProductionExact103SnapshotPersistenceProofRunnerV1
 {
@@ -174,7 +177,18 @@ public static class Qa04ProductionExact103SnapshotPersistenceProofRunnerV1
         Console.WriteLine(
             $"[qa04-production] Gate3 Step4 exact-103 Snapshot recovery proof complete sections={recovered.SectionCount} coreSections={recovered.CoreSectionCount} domainSections={recovered.DomainSectionCount} chunks={recovered.ChunkCount} fragments={recovered.FragmentCount} logicalRecords={recovered.DomainLogicalRecordCount}");
 
-        return persisted;
+        if (recovered.RecoveredStateDigest.Length != 32 ||
+            !CryptographicOperations.FixedTimeEquals(
+                recovered.RecoveredStateDigest,
+                frozenState.Diagnostic.StateDigest))
+            throw new InvalidDataException("qa04.gate3.semantic-recovery-authoritative-state-digest-mismatch");
+        Console.WriteLine(
+            $"[qa04-production] Gate3 Step5 semantic rehash authoritative equivalence complete resultingStep={frozenState.Header.Step} sections={recovered.SectionCount} domainLogicalRecords={recovered.DomainLogicalRecordCount}");
+
+        return persisted with
+        {
+            RecoveredStateDigest = recovered.RecoveredStateDigest.ToArray(),
+        };
     }
 
     private static void RequireRecoveryCutMatches(

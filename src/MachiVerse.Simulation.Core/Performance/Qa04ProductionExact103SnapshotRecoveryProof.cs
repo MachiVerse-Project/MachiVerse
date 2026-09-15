@@ -13,13 +13,17 @@ public sealed record Qa04ProductionExact103SnapshotRecoveryProofV1(
     ulong FragmentCount,
     ulong DomainLogicalRecordCount,
     byte[] SnapshotDigest,
-    byte[] PhysicalManifestDigest);
+    byte[] PhysicalManifestDigest)
+{
+    public byte[] RecoveredStateDigest { get; init; } = Array.Empty<byte>();
+}
 
 /// <summary>
-/// Gate3 Step 4 production proof. Recovery starts only from the committed SQLite snapshot catalog
+/// Gate3 Steps 4-5 production proof. Recovery starts only from the committed SQLite snapshot catalog
 /// and the final manifest/chunk files created by Step 3. The original State(S+1), typed mutation
-/// material and in-memory source sections are deliberately not accepted as inputs. This stage proves
-/// exact-103 physical/logical recovery; schema-owner semantic rehash remains Gate3 Step 5.
+/// material and in-memory source sections are deliberately not accepted as recovery inputs. Step 4
+/// proves exact-103 physical/logical recovery; Step 5 re-reads that durable Snapshot through the
+/// schema-owner semantic recovery boundary and returns the recovered WorldState semantic rehash.
 /// </summary>
 public static class Qa04ProductionExact103SnapshotRecoveryProofRunnerV1
 {
@@ -33,10 +37,11 @@ public static class Qa04ProductionExact103SnapshotRecoveryProofRunnerV1
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(world);
 
+        var decoders = CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders();
         var recovered = await CanonicalSnapshotDurableRecoveryV1.RecoverNewestAsync(
             store,
             world,
-            CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders(),
+            decoders,
             cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (recovered.Catalog.SnapshotStep != persisted.SnapshotStep ||
@@ -77,6 +82,23 @@ public static class Qa04ProductionExact103SnapshotRecoveryProofRunnerV1
             recovered.FragmentCount < checked((ulong)sections.Count))
             throw new InvalidDataException("qa04.gate3.recovery.material-count-mismatch");
 
+        Console.WriteLine("[qa04-production] Gate3 Step5 semantic Snapshot recovery/rehash proof start");
+        var semantic = await CanonicalSnapshotSemanticRecoveryV1.RecoverAndRehashAsync(
+            recovered,
+            world,
+            decoders,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (semantic.Header.WorldId != recovered.Manifest.Logical.WorldId ||
+            semantic.Header.Step != recovered.Catalog.SnapshotStep ||
+            semantic.SectionCount != sections.Count ||
+            semantic.CoreSectionCount != coreSectionCount ||
+            semantic.DomainSectionCount != domainSectionCount ||
+            semantic.DomainLogicalRecordCount != domainLogicalRecordCount ||
+            semantic.StateDigest.Length != 32)
+            throw new InvalidDataException("qa04.gate3.semantic-recovery-production-proof-mismatch");
+        Console.WriteLine(
+            $"[qa04-production] Gate3 Step5 semantic Snapshot recovery/rehash proof complete sections={semantic.SectionCount} coreSections={semantic.CoreSectionCount} domainSections={semantic.DomainSectionCount} logicalRecords={semantic.DomainLogicalRecordCount}");
+
         return new Qa04ProductionExact103SnapshotRecoveryProofV1(
             recovered.Catalog.SnapshotStep,
             sections.Count,
@@ -86,6 +108,9 @@ public static class Qa04ProductionExact103SnapshotRecoveryProofRunnerV1
             recovered.FragmentCount,
             domainLogicalRecordCount,
             recovered.Catalog.SnapshotDigest.ToArray(),
-            recovered.Catalog.PhysicalManifestDigest.ToArray());
+            recovered.Catalog.PhysicalManifestDigest.ToArray())
+        {
+            RecoveredStateDigest = semantic.StateDigest.ToArray(),
+        };
     }
 }
