@@ -21,7 +21,8 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
         IReadOnlyList<CrossDomainTransactionStateV1> activeTransactions,
         IReadOnlyList<PartitionStateHeaderV1> environmentD1Headers,
         IDomainRecordSchemaResolverV1 references,
-        Qa04ProductionReferenceWorldStateValidationV1 validation)
+        Qa04ProductionReferenceWorldStateValidationV1 validation,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> basisDomainAuthorities)
     {
         PartitionAuthorityState = partitionAuthorityState ?? throw new ArgumentNullException(nameof(partitionAuthorityState));
         MutationState = mutationState ?? throw new ArgumentNullException(nameof(mutationState));
@@ -29,6 +30,9 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
         EnvironmentD1Headers = environmentD1Headers ?? throw new ArgumentNullException(nameof(environmentD1Headers));
         References = references ?? throw new ArgumentNullException(nameof(references));
         Validation = validation ?? throw new ArgumentNullException(nameof(validation));
+        BasisDomainAuthorities = basisDomainAuthorities ?? throw new ArgumentNullException(nameof(basisDomainAuthorities));
+        if (BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
+            throw new InvalidDataException("qa04.production-reference-world.snapshot-authority-count-not-97");
     }
 
     public WorldStateV1 PartitionAuthorityState { get; }
@@ -37,6 +41,7 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
     public IReadOnlyList<PartitionStateHeaderV1> EnvironmentD1Headers { get; }
     public IDomainRecordSchemaResolverV1 References { get; }
     public Qa04ProductionReferenceWorldStateValidationV1 Validation { get; }
+    public IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> BasisDomainAuthorities { get; }
 }
 
 /// <summary>
@@ -58,6 +63,7 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
         Qa04ReferenceWorldMaterialContractV1.RequireAllProductionMaterializersAvailable();
 
         var resident = Qa04ReferenceWorldMaterializerV1.MaterializeCanonicalResidentIdentityLifecycle();
+        var snapshotAuthorities = Qa04ProductionDomainSnapshotAuthorityBuilderV1.CreateInitial(resident);
         var headers = resident.WorldState.Partitions.CanonicalEntries.ToDictionary(
             static entry => entry.Header.PartitionId.Value,
             static entry => entry.Header,
@@ -148,6 +154,35 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
             detailRegions,
             basisStep);
 
+        snapshotAuthorities.Replace(scopes, headers[SpatialScopeRegistryPayloadV1.PartitionId], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(participation.Partition, headers[ParticipationControlModePayloadV1.PartitionId], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(physical.TileFrames, physical.TileFrameHeader, static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(physical.Presences, physical.PresenceHeader, static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(new PhysicalOccupancySnapshotAuthorityV2(physical.Occupancy, physical.OccupancyHeader));
+        snapshotAuthorities.Replace(detailRegions.Partition, headers[detailRegions.Partition.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(terrain);
+        foreach (var authority in environmentD0.Materialization.State.BindSnapshotMaterial(partitionState).Authorities)
+            snapshotAuthorities.Replace(authority);
+        snapshotAuthorities.Replace(facility.BuiltStructures, headers[facility.BuiltStructures.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(facility.FacilityServices, headers[facility.FacilityServices.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(service.TransportServices, headers[service.TransportServices.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(service.WaterServices, headers[service.WaterServices.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(service.PowerServices, headers[service.PowerServices.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(service.CommunicationServices, headers[service.CommunicationServices.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(service.ServiceQueue, headers[InfrastructureServiceQueuePayloadV1.PartitionId], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(new InfrastructureNetworkTopologySnapshotAuthorityV2(
+            topologyState,
+            headers[InfrastructureNetworkTopologyRecordSchemaV2.PartitionId]));
+        snapshotAuthorities.Replace(infrastructureDependency.Partition, headers[infrastructureDependency.Partition.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(informationDelivery.Partition, headers[informationDelivery.Partition.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(remainingInformation.MediaDistribution, headers[remainingInformation.MediaDistribution.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(remainingInformation.RecordStore, headers[remainingInformation.RecordStore.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(infrastructureTail.AddressPlaceIndexes, headers[infrastructureTail.AddressPlaceIndexes.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(infrastructureTail.FailureRecoveries, headers[infrastructureTail.FailureRecoveries.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        snapshotAuthorities.Replace(infrastructureTail.Lineages, headers[infrastructureTail.Lineages.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        society.ApplySnapshotAuthorities(snapshotAuthorities);
+        var basisDomainAuthorities = snapshotAuthorities.Build(partitionState).CanonicalAuthorities;
+
         var mutationReferences = new CompositeReferenceResolver(
             service.References,
             participation.References,
@@ -190,7 +225,8 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
             activeTransactions,
             environmentD1Headers,
             mutationReferences,
-            validation);
+            validation,
+            basisDomainAuthorities);
     }
 
     private static SocietyGovernanceBuildResult BuildSocietyGovernance(
@@ -275,13 +311,53 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
         Replace(headers, Header(governance.BorderControls, DetailLevelV1.D2RegionalAggregate, static payload => payload.CanonicalDigest()));
         Replace(headers, Header(governance.Lineages, DetailLevelV1.D2RegionalAggregate, static payload => payload.CanonicalDigest()));
 
+        void ApplySnapshotAuthorities(Qa04ProductionDomainSnapshotAuthorityBuilderV1 builder)
+        {
+            builder.Replace(canonical.Organizations, headers[canonical.Organizations.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(canonical.Institutions, headers[canonical.Institutions.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(canonical.ContractClaims, headers[canonical.ContractClaims.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(canonical.InformationClaims, headers[canonical.InformationClaims.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(canonical.PublicAuthorities, headers[canonical.PublicAuthorities.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(canonical.PermissionLicenses, headers[canonical.PermissionLicenses.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(memberships.MembershipRoles, headers[memberships.MembershipRoles.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(employments.Employments, headers[employments.Employments.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(households, headers[households.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(propertyRights.PropertyRights, headers[propertyRights.PropertyRights.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(currencies.Currencies, headers[currencies.Currencies.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(accounts.Accounts, headers[accounts.Accounts.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(new SocietyMarketTransactionSnapshotAuthorityV2(
+                marketState,
+                headers[SocietyMarketTransactionRecordSchemaV2.PartitionId]));
+            builder.Replace(remainingSociety.BusinessProductions, headers[remainingSociety.BusinessProductions.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(remainingSociety.LogisticsObligations, headers[remainingSociety.LogisticsObligations.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(remainingSociety.HistoryLineages, headers[remainingSociety.HistoryLineages.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(socialRelations.Educations, headers[socialRelations.Educations.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(socialRelations.Cultures, headers[socialRelations.Cultures.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(socialRelations.Reputations, headers[socialRelations.Reputations.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(polities, headers[polities.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(territorial.Jurisdictions, headers[territorial.Jurisdictions.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(territorial.TerritorialClaims, headers[territorial.TerritorialClaims.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(territorial.EffectiveControls, headers[territorial.EffectiveControls.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.LawRules, headers[governance.LawRules.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.TaxFiscal, headers[governance.TaxFiscal.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.Diplomacy, headers[governance.Diplomacy.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.SecurityIncidents, headers[governance.SecurityIncidents.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.Investigations, headers[governance.Investigations.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.JudicialCases, headers[governance.JudicialCases.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.Enforcements, headers[governance.Enforcements.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.MilitaryAuthorities, headers[governance.MilitaryAuthorities.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.BorderControls, headers[governance.BorderControls.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+            builder.Replace(governance.Lineages, headers[governance.Lineages.Identity.PartitionId.Value], static payload => payload.CanonicalDigest());
+        }
+
         return new SocietyGovernanceBuildResult(
             marketState,
             marketReferences,
             governance.SecurityIncidents,
             governance.References,
             contractPool,
-            permissionPool);
+            permissionPool,
+            ApplySnapshotAuthorities);
     }
 
     private static WorldStateV1 BuildWorldState(
@@ -351,7 +427,8 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
         DomainPartitionStateV1<GovernanceSecurityIncidentPayloadV1> SecurityIncidents,
         IDomainRecordSchemaResolverV1 GovernanceReferences,
         IReadOnlyList<OpaqueId128> ContractClaimPool,
-        IReadOnlyList<OpaqueId128> PermissionLicensePool);
+        IReadOnlyList<OpaqueId128> PermissionLicensePool,
+        Action<Qa04ProductionDomainSnapshotAuthorityBuilderV1> ApplySnapshotAuthorities);
 
     private sealed class CompositeReferenceResolver : IDomainRecordSchemaResolverV1
     {
