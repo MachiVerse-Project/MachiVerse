@@ -225,8 +225,25 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             Console.WriteLine(
                 $"[qa04-production] Gate3 Step2 exact-97 Domain section proof complete sections={gate3Domains.DomainSectionCount} logicalRecords={gate3Domains.LogicalRecordCount}");
 
+            Console.WriteLine("[qa04-production] Gate3 Step3 exact-103 durable Snapshot proof start");
+            var gate3Snapshot = await Qa04ProductionExact103SnapshotPersistenceProofRunnerV1.VerifyAsync(
+                finalized.AuthoritativeState,
+                assembly.BasisDomainAuthorities,
+                mutation.State,
+                store,
+                paths);
+            Require(gate3Snapshot.SnapshotStep == verification.ResultingStep &&
+                    gate3Snapshot.SectionCount == SnapshotManifestValidation.StandardRequiredSectionCount &&
+                    gate3Snapshot.CoreSectionCount == gate3Core.CoreSectionCount &&
+                    gate3Snapshot.DomainSectionCount == gate3Domains.DomainSectionCount &&
+                    gate3Snapshot.DomainLogicalRecordCount == gate3Domains.LogicalRecordCount &&
+                    gate3Snapshot.ChunkCount > 0,
+                "Gate3 Step3 production exact-103 durable Snapshot proof failed.");
             Console.WriteLine(
-                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount} domainSections={gate3Domains.DomainSectionCount} domainLogicalRecords={gate3Domains.LogicalRecordCount}");
+                $"[qa04-production] Gate3 Step3 exact-103 durable Snapshot proof complete sections={gate3Snapshot.SectionCount} chunks={gate3Snapshot.ChunkCount} logicalRecords={gate3Snapshot.DomainLogicalRecordCount}");
+
+            Console.WriteLine(
+                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount} domainSections={gate3Domains.DomainSectionCount} domainLogicalRecords={gate3Domains.LogicalRecordCount} snapshotSections={gate3Snapshot.SectionCount} snapshotChunks={gate3Snapshot.ChunkCount}");
         }
         finally
         {
