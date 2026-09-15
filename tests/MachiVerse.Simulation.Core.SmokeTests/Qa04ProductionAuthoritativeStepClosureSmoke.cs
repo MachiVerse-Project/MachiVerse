@@ -78,7 +78,10 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             PersistenceLayout.EnsureGenerationDirectories(paths);
             await PersistenceLayout.WriteCurrentAsync(paths, 1);
             await using var store = await SqlitePersistenceStore.OpenOrCreateAsync(paths);
-            var initialContinuity = await InitializePersistenceGenesisAsync(store, partitionAuthorityState);
+            var initialContinuity = await InitializePersistenceGenesisAsync(
+                store,
+                partitionAuthorityState,
+                activeTransactions);
 
             Console.WriteLine($"[qa04-production] durable admission start operations={bindings.Length}");
             var policy = Qa04CanonicalOperationDurableAdmissionV1.CreateCanonicalPolicy(1);
@@ -252,7 +255,8 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
 
     private static async Task<byte[]> InitializePersistenceGenesisAsync(
         SqlitePersistenceStore store,
-        WorldStateV1 state)
+        WorldStateV1 state,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions)
     {
         var genesis = HistoryRecordMaterial.Create(
             Qa04ReferenceLoadV1.WorldId,
@@ -272,7 +276,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             });
         var initialContinuity = HistoryIntegrity.ComputeGenesisContinuityToken(
             Qa04ReferenceLoadV1.WorldId, genesis.RecordDigest);
-        await store.InitializeWorldMetadataAsync(
+        await store.InitializeWorldMetadataWithCanonicalCrossDomainTransactionsAsync(
             new WorldPersistenceMetadataSeed(
                 Qa04ReferenceLoadV1.WorldId,
                 PersistenceGeneration: 1,
@@ -281,7 +285,8 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 state.Header.ConfigGeneration,
                 state.Diagnostic.ConfigDigest,
                 state.Header.MasterGeneration),
-            genesis);
+            genesis,
+            activeTransactions);
         return initialContinuity;
     }
 
