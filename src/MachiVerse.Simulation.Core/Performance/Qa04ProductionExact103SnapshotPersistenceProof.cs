@@ -20,9 +20,8 @@ public sealed record Qa04ProductionExact103SnapshotPersistenceProofV1(
 /// same-SQLite-read recovery cut, composes exactly 6 Core + 97 Domain streaming sections, drains all
 /// fragments to durable production chunk/manifest files, atomically publishes the physical Snapshot,
 /// records the exact logical/physical digests in SQLite, and reads those durable authorities back.
-///
-/// This is intentionally not a periodic RunningSnapshot trigger and does not relax its cadence.
-/// It also does not perform semantic Snapshot recovery; that belongs to Gate3 Step 4.
+/// Gate3 Step 4 is then invoked from the committed durable authorities only; semantic rehash remains
+/// intentionally deferred to Gate3 Step 5.
 /// </summary>
 public static class Qa04ProductionExact103SnapshotPersistenceProofRunnerV1
 {
@@ -149,7 +148,7 @@ public static class Qa04ProductionExact103SnapshotPersistenceProofRunnerV1
             staged,
             cancellationToken).ConfigureAwait(false);
 
-        return new Qa04ProductionExact103SnapshotPersistenceProofV1(
+        var persisted = new Qa04ProductionExact103SnapshotPersistenceProofV1(
             cut.SnapshotStep,
             sections.Count,
             coreSectionCount,
@@ -158,6 +157,24 @@ public static class Qa04ProductionExact103SnapshotPersistenceProofRunnerV1
             domainLogicalRecordCount,
             staged.SnapshotDigest.ToArray(),
             staged.PhysicalManifestDigest.ToArray());
+
+        Console.WriteLine("[qa04-production] Gate3 Step4 exact-103 Snapshot recovery proof start");
+        var recovered = await Qa04ProductionExact103SnapshotRecoveryProofRunnerV1.VerifyAsync(
+            persisted,
+            store,
+            world,
+            cancellationToken).ConfigureAwait(false);
+        if (recovered.SnapshotStep != persisted.SnapshotStep ||
+            recovered.SectionCount != persisted.SectionCount ||
+            recovered.CoreSectionCount != persisted.CoreSectionCount ||
+            recovered.DomainSectionCount != persisted.DomainSectionCount ||
+            recovered.ChunkCount != persisted.ChunkCount ||
+            recovered.DomainLogicalRecordCount != persisted.DomainLogicalRecordCount)
+            throw new InvalidDataException("qa04.gate3.recovery.production-proof-mismatch");
+        Console.WriteLine(
+            $"[qa04-production] Gate3 Step4 exact-103 Snapshot recovery proof complete sections={recovered.SectionCount} coreSections={recovered.CoreSectionCount} domainSections={recovered.DomainSectionCount} chunks={recovered.ChunkCount} fragments={recovered.FragmentCount} logicalRecords={recovered.DomainLogicalRecordCount}");
+
+        return persisted;
     }
 
     private static void RequireRecoveryCutMatches(
