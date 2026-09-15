@@ -53,6 +53,8 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
         var activeTransactions = assembly.ActiveTransactions;
         Require(partitionAuthorityState.Partitions.CanonicalEntries.Count() == StandardDomainPartitionRegistry.StandardPartitionCount,
             "Gate2 production closure requires the full 97-partition WorldState surface.");
+        Require(assembly.BasisDomainAuthorities.Count == StandardDomainPartitionRegistry.StandardPartitionCount,
+            "Gate3 Step2 requires the exact 97 production material authorities at State(S).");
         Require(assembly.Validation.ResidentCount == Qa04ReferenceWorldMaterializerV1.CanonicalResidentCount &&
                 assembly.Validation.ParticipationControlModeCount == Qa04ParticipationControlModeCanonicalAuthorityV1.CanonicalCount &&
                 assembly.Validation.PhysicalPresenceCount == Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount &&
@@ -64,7 +66,7 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                 assembly.Validation.CanonicalInitialRecordCount == Qa04ReferenceLoadV1.CanonicalInitialRecordCount,
             "Gate2 production State(S) did not satisfy the full reference-world authority contract.");
         Console.WriteLine(
-            $"[qa04-production] reference-world assembly complete records={assembly.Validation.CanonicalInitialRecordCount} transactions={activeTransactions.Count}");
+            $"[qa04-production] reference-world assembly complete records={assembly.Validation.CanonicalInitialRecordCount} transactions={activeTransactions.Count} domainAuthorities={assembly.BasisDomainAuthorities.Count}");
 
         var scheduler = new OperationSchedulerStateV1(
             nextSchedulableStep: effectiveStep,
@@ -211,8 +213,20 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                     gate3Core.CrossDomainTransactionCount == activeTransactions.Count,
                 "Gate3 Step1 production six-Core-section proof failed.");
 
+            Console.WriteLine("[qa04-production] Gate3 Step2 exact-97 Domain section proof start");
+            var gate3Domains = Qa04ProductionDomainSnapshotSectionProofRunnerV1.Verify(
+                finalized.AuthoritativeState,
+                assembly.BasisDomainAuthorities,
+                mutation.State);
+            Require(gate3Domains.BasisStep == verification.ResultingStep &&
+                    gate3Domains.DomainSectionCount == StandardDomainPartitionRegistry.StandardPartitionCount &&
+                    gate3Domains.ChangedPartitionCount == verification.ChangedPartitionCount,
+                "Gate3 Step2 production exact-97 Domain-section proof failed.");
             Console.WriteLine(
-                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount}");
+                $"[qa04-production] Gate3 Step2 exact-97 Domain section proof complete sections={gate3Domains.DomainSectionCount} logicalRecords={gate3Domains.LogicalRecordCount}");
+
+            Console.WriteLine(
+                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount} domainSections={gate3Domains.DomainSectionCount} domainLogicalRecords={gate3Domains.LogicalRecordCount}");
         }
         finally
         {
