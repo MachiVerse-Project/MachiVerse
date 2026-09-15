@@ -28,7 +28,7 @@ public sealed class Qa04PhysicalD0FullReferenceWorldCanonicalMaterializationV1
 
         if (TileFrames.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalTileFrameCount ||
             Presences.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount ||
-            Occupancy.ItemCount != checked(Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount * 2UL) ||
+            Occupancy.State.ItemCount != checked(Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount * 2UL) ||
             PresenceHeader.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount ||
             OccupancyHeader.ItemCount != checked(Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount * 2UL) ||
             TileFrameHeader.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalTileFrameCount)
