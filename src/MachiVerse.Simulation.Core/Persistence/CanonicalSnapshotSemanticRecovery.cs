@@ -80,7 +80,8 @@ public static class CanonicalSnapshotSemanticRecoveryV1
         RequireLogicalMatchesRecoveredAuthority(terrainLogical, terrain, terrain.Header);
         sources.Add(new RecoveredDomainSourceV1(terrain, terrain.Header));
 
-        header ??= throw new InvalidDataException("persistence.snapshot.semantic-recovery-world-header-missing");
+        if (header is null)
+            throw new InvalidDataException("persistence.snapshot.semantic-recovery-world-header-missing");
         RequireHeaderMatchesManifest(header, recovered.Manifest.Logical, recovered.Catalog);
 
         var orderedSources = sources
@@ -110,11 +111,11 @@ public static class CanonicalSnapshotSemanticRecoveryV1
         {
             if (StandardSnapshotSectionSetV1.IsCoreSection(section.SectionId))
             {
-                if (!coreVerifiers.TryGetValue(section.SectionId, out var verifier))
+                if (!coreVerifiers.TryGetValue(section.SectionId, out var coreVerifier))
                     throw new InvalidDataException($"persistence.snapshot.semantic-verifier-missing:{section.SectionId}");
-                var semantic = VerifySection(verifier, section, references);
-                RequireSemanticMatchesSection(section, semantic);
-                if (!coreSemantic.TryAdd(section.SectionId, semantic))
+                var coreVerification = VerifySection(coreVerifier, section, references);
+                RequireSemanticMatchesSection(section, coreVerification);
+                if (!coreSemantic.TryAdd(section.SectionId, coreVerification))
                     throw new InvalidDataException($"persistence.snapshot.semantic-recovery-core-duplicate:{section.SectionId}");
                 continue;
             }
@@ -127,11 +128,11 @@ public static class CanonicalSnapshotSemanticRecoveryV1
                 throw new InvalidDataException($"persistence.snapshot.partition-provider-missing:{section.SectionId}");
 
             var provider = ResolveRecoveredProvider(identity, recoveredSource.Source.RecordSchema, standardProvider);
-            var verifier = provider.CreateSemanticVerifier(recoveredSource.Header, references);
-            var semantic = VerifySection(verifier, section, references);
-            RequireSemanticMatchesSection(section, semantic);
-            RequireSemanticMatchesHeader(recoveredSource.Header, semantic);
-            if (!domainSemantic.TryAdd(section.SectionId, semantic))
+            var domainVerifier = provider.CreateSemanticVerifier(recoveredSource.Header, references);
+            var domainVerification = VerifySection(domainVerifier, section, references);
+            RequireSemanticMatchesSection(section, domainVerification);
+            RequireSemanticMatchesHeader(recoveredSource.Header, domainVerification);
+            if (!domainSemantic.TryAdd(section.SectionId, domainVerification))
                 throw new InvalidDataException($"persistence.snapshot.semantic-recovery-domain-duplicate:{section.SectionId}");
         }
 
