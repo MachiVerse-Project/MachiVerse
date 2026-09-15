@@ -10,9 +10,11 @@ const ulong basisStep = Qa04ProductionReferenceWorldAssemblerV1.CanonicalBasisSt
 var config = Qa04ReferenceConfigAuthorityV1.CreateCanonical();
 var detailDirectory = new DetailDirectoryV1(Array.Empty<DetailRegionStateV1>());
 var registry = StandardDomainRegistryAuthorityV1.Generation1;
-var transactionState = CreateActiveTransaction();
+var transactionState = CreateActiveTransaction(updatedStep: 0);
 var sourceTransactions = new[] { transactionState };
 var state = CreateState(sourceTransactions, config, detailDirectory);
+
+await ProveNonGenesisTransactionRejectedAsync(state);
 
 var root = Path.Combine(Path.GetTempPath(), "machiverse-gate3-core-fast-" + Guid.NewGuid().ToString("N"));
 try
@@ -21,7 +23,7 @@ try
     PersistenceLayout.EnsureGenerationDirectories(paths);
     await PersistenceLayout.WriteCurrentAsync(paths, 1);
     await using var store = await SqlitePersistenceStore.OpenOrCreateAsync(paths);
-    var initialContinuity = await InitializeGenesisAsync(store, state);
+    var initialContinuity = await InitializeGenesisAsync(store, state, sourceTransactions);
 
     _ = await Qa04ProductionBasisPersistenceV1.PersistAsync(
         store,
@@ -38,7 +40,10 @@ try
     var recoveredTransactions = CoreOperationStateSnapshotCutV2.DecodeTransactions(
         recoveryCut.CrossDomainTransactions,
         recoveryCut.FinalizedStep);
-    Require(recoveredTransactions.Count == 1 && recoveredTransactions[0].TransactionId == transactionState.TransactionId,
+    Require(recoveredTransactions.Count == 1 &&
+            recoveredTransactions[0].TransactionId == transactionState.TransactionId &&
+            recoveredTransactions[0].CreatedStep == 0 &&
+            recoveredTransactions[0].UpdatedStep == 0,
         "Fast Gate3 recovery transaction decode drifted.");
 
     var supplemental = CreateSupplemental(state, config, detailDirectory, registry);
@@ -84,7 +89,7 @@ try
         "Fast Gate3 contract must emit exactly the six canonical Core Snapshot sections.");
 
     Console.WriteLine(
-        $"gate3-core-fast-pass step={basisStep} sections={sections.Count} transactions=1 operations=0 standardPartitions={state.Partitions.Count} reduced=true releaseEvidence=false");
+        $"gate3-core-fast-pass step={basisStep} sections={sections.Count} transactions=1 operations=0 standardPartitions={state.Partitions.Count} genesisUpdatedStep=0 reduced=true releaseEvidence=false");
 }
 finally
 {
@@ -144,7 +149,7 @@ static IFrozenCoreSnapshotOwnerMaterialV1[] CreateSupplemental(
         FrozenDomainRegistrySnapshotOwnerV1.Freeze(state.Header.Step, registry),
     ];
 
-static CrossDomainTransactionStateV1 CreateActiveTransaction()
+static CrossDomainTransactionStateV1 CreateActiveTransaction(ulong updatedStep)
 {
     const ulong transactionBasisStep = 0;
     var kind = CrossDomainTransactionKindRegistryV1.Get("transaction.birth");
@@ -176,12 +181,74 @@ static CrossDomainTransactionStateV1 CreateActiveTransaction()
         [invariant]);
     if (!candidate.CanFinalize)
         throw new InvalidOperationException("Fast Gate3 transaction fixture did not validate.");
-    return CrossDomainTransactionStateV1.FromValidCandidate(candidate, transactionBasisStep + 1);
+    return CrossDomainTransactionStateV1.FromValidCandidate(candidate, updatedStep);
 }
 
-static async Task<byte[]> InitializeGenesisAsync(SqlitePersistenceStore store, WorldStateV1 state)
+static async Task<byte[]> InitializeGenesisAsync(
+    SqlitePersistenceStore store,
+    WorldStateV1 state,
+    IReadOnlyCollection<CrossDomainTransactionStateV1> transactions)
 {
-    var genesis = HistoryRecordMaterial.Create(
+    var genesis = CreateGenesisHistory();
+    var continuity = HistoryIntegrity.ComputeGenesisContinuityToken(
+        Qa04ReferenceLoadV1.WorldId,
+        genesis.RecordDigest);
+    await store.InitializeWorldMetadataWithCanonicalCrossDomainTransactionsAsync(
+        new WorldPersistenceMetadataSeed(
+            Qa04ReferenceLoadV1.WorldId,
+            PersistenceGeneration: 1,
+            Qa04ReferenceLoadV1.WorldSeed,
+            continuity,
+            state.Header.ConfigGeneration,
+            state.Diagnostic.ConfigDigest,
+            state.Header.MasterGeneration),
+        genesis,
+        transactions);
+    return continuity;
+}
+
+static async Task ProveNonGenesisTransactionRejectedAsync(WorldStateV1 state)
+{
+    var root = Path.Combine(Path.GetTempPath(), "machiverse-gate3-core-genesis-negative-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var paths = PersistenceLayout.Resolve(root, Qa04ReferenceLoadV1.WorldId, 1);
+        PersistenceLayout.EnsureGenerationDirectories(paths);
+        await PersistenceLayout.WriteCurrentAsync(paths, 1);
+        await using var store = await SqlitePersistenceStore.OpenOrCreateAsync(paths);
+        var genesis = CreateGenesisHistory();
+        var continuity = HistoryIntegrity.ComputeGenesisContinuityToken(
+            Qa04ReferenceLoadV1.WorldId,
+            genesis.RecordDigest);
+        var rejected = false;
+        try
+        {
+            await store.InitializeWorldMetadataWithCanonicalCrossDomainTransactionsAsync(
+                new WorldPersistenceMetadataSeed(
+                    Qa04ReferenceLoadV1.WorldId,
+                    PersistenceGeneration: 1,
+                    Qa04ReferenceLoadV1.WorldSeed,
+                    continuity,
+                    state.Header.ConfigGeneration,
+                    state.Diagnostic.ConfigDigest,
+                    state.Header.MasterGeneration),
+                genesis,
+                [CreateActiveTransaction(updatedStep: 1)]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "persistence.genesis-cross-domain-transaction-state-invalid")
+        {
+            rejected = true;
+        }
+        Require(rejected, "Fast Gate3 genesis contract must reject UpdatedStep != 0 transaction authority.");
+    }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+}
+
+static HistoryRecordMaterial CreateGenesisHistory()
+    => HistoryRecordMaterial.Create(
         Qa04ReferenceLoadV1.WorldId,
         sequence: 1,
         previousRecordDigest: new byte[32],
@@ -197,21 +264,6 @@ static async Task<byte[]> InitializeGenesisAsync(SqlitePersistenceStore store, W
             writer.WriteUnsigned(1); writer.WriteBytes(Qa04ReferenceLoadV1.WorldSeed.ToBytes());
             writer.WriteUnsigned(2); writer.WriteUnsigned(0);
         });
-    var continuity = HistoryIntegrity.ComputeGenesisContinuityToken(
-        Qa04ReferenceLoadV1.WorldId,
-        genesis.RecordDigest);
-    await store.InitializeWorldMetadataAsync(
-        new WorldPersistenceMetadataSeed(
-            Qa04ReferenceLoadV1.WorldId,
-            PersistenceGeneration: 1,
-            Qa04ReferenceLoadV1.WorldSeed,
-            continuity,
-            state.Header.ConfigGeneration,
-            state.Diagnostic.ConfigDigest,
-            state.Header.MasterGeneration),
-        genesis);
-    return continuity;
-}
 
 static void Require(bool condition, string message)
 {
