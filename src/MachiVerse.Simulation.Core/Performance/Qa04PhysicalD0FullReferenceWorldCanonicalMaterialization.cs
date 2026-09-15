@@ -10,28 +10,36 @@ namespace MachiVerse.Simulation.Core.Performance;
 public sealed class Qa04PhysicalD0FullReferenceWorldCanonicalMaterializationV1
 {
     internal Qa04PhysicalD0FullReferenceWorldCanonicalMaterializationV1(
+        DomainPartitionStateV1<SpatialWorldFramePayloadV1> tileFrames,
         PartitionStateHeaderV1 tileFrameHeader,
         DomainPartitionStateV1<PhysicalPresencePayloadV1> presences,
         PartitionStateHeaderV1 presenceHeader,
+        PhysicalOccupancyPartitionStateV2 occupancy,
         PartitionStateHeaderV1 occupancyHeader,
         IDomainRecordSchemaResolverV1 references)
     {
+        TileFrames = tileFrames ?? throw new ArgumentNullException(nameof(tileFrames));
         TileFrameHeader = tileFrameHeader ?? throw new ArgumentNullException(nameof(tileFrameHeader));
         Presences = presences ?? throw new ArgumentNullException(nameof(presences));
         PresenceHeader = presenceHeader ?? throw new ArgumentNullException(nameof(presenceHeader));
+        Occupancy = occupancy ?? throw new ArgumentNullException(nameof(occupancy));
         OccupancyHeader = occupancyHeader ?? throw new ArgumentNullException(nameof(occupancyHeader));
         References = references ?? throw new ArgumentNullException(nameof(references));
 
-        if (Presences.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount ||
+        if (TileFrames.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalTileFrameCount ||
+            Presences.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount ||
+            Occupancy.ItemCount != checked(Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount * 2UL) ||
             PresenceHeader.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount ||
             OccupancyHeader.ItemCount != checked(Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalPhysicalCount * 2UL) ||
             TileFrameHeader.ItemCount != Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1.CanonicalTileFrameCount)
             throw new InvalidDataException("qa04.physical.full-reference-world-result-count-drift");
     }
 
+    public DomainPartitionStateV1<SpatialWorldFramePayloadV1> TileFrames { get; }
     public PartitionStateHeaderV1 TileFrameHeader { get; }
     public DomainPartitionStateV1<PhysicalPresencePayloadV1> Presences { get; }
     public PartitionStateHeaderV1 PresenceHeader { get; }
+    public PhysicalOccupancyPartitionStateV2 Occupancy { get; }
     public PartitionStateHeaderV1 OccupancyHeader { get; }
     public IDomainRecordSchemaResolverV1 References { get; }
 }
@@ -191,9 +199,11 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
             payload => PhysicalOccupancyPayloadCanonicalDigestV2.Compute(payload, references));
 
         return new Qa04PhysicalD0FullReferenceWorldCanonicalMaterializationV1(
+            tileFrames,
             tileFrameHeader,
             physical.Presence,
             presenceHeader,
+            physical.Occupancy,
             occupancyHeader,
             references);
     }
