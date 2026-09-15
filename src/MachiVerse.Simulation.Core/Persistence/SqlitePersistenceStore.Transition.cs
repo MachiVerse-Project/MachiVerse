@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using Microsoft.Data.Sqlite;
@@ -96,7 +97,9 @@ WHERE singleton=1;
                     throw new InvalidDataException("persistence.meta-update-failed");
             }
 
+            var commitStarted = Stopwatch.GetTimestamp();
             transaction.Commit();
+            ObserveSuccessfulCommit(Stopwatch.GetElapsedTime(commitStarted));
             return new DurableTransitionResult(resultingStep, history.Sequence);
         }
         catch

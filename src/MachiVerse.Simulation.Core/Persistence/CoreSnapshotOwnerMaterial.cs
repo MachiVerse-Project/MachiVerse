@@ -68,11 +68,15 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
         WorldStateHeaderV1 header,
         IReadOnlyList<DurableOperationStateV1> durableOperations,
         IReadOnlyList<ScheduledOperationRefV1> scheduledOperations,
-        IReadOnlyDictionary<string, IFrozenCoreSnapshotOwnerMaterialV1> supplemental)
+        IReadOnlyDictionary<string, IFrozenCoreSnapshotOwnerMaterialV1> supplemental,
+        IReadOnlyList<CrossDomainTransactionStateV1>? crossDomainTransactions = null)
     {
         Header = CloneHeader(header);
         DurableOperations = Array.AsReadOnly(durableOperations.Select(CloneDurableOperation).ToArray());
         ScheduledOperations = Array.AsReadOnly(scheduledOperations.Select(CloneScheduledOperation).ToArray());
+        CrossDomainTransactions = crossDomainTransactions is null
+            ? null
+            : Array.AsReadOnly(crossDomainTransactions.Select(CloneCrossDomainTransaction).ToArray());
         _supplemental = supplemental;
     }
 
@@ -80,6 +84,8 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
     public ulong BasisStep => Header.Step;
     public IReadOnlyList<DurableOperationStateV1> DurableOperations { get; }
     public IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations { get; }
+    public IReadOnlyList<CrossDomainTransactionStateV1>? CrossDomainTransactions { get; }
+    public bool HasOperationAuthorityV2 => CrossDomainTransactions is not null;
     public IReadOnlyCollection<string> SupplementalSectionIds => _supplemental.Keys.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
 
     public IFrozenCoreSnapshotOwnerMaterialV1 GetSupplemental(string sectionId)
@@ -102,6 +108,16 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
     public WorldSubstateRefV1 RecomputeOperationAuthority()
         => DurableOperationSubstateV1.Canonicalize(DurableOperations);
 
+    public WorldSubstateRefV1 RecomputeOperationAuthorityV2()
+    {
+        if (CrossDomainTransactions is null)
+            throw new InvalidOperationException("snapshot-running.operation-v2-material-missing");
+        return CoreOperationStateSubstateV2.Canonicalize(
+            DurableOperations,
+            CrossDomainTransactions,
+            BasisStep);
+    }
+
     public static CoreSnapshotOwnerMaterialCutV1 Create(
         WorldStateV1 frozenState,
         IReadOnlyList<DurableOperationStateV1> durableOperations,
@@ -113,6 +129,60 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
         ArgumentNullException.ThrowIfNull(scheduledOperations);
         ArgumentNullException.ThrowIfNull(supplementalOwnerMaterial);
 
+        var byId = ValidateSupplemental(frozenState, supplementalOwnerMaterial);
+        var cut = new CoreSnapshotOwnerMaterialCutV1(
+            frozenState.Header,
+            durableOperations,
+            scheduledOperations,
+            byId);
+        RequireSubstate(
+            cut.RecomputeSchedulerAuthority(),
+            frozenState.SchedulerState,
+            "snapshot-running.scheduler-owner-material-mismatch");
+        RequireSubstate(
+            cut.RecomputeOperationAuthority(),
+            frozenState.OperationState,
+            "snapshot-running.operation-owner-material-mismatch");
+        ValidateSupplementalAuthorities(frozenState, byId);
+        return cut;
+    }
+
+    public static CoreSnapshotOwnerMaterialCutV1 CreateV2(
+        WorldStateV1 frozenState,
+        IReadOnlyList<DurableOperationStateV1> durableOperations,
+        IReadOnlyList<ScheduledOperationRefV1> scheduledOperations,
+        IReadOnlyList<CrossDomainTransactionStateV1> crossDomainTransactions,
+        IEnumerable<IFrozenCoreSnapshotOwnerMaterialV1> supplementalOwnerMaterial)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        ArgumentNullException.ThrowIfNull(durableOperations);
+        ArgumentNullException.ThrowIfNull(scheduledOperations);
+        ArgumentNullException.ThrowIfNull(crossDomainTransactions);
+        ArgumentNullException.ThrowIfNull(supplementalOwnerMaterial);
+
+        var byId = ValidateSupplemental(frozenState, supplementalOwnerMaterial);
+        var cut = new CoreSnapshotOwnerMaterialCutV1(
+            frozenState.Header,
+            durableOperations,
+            scheduledOperations,
+            byId,
+            crossDomainTransactions);
+        RequireSubstate(
+            cut.RecomputeSchedulerAuthority(),
+            frozenState.SchedulerState,
+            "snapshot-running.scheduler-owner-material-mismatch");
+        RequireSubstate(
+            cut.RecomputeOperationAuthorityV2(),
+            frozenState.OperationState,
+            "snapshot-running.operation-v2-owner-material-mismatch");
+        ValidateSupplementalAuthorities(frozenState, byId);
+        return cut;
+    }
+
+    private static IReadOnlyDictionary<string, IFrozenCoreSnapshotOwnerMaterialV1> ValidateSupplemental(
+        WorldStateV1 frozenState,
+        IEnumerable<IFrozenCoreSnapshotOwnerMaterialV1> supplementalOwnerMaterial)
+    {
         var supplemental = supplementalOwnerMaterial
             .Select(static material => material ?? throw new ArgumentNullException(nameof(supplementalOwnerMaterial)))
             .ToArray();
@@ -136,22 +206,14 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
             if (!byId.ContainsKey(sectionId))
                 throw new InvalidDataException($"snapshot-running.core-owner-material-missing:{sectionId}");
         }
+        return byId;
+    }
 
-        var cut = new CoreSnapshotOwnerMaterialCutV1(
-            frozenState.Header,
-            durableOperations,
-            scheduledOperations,
-            byId);
-        RequireSubstate(
-            cut.RecomputeSchedulerAuthority(),
-            frozenState.SchedulerState,
-            "snapshot-running.scheduler-owner-material-mismatch");
-        RequireSubstate(
-            cut.RecomputeOperationAuthority(),
-            frozenState.OperationState,
-            "snapshot-running.operation-owner-material-mismatch");
-
-        foreach (var sectionId in required)
+    private static void ValidateSupplementalAuthorities(
+        WorldStateV1 frozenState,
+        IReadOnlyDictionary<string, IFrozenCoreSnapshotOwnerMaterialV1> byId)
+    {
+        foreach (var sectionId in CoreSnapshotOwnerSectionRegistryV1.RequiredSupplementalSectionIds)
         {
             var authority = byId[sectionId].RecomputeAuthority()
                 ?? throw new InvalidDataException($"snapshot-running.core-owner-material-authority-null:{sectionId}");
@@ -160,8 +222,6 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
                 !CryptographicOperations.FixedTimeEquals(authority.CanonicalDigest, expected.CanonicalDigest))
                 throw new InvalidDataException($"snapshot-running.core-owner-material-authority-mismatch:{sectionId}");
         }
-
-        return cut;
     }
 
     private static CoreSnapshotOwnerAuthorityV1 ExpectedAuthority(WorldStateV1 state, string sectionId)
@@ -211,5 +271,52 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
             scheduled.OperationId,
             scheduled.EffectiveStep,
             SameStepOrderKey.FromDatabaseBytes(scheduled.OrderKey.ToDatabaseBytes()));
+    }
+
+    private static CrossDomainTransactionStateV1 CloneCrossDomainTransaction(CrossDomainTransactionStateV1 state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return new CrossDomainTransactionStateV1(
+            state.TransactionId,
+            state.TransactionKind,
+            state.Lifecycle,
+            state.CreatedStep,
+            state.UpdatedStep,
+            state.TerminalStep,
+            CloneCausality(state.RootCausality),
+            state.SubjectIds,
+            state.Participants.Select(ClonePersistentTransactionParticipant),
+            state.InvariantResults.Select(CloneInvariantResult));
+    }
+
+    private static PersistentTransactionParticipantV1 ClonePersistentTransactionParticipant(
+        PersistentTransactionParticipantV1 participant)
+    {
+        ArgumentNullException.ThrowIfNull(participant);
+        return new PersistentTransactionParticipantV1(
+            participant.DomainToken,
+            participant.PartitionId,
+            participant.IntentIds,
+            participant.Required,
+            participant.Outcome,
+            participant.CandidateEffectDigest,
+            participant.DiagnosticCode);
+    }
+
+    private static InvariantResultV1 CloneInvariantResult(InvariantResultV1 result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return new InvariantResultV1(
+            result.InvariantId,
+            result.Severity,
+            result.Outcome,
+            result.ParticipantRefs.Select(CloneCausality),
+            result.DiagnosticCode);
+    }
+
+    private static CausalityRefV1 CloneCausality(CausalityRefV1 causality)
+    {
+        ArgumentNullException.ThrowIfNull(causality);
+        return new CausalityRefV1(causality.Kind, causality.Id, causality.BasisStep);
     }
 }

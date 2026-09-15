@@ -11,14 +11,15 @@ public sealed record SnapshotRecoveryStateCutV1(
     byte[] ConfigDigest,
     HistoryAnchor HistoryAnchor,
     IReadOnlyList<DurableOperationStateV1> DurableOperations,
-    IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations);
+    IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations,
+    IReadOnlyList<DurableCrossDomainTransactionStateV1> CrossDomainTransactions);
 
 public sealed partial class SqlitePersistenceStore
 {
     /// <summary>
     /// Captures mutable recovery authority for a running snapshot in one SQLite read transaction.
     /// The result may be serialized after the Step-boundary barrier is released without re-reading
-    /// operation/scheduler tables that may have advanced in the meantime.
+    /// operation/scheduler/transaction tables that may have advanced in the meantime.
     /// </summary>
     public async Task<SnapshotRecoveryStateCutV1> ReadSnapshotRecoveryCutAsync(
         CancellationToken cancellationToken = default)
@@ -30,6 +31,7 @@ public sealed partial class SqlitePersistenceStore
             var context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
             var operations = await ReadSnapshotOperationStatesAsync(transaction, cancellationToken).ConfigureAwait(false);
             var scheduled = await ReadSnapshotScheduledOperationsAsync(transaction, cancellationToken).ConfigureAwait(false);
+            var crossDomainTransactions = await ReadSnapshotCrossDomainTransactionStatesAsync(transaction, cancellationToken).ConfigureAwait(false);
             transaction.Commit();
             return new SnapshotRecoveryStateCutV1(
                 head.FinalizedStep,
@@ -38,7 +40,8 @@ public sealed partial class SqlitePersistenceStore
                 head.ConfigDigest,
                 context.Anchor,
                 operations,
-                scheduled);
+                scheduled,
+                crossDomainTransactions);
         }
         catch
         {
@@ -115,6 +118,26 @@ ORDER BY effective_step ASC, order_key ASC, operation_id ASC;
                 U64Be.Decode((byte[])reader[0]),
                 SameStepOrderKey.FromDatabaseBytes(orderBytes)));
         }
+        return Array.AsReadOnly(result.ToArray());
+    }
+
+    private async Task<IReadOnlyList<DurableCrossDomainTransactionStateV1>> ReadSnapshotCrossDomainTransactionStatesAsync(
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+SELECT transaction_id, lifecycle, created_step, updated_step, terminal_step, state_wire, state_digest
+FROM cross_domain_transaction_state
+ORDER BY transaction_id ASC;
+""";
+        var result = new List<DurableCrossDomainTransactionStateV1>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            result.Add(ReadCrossDomainTransactionState(reader));
+        if (result.Select(static value => value.TransactionId).Distinct().Count() != result.Count)
+            throw new InvalidDataException("snapshot-cut.cross-domain-transaction-duplicate-id");
         return Array.AsReadOnly(result.ToArray());
     }
 }

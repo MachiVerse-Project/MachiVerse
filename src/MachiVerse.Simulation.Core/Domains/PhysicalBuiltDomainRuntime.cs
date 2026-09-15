@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -8,9 +9,22 @@ public sealed class PhysicalBuiltDomainRuntimeV1 : DeterministicDomainRuntimeV1
 {
     public PhysicalBuiltDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
-        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null,
+        PhysicalBuiltDomainStateV1? state = null)
         : base("physical_built", intentEvaluator, partitionCandidateEvaluator)
     {
+        State = state;
+    }
+
+    public PhysicalBuiltDomainStateV1? State { get; }
+
+    public PhysicalBuiltDomainStateV1 RequireState()
+        => State ?? throw new InvalidDataException("physical-built.runtime-state.unavailable");
+
+    public PhysicalBuiltDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        return RequireState().BindSnapshotMaterial(frozenState);
     }
 }
 

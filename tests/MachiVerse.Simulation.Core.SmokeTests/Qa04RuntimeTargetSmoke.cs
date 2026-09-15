@@ -10,6 +10,7 @@ internal static class Qa04RuntimeTargetSmoke
     {
         VerifyResidentMaterialization();
         await VerifyStructuralAuthorityPathAsync();
+        await Qa04ProductionAuthoritativeStepClosureSmoke.RunAsync();
 
         Require(Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.SequenceEqual(new[] { 1, 4, 8, 16 }),
             "QA-04 runtime target worker-count set drifted.");

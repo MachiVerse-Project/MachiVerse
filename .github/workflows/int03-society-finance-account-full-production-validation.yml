@@ -1,0 +1,35 @@
+name: INT-03 Society FinanceAccount full production validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.SocietyFinanceAccountFullProductionSmoke/**'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04SocietyFinanceAccountCanonicalAuthoritySmoke.cs'
+      - '.github/workflows/int03-society-finance-account-full-production-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-society-finance-account-full-production-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  society-finance-account-full-production:
+    name: Full 80,000-record Society FinanceAccount proof
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Society FinanceAccount full-production probe
+        run: dotnet build tests/MachiVerse.Simulation.Core.SocietyFinanceAccountFullProductionSmoke/MachiVerse.Simulation.Core.SocietyFinanceAccountFullProductionSmoke.csproj --configuration Release
+      - name: Prove Society FinanceAccount materialization and recovery
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.SocietyFinanceAccountFullProductionSmoke/MachiVerse.Simulation.Core.SocietyFinanceAccountFullProductionSmoke.csproj --configuration Release --no-build

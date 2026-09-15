@@ -1,0 +1,289 @@
+using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Environment;
+using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
+using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
+using MachiVerse.Simulation.Core.Domains.Participation;
+using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
+using MachiVerse.Simulation.Core.Domains.Resident;
+using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
+using MachiVerse.Simulation.Core.WorldState;
+
+namespace MachiVerse.Simulation.Core.Performance;
+
+public sealed record Qa04CanonicalOperationMutationStateV1(
+    DomainPartitionStateV1<InfrastructureServiceQueuePayloadV1> InfrastructureServiceQueue,
+    DomainPartitionStateV1<ParticipationControlModePayloadV1> ParticipationControlMode,
+    DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> ResidentBehaviorState,
+    DomainPartitionStateV1<PhysicalPresencePayloadV1> PhysicalPresence,
+    SocietyMarketTransactionPartitionStateV2 MarketTransaction,
+    DomainPartitionStateV1<GovernanceSecurityIncidentPayloadV1> GovernanceSecurityIncident,
+    DomainPartitionStateV1<EnvironmentHazardPayloadV1> EnvironmentHazard);
+
+public sealed record Qa04CanonicalOperationMutationChangeV1(
+    StableToken FamilyToken,
+    string OperationKind,
+    OpaqueId128 OperationId,
+    byte[] ImmutablePayloadDigest,
+    SameStepOrderKey OrderKey,
+    StableToken PartitionId,
+    OpaqueId128 ChangedRecordId,
+    SchemaRefV1 RecordSchema,
+    ulong ResultRevision,
+    ulong ResultCreatedStep,
+    DetailLevelV1 ResultDetailLevel,
+    StableToken MutationMode);
+
+public sealed record Qa04CanonicalOperationMutationBatchResultV1(
+    ulong EffectiveStep,
+    Qa04CanonicalOperationMutationStateV1 State,
+    IReadOnlyList<OpaqueId128> AppliedOperationIds,
+    IReadOnlyDictionary<string, ulong> AppliedCountByFamily,
+    IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Changes);
+
+/// <summary>
+/// Gate-2 integration stage that applies already-authoritative perf.reference.v1 Operations to the
+/// six typed mutation targets in canonical scheduler order. This composes the six Gate-1 handlers;
+/// it does not itself claim full authoritative-Step availability, build partition candidates, or
+/// cross the SQLite COMMIT/publish boundary.
+/// </summary>
+public static class Qa04CanonicalOperationMutationBatchV1
+{
+    private const string InfrastructureFamily = "infrastructure-service-delivery";
+    private const string ResidentFamily = "participation-control-resident-action";
+    private const string PhysicalFamily = "physical-item-movement-work";
+    private const string MarketFamily = "society-market-payment-contract";
+    private const string GovernanceFamily = "governance-security";
+    private const string EnvironmentFamily = "environment-spatial-admin-synthetic";
+
+    private static readonly StableToken Create = new("create");
+    private static readonly StableToken Revise = new("revise");
+
+    public static Qa04CanonicalOperationMutationBatchResultV1 Apply(
+        OpaqueId128 worldId,
+        ulong effectiveStep,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+        Qa04CanonicalOperationMutationStateV1 initialState,
+        IDomainRecordSchemaResolverV1 references)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
+        if (worldId != Qa04ReferenceLoadV1.WorldId)
+            throw new InvalidDataException("qa04.full-step.mutation-world-id-drift");
+        if (effectiveStep == 0) throw new ArgumentOutOfRangeException(nameof(effectiveStep));
+        ArgumentNullException.ThrowIfNull(orderedBindings);
+        ArgumentNullException.ThrowIfNull(initialState);
+        ArgumentNullException.ThrowIfNull(references);
+        if (orderedBindings.Count == 0)
+            throw new InvalidDataException("qa04.full-step.mutation-batch-empty");
+
+        ValidateStateIdentities(initialState);
+
+        var state = initialState;
+        var appliedIds = new List<OpaqueId128>(orderedBindings.Count);
+        var counts = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var changes = new List<Qa04CanonicalOperationMutationChangeV1>(orderedBindings.Count);
+        SameStepOrderKey? previousOrderKey = null;
+
+        foreach (var binding in orderedBindings)
+        {
+            ArgumentNullException.ThrowIfNull(binding);
+            if (binding.SourceDescriptor is null || binding.ScheduledOperation is null || binding.OrderKey is null)
+                throw new InvalidDataException("qa04.full-step.mutation-binding-null");
+            if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
+                throw new InvalidDataException("qa04.full-step.mutation-effective-step-drift");
+            if (!binding.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(
+                    binding.ScheduledOperation.OrderKey.ToDatabaseBytes()))
+                throw new InvalidDataException("qa04.full-step.mutation-order-key-drift");
+            if (previousOrderKey is not null && previousOrderKey.CompareTo(binding.OrderKey) >= 0)
+                throw new InvalidDataException("qa04.full-step.mutation-order-not-canonical");
+            previousOrderKey = binding.OrderKey;
+
+            var operationId = binding.SourceDescriptor.OperationId;
+            if (operationId.IsZero || appliedIds.Contains(operationId))
+                throw new InvalidDataException("qa04.full-step.mutation-operation-id-duplicate");
+
+            Qa04CanonicalOperationMutationChangeV1 change;
+            switch (binding.SourceDescriptor.FamilyToken.Value)
+            {
+                case InfrastructureFamily:
+                {
+                    var result = Qa04InfrastructureServiceReserveApplicationV1.Apply(
+                        worldId,
+                        binding,
+                        state.InfrastructureServiceQueue,
+                        references);
+                    state = state with { InfrastructureServiceQueue = result.ServiceQueue };
+                    change = Change(
+                        binding,
+                        InfrastructureServiceQueuePayloadV1.PartitionId,
+                        result.CreatedRecord.RecordId,
+                        result.CreatedRecord.RecordSchema,
+                        result.CreatedRecord.Revision,
+                        result.CreatedRecord.CreatedStep,
+                        result.CreatedRecord.DetailLevel,
+                        Create);
+                    break;
+                }
+                case ResidentFamily:
+                {
+                    var controlModeId = Qa04ParticipationControlModeCanonicalAuthorityV1.RecordId(
+                        binding.SourceDescriptor.FamilyOrdinal);
+                    if (!state.ParticipationControlMode.TryGet(controlModeId, out var controlMode) || controlMode is null)
+                        throw new InvalidDataException("qa04.full-step.mutation-control-mode-missing");
+
+                    var result = Qa04ResidentActionApplicationV1.Apply(
+                        worldId,
+                        binding,
+                        state.ResidentBehaviorState,
+                        controlMode,
+                        references);
+                    state = state with { ResidentBehaviorState = result.BehaviorState };
+                    change = Change(
+                        binding,
+                        ResidentBehaviorStatePayloadV1.PartitionId,
+                        result.AppliedRecord.RecordId,
+                        result.AppliedRecord.RecordSchema,
+                        result.AppliedRecord.Revision,
+                        result.AppliedRecord.CreatedStep,
+                        result.AppliedRecord.DetailLevel,
+                        result.Created ? Create : Revise);
+                    break;
+                }
+                case PhysicalFamily:
+                {
+                    var result = Qa04PhysicalMoveApplicationV1.Apply(binding, state.PhysicalPresence, references);
+                    state = state with { PhysicalPresence = result.PresenceState };
+                    change = Change(
+                        binding,
+                        PhysicalPresencePayloadV1.PartitionId,
+                        result.AppliedRecord.RecordId,
+                        result.AppliedRecord.RecordSchema,
+                        result.AppliedRecord.Revision,
+                        result.AppliedRecord.CreatedStep,
+                        result.AppliedRecord.DetailLevel,
+                        Revise);
+                    break;
+                }
+                case MarketFamily:
+                {
+                    var result = Qa04MarketOrderApplicationV1.Apply(binding, state.MarketTransaction, references);
+                    state = state with { MarketTransaction = result.MarketState };
+                    change = Change(
+                        binding,
+                        SocietyMarketTransactionRecordSchemaV2.PartitionId,
+                        result.CreatedOrder.RecordId,
+                        result.CreatedOrder.RecordSchema,
+                        result.CreatedOrder.Revision,
+                        result.CreatedOrder.CreatedStep,
+                        result.CreatedOrder.DetailLevel,
+                        Create);
+                    break;
+                }
+                case GovernanceFamily:
+                {
+                    var result = Qa04GovernanceIncidentApplicationV1.Apply(
+                        binding,
+                        state.GovernanceSecurityIncident,
+                        references);
+                    state = state with { GovernanceSecurityIncident = result.IncidentState };
+                    change = Change(
+                        binding,
+                        GovernanceSecurityIncidentPayloadV1.PartitionId,
+                        result.CreatedIncident.RecordId,
+                        result.CreatedIncident.RecordSchema,
+                        result.CreatedIncident.Revision,
+                        result.CreatedIncident.CreatedStep,
+                        result.CreatedIncident.DetailLevel,
+                        Create);
+                    break;
+                }
+                case EnvironmentFamily:
+                {
+                    var result = Qa04EnvironmentHazardApplicationV1.Apply(binding, state.EnvironmentHazard, references);
+                    state = state with { EnvironmentHazard = result.HazardState };
+                    change = Change(
+                        binding,
+                        EnvironmentHazardPayloadV1.PartitionId,
+                        result.CreatedHazard.RecordId,
+                        result.CreatedHazard.RecordSchema,
+                        result.CreatedHazard.Revision,
+                        result.CreatedHazard.CreatedStep,
+                        result.CreatedHazard.DetailLevel,
+                        Create);
+                    break;
+                }
+                default:
+                    throw new InvalidDataException(
+                        $"qa04.full-step.mutation-family-unregistered:{binding.SourceDescriptor.FamilyToken.Value}");
+            }
+
+            appliedIds.Add(operationId);
+            changes.Add(change);
+            counts[binding.SourceDescriptor.FamilyToken.Value] = checked(
+                counts.GetValueOrDefault(binding.SourceDescriptor.FamilyToken.Value) + 1UL);
+        }
+
+        return new Qa04CanonicalOperationMutationBatchResultV1(
+            effectiveStep,
+            state,
+            Array.AsReadOnly(appliedIds.ToArray()),
+            new System.Collections.ObjectModel.ReadOnlyDictionary<string, ulong>(counts),
+            Array.AsReadOnly(changes.ToArray()));
+    }
+
+    private static Qa04CanonicalOperationMutationChangeV1 Change(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        string partitionId,
+        OpaqueId128 changedRecordId,
+        SchemaRefV1 recordSchema,
+        ulong resultRevision,
+        ulong resultCreatedStep,
+        DetailLevelV1 resultDetailLevel,
+        StableToken mutationMode)
+    {
+        var immutableDigest = binding.BoundDescriptor.PayloadDigest.ToArray();
+        if (immutableDigest.Length != 32)
+            throw new InvalidDataException("qa04.full-step.mutation-payload-digest-length");
+        if (changedRecordId.IsZero)
+            throw new InvalidDataException("qa04.full-step.mutation-changed-record-id-zero");
+        if (mutationMode != Create && mutationMode != Revise)
+            throw new InvalidDataException("qa04.full-step.mutation-mode-invalid");
+
+        return new Qa04CanonicalOperationMutationChangeV1(
+            binding.SourceDescriptor.FamilyToken,
+            binding.Operation.OperationKind,
+            binding.SourceDescriptor.OperationId,
+            immutableDigest,
+            binding.OrderKey,
+            new StableToken(partitionId),
+            changedRecordId,
+            recordSchema,
+            resultRevision,
+            resultCreatedStep,
+            resultDetailLevel,
+            mutationMode);
+    }
+
+    private static void ValidateStateIdentities(Qa04CanonicalOperationMutationStateV1 state)
+    {
+        if (state.InfrastructureServiceQueue.Identity !=
+            StandardDomainPartitionRegistry.Get(InfrastructureServiceQueuePayloadV1.PartitionId))
+            throw new InvalidDataException("qa04.full-step.mutation-infrastructure-state-identity");
+        if (state.ParticipationControlMode.Identity !=
+            StandardDomainPartitionRegistry.Get(ParticipationControlModePayloadV1.PartitionId))
+            throw new InvalidDataException("qa04.full-step.mutation-control-state-identity");
+        if (state.ResidentBehaviorState.Identity !=
+            StandardDomainPartitionRegistry.Get(ResidentBehaviorStatePayloadV1.PartitionId))
+            throw new InvalidDataException("qa04.full-step.mutation-resident-state-identity");
+        if (state.PhysicalPresence.Identity !=
+            StandardDomainPartitionRegistry.Get(PhysicalPresencePayloadV1.PartitionId))
+            throw new InvalidDataException("qa04.full-step.mutation-physical-state-identity");
+        if (state.MarketTransaction.State.Identity != SocietyMarketTransactionPartitionIdentityV2.Identity)
+            throw new InvalidDataException("qa04.full-step.mutation-market-state-identity");
+        if (state.GovernanceSecurityIncident.Identity !=
+            StandardDomainPartitionRegistry.Get(GovernanceSecurityIncidentPayloadV1.PartitionId))
+            throw new InvalidDataException("qa04.full-step.mutation-governance-state-identity");
+        if (state.EnvironmentHazard.Identity !=
+            StandardDomainPartitionRegistry.Get(EnvironmentHazardPayloadV1.PartitionId))
+            throw new InvalidDataException("qa04.full-step.mutation-environment-state-identity");
+    }
+}

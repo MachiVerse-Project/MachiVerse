@@ -1,0 +1,1 @@
+global using Qa04ResidentIdentityLifecyclePayloadV1 = MachiVerse.Simulation.Core.Domains.Resident.ResidentIdentityLifecyclePayloadV1;

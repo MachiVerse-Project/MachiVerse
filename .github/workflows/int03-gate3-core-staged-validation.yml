@@ -1,0 +1,54 @@
+name: INT-03 Gate3 Core staged validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04ProductionAuthoritativeStepClosureSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.Gate3CoreSmokeTests/**'
+      - 'tests/MachiVerse.Simulation.Core.ProductionClosureSmokeTests/**'
+      - '.github/workflows/int03-gate3-core-staged-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-gate3-core-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate3-core-fast:
+    name: Gate3 Core fast authority / recovery contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build fast Gate3 Core contract
+        run: dotnet build tests/MachiVerse.Simulation.Core.Gate3CoreSmokeTests --configuration Release
+      - name: Prove reduced real-SQLite recovery and six-Core authority
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.Gate3CoreSmokeTests --configuration Release --no-build
+
+  gate3-core-production:
+    name: Gate3 Core full production closure
+    needs: gate3-core-fast
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build dedicated production closure runner
+        run: dotnet build tests/MachiVerse.Simulation.Core.ProductionClosureSmokeTests --configuration Release
+      - name: Prove full QA-04 authoritative Step and Gate3 six-Core recovery
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.ProductionClosureSmokeTests --configuration Release --no-build

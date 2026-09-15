@@ -59,13 +59,19 @@ jobs:
           assert inspect['initialResidentLifecycle'] == 'alive', inspect
           assert inspect['authoritativeStepStructuralBridgeAvailable'] is True, inspect
           assert inspect['coreSubstateTwoStepBridgeAvailable'] is True, inspect
-          assert inspect['referenceWorldMaterialized'] is False, inspect
-          assert inspect['authoritativeStepLoopAvailable'] is False, inspect
+          assert inspect['detailSubstateTwoStepBridgeAvailable'] is True, inspect
+          assert inspect['reducedAuthoritativeStepLoopAvailable'] is True, inspect
+          assert inspect['runningSnapshotBridgeAvailable'] is True, inspect
+          assert inspect['referenceWorldMaterialized'] is True, inspect
+          assert inspect['authoritativeStepLoopAvailable'] is True, inspect
           assert inspect['releaseEvidenceCapable'] is False, inspect
+          assert 'qa04.target.authoritative-step-loop-not-assembled' not in inspect['blockingFailureCodes'], inspect
+          assert 'qa04.target.reference-world-not-materialized' not in inspect['blockingFailureCodes'], inspect
           assert worker['workerCount'] == 16, worker
           assert worker['domainCount'] == 8, worker
           assert worker['maxObservedConcurrency'] == 8, worker
           assert worker['workerCountAppliedToDomainExecutor'] is True, worker
+          assert worker['referenceWorldMaterialized'] is True, worker
           assert worker['releaseEvidenceCapable'] is False, worker
           PY
       - name: Materialize canonical 1,000,000 Resident identity records
@@ -193,7 +199,57 @@ jobs:
           assert 'qa04.target.core-substate-mutation-application-not-assembled' not in result['blockingFailureCodes'], result
           assert 'qa04.target.detail-substate-mutation-application-not-assembled' in result['blockingFailureCodes'], result
           PY
-      - name: Prove external adapter reaches Core and fails closed
+      - name: Prove reduced authoritative loop survives 30 consecutive SQLite COMMIT Steps
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          persistence="$RUNNER_TEMP/qa04-authoritative-loop-persistence"
+          request=$(python3 - "$persistence" <<'PY'
+          import json, sys
+          print(json.dumps({
+              'schemaVersion':'1.0',
+              'command':'authoritative-step-loop-probe',
+              'workerCount':4,
+              'recordCount':128,
+              'persistenceRoot':sys.argv[1],
+          }, separators=(',', ':')))
+          PY
+          )
+          printf '%s\n' "$request" | "$core" qa04-target > "$RUNNER_TEMP/core-authoritative-loop.json"
+          python3 - "$RUNNER_TEMP/core-authoritative-loop.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['basisStep'] == 0, result
+          assert result['stepCount'] == 30 and result['finalResultingStep'] == 30, result
+          assert result['workerCount'] == 4 and result['residentRecordCount'] == 128, result
+          assert result['totalDomainOutputCount'] == 240, result
+          assert result['totalPartitionCandidateCount'] == 30, result
+          assert result['candidatePublishableBeforeCommitObserved'] is False, result
+          assert result['preparedStatePublishableBeforeCommitObserved'] is False, result
+          for key in (
+              'allDurableReceiptsPublishable',
+              'allResultingWorldStatesPublishable',
+              'allStateChainsValid',
+              'schedulerReopenedEachStep',
+              'realSqliteCommitObservedThroughLoop',
+              'reducedAuthoritativeStepLoopAvailable',
+          ):
+              assert result[key] is True, (key, result)
+          assert result['finalResidentPartitionRevision'] == 31, result
+          assert result['finalResidentPartitionBasisStep'] == 30, result
+          assert result['basisStateDigest'] != result['finalStateDigest'], result
+          for key in ('basisStateDigest','finalStateDigest','finalContinuityToken'):
+              digest = result[key]
+              assert len(digest) == 64 and set(digest) != {'0'}, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['authoritativeStepLoopAvailable'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
+          assert 'qa04.target.reference-world-other-partitions-not-materialized' in result['blockingFailureCodes'], result
+          assert 'qa04.target.authoritative-full-step-loop-not-assembled' in result['blockingFailureCodes'], result
+          PY
+      - name: Prove external adapter reaches Core and fails closed after Gate 2
         shell: bash
         run: |
           set -euo pipefail
@@ -208,8 +264,11 @@ jobs:
               response = json.load(f)
           assert response['executionClass'] == 'release', response
           assert response['responseKind'] == 'performance-benchmark-report-v1', response
+          assert response['referenceWorldMaterialized'] is True, response
+          assert response['releaseEvidenceCapable'] is False, response
           assert response['passed'] is False, response
-          assert 'qa04.target.reference-world-not-materialized' in response['failureCodes'], response
+          assert 'qa04.target.authoritative-step-loop-not-assembled' not in response['failureCodes'], response
+          assert 'qa04.measurement.step-sample-count' in response['failureCodes'], response
           assert response['report']['worker_count'] == 4, response
           assert response['report']['step_count'] == 0, response
           PY

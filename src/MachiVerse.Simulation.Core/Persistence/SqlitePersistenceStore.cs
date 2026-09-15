@@ -133,6 +133,19 @@ CREATE TABLE IF NOT EXISTS operation_state (
   rich_result_payload BLOB
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS cross_domain_transaction_state (
+  transaction_id BLOB PRIMARY KEY CHECK (length(transaction_id) = 16),
+  lifecycle INTEGER NOT NULL,
+  created_step BLOB NOT NULL CHECK (length(created_step) = 8),
+  updated_step BLOB NOT NULL CHECK (length(updated_step) = 8),
+  terminal_step BLOB CHECK (terminal_step IS NULL OR length(terminal_step) = 8),
+  state_wire BLOB NOT NULL,
+  state_digest BLOB NOT NULL CHECK (length(state_digest) = 32)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS cross_domain_transaction_state_by_lifecycle_updated
+ON cross_domain_transaction_state(lifecycle, updated_step, transaction_id);
+
 CREATE TABLE IF NOT EXISTS scheduled_operation (
   effective_step BLOB NOT NULL CHECK (length(effective_step) = 8),
   order_key BLOB NOT NULL,
