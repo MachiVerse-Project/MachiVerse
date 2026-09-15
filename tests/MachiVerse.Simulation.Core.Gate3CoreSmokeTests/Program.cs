@@ -181,7 +181,17 @@ static CrossDomainTransactionStateV1 CreateActiveTransaction(ulong updatedStep)
         [invariant]);
     if (!candidate.CanFinalize)
         throw new InvalidOperationException("Fast Gate3 transaction fixture did not validate.");
-    return CrossDomainTransactionStateV1.FromValidCandidate(candidate, updatedStep);
+    return new CrossDomainTransactionStateV1(
+        candidate.TransactionId,
+        candidate.TransactionKind,
+        TransactionLifecycleV1.Active,
+        createdStep: 0,
+        updatedStep,
+        terminalStep: null,
+        candidate.RootCausalityRef,
+        candidate.SubjectRefs,
+        candidate.Participants.Select(PersistentTransactionParticipantV1.FromCandidate),
+        candidate.InvariantResults);
 }
 
 static async Task<byte[]> InitializeGenesisAsync(
