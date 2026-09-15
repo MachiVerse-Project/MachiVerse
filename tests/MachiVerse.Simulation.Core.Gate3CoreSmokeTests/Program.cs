@@ -190,7 +190,14 @@ static CrossDomainTransactionStateV1 CreateActiveTransaction(ulong updatedStep)
         terminalStep: null,
         candidate.RootCausalityRef,
         candidate.SubjectRefs,
-        candidate.Participants.Select(PersistentTransactionParticipantV1.FromCandidate),
+        candidate.Participants.Select(static value => new PersistentTransactionParticipantV1(
+            value.DomainToken,
+            value.PartitionId,
+            value.IntentIds,
+            value.Required,
+            value.Outcome,
+            value.CandidateEffectDigest,
+            value.DiagnosticCode)),
         candidate.InvariantResults);
 }
 
