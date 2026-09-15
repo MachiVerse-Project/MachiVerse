@@ -20,11 +20,24 @@ public static class StandardSnapshotStreamingOwnerCompositionV1
         ArgumentNullException.ThrowIfNull(domainProviders);
         RequireSameFrozenHeader(coreCut.Header, domainAuthorities.FrozenState.Header);
 
-        var coreSections = CoreSnapshotProductionSectionProviderV1.CreateAllSix(coreCut);
-        CoreSnapshotProductionSectionProviderV1.VerifyAllSix(
-            coreSections,
-            coreCut.BasisStep,
-            coreCut.Header.ConfigGeneration);
+        var coreSections = coreCut.HasOperationAuthorityV2
+            ? CoreSnapshotProductionSectionProviderV1.CreateAllSixV2(coreCut)
+            : CoreSnapshotProductionSectionProviderV1.CreateAllSix(coreCut);
+        if (coreCut.HasOperationAuthorityV2)
+        {
+            CoreSnapshotProductionSectionProviderV1.VerifyAllSixV2(
+                coreSections,
+                coreCut.BasisStep,
+                coreCut.Header.ConfigGeneration);
+        }
+        else
+        {
+            CoreSnapshotProductionSectionProviderV1.VerifyAllSix(
+                coreSections,
+                coreCut.BasisStep,
+                coreCut.Header.ConfigGeneration);
+        }
+
         var domainSections = DomainPartitionSnapshotStreamingProductionProviderV1.CreateAll97WithTerrainV2(
             domainAuthorities,
             domainProviders);
