@@ -237,13 +237,33 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
                     gate3Snapshot.CoreSectionCount == gate3Core.CoreSectionCount &&
                     gate3Snapshot.DomainSectionCount == gate3Domains.DomainSectionCount &&
                     gate3Snapshot.DomainLogicalRecordCount == gate3Domains.LogicalRecordCount &&
-                    gate3Snapshot.ChunkCount > 0,
-                "Gate3 Step3 production exact-103 durable Snapshot proof failed.");
+                    gate3Snapshot.ChunkCount > 0 &&
+                    gate3Snapshot.RecoveredStateDigest.Length == 32,
+                "Gate3 Step3-5 production exact-103 Snapshot/recovery proof failed.");
             Console.WriteLine(
                 $"[qa04-production] Gate3 Step3 exact-103 durable Snapshot proof complete sections={gate3Snapshot.SectionCount} chunks={gate3Snapshot.ChunkCount} logicalRecords={gate3Snapshot.DomainLogicalRecordCount}");
 
+            Console.WriteLine("[qa04-production] Gate3 Step6 replay / equivalence proof start");
+            var gate3Replay = await Qa04ProductionGate3Step6ReplayEquivalenceProofRunnerV1.VerifyAsync(
+                finalized,
+                initial,
+                bindings,
+                references,
+                gate3Snapshot,
+                store,
+                paths);
+            Require(gate3Replay.BasisStep == effectiveStep &&
+                    gate3Replay.ResultingStep == verification.ResultingStep &&
+                    gate3Replay.HistorySequence == finalized.DurableReceipt.HistorySequence &&
+                    gate3Replay.TerminalOperationCount == bindings.Length &&
+                    gate3Replay.CrossDomainTransactionCount == activeTransactions.Count &&
+                    gate3Replay.ReplayedStateDigest.AsSpan().SequenceEqual(gate3Replay.RecoveredStateDigest),
+                "Gate3 Step6 production replay/equivalence proof failed.");
             Console.WriteLine(
-                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount} domainSections={gate3Domains.DomainSectionCount} domainLogicalRecords={gate3Domains.LogicalRecordCount} snapshotSections={gate3Snapshot.SectionCount} snapshotChunks={gate3Snapshot.ChunkCount}");
+                $"[qa04-production] Gate3 Step6 replay / equivalence proof complete resultingStep={gate3Replay.ResultingStep} terminalOperations={gate3Replay.TerminalOperationCount} transactions={gate3Replay.CrossDomainTransactionCount}");
+
+            Console.WriteLine(
+                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount} domainSections={gate3Domains.DomainSectionCount} domainLogicalRecords={gate3Domains.LogicalRecordCount} snapshotSections={gate3Snapshot.SectionCount} snapshotChunks={gate3Snapshot.ChunkCount} replayOperations={gate3Replay.TerminalOperationCount}");
         }
         finally
         {
