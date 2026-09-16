@@ -56,6 +56,10 @@ public static class Qa04ProcessTargetV1
                 "running-snapshot-probe" => await Qa04RunningSnapshotBridgeV1.RunReducedAsync(
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "production-reference-connection-probe" => await Qa04ProductionReferenceConnectionProbeV1.RunAsync(
+                    request.WorkerCount,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 "production-reference-run" => await Qa04ProductionReferenceRunV1.RunCanonicalAsync(
                     request.WorkerCount,
                     request.PersistenceRoot,
@@ -79,6 +83,7 @@ public static class Qa04ProcessTargetV1
         var referenceWorldMaterialized = ReferenceWorldMaterialized();
         var authoritativeStepLoopAvailable = AuthoritativeStepLoopAvailable(referenceWorldMaterialized);
         var config = Qa04ReferenceConfigAuthorityV1.CreateCanonical();
+        var productionAvailable = referenceWorldMaterialized && authoritativeStepLoopAvailable;
         var additionalBlockers = authoritativeStepLoopAvailable
             ? Array.Empty<string>()
             : new[] { "qa04.target.authoritative-step-loop-not-assembled" };
@@ -100,7 +105,8 @@ public static class Qa04ProcessTargetV1
             DetailSubstateTwoStepBridgeAvailable = true,
             ReducedAuthoritativeStepLoopAvailable = true,
             RunningSnapshotBridgeAvailable = true,
-            ProductionReferenceRunAvailable = referenceWorldMaterialized && authoritativeStepLoopAvailable,
+            ProductionReferenceConnectionProbeAvailable = productionAvailable,
+            ProductionReferenceRunAvailable = productionAvailable,
             ReferenceWorldMaterialized = referenceWorldMaterialized,
             AuthoritativeStepLoopAvailable = authoritativeStepLoopAvailable,
             ReleaseEvidenceCapable = false,
@@ -324,6 +330,7 @@ public sealed class Qa04ProcessInspectionV1
     public bool DetailSubstateTwoStepBridgeAvailable { get; set; }
     public bool ReducedAuthoritativeStepLoopAvailable { get; set; }
     public bool RunningSnapshotBridgeAvailable { get; set; }
+    public bool ProductionReferenceConnectionProbeAvailable { get; set; }
     public bool ProductionReferenceRunAvailable { get; set; }
     public bool ReferenceWorldMaterialized { get; set; }
     public bool AuthoritativeStepLoopAvailable { get; set; }
