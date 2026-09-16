@@ -24,9 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: Checkout pull request
+      - name: Checkout exact evidence head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 2
 
       - name: Determine whether actual evidence execution was explicitly requested
@@ -39,6 +40,7 @@ jobs:
             exit 0
           fi
           subject="$(git log -1 --format=%s)"
+          echo "Evidence head subject: $subject"
           if [[ "$subject" == *"[gate4-step1-evidence]"* ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
