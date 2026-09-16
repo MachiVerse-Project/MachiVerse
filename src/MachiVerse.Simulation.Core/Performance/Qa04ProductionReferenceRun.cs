@@ -334,23 +334,38 @@ public static class Qa04ProductionReferenceRunV1
             domainLogicalRecordCount,
             staged.SnapshotDigest.ToArray(),
             staged.PhysicalManifestDigest.ToArray());
-        var recovered = await Qa04ProductionExact103SnapshotRecoveryProofRunnerV1.VerifyAsync(
-            persisted,
+
+        var decoders = CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders(zstd);
+        var durable = await CanonicalSnapshotDurableRecoveryV1.RecoverNewestAsync(
             store,
             world,
-            cancellationToken).ConfigureAwait(false);
-        if (recovered.SnapshotStep != cut.SnapshotStep ||
-            recovered.SectionCount != 103 ||
-            recovered.CoreSectionCount != 6 ||
-            recovered.DomainSectionCount != 97 ||
-            recovered.ChunkCount != staged.Chunks.Count ||
-            recovered.DomainLogicalRecordCount != domainLogicalRecordCount ||
-            recovered.RecoveredStateDigest.Length != 32)
-            throw new InvalidDataException("qa04.production-run.snapshot-recovery-drift");
+            decoders,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (durable.Catalog.SnapshotId != cut.SnapshotId ||
+            durable.Catalog.SnapshotStep != cut.SnapshotStep ||
+            durable.Sections.Count != 103 ||
+            durable.ChunkCount != staged.Chunks.Count ||
+            !CryptographicOperations.FixedTimeEquals(durable.Catalog.SnapshotDigest, staged.SnapshotDigest) ||
+            !CryptographicOperations.FixedTimeEquals(durable.Catalog.PhysicalManifestDigest, staged.PhysicalManifestDigest))
+            throw new InvalidDataException("qa04.production-run.snapshot-durable-recovery-drift");
+
+        var semantic = await CanonicalSnapshotSemanticRecoveryV1.RecoverAndRehashAsync(
+            durable,
+            world,
+            decoders,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (semantic.Header.WorldId != cut.FrozenState.Header.WorldId ||
+            semantic.Header.Step != cut.SnapshotStep ||
+            semantic.SectionCount != 103 ||
+            semantic.CoreSectionCount != 6 ||
+            semantic.DomainSectionCount != 97 ||
+            semantic.DomainLogicalRecordCount != domainLogicalRecordCount ||
+            semantic.StateDigest.Length != 32)
+            throw new InvalidDataException("qa04.production-run.snapshot-semantic-recovery-drift");
 
         return persisted with
         {
-            RecoveredStateDigest = recovered.RecoveredStateDigest.ToArray(),
+            RecoveredStateDigest = semantic.StateDigest.ToArray(),
         };
     }
 
