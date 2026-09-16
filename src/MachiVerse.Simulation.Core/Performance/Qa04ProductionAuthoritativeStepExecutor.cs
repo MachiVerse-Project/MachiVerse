@@ -17,6 +17,7 @@ public sealed record Qa04ProductionAuthoritativeStepExecutionV1(
     ulong InjectionStep,
     ulong BasisStep,
     ulong ResultingStep,
+    OpaqueId128 CandidateId,
     int OperationCount,
     Qa04CanonicalOperationMutationStateV1 MutationState,
     IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> DomainAuthorities,
@@ -25,14 +26,13 @@ public sealed record Qa04ProductionAuthoritativeStepExecutionV1(
 /// <summary>
 /// Executes exactly one ordinary perf.reference.v1 production workload transition while preserving
 /// the complete authoritative State / SQLite Operation catalog / scheduler / typed mutation material
-/// from the previous transition. The caller owns CandidateId selection because no canonical QA-04
-/// multi-Step CandidateId derivation is currently specified; this seam never invents one.
+/// from the previous transition. CandidateId is always derived through the canonical QA-04 identity
+/// contract and registered in the caller-owned run-local collision guard.
 /// </summary>
 public static class Qa04ProductionAuthoritativeStepExecutorV1
 {
     public static async Task<Qa04ProductionAuthoritativeStepExecutionV1> ExecuteAsync(
         ulong injectionStep,
-        OpaqueId128 candidateId,
         int workerCount,
         WorldStateV1 partitionAuthorityState,
         Qa04CanonicalOperationMutationStateV1 mutationState,
@@ -41,10 +41,9 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactions,
         SqlitePersistenceStore store,
         OperationSchedulerStateV1 scheduler,
+        Qa04ProductionStepCandidateIdentityRegistryV1 candidateIdentities,
         CancellationToken cancellationToken = default)
     {
-        if (candidateId.IsZero)
-            throw new ArgumentException("CandidateId ZERO is invalid.", nameof(candidateId));
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.production-loop.worker-count-not-canonical");
         ArgumentNullException.ThrowIfNull(partitionAuthorityState);
@@ -54,6 +53,7 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
         ArgumentNullException.ThrowIfNull(crossDomainTransactions);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
+        ArgumentNullException.ThrowIfNull(candidateIdentities);
 
         var basisStep = checked(injectionStep + 1UL);
         if (partitionAuthorityState.Header.WorldId != Qa04ReferenceLoadV1.WorldId ||
@@ -65,6 +65,13 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
             throw new InvalidDataException("qa04.production-loop.current-step-scheduler-not-empty-before-admission");
         if (domainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-loop.domain-authority-count-not-97");
+
+        var candidateIdentity = candidateIdentities.DeriveAndRegister(
+            partitionAuthorityState.Header.WorldId,
+            basisStep);
+        if (candidateIdentity.TargetStep != checked(basisStep + 1UL))
+            throw new InvalidDataException("qa04.production-loop.candidate-target-step-drift");
+        var candidateId = candidateIdentity.CandidateId;
 
         var bindings = Qa04ReferenceLoadV1.OperationsForStep(injectionStep)
             .Select(descriptor => Qa04CanonicalOperationBindingV1.Bind(
@@ -174,6 +181,7 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
             injectionStep,
             basisStep,
             resultingStep,
+            candidateId,
             bindings.Length,
             mutation.State,
             Array.AsReadOnly(resultingAuthorities.CanonicalAuthorities.ToArray()),
