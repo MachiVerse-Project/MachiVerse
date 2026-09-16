@@ -131,7 +131,7 @@ public static class Qa04RunningSnapshotMeasurementExtensionsV1
 
         return MeasureSnapshotCowBarrierAsync(
             collector,
-            token => coordinator.TryFreezeWithCoreOwnerMaterialIfDueMeasuredAsync(
+            token => coordinator.TryFreezeWithCoreOwnerMaterialIfDueAsync(
                 finalizedState,
                 store,
                 supplementalOwnerMaterial,
