@@ -184,6 +184,7 @@ work branch
 10. CI高速化のためにproduction workload件数、assert、negative proof、決定論条件、authority境界、Snapshot/recovery/replay条件等を勝手に弱めないこと。**必要な証明量は維持し、まず証明の実装方法と再実行頻度を最適化する。**
 11. Artifactや過去runを再利用する場合、production / reduced / preflight / synthetic等のprovenanceを保持し、異なるevidence classを代替扱いしないこと。production evidenceが必要な判定にreduced / synthetic evidenceを混入させない。
 12. CI変更時は少なくとも、**何を証明するCIか / どの変更で無効化されるか / 既存CIとの重複はないか / 高コストの場合に再実行をどう抑制するか / timeoutの根拠**を確認すること。高コストCIを追加・大幅拡張した場合は、初回実測後に所要時間とボトルネックを確認し、明らかな無駄を残したまま「greenだから完了」としない。
+13. documentation-only / metadata-only 等、当該proofの実行結果へ影響しない変更で高コストCIが発火した場合は、その実行自体を「念のため必要」と正当化せず、trigger / invalidation / reuse設計の改善対象として扱うこと。
 
 ## 言語ルール
 
