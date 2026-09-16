@@ -11,24 +11,27 @@ public enum Qa04MeasurementPhaseV1 : byte
 }
 
 /// <summary>
-/// Harness-only finalized-Step phase convention for one perf.reference.v1 process run. Genesis is
-/// State(0); 9,000 finalized Steps are warm-up, the following 18,000 finalized Steps are measured,
-/// and later work is cooldown/snapshot drain. Phase classification never affects world semantics.
+/// Harness-only finalized-State phase convention for one perf.reference.v1 production process run.
+/// State(0) is persistence genesis authority and State(1) is the durable canonical production
+/// reference-world basis. Both are initialization. The following 9,000 workload transitions are
+/// warm-up, the next 18,000 workload transitions are measured, and later work is cooldown/snapshot
+/// drain. Phase classification never affects world semantics.
 /// </summary>
 public static class Qa04MeasurementPhaseContractV1
 {
     public const ulong GenesisStep = 0;
+    public const ulong InitializationBasisStep = Qa04ProductionReferenceWorldAssemblerV1.CanonicalBasisStep;
     public const ulong WarmUpStepCount = 9_000;
     public const ulong MeasurementStepCount = 18_000;
-    public const ulong WarmUpFirstFinalizedStep = 1;
-    public const ulong WarmUpLastFinalizedStep = WarmUpStepCount;
+    public const ulong WarmUpFirstFinalizedStep = InitializationBasisStep + 1;
+    public const ulong WarmUpLastFinalizedStep = InitializationBasisStep + WarmUpStepCount;
     public const ulong MeasurementFirstFinalizedStep = WarmUpLastFinalizedStep + 1;
-    public const ulong MeasurementLastFinalizedStep = WarmUpStepCount + MeasurementStepCount;
+    public const ulong MeasurementLastFinalizedStep = InitializationBasisStep + WarmUpStepCount + MeasurementStepCount;
 
     public static Qa04MeasurementPhaseV1 ClassifyFinalizedStep(ulong finalizedStep)
         => finalizedStep switch
         {
-            GenesisStep => Qa04MeasurementPhaseV1.Initialization,
+            <= InitializationBasisStep => Qa04MeasurementPhaseV1.Initialization,
             <= WarmUpLastFinalizedStep => Qa04MeasurementPhaseV1.WarmUp,
             <= MeasurementLastFinalizedStep => Qa04MeasurementPhaseV1.Measurement,
             _ => Qa04MeasurementPhaseV1.Cooldown,
@@ -49,11 +52,15 @@ public static class Qa04MeasurementPhaseContractV1
 
     public static void ValidateCanonicalContract()
     {
-        if (WarmUpStepCount != Qa04ReferenceLoadV1.WarmupSteps ||
+        if (InitializationBasisStep != 1 ||
+            WarmUpStepCount != Qa04ReferenceLoadV1.WarmupSteps ||
             MeasurementStepCount != Qa04ReferenceLoadV1.MeasurementSteps)
-            throw new InvalidDataException("qa04.measurement.phase-count-drift");
-        if (MeasurementLastFinalizedStep != 27_000)
-            throw new InvalidDataException("qa04.measurement.final-step-drift");
+            throw new InvalidDataException("qa04.measurement.phase-count-or-basis-drift");
+        if (WarmUpFirstFinalizedStep != 2 ||
+            WarmUpLastFinalizedStep != 9_001 ||
+            MeasurementFirstFinalizedStep != 9_002 ||
+            MeasurementLastFinalizedStep != 27_001)
+            throw new InvalidDataException("qa04.measurement.finalized-state-range-drift");
 
         var snapshotTriggers = StandardSnapshotTriggersInsideMeasurement();
         if (snapshotTriggers.Count != 1 || snapshotTriggers[0] != RunningSnapshotCoordinatorV1.StandardIntervalSteps)
