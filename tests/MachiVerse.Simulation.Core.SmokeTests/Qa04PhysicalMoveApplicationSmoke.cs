@@ -65,6 +65,23 @@ internal static class Qa04PhysicalMoveApplicationSmoke
             replayFromSamePreState.AppliedRecord.Payload == result.AppliedRecord.Payload,
             "physical move replay from the same pre-state must be deterministic");
 
+        var nextDescriptor = Qa04ReferenceLoadV1.OperationsForStep(2)
+            .First(static value => value.FamilyToken.Value == "physical-item-movement-work");
+        Require(nextDescriptor.FamilyOrdinal == descriptor.FamilyOrdinal,
+            "consecutive canonical physical workload must retain the same first target ordinal");
+        var nextBinding = Qa04CanonicalOperationBindingV1.Bind(nextDescriptor, schedulingPolicyGeneration: 1);
+        var nextResult = Qa04PhysicalMoveApplicationV1.Apply(nextBinding, result.PresenceState, references);
+        var expectedNextVelocity = new Vec3Int64V1(
+            Qa04ReferenceGenesisValueSourceV1.SmallSignedValue(nextDescriptor.OperationId, "vx"),
+            Qa04ReferenceGenesisValueSourceV1.SmallSignedValue(nextDescriptor.OperationId, "vy"),
+            0);
+        Require(nextResult.AppliedRecord.RecordId == result.AppliedRecord.RecordId &&
+                nextResult.AppliedRecord.Revision == 3 &&
+                nextResult.AppliedRecord.CreatedStep == 0 &&
+                nextResult.AppliedRecord.RetiredStep is null &&
+                nextResult.AppliedRecord.Payload.LinearVelocity == expectedNextVelocity,
+            "consecutive production Steps must advance the same Presence revision monotonically");
+
         var otherDescriptor = Qa04ReferenceLoadV1.OperationsForStep(1)
             .First(static value => value.FamilyToken.Value != "physical-item-movement-work");
         var otherBinding = Qa04CanonicalOperationBindingV1.Bind(otherDescriptor, schedulingPolicyGeneration: 1);
@@ -92,7 +109,7 @@ internal static class Qa04PhysicalMoveApplicationSmoke
             target.Presence.RecordId,
             target.Presence.RecordSchema,
             revision: 2,
-            target.Presence.CreatedStep,
+            createdStep: 1,
             target.Presence.RetiredStep,
             target.Presence.DetailLevel,
             target.Presence.LineageRef,
@@ -102,10 +119,6 @@ internal static class Qa04PhysicalMoveApplicationSmoke
             new[] { driftedTarget, nonTarget.Presence });
         ExpectInvalid(
             () => Qa04PhysicalMoveApplicationV1.Apply(binding, driftedState, references),
-            "qa04.physical.move-target-drift");
-
-        ExpectInvalid(
-            () => Qa04PhysicalMoveApplicationV1.Apply(binding, result.PresenceState, references),
             "qa04.physical.move-target-drift");
     }
 
