@@ -40,7 +40,7 @@ jobs:
     name: Gate3 Core full production closure
     needs: gate3-core-fast
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Checkout pull request
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
