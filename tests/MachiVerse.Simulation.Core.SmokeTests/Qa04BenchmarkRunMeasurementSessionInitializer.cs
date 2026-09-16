@@ -9,7 +9,12 @@ internal static class Qa04BenchmarkRunMeasurementSessionInitializer
             collector,
             workingSetBytes: static () => 1_234);
 
-        for (ulong step = 1; step <= Qa04MeasurementPhaseContractV1.WarmUpLastFinalizedStep; step++)
+        Require(session.LastFinalizedStep == Qa04MeasurementPhaseContractV1.InitializationBasisStep,
+            "QA-04 measurement session must start at the durable production State(1) basis.");
+
+        for (var step = Qa04MeasurementPhaseContractV1.WarmUpFirstFinalizedStep;
+             step <= Qa04MeasurementPhaseContractV1.WarmUpLastFinalizedStep;
+             step++)
         {
             await session.ExecuteFinalizingStepAsync(step, static _ => Task.CompletedTask);
         }
