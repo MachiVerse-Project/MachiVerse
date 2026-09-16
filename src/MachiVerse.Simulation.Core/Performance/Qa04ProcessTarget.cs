@@ -56,6 +56,10 @@ public static class Qa04ProcessTargetV1
                 "running-snapshot-probe" => await Qa04RunningSnapshotBridgeV1.RunReducedAsync(
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "production-reference-run" => await Qa04ProductionReferenceRunV1.RunCanonicalAsync(
+                    request.WorkerCount,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 _ => throw new InvalidDataException("qa04.target.command-unsupported"),
             };
 
@@ -94,6 +98,7 @@ public static class Qa04ProcessTargetV1
             DetailSubstateTwoStepBridgeAvailable = true,
             ReducedAuthoritativeStepLoopAvailable = true,
             RunningSnapshotBridgeAvailable = true,
+            ProductionReferenceRunAvailable = referenceWorldMaterialized && authoritativeStepLoopAvailable,
             ReferenceWorldMaterialized = referenceWorldMaterialized,
             AuthoritativeStepLoopAvailable = authoritativeStepLoopAvailable,
             ReleaseEvidenceCapable = false,
@@ -316,6 +321,7 @@ public sealed class Qa04ProcessInspectionV1
     public bool DetailSubstateTwoStepBridgeAvailable { get; set; }
     public bool ReducedAuthoritativeStepLoopAvailable { get; set; }
     public bool RunningSnapshotBridgeAvailable { get; set; }
+    public bool ProductionReferenceRunAvailable { get; set; }
     public bool ReferenceWorldMaterialized { get; set; }
     public bool AuthoritativeStepLoopAvailable { get; set; }
     public bool ReleaseEvidenceCapable { get; set; }
