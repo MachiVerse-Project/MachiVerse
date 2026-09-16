@@ -139,6 +139,30 @@ public static class Qa04RunningSnapshotMeasurementExtensionsV1
             cancellationToken);
     }
 
+    public static Task<RunningSnapshotCutV1?> TryFreezeWithCoreOwnerMaterialV2IfDueMeasuredAsync(
+        this RunningSnapshotCoordinatorV1 coordinator,
+        WorldStateV1 finalizedState,
+        SqlitePersistenceStore store,
+        IEnumerable<IFrozenCoreSnapshotOwnerMaterialV1> supplementalOwnerMaterial,
+        Qa04BenchmarkMetricCollectorV1 collector,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(coordinator);
+        ArgumentNullException.ThrowIfNull(finalizedState);
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(supplementalOwnerMaterial);
+        ArgumentNullException.ThrowIfNull(collector);
+
+        return MeasureSnapshotCowBarrierAsync(
+            collector,
+            token => coordinator.TryFreezeWithCoreOwnerMaterialV2IfDueAsync(
+                finalizedState,
+                store,
+                supplementalOwnerMaterial,
+                token),
+            cancellationToken);
+    }
+
     /// <summary>
     /// Generic harness seam for a caller-held COW/freeze barrier. Successful non-null materialization
     /// records one sample; null and exception paths never fabricate a successful barrier sample.
