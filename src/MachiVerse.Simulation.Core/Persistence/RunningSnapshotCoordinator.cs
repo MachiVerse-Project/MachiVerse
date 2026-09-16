@@ -62,13 +62,18 @@ public sealed class RunningSnapshotCoordinatorV1
         WorldStateV1 finalizedState,
         SqlitePersistenceStore store,
         CancellationToken cancellationToken = default)
-        => TryFreezeInternalAsync(finalizedState, store, supplementalOwnerMaterial: null, cancellationToken);
+        => TryFreezeInternalAsync(
+            finalizedState,
+            store,
+            supplementalOwnerMaterial: null,
+            operationAuthorityV2: false,
+            cancellationToken);
 
     /// <summary>
-    /// Strict running-snapshot freeze for the six Core recovery owners. Scheduler/Operation material
-    /// is read from the same SQLite recovery transaction as the snapshot head; detail/domain-registry/
-    /// Config material is supplied by its owning runtime and must independently recompute the frozen
-    /// authoritative digest. Missing/stale/digest-only substitutes fail closed before the cut is exposed.
+    /// Strict running-snapshot freeze for the six Core recovery owners using core.operation-state /1.0.
+    /// Scheduler/Operation material is read from the same SQLite recovery transaction as the snapshot
+    /// head; detail/domain-registry/Config material is supplied by its owning runtime and must
+    /// independently recompute the frozen authoritative digest.
     /// </summary>
     public Task<RunningSnapshotCutV1?> TryFreezeWithCoreOwnerMaterialIfDueAsync(
         WorldStateV1 finalizedState,
@@ -77,13 +82,40 @@ public sealed class RunningSnapshotCoordinatorV1
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(supplementalOwnerMaterial);
-        return TryFreezeInternalAsync(finalizedState, store, supplementalOwnerMaterial, cancellationToken);
+        return TryFreezeInternalAsync(
+            finalizedState,
+            store,
+            supplementalOwnerMaterial,
+            operationAuthorityV2: false,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Strict running-snapshot freeze for core.operation-state /2.0. The same SQLite recovery cut
+    /// freezes durable Operation rows and persistent CrossDomainTransaction rows, decodes the latter
+    /// at the frozen finalized Step, and validates the combined v2 authority before exposing the cut.
+    /// Existing v1 callers are unchanged.
+    /// </summary>
+    public Task<RunningSnapshotCutV1?> TryFreezeWithCoreOwnerMaterialV2IfDueAsync(
+        WorldStateV1 finalizedState,
+        SqlitePersistenceStore store,
+        IEnumerable<IFrozenCoreSnapshotOwnerMaterialV1> supplementalOwnerMaterial,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(supplementalOwnerMaterial);
+        return TryFreezeInternalAsync(
+            finalizedState,
+            store,
+            supplementalOwnerMaterial,
+            operationAuthorityV2: true,
+            cancellationToken);
     }
 
     private async Task<RunningSnapshotCutV1?> TryFreezeInternalAsync(
         WorldStateV1 finalizedState,
         SqlitePersistenceStore store,
         IEnumerable<IFrozenCoreSnapshotOwnerMaterialV1>? supplementalOwnerMaterial,
+        bool operationAuthorityV2,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(finalizedState);
@@ -107,9 +139,28 @@ public sealed class RunningSnapshotCoordinatorV1
             !CryptographicOperations.FixedTimeEquals(recovery.ConfigDigest, finalizedState.Diagnostic.ConfigDigest))
             throw new InvalidDataException("snapshot-running.config-authority-mismatch");
 
-        var operationAuthority = DurableOperationSubstateV1.Canonicalize(recovery.DurableOperations);
+        IReadOnlyList<CrossDomainTransactionStateV1>? transactions = null;
+        WorldSubstateRefV1 operationAuthority;
+        if (operationAuthorityV2)
+        {
+            transactions = CoreOperationStateSnapshotCutV2.DecodeTransactions(
+                recovery.CrossDomainTransactions,
+                recovery.FinalizedStep);
+            operationAuthority = CoreOperationStateSubstateV2.Canonicalize(
+                recovery.DurableOperations,
+                transactions,
+                recovery.FinalizedStep);
+        }
+        else
+        {
+            operationAuthority = DurableOperationSubstateV1.Canonicalize(recovery.DurableOperations);
+        }
+
         if (!SubstateEquals(finalizedState.OperationState, operationAuthority))
-            throw new InvalidDataException("snapshot-running.operation-authority-mismatch");
+            throw new InvalidDataException(operationAuthorityV2
+                ? "snapshot-running.operation-v2-authority-mismatch"
+                : "snapshot-running.operation-authority-mismatch");
+
         var schedulerProjection = new OperationSchedulerStateV1(
             nextSchedulableStep: finalizedState.Header.Step,
             freezeStep: null,
@@ -123,11 +174,18 @@ public sealed class RunningSnapshotCoordinatorV1
         CoreSnapshotOwnerMaterialCutV1? coreOwnerMaterial = null;
         if (supplementalOwnerMaterial is not null)
         {
-            coreOwnerMaterial = CoreSnapshotOwnerMaterialCutV1.Create(
-                finalizedState,
-                recovery.DurableOperations,
-                recovery.ScheduledOperations,
-                supplementalOwnerMaterial);
+            coreOwnerMaterial = operationAuthorityV2
+                ? CoreSnapshotOwnerMaterialCutV1.CreateV2(
+                    finalizedState,
+                    recovery.DurableOperations,
+                    recovery.ScheduledOperations,
+                    transactions ?? throw new InvalidDataException("snapshot-running.operation-v2-material-missing"),
+                    supplementalOwnerMaterial)
+                : CoreSnapshotOwnerMaterialCutV1.Create(
+                    finalizedState,
+                    recovery.DurableOperations,
+                    recovery.ScheduledOperations,
+                    supplementalOwnerMaterial);
         }
 
         var snapshotId = DeriveSnapshotId(
