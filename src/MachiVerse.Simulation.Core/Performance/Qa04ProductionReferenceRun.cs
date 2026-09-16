@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.Runtime;
@@ -19,6 +20,11 @@ public sealed record Qa04ProductionReferenceRunResultV1(
     bool SnapshotCowFrozen,
     ulong SnapshotStep,
     bool SnapshotDrainCompleted,
+    int SnapshotSectionCount,
+    int SnapshotChunkCount,
+    string SnapshotDigest,
+    string SnapshotPhysicalManifestDigest,
+    string SnapshotRecoveredStateDigest,
     Qa04PerformanceMeasurementSnapshotV1 Measurement,
     bool PerformanceThresholdsPassed,
     int AcceptedOperationLoss,
@@ -34,14 +40,13 @@ public sealed record Qa04ProductionReferenceRunResultV1(
 /// SQLite COMMIT and publish boundary. No Step reinitializes the world.
 ///
 /// The standard State(18000) running-Snapshot COW cut is frozen through the v2 production
-/// coordinator and measured. Physical drain/commit remains a separate Gate-4 benchmark closure and
-/// is reported fail-closed until it is connected; the cut is abandoned only after all transitions
-/// finish so the production process never fabricates a completed Snapshot.
+/// coordinator and measured. Its exact 6 Core + 97 Domain authority is retained while later Steps
+/// continue, then drained, atomically committed, durably recovered and semantically rehashed after
+/// State(27001). Snapshot drain is cooldown work and is not included in Step wall-time samples.
 /// </summary>
 public static class Qa04ProductionReferenceRunV1
 {
     public const int CanonicalTransitionCount = 27_000;
-    private const string SnapshotDrainIncompleteCode = "qa04.measurement.snapshot-drain-not-completed";
 
     public static async Task<Qa04ProductionReferenceRunResultV1> RunCanonicalAsync(
         int workerCount,
@@ -103,6 +108,7 @@ public static class Qa04ProductionReferenceRunV1
         var currentMutationState = assembly.MutationState;
         IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> currentDomainAuthorities = assembly.BasisDomainAuthorities;
         var commitMetricAttached = false;
+        var snapshotCommitted = false;
 
         try
         {
@@ -180,17 +186,26 @@ public static class Qa04ProductionReferenceRunV1
                 frozenDomainAuthorities?.CanonicalAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
                 throw new InvalidDataException("qa04.production-run.snapshot-freeze-incomplete");
 
+            var snapshot = await DrainCommitAndRecoverSnapshotAsync(
+                snapshotCoordinator,
+                frozenSnapshot,
+                frozenDomainAuthorities,
+                store,
+                paths,
+                cancellationToken).ConfigureAwait(false);
+            snapshotCommitted = true;
+
+            if (!CryptographicOperations.FixedTimeEquals(
+                    snapshot.RecoveredStateDigest,
+                    frozenSnapshot.FrozenState.Diagnostic.StateDigest))
+                throw new InvalidDataException("qa04.production-run.snapshot-semantic-rehash-drift");
+
             var measurementSnapshot = measurement.Snapshot();
             var performance = Qa04PerformanceThresholdsV1.EvaluateCompleteMeasurement(
                 measurementSnapshot,
                 acceptedOperationLossCount: 0,
                 hiddenSolverIterationReductionCount: 0,
                 persistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount);
-            var failures = performance.FailureCodes
-                .Append(SnapshotDrainIncompleteCode)
-                .Distinct(StringComparer.Ordinal)
-                .OrderBy(static code => code, StringComparer.Ordinal)
-                .ToArray();
 
             var finalHistory = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
             var finalRecovery = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
@@ -217,20 +232,126 @@ public static class Qa04ProductionReferenceRunV1
                 CandidateIdSequenceDigest: Hex(candidateDigest),
                 SnapshotCowFrozen: true,
                 SnapshotStep: frozenSnapshot.SnapshotStep,
-                SnapshotDrainCompleted: false,
+                SnapshotDrainCompleted: true,
+                SnapshotSectionCount: snapshot.SectionCount,
+                SnapshotChunkCount: snapshot.ChunkCount,
+                SnapshotDigest: Hex(snapshot.SnapshotDigest),
+                SnapshotPhysicalManifestDigest: Hex(snapshot.PhysicalManifestDigest),
+                SnapshotRecoveredStateDigest: Hex(snapshot.RecoveredStateDigest),
                 Measurement: measurementSnapshot,
                 PerformanceThresholdsPassed: performance.Passed,
                 AcceptedOperationLoss: 0,
                 HiddenSolverIterationReduction: false,
                 PersistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount,
-                Passed: false,
-                FailureCodes: Array.AsReadOnly(failures));
+                Passed: performance.Passed,
+                FailureCodes: performance.FailureCodes);
         }
         finally
         {
-            if (frozenSnapshot is not null)
+            if (frozenSnapshot is not null && !snapshotCommitted)
                 snapshotCoordinator.Abandon(frozenSnapshot);
         }
+    }
+
+    private static async Task<Qa04ProductionExact103SnapshotPersistenceProofV1> DrainCommitAndRecoverSnapshotAsync(
+        RunningSnapshotCoordinatorV1 coordinator,
+        RunningSnapshotCutV1 cut,
+        DomainPartitionSnapshotAuthoritySetV1 domainAuthorities,
+        SqlitePersistenceStore store,
+        WorldPersistencePaths world,
+        CancellationToken cancellationToken)
+    {
+        var coreOwnerMaterial = cut.CoreOwnerMaterial
+            ?? throw new InvalidDataException("qa04.production-run.snapshot-core-owner-material-missing");
+        if (!coreOwnerMaterial.HasOperationAuthorityV2)
+            throw new InvalidDataException("qa04.production-run.snapshot-operation-v2-missing");
+
+        var providers = StandardDomainSnapshotOwnerCompositionV1.CreateAllProviders();
+        var sections = StandardSnapshotStreamingOwnerCompositionV1.CreateAll103WithTerrainV2(
+            coreOwnerMaterial,
+            domainAuthorities,
+            providers);
+        if (sections.Count != 103 ||
+            sections.Count != SnapshotManifestValidation.StandardRequiredSectionCount)
+            throw new InvalidDataException("qa04.production-run.snapshot-section-count-not-103");
+
+        var coreSectionCount = sections.Count(static section => StandardSnapshotSectionSetV1.IsCoreSection(section.SectionId));
+        var domainSectionCount = sections.Count(static section => StandardDomainPartitionRegistry.TryGet(section.SectionId, out _));
+        if (coreSectionCount != 6 || domainSectionCount != 97)
+            throw new InvalidDataException("qa04.production-run.snapshot-section-owner-count-drift");
+
+        ulong domainLogicalRecordCount = 0;
+        foreach (var section in sections)
+        {
+            if (StandardDomainPartitionRegistry.TryGet(section.SectionId, out _))
+                domainLogicalRecordCount = checked(domainLogicalRecordCount + section.LogicalItemCount);
+        }
+
+        var physical = SnapshotPhysicalStaging.Prepare(world, cut.SnapshotId);
+        var config = Qa04ReferenceConfigAuthorityV1.CreateCanonical();
+        var zstd = new ZstdSnapshotChunkCompressionCodecV1();
+        var staged = await CanonicalSnapshotProductionManifestDrainV1.StageRunningCutStreamingAsync(
+            cut,
+            physical,
+            sections,
+            config,
+            Qa04ReferenceLoadV1.WorldSeed,
+            zstdCodec: zstd,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (staged.Manifest.Logical.Sections.Count != 103 || staged.Chunks.Count == 0)
+            throw new InvalidDataException("qa04.production-run.snapshot-staged-material-incomplete");
+
+        var committed = await coordinator.CommitDrainedAsync(
+            cut,
+            store,
+            world,
+            physical,
+            staged.SnapshotDigest,
+            staged.PhysicalManifestDigest,
+            async (candidate, token) =>
+            {
+                var manifest = await SnapshotPhysicalManifestStagingValidationV1.ValidateAsync(
+                    candidate,
+                    cancellationToken: token).ConfigureAwait(false);
+                SnapshotPhysicalManifestStreamingAuthorityValidationV1.RequireExpectedAuthority(
+                    manifest,
+                    sections,
+                    cut.FrozenState,
+                    cut,
+                    staged.SnapshotDigest,
+                    staged.PhysicalManifestDigest);
+            },
+            cancellationToken).ConfigureAwait(false);
+        if (committed.SnapshotId != cut.SnapshotId || committed.SnapshotStep != cut.SnapshotStep)
+            throw new InvalidDataException("qa04.production-run.snapshot-commit-receipt-drift");
+
+        var persisted = new Qa04ProductionExact103SnapshotPersistenceProofV1(
+            cut.SnapshotStep,
+            sections.Count,
+            coreSectionCount,
+            domainSectionCount,
+            staged.Chunks.Count,
+            domainLogicalRecordCount,
+            staged.SnapshotDigest.ToArray(),
+            staged.PhysicalManifestDigest.ToArray());
+        var recovered = await Qa04ProductionExact103SnapshotRecoveryProofRunnerV1.VerifyAsync(
+            persisted,
+            store,
+            world,
+            cancellationToken).ConfigureAwait(false);
+        if (recovered.SnapshotStep != cut.SnapshotStep ||
+            recovered.SectionCount != 103 ||
+            recovered.CoreSectionCount != 6 ||
+            recovered.DomainSectionCount != 97 ||
+            recovered.ChunkCount != staged.Chunks.Count ||
+            recovered.DomainLogicalRecordCount != domainLogicalRecordCount ||
+            recovered.RecoveredStateDigest.Length != 32)
+            throw new InvalidDataException("qa04.production-run.snapshot-recovery-drift");
+
+        return persisted with
+        {
+            RecoveredStateDigest = recovered.RecoveredStateDigest.ToArray(),
+        };
     }
 
     private static async Task<byte[]> InitializePersistenceGenesisAsync(
