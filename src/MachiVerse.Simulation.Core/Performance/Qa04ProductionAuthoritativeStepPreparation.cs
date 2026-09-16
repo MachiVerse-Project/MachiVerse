@@ -5,10 +5,11 @@ using MachiVerse.Simulation.Core.WorldState;
 namespace MachiVerse.Simulation.Core.Performance;
 
 /// <summary>
-/// Gate-2 Step 13 preparation boundary. It requires the completed production reference-world
-/// authority contract and the full steady perf.reference.v1 workload, preserves the actual
-/// eight-domain runtime outputs, overlays only the six typed mutation partition candidates owned by
-/// those domains, and then enters the ordinary StepCandidate / Prepare authority path.
+/// Production QA-04 authoritative-Step preparation boundary. It requires the completed production
+/// reference-world authority contract and the exact canonical perf.reference.v1 workload for the
+/// current basis Step, preserves the actual eight-domain runtime outputs, overlays only the six
+/// typed mutation partition candidates owned by those domains, and then enters the ordinary
+/// StepCandidate / Prepare authority path.
 ///
 /// This boundary does not cross SQLite COMMIT or publish State(S+1); finalization remains owned by
 /// Qa04CanonicalOperationStepFinalizationV1.
@@ -37,9 +38,12 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         Qa04ReferenceWorldMaterialContractV1.RequireAllProductionMaterializersAvailable();
         Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
 
-        var expectedOperationCount = checked((int)Qa04ReferenceLoadV1.OperationCountForStep(0));
-        if (expectedOperationCount != checked((int)Qa04ReferenceLoadV1.SteadyOperationsPerStep) ||
-            orderedBindings.Count != expectedOperationCount ||
+        if (basisState.Header.Step == 0)
+            throw new InvalidDataException("qa04.production-step.basis-step-zero");
+        var injectionStep = checked(basisState.Header.Step - 1UL);
+        var expectedDescriptors = Qa04ReferenceLoadV1.OperationsForStep(injectionStep).ToArray();
+        var expectedOperationCount = expectedDescriptors.Length;
+        if (orderedBindings.Count != expectedOperationCount ||
             frozenInput.ScheduledOperations.Count != expectedOperationCount ||
             mutationResult.AppliedOperationIds.Count != expectedOperationCount)
         {
@@ -53,10 +57,12 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             throw new InvalidDataException("qa04.production-step.basis-drift");
         }
 
-        var expectedFamilyCounts = Qa04ReferenceLoadV1.OperationFamilies.ToDictionary(
-            static family => family.FamilyToken.Value,
-            static family => checked(Qa04ReferenceLoadV1.SteadyOperationsPerStep * family.SharePermille / 1_000UL),
-            StringComparer.Ordinal);
+        var expectedFamilyCounts = expectedDescriptors
+            .GroupBy(static descriptor => descriptor.FamilyToken.Value, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => checked((ulong)group.LongCount()),
+                StringComparer.Ordinal);
         if (mutationResult.AppliedCountByFamily.Count != expectedFamilyCounts.Count ||
             expectedFamilyCounts.Any(pair =>
                 !mutationResult.AppliedCountByFamily.TryGetValue(pair.Key, out var actual) || actual != pair.Value))
@@ -64,11 +70,18 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             throw new InvalidDataException("qa04.production-step.family-coverage-drift");
         }
 
+        var expectedByOperationId = expectedDescriptors.ToDictionary(static descriptor => descriptor.OperationId);
+        var observedOperationIds = new HashSet<OpaqueId128>();
         for (var index = 0; index < orderedBindings.Count; index++)
         {
             var binding = orderedBindings[index];
             var frozen = frozenInput.ScheduledOperations[index];
-            if (binding.SourceDescriptor.InjectionStep != 0 ||
+            if (!expectedByOperationId.TryGetValue(binding.SourceDescriptor.OperationId, out var expected) ||
+                !observedOperationIds.Add(binding.SourceDescriptor.OperationId) ||
+                binding.SourceDescriptor.InjectionStep != injectionStep ||
+                binding.SourceDescriptor.FamilyToken != expected.FamilyToken ||
+                binding.SourceDescriptor.FamilyOrdinal != expected.FamilyOrdinal ||
+                !binding.SourceDescriptor.PayloadDigest.AsSpan().SequenceEqual(expected.PayloadDigest) ||
                 binding.ScheduledOperation.EffectiveStep != basisState.Header.Step ||
                 frozen.OperationId != binding.SourceDescriptor.OperationId ||
                 mutationResult.AppliedOperationIds[index] != frozen.OperationId ||
@@ -77,6 +90,8 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
                 throw new InvalidDataException("qa04.production-step.operation-order-drift");
             }
         }
+        if (observedOperationIds.Count != expectedByOperationId.Count)
+            throw new InvalidDataException("qa04.production-step.operation-set-drift");
 
         var plan = StandardDomainExecutionPlanV1.Create();
         var runtimeByDomain = runtimeOutputs.ToDictionary(static output => output.DomainToken);
