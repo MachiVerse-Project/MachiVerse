@@ -6,9 +6,11 @@ using MachiVerse.Simulation.Core.WorldState;
 namespace MachiVerse.Simulation.Core.Performance;
 
 /// <summary>
-/// Binds the ordinary scheduler and durable-operation core substates into a QA-04 production
+/// Binds the ordinary scheduler and complete durable-operation catalog into a QA-04 production
 /// State(S). Partition authority is supplied by the caller and is preserved byte-for-byte; this
-/// component does not invent or synthesize reference-world partition material.
+/// component does not invent or synthesize reference-world partition material. Scheduled authority
+/// may include the current/future scheduler buckets while already-finalized Operations remain in the
+/// durable catalog as TerminalDurable history authority across consecutive production Steps.
 /// </summary>
 public static class Qa04ProductionStepBasisAuthorityV1
 {
@@ -124,26 +126,58 @@ public static class Qa04ProductionStepBasisAuthorityV1
         if (scheduler.NextSchedulableStep != basisStep)
             throw new InvalidDataException("qa04.production-step.scheduler-basis-mismatch");
 
-        var scheduled = scheduler.ForEffectiveStep(basisStep);
-        if (scheduled.Count != durableOperations.Count)
-            throw new InvalidDataException("qa04.production-step.scheduler-durable-count-mismatch");
-
         var durableById = durableOperations.ToDictionary(static state => state.OperationId);
         if (durableById.Count != durableOperations.Count)
             throw new InvalidDataException("qa04.production-step.durable-operation-duplicate");
 
-        foreach (var operation in scheduled)
+        var scheduledById = new Dictionary<MachiVerse.Simulation.Core.Determinism.OpaqueId128, ScheduledOperationRefV1>();
+        foreach (var bucket in scheduler.CanonicalBuckets)
         {
-            if (!durableById.TryGetValue(operation.OperationId, out var durable))
-                throw new InvalidDataException("qa04.production-step.scheduled-operation-not-durable");
-            if (durable.Lifecycle != DurableOperationLifecycleV1.ScheduledDurable ||
-                durable.EffectiveStep != basisStep)
-                throw new InvalidDataException("qa04.production-step.durable-operation-not-scheduled-for-basis");
+            if (bucket.Key < basisStep)
+                throw new InvalidDataException("qa04.production-step.scheduler-past-bucket-retained");
+            foreach (var operation in bucket.Value)
+            {
+                if (!scheduledById.TryAdd(operation.OperationId, operation))
+                    throw new InvalidDataException("qa04.production-step.scheduler-operation-duplicate");
+                if (operation.EffectiveStep != bucket.Key)
+                    throw new InvalidDataException("qa04.production-step.scheduler-bucket-effective-step-drift");
+                if (!durableById.TryGetValue(operation.OperationId, out var durable))
+                    throw new InvalidDataException("qa04.production-step.scheduled-operation-not-durable");
+                if (durable.Lifecycle != DurableOperationLifecycleV1.ScheduledDurable ||
+                    durable.EffectiveStep != operation.EffectiveStep)
+                    throw new InvalidDataException("qa04.production-step.durable-operation-not-scheduled-for-bucket");
+            }
         }
 
-        if (durableById.Values.Any(state =>
-                state.Lifecycle != DurableOperationLifecycleV1.ScheduledDurable ||
-                state.EffectiveStep != basisStep))
-            throw new InvalidDataException("qa04.production-step.unexpected-durable-operation-state");
+        foreach (var durable in durableOperations)
+        {
+            switch (durable.Lifecycle)
+            {
+                case DurableOperationLifecycleV1.AcceptedDurable:
+                    throw new InvalidDataException("qa04.production-step.accepted-operation-not-scheduled");
+
+                case DurableOperationLifecycleV1.ScheduledDurable:
+                    if (durable.EffectiveStep is null || durable.EffectiveStep < basisStep ||
+                        !scheduledById.TryGetValue(durable.OperationId, out var scheduled) ||
+                        scheduled.EffectiveStep != durable.EffectiveStep)
+                    {
+                        throw new InvalidDataException("qa04.production-step.durable-scheduled-operation-not-in-scheduler");
+                    }
+                    break;
+
+                case DurableOperationLifecycleV1.TerminalDurable:
+                    if (durable.EffectiveStep is null || durable.EffectiveStep >= basisStep ||
+                        durable.TerminalSequence is null || durable.TerminalStatus is null ||
+                        string.IsNullOrWhiteSpace(durable.ResultCode) ||
+                        scheduledById.ContainsKey(durable.OperationId))
+                    {
+                        throw new InvalidDataException("qa04.production-step.terminal-operation-history-invalid");
+                    }
+                    break;
+
+                default:
+                    throw new InvalidDataException("qa04.production-step.durable-operation-lifecycle-invalid");
+            }
+        }
     }
 }
