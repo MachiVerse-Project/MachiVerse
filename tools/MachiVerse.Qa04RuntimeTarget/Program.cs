@@ -97,7 +97,11 @@ internal static class Program
             throw new InvalidDataException("Simulation Core worker probe did not prove the requested worker count and reference-world readiness boundary.");
 
         if (string.Equals(request.ExecutionClass, "contract-smoke", StringComparison.Ordinal))
+        {
+            if (ConnectionProbeRequested(request.Profile))
+                return await ContractSmokeConnectionProbeAsync(request, run, inspection, probe, coreExecutable);
             return ContractSmokeBenchmark(request, run, inspection, probe);
+        }
 
         return await ReleaseBenchmarkAsync(request, run, inspection, probe, coreExecutable);
     }
@@ -149,6 +153,119 @@ internal static class Program
                 hidden_solver_iteration_reduction = false,
                 failure_codes = failures,
             });
+    }
+
+    private static async Task<Response> ContractSmokeConnectionProbeAsync(
+        Request request,
+        RunDescriptor run,
+        Inspection inspection,
+        WorkerProbe workerProbe,
+        string coreExecutable)
+    {
+        if (!inspection.ProductionReferenceConnectionProbeAvailable)
+            throw new InvalidDataException("Simulation Core production reference connection probe is not available.");
+        if (inspection.BlockingFailureCodes.Length != 0)
+            throw new InvalidDataException("Simulation Core production reference connection probe still has blocking failures.");
+
+        var persistenceRoot = Path.Combine(
+            Path.GetTempPath(),
+            "machiverse-qa04-connection-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var connection = await InvokeCoreAsync<ProductionReferenceConnectionProbe>(
+                coreExecutable,
+                new
+                {
+                    schemaVersion = "1.0",
+                    command = "production-reference-connection-probe",
+                    workerCount = run.WorkerCount,
+                    persistenceRoot,
+                },
+                timeout: null);
+            ValidateProductionReferenceConnectionProbe(connection, run);
+
+            var failures = MergeFailures(BenchmarkMeasurementCode);
+            return NewResponse(
+                request,
+                "performance-benchmark-report-v1",
+                referenceWorldMaterialized: true,
+                releaseEvidenceCapable: false,
+                blockingFailureCodes: [],
+                passed: false,
+                failures,
+                new
+                {
+                    benchmark_profile_id = ReferenceProfile,
+                    build_version = request.SourceCommit,
+                    runtime_version = "assembled-core-production-connection-probe.v1",
+                    hardware_profile_digest = HardwareProfileDigest(),
+                    config_digest = inspection.CanonicalConfigDigest,
+                    worker_count = run.WorkerCount,
+                    run_ordinal = run.RunOrdinal,
+                    step_count = 0,
+                    step_p50_ms = MissingMetricSentinelMilliseconds,
+                    step_p95_ms = MissingMetricSentinelMilliseconds,
+                    step_p99_ms = MissingMetricSentinelMilliseconds,
+                    step_mean_60s_ms = MissingMetricSentinelMilliseconds,
+                    domain_cpu_summary = new
+                    {
+                        measured = false,
+                        configured_worker_count = workerProbe.WorkerCount,
+                        max_observed_probe_concurrency = workerProbe.MaxObservedConcurrency,
+                    },
+                    max_memory_bytes = long.MaxValue,
+                    persistence_commit_p95_ms = MissingMetricSentinelMilliseconds,
+                    persistence_commit_p99_ms = MissingMetricSentinelMilliseconds,
+                    snapshot_summary = new { cow_barrier_p95_ms = MissingMetricSentinelMilliseconds, measured = false },
+                    publication_summary = new { measured = false },
+                    final_state_digest = connection.FinalStateDigest,
+                    accepted_operation_loss = 0,
+                    hidden_solver_iteration_reduction = false,
+                    connection_probe = new
+                    {
+                        production_executor_observed = connection.ProductionExecutorObserved,
+                        real_sqlite_commit_observed = connection.RealSqliteCommitObserved,
+                        transition_count = connection.TransitionCount,
+                        basis_step = connection.BasisStep,
+                        finalized_step = connection.FinalizedStep,
+                        reference_initial_record_count = connection.ReferenceInitialRecordCount,
+                        domain_authority_count = connection.DomainAuthorityCount,
+                        operation_count = connection.OperationCount,
+                        final_history_sequence = connection.FinalHistorySequence,
+                        final_history_digest = connection.FinalHistoryDigest,
+                        final_continuity_token = connection.FinalContinuityToken,
+                        candidate_id_sequence_digest = connection.CandidateIdSequenceDigest,
+                    },
+                    failure_codes = failures,
+                });
+        }
+        finally
+        {
+            if (Directory.Exists(persistenceRoot))
+                Directory.Delete(persistenceRoot, recursive: true);
+        }
+    }
+
+    private static void ValidateProductionReferenceConnectionProbe(
+        ProductionReferenceConnectionProbe connection,
+        RunDescriptor run)
+    {
+        if (!string.Equals(connection.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+            !string.Equals(connection.ProfileId, ReferenceProfile, StringComparison.Ordinal) ||
+            connection.WorkerCount != run.WorkerCount ||
+            connection.TransitionCount != 2 ||
+            connection.BasisStep != 1 ||
+            connection.FinalizedStep != 3 ||
+            connection.ReferenceInitialRecordCount != 6_760_000 ||
+            connection.DomainAuthorityCount != 97 ||
+            connection.OperationCount != 10_000 ||
+            !connection.RealSqliteCommitObserved ||
+            !connection.ProductionExecutorObserved)
+            throw new InvalidDataException("Simulation Core production reference connection probe drifted from the bounded Gate-4 contract.");
+        RequireLowerHex(connection.FinalStateDigest, 64, "connection finalStateDigest");
+        RequireLowerHex(connection.FinalHistoryDigest, 64, "connection finalHistoryDigest");
+        RequireLowerHex(connection.FinalContinuityToken, 64, "connection finalContinuityToken");
+        RequireLowerHex(connection.CandidateIdSequenceDigest, 64, "connection candidateIdSequenceDigest");
     }
 
     private static async Task<Response> ReleaseBenchmarkAsync(
@@ -364,7 +481,7 @@ internal static class Program
             !string.Equals(inspection.ProfileId, ReferenceProfile, StringComparison.Ordinal) ||
             inspection.StandardDomainCount != 8 || inspection.StandardPartitionCount != 97 ||
             !inspection.ReferenceWorldMaterialized || !inspection.AuthoritativeStepLoopAvailable || inspection.ReleaseEvidenceCapable ||
-            !inspection.ProductionReferenceRunAvailable)
+            !inspection.ProductionReferenceConnectionProbeAvailable || !inspection.ProductionReferenceRunAvailable)
             throw new InvalidDataException("Simulation Core QA-04 target inspection boundary is inconsistent.");
         if (!inspection.CanonicalWorkerCounts.SequenceEqual(new[] { 1, 4, 8, 16 }))
             throw new InvalidDataException("Simulation Core QA-04 canonical worker set drifted.");
@@ -444,6 +561,11 @@ internal static class Program
             FailureCodes = failures,
             Report = JsonSerializer.SerializeToElement(report, Json),
         };
+
+    private static bool ConnectionProbeRequested(JsonElement profile)
+        => profile.ValueKind == JsonValueKind.Object &&
+           profile.TryGetProperty("connectionProbe", out var requested) &&
+           requested.ValueKind == JsonValueKind.True;
 
     private static string HardwareProfileDigest()
     {
@@ -531,6 +653,7 @@ internal static class Program
         public int[] CanonicalWorkerCounts { get; set; } = [];
         public int StandardDomainCount { get; set; }
         public int StandardPartitionCount { get; set; }
+        public bool ProductionReferenceConnectionProbeAvailable { get; set; }
         public bool ProductionReferenceRunAvailable { get; set; }
         public bool ReferenceWorldMaterialized { get; set; }
         public bool AuthoritativeStepLoopAvailable { get; set; }
@@ -549,6 +672,26 @@ internal static class Program
         public bool ReferenceWorldMaterialized { get; set; }
         public bool ReleaseEvidenceCapable { get; set; }
         public string[] BlockingFailureCodes { get; set; } = [];
+    }
+
+    private sealed class ProductionReferenceConnectionProbe
+    {
+        public string SchemaVersion { get; set; } = "";
+        public string ProfileId { get; set; } = "";
+        public int WorkerCount { get; set; }
+        public int TransitionCount { get; set; }
+        public ulong BasisStep { get; set; }
+        public ulong FinalizedStep { get; set; }
+        public ulong ReferenceInitialRecordCount { get; set; }
+        public int DomainAuthorityCount { get; set; }
+        public int OperationCount { get; set; }
+        public string FinalStateDigest { get; set; } = "";
+        public ulong FinalHistorySequence { get; set; }
+        public string FinalHistoryDigest { get; set; } = "";
+        public string FinalContinuityToken { get; set; } = "";
+        public string CandidateIdSequenceDigest { get; set; } = "";
+        public bool RealSqliteCommitObserved { get; set; }
+        public bool ProductionExecutorObserved { get; set; }
     }
 
     private sealed class ProductionReferenceRun
