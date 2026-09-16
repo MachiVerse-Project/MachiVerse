@@ -170,6 +170,21 @@ work branch
 4. キャッシュ有無で検証結果の正否が変わらない構成にする。
 5. CI時間短縮だけを理由に必要な検証を無断で省略しない。
 
+### 検証コスト・重複proof・再実行抑制
+
+1. CI / Workflow / Job を新設または拡張する前に、**その検証だけが新たに証明する事実**を明確にすること。既存CIと同じ入力・同じassert・同じauthority境界を再確認するだけのJobを、安心感だけを理由に追加しない。
+2. 既存CIと責務が重なる場合は、まず既存Jobへの統合、共通fixture / runnerの再利用、または既存の成功evidenceを安全に再利用できるかを検討すること。検証の重複を残す場合は、異なるfailure modeや独立した証明境界など重複が必要な理由を説明できる状態にすること。
+3. 高コストなproduction / integration / determinism / soak系CIは、**そのproofへ影響する入力が変わった時、Gate等の完了判定時、release境界、または明示的な再検証が必要な時**に実行することを原則とする。無関係な変更で同じfull proofを無条件に繰り返さない。
+4. trigger / path filter は実際の依存関係を表現すること。`src/<component>/**` のような広い指定を使う場合は、その配下の任意変更が本当に当該proofを無効化するか確認すること。依存関係を追跡できるなら、より狭い入力集合を優先する。
+5. 長寿命PRでは `pull_request.paths` がPR全体の累積差分に反応し続けることを考慮すること。高コストCIの再実行判定をpath filterだけへ依存させず、必要に応じて**直近の有効な成功proof以降に関連入力が変わったか**、または関連入力のcontent fingerprintが変わったかで判定する。
+6. 過去の成功evidenceを再利用する場合はfail-closedとする。関連入力が変化したか判定できない、成功runのprovenanceが不明、base/branch条件が互換か確認できない、または直近の関連変更後に失敗がある場合は再実行すること。無関係な後続commitで以前の関連failureを隠さない。
+7. fast / contract / schema / build等の低コストcheckと、full production proof、release full sweepを分離すること。current headの基本健全性確認のために軽量checkを常時実行しつつ、重いproofは影響範囲に応じて実行する。
+8. CIが長時間化した場合、最初にworkloadやassertを削ったりtimeoutを伸ばしたりせず、stageごとの実測時間を取り、不要な再materialization、全件copy、重複I/O、同一計算の再実行、O(N²)等の実装上の反復コストを調査すること。
+9. timeout延長は、処理が正当であり実測上必要と確認できた場合の安全余裕として使用すること。原因未調査の性能劣化、hang、アルゴリズム上の無駄をtimeout延長だけで恒久対応しない。
+10. CI高速化のためにproduction workload件数、assert、negative proof、決定論条件、authority境界、Snapshot/recovery/replay条件等を勝手に弱めないこと。**必要な証明量は維持し、まず証明の実装方法と再実行頻度を最適化する。**
+11. Artifactや過去runを再利用する場合、production / reduced / preflight / synthetic等のprovenanceを保持し、異なるevidence classを代替扱いしないこと。production evidenceが必要な判定にreduced / synthetic evidenceを混入させない。
+12. CI変更時は少なくとも、**何を証明するCIか / どの変更で無効化されるか / 既存CIとの重複はないか / 高コストの場合に再実行をどう抑制するか / timeoutの根拠**を確認すること。高コストCIを追加・大幅拡張した場合は、初回実測後に所要時間とボトルネックを確認し、明らかな無駄を残したまま「greenだから完了」としない。
+
 ## 言語ルール
 
 1. このリポジトリは日本語を基準言語とする。
