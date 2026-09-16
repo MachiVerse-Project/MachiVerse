@@ -136,7 +136,9 @@ public static class Qa04ProductionGate3Step7NegativeRecoveryProofRunnerV1
     private static string ProveMissingRequiredSectionRejected(
         IReadOnlyList<CanonicalSnapshotRecoveredSectionV1> recoveredSections)
     {
-        var material = recoveredSections.Select(ToValidationMaterial).ToArray();
+        var material = recoveredSections
+            .Select(static section => ToValidationMaterial(section))
+            .ToArray();
         var missingSection = recoveredSections.First(static section =>
             StandardDomainPartitionRegistry.TryGet(section.SectionId, out _));
         var missing = material
