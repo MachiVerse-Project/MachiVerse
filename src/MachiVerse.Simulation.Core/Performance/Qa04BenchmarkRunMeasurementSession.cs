@@ -5,8 +5,10 @@ using MachiVerse.Simulation.Core.WorldState;
 namespace MachiVerse.Simulation.Core.Performance;
 
 /// <summary>
-/// Harness-only wall-time session for one sequential perf.reference.v1 process run. The caller
-/// executes every authoritative finalizing Step through this session in finalized-Step order.
+/// Harness-only wall-time session for one sequential perf.reference.v1 production process run. The
+/// durable canonical production basis State(1) already exists before this session executes workload
+/// transitions, so the first accepted resulting finalized State is State(2). The caller executes
+/// every authoritative finalizing workload Step through this session in finalized-State order.
 /// Warm-up/cooldown Steps are executed but never sampled. Measurement Step duration is timed around
 /// the supplied authoritative Step delegate; process working-set and GC observations occur only
 /// outside the measured Step body and cannot alter world-authoritative behavior.
@@ -16,7 +18,7 @@ public sealed class Qa04BenchmarkRunMeasurementSessionV1
     private readonly Qa04BenchmarkMetricCollectorV1 _collector;
     private readonly Func<long> _workingSetBytes;
     private readonly Qa04GcPauseSamplerV1 _gcPauseSampler;
-    private ulong _lastFinalizedStep;
+    private ulong _lastFinalizedStep = Qa04MeasurementPhaseContractV1.InitializationBasisStep;
     private long? _measurementStartTimestamp;
     private int _stepInFlight;
 
@@ -129,7 +131,7 @@ public static class Qa04RunningSnapshotMeasurementExtensionsV1
 
         return MeasureSnapshotCowBarrierAsync(
             collector,
-            token => coordinator.TryFreezeWithCoreOwnerMaterialIfDueAsync(
+            token => coordinator.TryFreezeWithCoreOwnerMaterialIfDueMeasuredAsync(
                 finalizedState,
                 store,
                 supplementalOwnerMaterial,
