@@ -78,6 +78,7 @@ public static class Qa04ProcessTargetV1
         ValidateGate2CapabilityContracts();
         var referenceWorldMaterialized = ReferenceWorldMaterialized();
         var authoritativeStepLoopAvailable = AuthoritativeStepLoopAvailable(referenceWorldMaterialized);
+        var config = Qa04ReferenceConfigAuthorityV1.CreateCanonical();
         var additionalBlockers = authoritativeStepLoopAvailable
             ? Array.Empty<string>()
             : new[] { "qa04.target.authoritative-step-loop-not-assembled" };
@@ -87,6 +88,7 @@ public static class Qa04ProcessTargetV1
             ProfileId = Qa04ReferenceLoadV1.BenchmarkProfileId,
             WorldId = Qa04ReferenceLoadV1.WorldId.ToString(),
             WorldSeedSha256 = Convert.ToHexString(SHA256.HashData(Qa04ReferenceLoadV1.WorldSeed.ToBytes())).ToLowerInvariant(),
+            CanonicalConfigDigest = Convert.ToHexString(config.Digest).ToLowerInvariant(),
             CanonicalWorkerCounts = Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.ToArray(),
             StandardDomainCount = StandardDomainExecutionPlanV1.Create().Entries.Count,
             StandardPartitionCount = StandardDomainPartitionRegistry.StandardPartitionCount,
@@ -310,6 +312,7 @@ public sealed class Qa04ProcessInspectionV1
     public string ProfileId { get; set; } = "";
     public string WorldId { get; set; } = "";
     public string WorldSeedSha256 { get; set; } = "";
+    public string CanonicalConfigDigest { get; set; } = "";
     public int[] CanonicalWorkerCounts { get; set; } = [];
     public int StandardDomainCount { get; set; }
     public int StandardPartitionCount { get; set; }
