@@ -262,8 +262,22 @@ internal static class Qa04ProductionAuthoritativeStepClosureSmoke
             Console.WriteLine(
                 $"[qa04-production] Gate3 Step6 replay / equivalence proof complete resultingStep={gate3Replay.ResultingStep} terminalOperations={gate3Replay.TerminalOperationCount} transactions={gate3Replay.CrossDomainTransactionCount}");
 
+            Console.WriteLine("[qa04-production] Gate3 Step7 negative recovery proof start");
+            var gate3Negative = await Qa04ProductionGate3Step7NegativeRecoveryProofRunnerV1.VerifyAsync(
+                gate3Snapshot,
+                store,
+                paths);
+            Require(gate3Negative.SnapshotStep == verification.ResultingStep &&
+                    gate3Negative.StaleGeneration == 1 &&
+                    gate3Negative.CurrentGeneration == 2 &&
+                    !string.IsNullOrWhiteSpace(gate3Negative.MissingSectionId) &&
+                    !string.IsNullOrWhiteSpace(gate3Negative.WrongOwnerSectionId),
+                "Gate3 Step7 production negative recovery proof failed.");
             Console.WriteLine(
-                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount} domainSections={gate3Domains.DomainSectionCount} domainLogicalRecords={gate3Domains.LogicalRecordCount} snapshotSections={gate3Snapshot.SectionCount} snapshotChunks={gate3Snapshot.ChunkCount} replayOperations={gate3Replay.TerminalOperationCount}");
+                $"[qa04-production] Gate3 Step7 negative recovery proof complete tamperedChunk={gate3Negative.TamperedChunkIndex} missingSection={gate3Negative.MissingSectionId} staleGeneration={gate3Negative.StaleGeneration} currentGeneration={gate3Negative.CurrentGeneration} wrongOwnerSection={gate3Negative.WrongOwnerSectionId}");
+
+            Console.WriteLine(
+                $"qa04-production-authoritative-step-pass operations={bindings.Length} domains={runtimeOutputs.Count} changedPartitions={verification.ChangedPartitionCount} partitions={verification.PartitionCount} activeTransactions={activeTransactions.Count} referenceRecords={assembly.Validation.CanonicalInitialRecordCount} resultingStep={verification.ResultingStep} coreSections={gate3Core.CoreSectionCount} domainSections={gate3Domains.DomainSectionCount} domainLogicalRecords={gate3Domains.LogicalRecordCount} snapshotSections={gate3Snapshot.SectionCount} snapshotChunks={gate3Snapshot.ChunkCount} replayOperations={gate3Replay.TerminalOperationCount} negativeRecoveryCases=4");
         }
         finally
         {
