@@ -184,7 +184,7 @@ internal static class Program
                 timeout: null);
             ValidateProductionReferenceConnectionProbe(connection, run);
 
-            var failures = MergeFailures(BenchmarkMeasurementCode);
+            var failures = MergeFailures(Array.Empty<string>(), BenchmarkMeasurementCode);
             return NewResponse(
                 request,
                 "performance-benchmark-report-v1",
