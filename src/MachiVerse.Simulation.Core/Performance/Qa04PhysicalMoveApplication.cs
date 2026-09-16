@@ -64,9 +64,10 @@ public static class Qa04PhysicalMoveApplicationV1
             references);
 
         var revised = existing.Revise(payload);
+        var expectedRevision = checked(existing.Revision + 1UL);
         if (revised.RecordId != existing.RecordId ||
             revised.RecordSchema != existing.RecordSchema ||
-            revised.Revision != 2 ||
+            revised.Revision != expectedRevision ||
             revised.CreatedStep != 0 ||
             revised.RetiredStep is not null ||
             revised.DetailLevel != DetailLevelV1.D0Entity ||
@@ -115,7 +116,7 @@ public static class Qa04PhysicalMoveApplicationV1
     {
         if (record.RecordId != presenceRef.RecordId ||
             record.RecordSchema != identity.RecordSchema ||
-            record.Revision != 1 ||
+            record.Revision == 0 ||
             record.CreatedStep != 0 ||
             record.IsRetired ||
             record.DetailLevel != DetailLevelV1.D0Entity ||
