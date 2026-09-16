@@ -13,6 +13,7 @@ on:
       - '.github/workflows/int03-gate3-core-staged-validation.yml'
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -44,11 +45,64 @@ jobs:
     steps:
       - name: Checkout pull request
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether production proof inputs changed
+        id: production_scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_FILE: int03-gate3-core-staged-validation.yml
+        run: |
+          set -euo pipefail
+
+          last_success="$(
+            gh api --paginate \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&status=success&branch=${GITHUB_HEAD_REF}&per_page=100" \
+              --jq '.workflow_runs[].head_sha' \
+              | awk -v current="${GITHUB_SHA}" '$0 != current { print; exit }'
+          )"
+
+          if [[ -z "${last_success}" ]]; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+            echo "reason=no-prior-success" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if ! git cat-file -e "${last_success}^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "${last_success}"
+          fi
+
+          changed_files="$(git diff --name-only "${last_success}" "${GITHUB_SHA}")"
+          printf '%s\n' "${changed_files}"
+
+          if grep -Eq \
+            '^(src/MachiVerse\.Simulation\.Core/|tests/MachiVerse\.Simulation\.Core\.SmokeTests/Qa04ProductionAuthoritativeStepClosureSmoke\.cs$|tests/MachiVerse\.Simulation\.Core\.Gate3CoreSmokeTests/|tests/MachiVerse\.Simulation\.Core\.ProductionClosureSmokeTests/|config/simulation-core\.toml$|docs/protocols/schema/|\.github/workflows/int03-gate3-core-staged-validation\.yml$)' \
+            <<< "${changed_files}"; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+            echo "reason=production-input-changed" >> "${GITHUB_OUTPUT}"
+          else
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+            echo "reason=prior-success-still-covers-inputs" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Reuse prior successful production proof
+        if: steps.production_scope.outputs.run != 'true'
+        run: |
+          echo "Gate3 full production proof inputs are unchanged since the latest successful run."
+          echo "Skipping only the redundant re-execution; the fast current-head contract still ran."
+
       - name: Setup .NET SDK
+        if: steps.production_scope.outputs.run == 'true'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.400
       - name: Build dedicated production closure runner
+        if: steps.production_scope.outputs.run == 'true'
         run: dotnet build tests/MachiVerse.Simulation.Core.ProductionClosureSmokeTests --configuration Release
       - name: Prove full QA-04 authoritative Step and Gate3 six-Core recovery
+        if: steps.production_scope.outputs.run == 'true'
         run: dotnet run --project tests/MachiVerse.Simulation.Core.ProductionClosureSmokeTests --configuration Release --no-build

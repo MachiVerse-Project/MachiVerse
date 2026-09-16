@@ -45,6 +45,10 @@ public sealed record Qa04CanonicalOperationMutationBatchResultV1(
 /// six typed mutation targets in canonical scheduler order. This composes the six Gate-1 handlers;
 /// it does not itself claim full authoritative-Step availability, build partition candidates, or
 /// cross the SQLite COMMIT/publish boundary.
+///
+/// Production batches retain each large immutable basis partition and buffer only additions or
+/// replacements while individual Gate-1 handlers validate one-operation material. Full canonical
+/// partition states are rebuilt once after the ordered batch, rather than once per Operation.
 /// </summary>
 public static class Qa04CanonicalOperationMutationBatchV1
 {
@@ -77,8 +81,24 @@ public static class Qa04CanonicalOperationMutationBatchV1
 
         ValidateStateIdentities(initialState);
 
-        var state = initialState;
+        var infrastructure = new AdditionOverlayV1<InfrastructureServiceQueuePayloadV1>(
+            initialState.InfrastructureServiceQueue);
+        var physical = new RevisionOverlayV1<PhysicalPresencePayloadV1>(initialState.PhysicalPresence);
+        var market = new MarketAdditionOverlayV1(initialState.MarketTransaction);
+        var governance = new AdditionOverlayV1<GovernanceSecurityIncidentPayloadV1>(
+            initialState.GovernanceSecurityIncident);
+        var environment = new AdditionOverlayV1<EnvironmentHazardPayloadV1>(initialState.EnvironmentHazard);
+        var residentBehaviorState = initialState.ResidentBehaviorState;
+
+        var emptyInfrastructure = EmptyLike(initialState.InfrastructureServiceQueue);
+        var emptyPhysical = EmptyLike(initialState.PhysicalPresence);
+        var emptyMarket = new SocietyMarketTransactionPartitionStateV2(
+            Array.Empty<SocietyMarketTransactionRecordMaterialV2>());
+        var emptyGovernance = EmptyLike(initialState.GovernanceSecurityIncident);
+        var emptyEnvironment = EmptyLike(initialState.EnvironmentHazard);
+
         var appliedIds = new List<OpaqueId128>(orderedBindings.Count);
+        var appliedIdSet = new HashSet<OpaqueId128>();
         var counts = new Dictionary<string, ulong>(StringComparer.Ordinal);
         var changes = new List<Qa04CanonicalOperationMutationChangeV1>(orderedBindings.Count);
         SameStepOrderKey? previousOrderKey = null;
@@ -98,7 +118,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
             previousOrderKey = binding.OrderKey;
 
             var operationId = binding.SourceDescriptor.OperationId;
-            if (operationId.IsZero || appliedIds.Contains(operationId))
+            if (operationId.IsZero || !appliedIdSet.Add(operationId))
                 throw new InvalidDataException("qa04.full-step.mutation-operation-id-duplicate");
 
             Qa04CanonicalOperationMutationChangeV1 change;
@@ -109,9 +129,11 @@ public static class Qa04CanonicalOperationMutationBatchV1
                     var result = Qa04InfrastructureServiceReserveApplicationV1.Apply(
                         worldId,
                         binding,
-                        state.InfrastructureServiceQueue,
+                        emptyInfrastructure,
                         references);
-                    state = state with { InfrastructureServiceQueue = result.ServiceQueue };
+                    infrastructure.Add(
+                        result.CreatedRecord,
+                        "qa04.infrastructure.service-reserve-duplicate");
                     change = Change(
                         binding,
                         InfrastructureServiceQueuePayloadV1.PartitionId,
@@ -127,16 +149,17 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 {
                     var controlModeId = Qa04ParticipationControlModeCanonicalAuthorityV1.RecordId(
                         binding.SourceDescriptor.FamilyOrdinal);
-                    if (!state.ParticipationControlMode.TryGet(controlModeId, out var controlMode) || controlMode is null)
+                    if (!initialState.ParticipationControlMode.TryGet(controlModeId, out var controlMode) ||
+                        controlMode is null)
                         throw new InvalidDataException("qa04.full-step.mutation-control-mode-missing");
 
                     var result = Qa04ResidentActionApplicationV1.Apply(
                         worldId,
                         binding,
-                        state.ResidentBehaviorState,
+                        residentBehaviorState,
                         controlMode,
                         references);
-                    state = state with { ResidentBehaviorState = result.BehaviorState };
+                    residentBehaviorState = result.BehaviorState;
                     change = Change(
                         binding,
                         ResidentBehaviorStatePayloadV1.PartitionId,
@@ -150,8 +173,19 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 }
                 case PhysicalFamily:
                 {
-                    var result = Qa04PhysicalMoveApplicationV1.Apply(binding, state.PhysicalPresence, references);
-                    state = state with { PhysicalPresence = result.PresenceState };
+                    if (!physical.TryGet(binding.PrimaryTarget.RecordId, out var target) || target is null)
+                    {
+                        _ = Qa04PhysicalMoveApplicationV1.Apply(binding, emptyPhysical, references);
+                        throw new InvalidDataException("qa04.physical.move-target-missing");
+                    }
+
+                    var singleTarget = new DomainPartitionStateV1<PhysicalPresencePayloadV1>(
+                        initialState.PhysicalPresence.Identity,
+                        new[] { target });
+                    var result = Qa04PhysicalMoveApplicationV1.Apply(binding, singleTarget, references);
+                    physical.Replace(
+                        result.AppliedRecord,
+                        "qa04.physical.move-target-missing");
                     change = Change(
                         binding,
                         PhysicalPresencePayloadV1.PartitionId,
@@ -165,8 +199,17 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 }
                 case MarketFamily:
                 {
-                    var result = Qa04MarketOrderApplicationV1.Apply(binding, state.MarketTransaction, references);
-                    state = state with { MarketTransaction = result.MarketState };
+                    if (!market.TryGet(binding.PrimaryTarget.RecordId, out var target) || target is null)
+                    {
+                        _ = Qa04MarketOrderApplicationV1.Apply(binding, emptyMarket, references);
+                        throw new InvalidDataException("qa04.market.order-target-missing");
+                    }
+
+                    var singleTarget = new SocietyMarketTransactionPartitionStateV2(new[] { target });
+                    var result = Qa04MarketOrderApplicationV1.Apply(binding, singleTarget, references);
+                    market.Add(
+                        result.CreatedOrder,
+                        "qa04.market.order-record-id-collision");
                     change = Change(
                         binding,
                         SocietyMarketTransactionRecordSchemaV2.PartitionId,
@@ -182,9 +225,11 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 {
                     var result = Qa04GovernanceIncidentApplicationV1.Apply(
                         binding,
-                        state.GovernanceSecurityIncident,
+                        emptyGovernance,
                         references);
-                    state = state with { GovernanceSecurityIncident = result.IncidentState };
+                    governance.Add(
+                        result.CreatedIncident,
+                        "qa04.governance.incident-record-id-collision");
                     change = Change(
                         binding,
                         GovernanceSecurityIncidentPayloadV1.PartitionId,
@@ -198,8 +243,13 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 }
                 case EnvironmentFamily:
                 {
-                    var result = Qa04EnvironmentHazardApplicationV1.Apply(binding, state.EnvironmentHazard, references);
-                    state = state with { EnvironmentHazard = result.HazardState };
+                    var result = Qa04EnvironmentHazardApplicationV1.Apply(
+                        binding,
+                        emptyEnvironment,
+                        references);
+                    environment.Add(
+                        result.CreatedHazard,
+                        "qa04.environment.hazard-record-id-collision");
                     change = Change(
                         binding,
                         EnvironmentHazardPayloadV1.PartitionId,
@@ -222,6 +272,16 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 counts.GetValueOrDefault(binding.SourceDescriptor.FamilyToken.Value) + 1UL);
         }
 
+        var state = new Qa04CanonicalOperationMutationStateV1(
+            infrastructure.Build(),
+            initialState.ParticipationControlMode,
+            residentBehaviorState,
+            physical.Build(),
+            market.Build(),
+            governance.Build(),
+            environment.Build());
+        ValidateStateIdentities(state);
+
         return new Qa04CanonicalOperationMutationBatchResultV1(
             effectiveStep,
             state,
@@ -229,6 +289,12 @@ public static class Qa04CanonicalOperationMutationBatchV1
             new System.Collections.ObjectModel.ReadOnlyDictionary<string, ulong>(counts),
             Array.AsReadOnly(changes.ToArray()));
     }
+
+    private static DomainPartitionStateV1<TPayload> EmptyLike<TPayload>(
+        DomainPartitionStateV1<TPayload> source)
+        => new(
+            source.Identity,
+            Array.Empty<DomainRecordEnvelopeV1<TPayload>>());
 
     private static Qa04CanonicalOperationMutationChangeV1 Change(
         Qa04CanonicalOperationBindingResultV1 binding,
@@ -285,5 +351,100 @@ public static class Qa04CanonicalOperationMutationBatchV1
         if (state.EnvironmentHazard.Identity !=
             StandardDomainPartitionRegistry.Get(EnvironmentHazardPayloadV1.PartitionId))
             throw new InvalidDataException("qa04.full-step.mutation-environment-state-identity");
+    }
+
+    private sealed class AdditionOverlayV1<TPayload>
+    {
+        private readonly DomainPartitionStateV1<TPayload> _initial;
+        private readonly Dictionary<OpaqueId128, DomainRecordEnvelopeV1<TPayload>> _additions = new();
+
+        public AdditionOverlayV1(DomainPartitionStateV1<TPayload> initial)
+        {
+            _initial = initial ?? throw new ArgumentNullException(nameof(initial));
+        }
+
+        public void Add(DomainRecordEnvelopeV1<TPayload> record, string duplicateCode)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            if (_initial.TryGet(record.RecordId, out _) || !_additions.TryAdd(record.RecordId, record))
+                throw new InvalidDataException(duplicateCode);
+        }
+
+        public DomainPartitionStateV1<TPayload> Build()
+            => new(
+                _initial.Identity,
+                _initial.RecordsCanonical.Concat(_additions.Values));
+    }
+
+    private sealed class RevisionOverlayV1<TPayload>
+    {
+        private readonly DomainPartitionStateV1<TPayload> _initial;
+        private readonly Dictionary<OpaqueId128, DomainRecordEnvelopeV1<TPayload>> _replacements = new();
+
+        public RevisionOverlayV1(DomainPartitionStateV1<TPayload> initial)
+        {
+            _initial = initial ?? throw new ArgumentNullException(nameof(initial));
+        }
+
+        public bool TryGet(OpaqueId128 recordId, out DomainRecordEnvelopeV1<TPayload>? record)
+        {
+            if (_replacements.TryGetValue(recordId, out var replacement))
+            {
+                record = replacement;
+                return true;
+            }
+
+            return _initial.TryGet(recordId, out record);
+        }
+
+        public void Replace(DomainRecordEnvelopeV1<TPayload> record, string missingCode)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            if (!_replacements.ContainsKey(record.RecordId) &&
+                !_initial.TryGet(record.RecordId, out _))
+                throw new InvalidDataException(missingCode);
+            _replacements[record.RecordId] = record;
+        }
+
+        public DomainPartitionStateV1<TPayload> Build()
+            => new(
+                _initial.Identity,
+                _initial.RecordsCanonical.Select(record =>
+                    _replacements.TryGetValue(record.RecordId, out var replacement)
+                        ? replacement
+                        : record));
+    }
+
+    private sealed class MarketAdditionOverlayV1
+    {
+        private readonly SocietyMarketTransactionPartitionStateV2 _initial;
+        private readonly Dictionary<OpaqueId128, SocietyMarketTransactionRecordMaterialV2> _additions = new();
+
+        public MarketAdditionOverlayV1(SocietyMarketTransactionPartitionStateV2 initial)
+        {
+            _initial = initial ?? throw new ArgumentNullException(nameof(initial));
+        }
+
+        public bool TryGet(OpaqueId128 recordId, out SocietyMarketTransactionRecordMaterialV2? record)
+        {
+            if (_additions.TryGetValue(recordId, out var added))
+            {
+                record = added;
+                return true;
+            }
+
+            return _initial.RecordSet.TryGet(recordId, out record);
+        }
+
+        public void Add(SocietyMarketTransactionRecordMaterialV2 record, string duplicateCode)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            if (_initial.RecordSet.TryGet(record.RecordId, out _) ||
+                !_additions.TryAdd(record.RecordId, record))
+                throw new InvalidDataException(duplicateCode);
+        }
+
+        public SocietyMarketTransactionPartitionStateV2 Build()
+            => new(_initial.RecordSet.RecordsCanonical.Concat(_additions.Values));
     }
 }
