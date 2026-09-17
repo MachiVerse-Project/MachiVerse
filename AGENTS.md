@@ -35,6 +35,7 @@ MachiVerse は、C# で開発する超大規模エージェントベースの世
 - `view`: 一般ビューの統合ブランチ。
 - `administration-view`: 管理ビューの統合ブランチ。
 - `documentation`: リポジトリ共通のドキュメント・設計文書・Protocol文書の統合ブランチ。
+- `promotion`: ブランド資産、Creative Asset、プロモーション資料および公開向けビジュアルの統合ブランチ。
 
 ブランチ名は原則として小文字を使用し、複数語はハイフンで区切る。
 
@@ -45,7 +46,7 @@ MachiVerse は、C# で開発する超大規模エージェントベースの世
 3. コンポーネント単位で `develop` へ統合可能な状態になった変更は、対象コンポーネントブランチから `develop` へ Pull Request で統合する。
 4. リポジトリ共通のドキュメント変更は `documentation` から作業ブランチを作成して行い、作業ブランチから `documentation`、`documentation` から `develop` の順に Pull Request で統合する。
 5. `develop` がリリース可能な状態になった場合、`develop` から `main` へ Pull Request で統合する。
-6. `main`、`develop`、各コンポーネント常設ブランチ、`documentation` 上で、通常の機能実装・修正・ドキュメント編集を直接コミットしないこと。
+6. `main`、`develop`、各コンポーネント常設ブランチ、`documentation`、`promotion` 上で、通常の機能実装・修正・ドキュメント編集を直接コミットしないこと。
 
 基本的な流れは以下とする。
 
@@ -59,7 +60,7 @@ responsibility branch
 work branch
 ```
 
-ここで `responsibility branch` は、対象に応じて `simulation`、`gateway`、`view`、`administration-view`、`documentation` のいずれかを指す。
+ここで `responsibility branch` は、対象に応じて `simulation`、`gateway`、`view`、`administration-view`、`documentation`、`promotion` のいずれかを指す。
 
 ### ドキュメント編集フロー
 
@@ -118,7 +119,6 @@ develop
 simulation
   ↓
 feature/support-core-gateway-v1.1
-
 gateway
   ↓
 feature/support-core-gateway-v1.1
