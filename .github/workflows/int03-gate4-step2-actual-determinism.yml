@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "evidence_head=$HEAD_SHA" >> "$GITHUB_OUTPUT"
-          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$HEAD_MESSAGE" == *"[gate4-step2-evidence]"* ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$EVENT_NAME" == "workflow_call" || "$HEAD_MESSAGE" == *"[gate4-step2-evidence]"* ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "Gate4 Step2 actual evidence execution authorized for $HEAD_SHA"
           else
