@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.Runtime;
@@ -15,7 +14,7 @@ public sealed record Qa04OperationClosedPrefixV1(
 {
     public static Qa04OperationClosedPrefixV1 Empty()
         => new(
-            Qa04ReferenceLoadV1.ProfileId,
+            Qa04ReferenceLoadV1.BenchmarkProfileId,
             0,
             null,
             0,
@@ -23,7 +22,7 @@ public sealed record Qa04OperationClosedPrefixV1(
 
     public void Validate(ulong stateStep)
     {
-        if (!string.Equals(ProfileId, Qa04ReferenceLoadV1.ProfileId, StringComparison.Ordinal))
+        if (!string.Equals(ProfileId, Qa04ReferenceLoadV1.BenchmarkProfileId, StringComparison.Ordinal))
             throw new InvalidDataException("qa04.operation-prefix.profile-id-mismatch");
         if (FirstInjectionStep != 0)
             throw new InvalidDataException("qa04.operation-prefix.first-injection-step");
@@ -154,7 +153,6 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
         ulong effectiveStep,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings)
     {
-        ArgumentNullException.ThrowIfNull(anchor);
         ArgumentNullException.ThrowIfNull(bindings);
         if (effectiveStep != checked(injectionStep + 1UL))
             throw new InvalidDataException("qa04.operation-batch.effective-step-drift");
@@ -179,7 +177,7 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
                     throw new InvalidDataException("qa04.operation-batch.order-key-length");
                 writer.WriteArrayStart(3);
                 writer.WriteBytes(binding.SourceDescriptor.OperationId.ToBytes());
-                writer.WriteBytes(binding.SourceDescriptor.PayloadDigest);
+                writer.WriteBytes(binding.BoundDescriptor.PayloadDigest);
                 writer.WriteBytes(orderKey);
             }
         });
@@ -212,7 +210,7 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
         byte[] scheduledBatchDigest)
     {
         writer.WriteMapStart(5);
-        writer.WriteUnsigned(0); writer.WriteAsciiText(Qa04ReferenceLoadV1.ProfileId);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(Qa04ReferenceLoadV1.BenchmarkProfileId);
         writer.WriteUnsigned(1); writer.WriteUnsigned(injectionStep);
         writer.WriteUnsigned(2); writer.WriteUnsigned(effectiveStep);
         writer.WriteUnsigned(3); writer.WriteUnsigned(operationCount);
@@ -260,7 +258,6 @@ public sealed class Qa04Step2DeterminismAccumulatorV1
 public static class Qa04TerminalSemanticAuthorityV1
 {
     public static byte[] ComputeBatchDigest(
-        ulong effectiveStep,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
         IReadOnlyList<TerminalOperationCommit> outcomes)
     {
@@ -277,10 +274,12 @@ public static class Qa04TerminalSemanticAuthorityV1
                 var outcome = outcomes[i];
                 if (outcome.OperationId != binding.SourceDescriptor.OperationId)
                     throw new InvalidDataException("qa04.operation-terminal.order-mismatch");
+                if (outcome.TerminalStatus < 0)
+                    throw new InvalidDataException("qa04.operation-terminal.status-negative");
                 _ = new StableToken(outcome.ResultCode);
                 writer.WriteArrayStart(4);
                 writer.WriteBytes(outcome.OperationId.ToBytes());
-                writer.WriteUnsigned(checked((uint)outcome.TerminalStatus));
+                writer.WriteUnsigned(checked((ulong)outcome.TerminalStatus));
                 writer.WriteAsciiText(outcome.ResultCode);
                 writer.WriteArrayStart(0);
             }
