@@ -164,12 +164,158 @@ public sealed class Qa04TransitionCommittedAuthorityV1
     public static Qa04TransitionCommittedAuthorityV1 DecodeAndValidate(HistoryRecordMaterial history)
     {
         ArgumentNullException.ThrowIfNull(history);
-        if (!string.Equals(history.RecordType, RecordType, StringComparison.Ordinal) ||
-            !string.Equals(history.PayloadSchemaId, PayloadSchemaId, StringComparison.Ordinal) ||
-            history.PayloadSchemaMajor != 1 || history.PayloadSchemaMinor != 0)
-            throw new InvalidDataException("qa04.transition-decode.schema-drift");
+        RequireTransitionHistorySchema(
+            history.RecordType,
+            history.PayloadSchemaId,
+            history.PayloadSchemaMajor,
+            history.PayloadSchemaMinor);
 
-        var reader = new StrictMvDcborReaderV1(history.PayloadBytes);
+        var decoded = DecodePhysicalWrapper(history.PayloadBytes);
+        var semantic = EncodeSemanticBody(
+            decoded.EffectiveStep,
+            decoded.ResultingStep,
+            decoded.ConfigGeneration,
+            decoded.ConfigDigest,
+            decoded.OperationIds,
+            decoded.Outcomes,
+            decoded.PreviousContinuity,
+            decoded.StateDiagnostic,
+            decoded.Partitions);
+        if (!semantic.AsSpan().SequenceEqual(history.NormalizedPayloadBytes))
+            throw new InvalidDataException("qa04.transition-decode.semantic-body-drift");
+
+        return ValidateDecodedHistory(history, decoded, semantic);
+    }
+
+    /// <summary>
+    /// Restores a transition authority directly from the persisted history_record columns.
+    /// The normalized semantic bytes are intentionally reconstructed from the canonical physical
+    /// wrapper and are never trusted as an independently persisted evidence representation.
+    /// </summary>
+    public static Qa04TransitionCommittedAuthorityV1 RestorePersistedAndValidate(
+        OpaqueId128 worldId,
+        ulong sequence,
+        ReadOnlySpan<byte> previousRecordDigest,
+        string recordType,
+        string payloadSchemaId,
+        ushort payloadSchemaMajor,
+        ushort payloadSchemaMinor,
+        ReadOnlySpan<byte> payloadBytes,
+        ReadOnlySpan<byte> normalizedPayloadDigest,
+        ReadOnlySpan<byte> recordDigest)
+    {
+        RequireTransitionHistorySchema(
+            recordType,
+            payloadSchemaId,
+            payloadSchemaMajor,
+            payloadSchemaMinor);
+
+        var decoded = DecodePhysicalWrapper(payloadBytes);
+        var semantic = EncodeSemanticBody(
+            decoded.EffectiveStep,
+            decoded.ResultingStep,
+            decoded.ConfigGeneration,
+            decoded.ConfigDigest,
+            decoded.OperationIds,
+            decoded.Outcomes,
+            decoded.PreviousContinuity,
+            decoded.StateDiagnostic,
+            decoded.Partitions);
+        var history = HistoryRecordMaterial.RestoreValidated(
+            worldId,
+            sequence,
+            previousRecordDigest,
+            recordType,
+            payloadSchemaId,
+            payloadSchemaMajor,
+            payloadSchemaMinor,
+            payloadBytes,
+            semantic,
+            normalizedPayloadDigest,
+            recordDigest);
+        return ValidateDecodedHistory(history, decoded, semantic);
+    }
+
+    private static Qa04TransitionCommittedAuthorityV1 ValidateDecodedHistory(
+        HistoryRecordMaterial history,
+        DecodedPhysicalTransitionV1 decoded,
+        byte[] semantic)
+    {
+        var canonicalPhysical = EncodePhysicalWrapper(
+            decoded.EffectiveStep,
+            decoded.ResultingStep,
+            decoded.ConfigGeneration,
+            decoded.ConfigDigest,
+            decoded.OperationIds,
+            decoded.Outcomes,
+            decoded.PreviousContinuity,
+            decoded.ResultingContinuity,
+            decoded.StateDiagnostic,
+            decoded.Partitions);
+        if (!canonicalPhysical.AsSpan().SequenceEqual(history.PayloadBytes))
+            throw new InvalidDataException("qa04.transition-decode.physical-not-canonical");
+
+        var normalizedDigest = HashSuite.Hash256(semantic);
+        if (!CryptographicOperations.FixedTimeEquals(normalizedDigest, history.NormalizedPayloadDigest))
+            throw new InvalidDataException("qa04.transition-decode.normalized-digest-drift");
+        var recordDigest = HistoryIntegrity.ComputeHistoryRecordDigest(
+            history.WorldId,
+            history.Sequence,
+            history.PreviousRecordDigest,
+            RecordTypeToken,
+            semantic);
+        if (!CryptographicOperations.FixedTimeEquals(recordDigest, history.RecordDigest))
+            throw new InvalidDataException("qa04.transition-decode.record-digest-drift");
+        var expectedResultingContinuity = HistoryIntegrity.ComputeTransitionContinuityToken(
+            history.WorldId,
+            decoded.ResultingStep,
+            decoded.PreviousContinuity,
+            recordDigest);
+        if (!CryptographicOperations.FixedTimeEquals(expectedResultingContinuity, decoded.ResultingContinuity))
+            throw new InvalidDataException("qa04.transition-decode.resulting-continuity-drift");
+
+        return new Qa04TransitionCommittedAuthorityV1(
+            decoded.EffectiveStep,
+            decoded.ResultingStep,
+            decoded.ConfigGeneration,
+            decoded.ConfigDigest,
+            decoded.OperationIds,
+            decoded.Outcomes,
+            decoded.PreviousContinuity,
+            decoded.ResultingContinuity,
+            decoded.StateDiagnostic,
+            decoded.Partitions,
+            history);
+    }
+
+    private static void RequireTransitionHistorySchema(
+        string recordType,
+        string payloadSchemaId,
+        ushort payloadSchemaMajor,
+        ushort payloadSchemaMinor)
+    {
+        if (!string.Equals(recordType, RecordType, StringComparison.Ordinal) ||
+            !string.Equals(payloadSchemaId, PayloadSchemaId, StringComparison.Ordinal) ||
+            payloadSchemaMajor != 1 ||
+            payloadSchemaMinor != 0)
+            throw new InvalidDataException("qa04.transition-decode.schema-drift");
+    }
+
+    private sealed record DecodedPhysicalTransitionV1(
+        ulong EffectiveStep,
+        ulong ResultingStep,
+        ulong ConfigGeneration,
+        byte[] ConfigDigest,
+        IReadOnlyList<OpaqueId128> OperationIds,
+        IReadOnlyList<TerminalOperationCommit> Outcomes,
+        byte[] PreviousContinuity,
+        byte[] ResultingContinuity,
+        byte[] StateDiagnostic,
+        IReadOnlyList<Qa04TransitionPartitionDigestV1> Partitions);
+
+    private static DecodedPhysicalTransitionV1 DecodePhysicalWrapper(ReadOnlySpan<byte> payloadBytes)
+    {
+        var reader = new StrictMvDcborReaderV1(payloadBytes);
         if (reader.ReadMapStart() != 10) throw new InvalidDataException("qa04.transition-decode.wrapper-map-size");
 
         reader.RequireUnsignedKey(0);
@@ -244,59 +390,15 @@ public sealed class Qa04TransitionCommittedAuthorityV1
                 throw new InvalidDataException("qa04.transition-decode.partition-shape");
             var partitionId = reader.ReadAsciiText();
             _ = new StableToken(partitionId);
-            if (previousPartitionId is not null && StringComparer.Ordinal.Compare(previousPartitionId, partitionId) >= 0)
+            if (previousPartitionId is not null &&
+                StringComparer.Ordinal.Compare(previousPartitionId, partitionId) >= 0)
                 throw new InvalidDataException("qa04.transition-decode.partition-order-drift");
             previousPartitionId = partitionId;
             partitions[index] = new Qa04TransitionPartitionDigestV1(partitionId, reader.ReadBytesExact(32));
         }
         reader.RequireEnd();
 
-        var canonicalPhysical = EncodePhysicalWrapper(
-            effectiveStep,
-            resultingStep,
-            configGeneration,
-            configDigest,
-            operationIds,
-            outcomes,
-            previousContinuity,
-            resultingContinuity,
-            stateDiagnostic,
-            partitions);
-        if (!canonicalPhysical.AsSpan().SequenceEqual(history.PayloadBytes))
-            throw new InvalidDataException("qa04.transition-decode.physical-not-canonical");
-
-        var semantic = EncodeSemanticBody(
-            effectiveStep,
-            resultingStep,
-            configGeneration,
-            configDigest,
-            operationIds,
-            outcomes,
-            previousContinuity,
-            stateDiagnostic,
-            partitions);
-        if (!semantic.AsSpan().SequenceEqual(history.NormalizedPayloadBytes))
-            throw new InvalidDataException("qa04.transition-decode.semantic-body-drift");
-        var normalizedDigest = HashSuite.Hash256(semantic);
-        if (!CryptographicOperations.FixedTimeEquals(normalizedDigest, history.NormalizedPayloadDigest))
-            throw new InvalidDataException("qa04.transition-decode.normalized-digest-drift");
-        var recordDigest = HistoryIntegrity.ComputeHistoryRecordDigest(
-            history.WorldId,
-            history.Sequence,
-            history.PreviousRecordDigest,
-            RecordTypeToken,
-            semantic);
-        if (!CryptographicOperations.FixedTimeEquals(recordDigest, history.RecordDigest))
-            throw new InvalidDataException("qa04.transition-decode.record-digest-drift");
-        var expectedResultingContinuity = HistoryIntegrity.ComputeTransitionContinuityToken(
-            history.WorldId,
-            resultingStep,
-            previousContinuity,
-            recordDigest);
-        if (!CryptographicOperations.FixedTimeEquals(expectedResultingContinuity, resultingContinuity))
-            throw new InvalidDataException("qa04.transition-decode.resulting-continuity-drift");
-
-        return new Qa04TransitionCommittedAuthorityV1(
+        return new DecodedPhysicalTransitionV1(
             effectiveStep,
             resultingStep,
             configGeneration,
@@ -306,8 +408,7 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             previousContinuity,
             resultingContinuity,
             stateDiagnostic,
-            Array.AsReadOnly(partitions),
-            history);
+            Array.AsReadOnly(partitions));
     }
 
     public static void RequireEquivalent(
