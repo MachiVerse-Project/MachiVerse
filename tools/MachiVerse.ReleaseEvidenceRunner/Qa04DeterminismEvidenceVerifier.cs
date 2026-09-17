@@ -132,11 +132,13 @@ internal static class Qa04DeterminismEvidenceVerifier
         };
     }
 
-    internal static string VerifyActualMatrix(string matrixPath)
+    internal static string VerifyActualMatrix(string matrixPath, string? planDirectory = null)
     {
         var rows = Program.ReadJson<Gate4Step2ActualRunEvidenceRow[]>(
             matrixPath,
             "Gate4 Step2 actual determinism matrix");
+        if (planDirectory is not null)
+            RequireCanonicalPlanRows(rows, planDirectory);
         var summary = ValidateActualMatrix(rows);
         Console.WriteLine("Gate4 Step2 actual determinism matrix PASS");
         Console.WriteLine($"actual_run_count={rows.Length}");
@@ -150,6 +152,33 @@ internal static class Qa04DeterminismEvidenceVerifier
                     $"run={row.RunId} step3_performance_failures={string.Join(",", row.PerformanceFailureCodes)}");
         }
         return summary;
+    }
+
+    private static void RequireCanonicalPlanRows(
+        IReadOnlyCollection<Gate4Step2ActualRunEvidenceRow> rows,
+        string planDirectory)
+    {
+        var planPath = Path.Combine(planDirectory, "reference-run-matrix.json");
+        var planned = Program.ReadJson<BenchmarkRunDescriptor[]>(
+            planPath,
+            "Gate4 Step2 canonical reference-run matrix");
+        if (planned.Length != 12)
+            throw new InvalidDataException("QA-04 canonical Step2 plan must contain exactly 12 runs.");
+
+        var expected = planned
+            .Select(static run => (run.RunId, run.WorkerCount, run.RunOrdinal))
+            .OrderBy(static value => value.WorkerCount)
+            .ThenBy(static value => value.RunOrdinal)
+            .ThenBy(static value => value.RunId, StringComparer.Ordinal)
+            .ToArray();
+        var actual = rows
+            .Select(static row => (row.RunId, row.WorkerCount, row.RunOrdinal))
+            .OrderBy(static value => value.WorkerCount)
+            .ThenBy(static value => value.RunOrdinal)
+            .ThenBy(static value => value.RunId, StringComparer.Ordinal)
+            .ToArray();
+        if (!expected.SequenceEqual(actual))
+            throw new InvalidDataException("QA-04 actual Step2 rows do not match the canonical materialized run plan.");
     }
 
     private static string ValidateActualMatrix(IReadOnlyCollection<Gate4Step2ActualRunEvidenceRow> rows)
