@@ -24,6 +24,25 @@ internal static class Program
                 return 0;
             }
 
+            if (string.Equals(args[0], "run-step2", StringComparison.Ordinal) && args.Length == 7)
+            {
+                await ReleaseEvidenceRunner.RunGate4Step2ActualRunAsync(
+                    root,
+                    args[1],
+                    Path.GetFullPath(args[2]),
+                    Path.GetFullPath(args[3]),
+                    int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture),
+                    int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture),
+                    Path.GetFullPath(args[6]));
+                return 0;
+            }
+
+            if (string.Equals(args[0], "verify-step2", StringComparison.Ordinal) && args.Length == 2)
+            {
+                _ = Qa04DeterminismEvidenceVerifier.VerifyActualMatrix(Path.GetFullPath(args[1]));
+                return 0;
+            }
+
             if (string.Equals(args[0], "run", StringComparison.Ordinal) && args.Length == 6)
             {
                 var planDirectory = Path.GetFullPath(args[4]);
@@ -52,7 +71,7 @@ internal static class Program
             }
 
             throw new ArgumentException(
-                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]");
+                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run-step2 <source-commit> <adapter-executable> <plan-directory> <worker-count> <run-ordinal> <output.json>|verify-step2 <matrix.json>|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]");
         }
         catch (Exception ex)
         {
