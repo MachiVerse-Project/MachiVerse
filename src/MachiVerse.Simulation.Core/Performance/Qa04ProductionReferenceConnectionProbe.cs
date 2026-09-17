@@ -24,12 +24,11 @@ public sealed record Qa04ProductionReferenceConnectionProbeResultV1(
     bool ProductionExecutorObserved);
 
 /// <summary>
-/// Gate-4 Step-1 connection proof. It assembles the complete canonical reference world once, opens
-/// the real production SQLite store, persists durable State(1), and executes the first two canonical
-/// workload transitions through the exact same production executor used by the 27,000-transition
-/// release benchmark. It is deliberately bounded and cannot be reported as performance or release
-/// evidence; its only purpose is to prove the external evidence adapter is wired to the real runtime
-/// path before the 12 full process runs begin.
+/// Gate-4 production connection proof. It assembles the complete canonical reference world once,
+/// opens the real production SQLite store, persists durable State(1), and executes the first two
+/// canonical workload transitions through the Gate4 Step2 compact generated-Operation authority.
+/// It is deliberately bounded and cannot be reported as performance or release evidence; its only
+/// purpose is to prove the external evidence adapter is wired to the real runtime/SQLite path.
 /// </summary>
 public static class Qa04ProductionReferenceConnectionProbeV1
 {
@@ -59,11 +58,12 @@ public static class Qa04ProductionReferenceConnectionProbeV1
             nextSchedulableStep: Qa04ProductionReferenceWorldAssemblerV1.CanonicalBasisStep,
             freezeStep: null,
             scheduled: Array.Empty<ScheduledOperationRefV1>());
-        var basisState = Qa04ProductionStepBasisAuthorityV1.BindCoreAuthorityV2(
+        var closedPrefix = Qa04OperationClosedPrefixV1.Empty();
+        var basisState = Qa04ProductionStep2BasisPersistenceV1.BindInitialBasis(
             assembly.PartitionAuthorityState,
             scheduler,
-            Array.Empty<DurableOperationStateV1>(),
-            assembly.ActiveTransactions);
+            assembly.ActiveTransactions,
+            closedPrefix);
 
         var paths = PersistenceLayout.Resolve(persistenceRoot, Qa04ReferenceLoadV1.WorldId, 1);
         PersistenceLayout.EnsureGenerationDirectories(paths);
@@ -75,22 +75,24 @@ public static class Qa04ProductionReferenceConnectionProbeV1
             basisState,
             assembly.ActiveTransactions,
             cancellationToken).ConfigureAwait(false);
-        _ = await Qa04ProductionBasisPersistenceV1.PersistAsync(
+        _ = await Qa04ProductionStep2BasisPersistenceV1.PersistAsync(
             store,
             basisState,
             initialContinuity,
+            closedPrefix,
             assembly.ActiveTransactions,
             cancellationToken).ConfigureAwait(false);
 
         var currentState = basisState;
         var currentMutationState = assembly.MutationState;
         IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> currentDomainAuthorities = assembly.BasisDomainAuthorities;
+        var currentClosedPrefix = closedPrefix;
         var candidateIdentities = new Qa04ProductionStepCandidateIdentityRegistryV1();
         var operationCount = 0;
 
         for (ulong injectionStep = 0; injectionStep < TransitionCount; injectionStep++)
         {
-            var completed = await Qa04ProductionAuthoritativeStepExecutorV1.ExecuteAsync(
+            var completed = await Qa04ProductionStep2AuthoritativeStepExecutorV1.ExecuteAsync(
                 injectionStep,
                 workerCount,
                 currentState,
@@ -98,6 +100,7 @@ public static class Qa04ProductionReferenceConnectionProbeV1
                 currentDomainAuthorities,
                 assembly.References,
                 assembly.ActiveTransactions,
+                currentClosedPrefix,
                 store,
                 scheduler,
                 candidateIdentities,
@@ -105,6 +108,7 @@ public static class Qa04ProductionReferenceConnectionProbeV1
             currentState = completed.Finalization.AuthoritativeState.State;
             currentMutationState = completed.MutationState;
             currentDomainAuthorities = completed.DomainAuthorities;
+            currentClosedPrefix = completed.ClosedPrefix;
             operationCount = checked(operationCount + completed.OperationCount);
         }
 
@@ -113,10 +117,23 @@ public static class Qa04ProductionReferenceConnectionProbeV1
             throw new InvalidDataException("qa04.production-connection.final-step-drift");
         if (candidateIdentities.Count != TransitionCount)
             throw new InvalidDataException("qa04.production-connection.candidate-count-drift");
-        if (operationCount != checked((int)(
-                Qa04ReferenceLoadV1.OperationCountForStep(0) +
-                Qa04ReferenceLoadV1.OperationCountForStep(1))))
-            throw new InvalidDataException("qa04.production-connection.operation-count-drift");
+        var expectedOperationCount = checked((int)(
+            Qa04ReferenceLoadV1.OperationCountForStep(0) +
+            Qa04ReferenceLoadV1.OperationCountForStep(1)));
+        if (operationCount != expectedOperationCount ||
+            currentClosedPrefix.LastClosedInjectionStep != checked((ulong)TransitionCount - 1UL) ||
+            currentClosedPrefix.TerminalOperationCount != checked((ulong)expectedOperationCount))
+            throw new InvalidDataException("qa04.production-connection.operation-prefix-drift");
+
+        var mutableOperations = await store.ListOperationStatesCanonicalAsync(cancellationToken).ConfigureAwait(false);
+        if (mutableOperations.Count != 0)
+            throw new InvalidDataException("qa04.production-connection.closed-generated-operation-row-retained");
+        var durablePrefix = await store.ReadQa04OperationClosedPrefixAsync(cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidDataException("qa04.production-connection.closed-prefix-missing");
+        if (durablePrefix.LastClosedInjectionStep != currentClosedPrefix.LastClosedInjectionStep ||
+            durablePrefix.TerminalOperationCount != currentClosedPrefix.TerminalOperationCount ||
+            !durablePrefix.TerminalSemanticDigest.AsSpan().SequenceEqual(currentClosedPrefix.TerminalSemanticDigest))
+            throw new InvalidDataException("qa04.production-connection.closed-prefix-durable-drift");
 
         var finalHistory = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
         var finalRecovery = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
