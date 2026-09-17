@@ -21,6 +21,7 @@ public sealed record Qa04ProductionStep2FinalizationResultV1(
     AuthoritativeStepWorldStateV1 AuthoritativeState,
     Qa04OperationClosedPrefixV1 ClosedPrefix,
     byte[] ResultingContinuityToken,
+    Qa04TransitionCommittedAuthorityV1 TransitionAuthority,
     Qa04CanonicalOperationPostCommitVerificationV1 PostCommitVerification);
 
 public sealed record Qa04ProductionStep2AuthoritativeStepExecutionV1(
@@ -458,16 +459,26 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         var anchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
         if (anchor.Sequence == ulong.MaxValue)
             throw new InvalidDataException("qa04.step2.finalization-history-sequence-overflow");
-        var transition = CreateTransitionHistory(
-            candidate,
-            prepared,
-            checked(anchor.Sequence + 1UL),
-            anchor.Digest);
-        var resultingContinuity = HistoryIntegrity.ComputeTransitionContinuityToken(
+        var partitionDigests = candidate.PartitionCandidates
+            .Select(partition => new Qa04TransitionPartitionDigestV1(
+                partition.PartitionId.Value,
+                prepared.ResultingState.Partitions.Get(partition.PartitionId.Value).Header.CanonicalDigest.ToArray()))
+            .ToArray();
+        var transitionAuthority = Qa04TransitionCommittedAuthorityV1.Create(
             candidate.WorldId,
+            checked(anchor.Sequence + 1UL),
+            anchor.Digest,
+            candidate.BasisStep,
             candidate.TargetStep,
+            candidate.ConfigGeneration,
+            candidate.ConfigDigest,
+            bindings.Select(static binding => binding.SourceDescriptor.OperationId).ToArray(),
+            alignedTerminal,
             before.ContinuityToken,
-            transition.RecordDigest);
+            prepared.ResultingState.Diagnostic.StateDigest,
+            partitionDigests);
+        var transition = transitionAuthority.History;
+        var resultingContinuity = transitionAuthority.ResultingStateContinuityToken;
         var material = new StepFinalizeMaterialV1(
             candidate.ConfigGeneration,
             candidate.ConfigDigest,
@@ -478,7 +489,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             store,
             injectionStep,
             basisPrefix,
-            resultingPrefix);
+            resultingPrefix,
+            transitionAuthority);
         var receipt = await new StepFinalizationCoordinatorV1(durability)
             .FinalizeAsync(candidate, scheduler, material, cancellationToken)
             .ConfigureAwait(false);
@@ -513,6 +525,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             authoritative,
             resultingPrefix,
             resultingContinuity.ToArray(),
+            transitionAuthority,
             verification);
     }
 
@@ -621,38 +634,6 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             publishedState.Diagnostic.StateDigest.ToArray());
     }
 
-    private static HistoryRecordMaterial CreateTransitionHistory(
-        StepCandidateV1 candidate,
-        PreparedStepWorldStateV1 prepared,
-        ulong sequence,
-        ReadOnlySpan<byte> previousRecordDigest)
-        => HistoryRecordMaterial.Create(
-            candidate.WorldId,
-            sequence,
-            previousRecordDigest,
-            "transition.committed.v1",
-            "persistence.transition-committed",
-            1,
-            0,
-            candidate.DiagnosticDigest.Concat(prepared.ResultingState.Diagnostic.StateDigest).ToArray(),
-            writer =>
-            {
-                writer.WriteMapStart(7);
-                writer.WriteUnsigned(0); writer.WriteUnsigned(candidate.BasisStep);
-                writer.WriteUnsigned(1); writer.WriteUnsigned(candidate.TargetStep);
-                writer.WriteUnsigned(2); writer.WriteBytes(candidate.CandidateId.ToBytes());
-                writer.WriteUnsigned(3); writer.WriteBytes(candidate.DiagnosticDigest);
-                writer.WriteUnsigned(4); writer.WriteBytes(prepared.BasisStateDigest);
-                writer.WriteUnsigned(5); writer.WriteBytes(prepared.ResultingState.Diagnostic.StateDigest);
-                writer.WriteUnsigned(6); writer.WriteArrayStart((ulong)candidate.PartitionCandidates.Count);
-                foreach (var partition in candidate.PartitionCandidates)
-                {
-                    writer.WriteArrayStart(2);
-                    writer.WriteAsciiText(partition.PartitionId.Value);
-                    writer.WriteBytes(partition.CandidateDigest);
-                }
-            });
-
     private static void RequirePartitionCandidateStability(StepCandidateV1 expected, StepCandidateV1 actual)
     {
         if (expected.PartitionCandidates.Count != actual.PartitionCandidates.Count)
@@ -688,23 +669,29 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         SqlitePersistenceStore store,
         ulong injectionStep,
         Qa04OperationClosedPrefixV1 basisPrefix,
-        Qa04OperationClosedPrefixV1 resultingPrefix) : IStepTransitionDurabilityV1
+        Qa04OperationClosedPrefixV1 resultingPrefix,
+        Qa04TransitionCommittedAuthorityV1 transitionAuthority) : IStepTransitionDurabilityV1
     {
         public Task<DurableTransitionResult> CommitAsync(
             StepCandidateV1 candidate,
             StepFinalizeMaterialV1 material,
             CancellationToken cancellationToken = default)
-            => store.PersistQa04CompactTransitionCommitAsync(
+        {
+            if (candidate.BasisStep != transitionAuthority.EffectiveStep ||
+                candidate.TargetStep != transitionAuthority.ResultingStep ||
+                material.ActiveConfigGeneration != transitionAuthority.ActiveConfigGeneration ||
+                !CryptographicOperations.FixedTimeEquals(material.ActiveConfigDigest, transitionAuthority.ActiveConfigDigest) ||
+                !CryptographicOperations.FixedTimeEquals(material.TransitionHistory.RecordDigest, transitionAuthority.History.RecordDigest) ||
+                !CryptographicOperations.FixedTimeEquals(material.ResultingStateContinuityToken, transitionAuthority.ResultingStateContinuityToken))
+                throw new InvalidDataException("qa04.step2.finalization.transition-authority-material-drift");
+
+            return store.PersistQa04CanonicalTransitionCommitAsync(
                 injectionStep,
-                candidate.BasisStep,
-                candidate.TargetStep,
-                material.ResultingStateContinuityToken,
-                material.ActiveConfigGeneration,
-                material.ActiveConfigDigest,
-                material.TransitionHistory,
+                transitionAuthority,
                 material.TerminalOperations,
                 basisPrefix,
                 resultingPrefix,
                 cancellationToken);
+        }
     }
 }
