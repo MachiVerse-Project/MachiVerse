@@ -8,6 +8,8 @@ namespace MachiVerse.Simulation.Core.Performance;
 /// QA-04 production transition durability adapter. Ordinary Steps use the standard transition
 /// commit. A turnover Step supplies only the CrossDomainTransaction rows whose authority changes
 /// in State(S+1), so terminalization/replacement and the transition recovery head commit atomically.
+/// The durable authority verifier below is intentionally reusable after store reopen so the same
+/// canonical ACTIVE transaction authority is checked on both sides of the recovery boundary.
 /// </summary>
 public sealed class Qa04CrossDomainStepTransitionDurabilityV1 : IStepTransitionDurabilityV1
 {
