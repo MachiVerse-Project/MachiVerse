@@ -12,6 +12,7 @@ internal static class Program
     private const string PersistenceProfile = "perf.persistence.v1";
     private const string PublicationProfile = "perf.publication.v1";
     private const string SoakProfile = "performance.soak.24h";
+    private const ulong CanonicalTerminalOperationCount = 136_450_000UL;
     private const string BenchmarkMeasurementCode = "qa04.measurement.step-sample-count";
     private const double MissingMetricSentinelMilliseconds = 1_000_000_000.0;
 
@@ -321,6 +322,9 @@ internal static class Program
                     config_digest = inspection.CanonicalConfigDigest,
                     worker_count = run.WorkerCount,
                     run_ordinal = run.RunOrdinal,
+                    production_transition_count = production.TransitionCount,
+                    terminal_operation_count = production.TerminalOperationCount,
+                    finalized_step = production.FinalizedStep,
                     step_count = measurement.StepSampleCount,
                     step_p50_ms = Milliseconds(step?.P50),
                     step_p95_ms = Milliseconds(step?.P95),
@@ -382,6 +386,7 @@ internal static class Program
             !string.Equals(production.ProfileId, ReferenceProfile, StringComparison.Ordinal) ||
             production.WorkerCount != run.WorkerCount ||
             production.TransitionCount != 27_000 ||
+            production.TerminalOperationCount != CanonicalTerminalOperationCount ||
             production.FinalizedStep != 27_001 ||
             !production.SnapshotCowFrozen ||
             production.SnapshotStep != 18_000 ||
@@ -719,6 +724,7 @@ internal static class Program
         public string ProfileId { get; set; } = "";
         public int WorkerCount { get; set; }
         public int TransitionCount { get; set; }
+        public ulong TerminalOperationCount { get; set; }
         public ulong FinalizedStep { get; set; }
         public string FinalStateDigest { get; set; } = "";
         public ProductionDeterminismEvidence? DeterminismEvidence { get; set; }
