@@ -166,7 +166,11 @@ public sealed partial class SqlitePersistenceStore
                         transaction,
                         cancellationToken)
                     .ConfigureAwait(false);
-                context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
+                context = new HistoryContext(
+                    context.WorldId,
+                    new HistoryAnchor(
+                        detailDecisionAuthority.History.Sequence,
+                        detailDecisionAuthority.History.RecordDigest));
             }
 
             ValidateNextHistoryRecord(authority.History, context);
