@@ -13,6 +13,7 @@ public sealed record Qa04ProductionReferenceRunResultV1(
     int TransitionCount,
     ulong FinalizedStep,
     string FinalStateDigest,
+    Qa04ProductionDeterminismEvidenceV1 DeterminismEvidence,
     ulong FinalHistorySequence,
     string FinalHistoryDigest,
     string FinalContinuityToken,
@@ -103,6 +104,7 @@ public static class Qa04ProductionReferenceRunV1
         var collector = new Qa04BenchmarkMetricCollectorV1();
         var measurement = new Qa04BenchmarkRunMeasurementSessionV1(collector);
         var candidateIdentities = new Qa04ProductionStepCandidateIdentityRegistryV1();
+        var determinismEvidence = new Qa04ProductionDeterminismEvidenceProducerV1();
         var snapshotCoordinator = new RunningSnapshotCoordinatorV1();
         RunningSnapshotCutV1? frozenSnapshot = null;
         DomainPartitionSnapshotAuthoritySetV1? frozenDomainAuthorities = null;
@@ -217,6 +219,12 @@ public static class Qa04ProductionReferenceRunV1
                         "qa04.detail-promotion-decision.v1",
                         StringComparison.Ordinal))
                     throw new InvalidDataException("qa04.production-run.detail-decision-authority-drift");
+
+                determinismEvidence.Append(
+                    injectionStep,
+                    completed.Finalization.TransitionAuthority,
+                    detailDecisionAuthority,
+                    completed.ClosedPrefix);
 
                 currentState = completed.Finalization.AuthoritativeState.State;
                 currentMutationState = completed.MutationState;
@@ -349,6 +357,7 @@ public static class Qa04ProductionReferenceRunV1
                 foreach (var candidate in candidateSequence)
                     writer.WriteBytes(candidate.CandidateId.ToBytes());
             });
+            var completedDeterminismEvidence = determinismEvidence.Complete(currentState, currentClosedPrefix);
 
             return new Qa04ProductionReferenceRunResultV1(
                 SchemaVersion: "1.0",
@@ -357,6 +366,7 @@ public static class Qa04ProductionReferenceRunV1
                 TransitionCount: CanonicalTransitionCount,
                 FinalizedStep: currentState.Header.Step,
                 FinalStateDigest: Hex(currentState.Diagnostic.StateDigest),
+                DeterminismEvidence: completedDeterminismEvidence,
                 FinalHistorySequence: finalHistory.Sequence,
                 FinalHistoryDigest: Hex(finalHistory.Digest),
                 FinalContinuityToken: Hex(finalRecovery.ContinuityToken),
