@@ -22,12 +22,15 @@ public sealed partial class SqlitePersistenceStore
             basisPrefix,
             resultingPrefix,
             Array.Empty<CrossDomainTransactionStateV1>(),
-            cancellationToken);
+            cancellationToken,
+            detailDecisionAuthority: null);
 
     /// <summary>
     /// Gate4 Step2 transition COMMIT path. The compact Operation transition, complete
-    /// transition.committed.v1 semantic authority, and any canonical CrossDomainTransaction
-    /// turnover changes become durable in the same SQLite transaction.
+    /// transition.committed.v1 semantic authority, optional canonical Detail decision authority,
+    /// and any canonical CrossDomainTransaction turnover changes become durable in the same
+    /// SQLite transaction. When supplied, the Detail decision record is appended immediately
+    /// before transition.committed.v1 and the transition record must bind it as its predecessor.
     /// </summary>
     public async Task<DurableTransitionResult> PersistQa04CanonicalTransitionCommitAsync(
         ulong injectionStep,
@@ -36,7 +39,8 @@ public sealed partial class SqlitePersistenceStore
         Qa04OperationClosedPrefixV1 basisPrefix,
         Qa04OperationClosedPrefixV1 resultingPrefix,
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority = null)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(terminalOperations);
@@ -57,6 +61,20 @@ public sealed partial class SqlitePersistenceStore
         if (resultingPrefix.LastClosedInjectionStep != injectionStep ||
             resultingPrefix.TerminalOperationCount != checked(basisPrefix.TerminalOperationCount + (ulong)terminalOperations.Count))
             throw new InvalidDataException("persistence.qa04-canonical-transition.result-prefix-drift");
+
+        if (detailDecisionAuthority is not null)
+        {
+            var detail = detailDecisionAuthority;
+            ValidateHistoryMaterial(detail.History, "qa04.detail-promotion-decision.v1");
+            if (detail.BasisStep != effectiveStep || detail.ResultingStep != resultingStep ||
+                detail.History.WorldId != authority.History.WorldId ||
+                detail.History.Sequence == ulong.MaxValue ||
+                checked(detail.History.Sequence + 1UL) != authority.History.Sequence ||
+                !CryptographicOperations.FixedTimeEquals(
+                    authority.History.PreviousRecordDigest,
+                    detail.History.RecordDigest))
+                throw new InvalidDataException("persistence.qa04-canonical-transition.detail-decision-chain-drift");
+        }
 
         var terminalById = terminalOperations.ToDictionary(static value => value.OperationId);
         if (terminalById.Count != terminalOperations.Count)
@@ -140,6 +158,17 @@ public sealed partial class SqlitePersistenceStore
             }
 
             var context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
+            if (detailDecisionAuthority is not null)
+            {
+                ValidateNextHistoryRecord(detailDecisionAuthority.History, context);
+                await InsertHistoryRecordAsync(
+                        detailDecisionAuthority.History,
+                        transaction,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
+            }
+
             ValidateNextHistoryRecord(authority.History, context);
             var expectedContinuity = HistoryIntegrity.ComputeTransitionContinuityToken(
                 context.WorldId,
