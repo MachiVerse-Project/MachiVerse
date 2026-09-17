@@ -36,9 +36,9 @@ public sealed record Qa04ProductionReferenceRunResultV1(
 /// <summary>
 /// Canonical perf.reference.v1 production process run. The reference world is assembled once at
 /// durable State(1), then all 27,000 workload transitions execute consecutively through the Gate4
-/// Step2 compact Operation authority, eight-domain runtime, typed mutation path, canonical SQLite
-/// transition COMMIT and publish boundary. CrossDomainTransaction turnover is applied every 300
-/// basis Steps without reinitializing the world.
+/// Step2 compact Operation authority, live Detail promotion/deferral authority, eight-domain runtime,
+/// typed mutation path, canonical SQLite transition COMMIT and publish boundary. CrossDomainTransaction
+/// turnover is applied every 300 basis Steps without reinitializing the world.
 /// </summary>
 public static class Qa04ProductionReferenceRunV1
 {
@@ -59,6 +59,8 @@ public static class Qa04ProductionReferenceRunV1
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceWorldMaterialContractV1.RequireAllProductionMaterializersAvailable();
         Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
+        Qa04CanonicalDetailTransitionBindingV1.ValidateCanonicalContract();
+        Qa04DetailRegionCanonicalAuthorityV1.ValidateCanonicalContract();
         Qa04CrossDomainTransactionTurnoverMaterializerV1.ValidateCanonicalContract();
         _ = Qa04AlgorithmIterationBudgetGuardV1.ValidateCanonicalContract();
 
@@ -74,6 +76,12 @@ public static class Qa04ProductionReferenceRunV1
             currentActiveSlots.Select(static slot => slot.State).ToArray());
         var currentClosedPrefix = Qa04OperationClosedPrefixV1.Empty();
 
+        var detailMaterial = Qa04DetailRegionCanonicalAuthorityV1.MaterializeCanonical();
+        var currentDetailDirectory = new DetailDirectoryV1(
+            detailMaterial.RegionsByTile,
+            Array.Empty<DetailTransitionCandidateV1>());
+        var detailPolicy = DetailTransitionPolicyV1.FromConfig(Qa04ReferenceConfigAuthorityV1.CreateCanonical());
+
         var scheduler = new OperationSchedulerStateV1(
             nextSchedulableStep: Qa04ProductionReferenceWorldAssemblerV1.CanonicalBasisStep,
             freezeStep: null,
@@ -83,6 +91,10 @@ public static class Qa04ProductionReferenceRunV1
             scheduler,
             currentActiveTransactions,
             currentClosedPrefix);
+        Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
+            DetailDirectorySubstateV1.Canonicalize(currentDetailDirectory),
+            basisState.DetailState,
+            "qa04.production-run.initial-detail-authority-drift");
 
         var paths = PersistenceLayout.Resolve(persistenceRoot, Qa04ReferenceLoadV1.WorldId, 1);
         PersistenceLayout.EnsureGenerationDirectories(paths);
@@ -115,6 +127,7 @@ public static class Qa04ProductionReferenceRunV1
         var commitMetricAttached = false;
         var snapshotCommitted = false;
         var turnoverCount = 0;
+        var detailDecisionCount = 0;
 
         try
         {
@@ -184,16 +197,33 @@ public static class Qa04ProductionReferenceRunV1
                             store,
                             scheduler,
                             candidateIdentities,
-                            token).ConfigureAwait(false);
+                            token,
+                            currentDetailDirectory,
+                            detailPolicy).ConfigureAwait(false);
                     },
                     cancellationToken).ConfigureAwait(false);
 
                 var completed = executed
                     ?? throw new InvalidDataException("qa04.production-run.step-result-missing");
+                var resultingDetailDirectory = completed.Finalization.DetailDirectory
+                    ?? throw new InvalidDataException("qa04.production-run.detail-directory-missing");
+                var detailDecisionAuthority = completed.Finalization.DetailDecisionAuthority
+                    ?? throw new InvalidDataException("qa04.production-run.detail-decision-authority-missing");
+                if (detailDecisionAuthority.BasisStep != basisStep ||
+                    detailDecisionAuthority.ResultingStep != resultingStep ||
+                    detailDecisionAuthority.History.NormalizedPayloadDigest.Length != 32 ||
+                    !string.Equals(
+                        detailDecisionAuthority.History.RecordType,
+                        "qa04.detail-promotion-decision.v1",
+                        StringComparison.Ordinal))
+                    throw new InvalidDataException("qa04.production-run.detail-decision-authority-drift");
+
                 currentState = completed.Finalization.AuthoritativeState.State;
                 currentMutationState = completed.MutationState;
                 currentDomainAuthorities = completed.DomainAuthorities;
                 currentClosedPrefix = completed.ClosedPrefix;
+                currentDetailDirectory = resultingDetailDirectory;
+                detailDecisionCount++;
 
                 if (pendingActiveSlots is not null)
                 {
@@ -205,10 +235,6 @@ public static class Qa04ProductionReferenceRunV1
                 if (resultingStep == RunningSnapshotCoordinatorV1.StandardIntervalSteps)
                 {
                     var config = Qa04ReferenceConfigAuthorityV1.CreateCanonical();
-                    var detailMaterial = Qa04DetailRegionCanonicalAuthorityV1.MaterializeCanonical();
-                    var detailDirectory = new DetailDirectoryV1(
-                        detailMaterial.RegionsByTile,
-                        Array.Empty<DetailTransitionCandidateV1>());
                     var registry = StandardDomainRegistryAuthorityV1.Generation1;
                     frozenSnapshot = await snapshotCoordinator
                         .TryFreezeWithCoreOwnerMaterialV2IfDueMeasuredAsync(
@@ -217,7 +243,7 @@ public static class Qa04ProductionReferenceRunV1
                             new IFrozenCoreSnapshotOwnerMaterialV1[]
                             {
                                 FrozenCoreConfigSnapshotOwnerV1.Freeze(currentState.Header.Step, config),
-                                FrozenDetailDirectorySnapshotOwnerV1.Freeze(currentState.Header.Step, detailDirectory),
+                                FrozenDetailDirectorySnapshotOwnerV1.Freeze(currentState.Header.Step, currentDetailDirectory),
                                 FrozenDomainRegistrySnapshotOwnerV1.Freeze(currentState.Header.Step, registry),
                             },
                             collector,
@@ -235,6 +261,12 @@ public static class Qa04ProductionReferenceRunV1
             if (turnoverCount != expectedTurnoverCount ||
                 currentActiveTransactions.Count != checked((int)Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount))
                 throw new InvalidDataException("qa04.production-run.transaction-turnover-run-coverage-drift");
+            if (detailDecisionCount != CanonicalTransitionCount)
+                throw new InvalidDataException("qa04.production-run.detail-decision-run-coverage-drift");
+            Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
+                DetailDirectorySubstateV1.Canonicalize(currentDetailDirectory),
+                currentState.DetailState,
+                "qa04.production-run.final-detail-authority-drift");
 
             var candidateSequence = candidateIdentities.ValidateCompleteCanonicalRun();
             if (currentState.Header.Step != Qa04MeasurementPhaseContractV1.MeasurementLastFinalizedStep ||
