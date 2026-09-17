@@ -312,6 +312,19 @@ public static class Qa04ProductionReferenceRunV1
             if (finalRecovery.FinalizedStep != currentState.Header.Step)
                 throw new InvalidDataException("qa04.production-run.final-recovery-head-drift");
 
+            var transitionTailReplay = await Qa04TransitionHistoryTailReplayV1.VerifyAsync(
+                store,
+                frozenSnapshot.SnapshotStep,
+                frozenSnapshot.HistoryAnchor.Sequence,
+                frozenSnapshot.StateContinuityToken,
+                currentState,
+                finalRecovery.ContinuityToken,
+                cancellationToken).ConfigureAwait(false);
+            if (transitionTailReplay.FinalStep != currentState.Header.Step ||
+                transitionTailReplay.TransitionCount !=
+                    checked((int)(currentState.Header.Step - frozenSnapshot.SnapshotStep)))
+                throw new InvalidDataException("qa04.production-run.transition-tail-replay-drift");
+
             var finalDurableOperations = await store.ListOperationStatesCanonicalAsync(cancellationToken).ConfigureAwait(false);
             if (finalDurableOperations.Count != 0)
                 throw new InvalidDataException("qa04.production-run.compact-operation-row-leak");
