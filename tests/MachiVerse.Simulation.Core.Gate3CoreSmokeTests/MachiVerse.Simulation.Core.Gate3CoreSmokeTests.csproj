@@ -9,5 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj" />
+    <Compile Include="../MachiVerse.Simulation.Core.SmokeTests/Qa04CompactOperationSnapshotSmoke.cs" Link="Qa04CompactOperationSnapshotSmoke.cs" />
   </ItemGroup>
 </Project>
