@@ -6,6 +6,12 @@ internal static class Qa04DeterminismEvidenceVerifier
 {
     private const string ProfileId = "perf.reference.v1";
     private const string SummaryDomain = "qa04.determinism-evidence.v1";
+    private const int CanonicalTransitionCount = 27_000;
+    private const ulong CanonicalTerminalOperationCount = 136_450_000UL;
+    private const ulong CanonicalFinalizedStep = 27_001UL;
+    private const int CanonicalMeasurementStepCount = 18_000;
+    private const ulong CanonicalSnapshotStep = 18_000UL;
+    private const int CanonicalSnapshotSectionCount = 103;
 
     internal static void VerifyContract()
     {
@@ -27,6 +33,176 @@ internal static class Qa04DeterminismEvidenceVerifier
         RequireThrows<InvalidDataException>(
             () => ValidateAndSummarize(mismatch),
             "QA-04 determinism evidence verifier must reject a cross-run promotion-order mismatch.");
+
+        var actualRows = new List<Gate4Step2ActualRunEvidenceRow>(12);
+        foreach (var worker in new[] { 1, 4, 8, 16 })
+        foreach (var ordinal in new[] { 1, 2, 3 })
+            actualRows.Add(SelfTestActualRow(worker, ordinal));
+        var actualSummary = ValidateActualMatrix(actualRows);
+        Program.RequireLowerHex(actualSummary, 64, "QA-04 actual Step2 determinism summary self-test");
+
+        var badTransitionCount = actualRows
+            .Select(static row => CloneActualRow(row))
+            .ToArray();
+        badTransitionCount[0].TransitionCount--;
+        RequireThrows<InvalidDataException>(
+            () => ValidateActualMatrix(badTransitionCount),
+            "QA-04 actual Step2 verifier must reject a non-canonical transition count.");
+    }
+
+    internal static Gate4Step2ActualRunEvidenceRow ParseActualRun(
+        BenchmarkRunDescriptor run,
+        Qa04AdapterResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(response);
+        if (response.ReferenceWorldMaterialized != true ||
+            response.ReleaseEvidenceCapable != false ||
+            (response.BlockingFailureCodes?.Length ?? -1) != 0)
+            throw new InvalidDataException($"QA-04 actual Step2 readiness boundary drifted: {run.RunId}.");
+        if (!string.Equals(response.ExecutionClass, "release", StringComparison.Ordinal) ||
+            !string.Equals(response.ProfileId, ProfileId, StringComparison.Ordinal))
+            throw new InvalidDataException($"QA-04 actual Step2 response class/profile drifted: {run.RunId}.");
+
+        var report = response.Report;
+        RequireString(report, "benchmark_profile_id", ProfileId, run.RunId);
+        RequireString(report, "runtime_version", "assembled-core-production-reference-run.v1", run.RunId);
+        RequireInt(report, "worker_count", run.WorkerCount, run.RunId);
+        RequireInt(report, "run_ordinal", run.RunOrdinal, run.RunId);
+        RequireInt(report, "production_transition_count", CanonicalTransitionCount, run.RunId);
+        RequireULong(report, "terminal_operation_count", CanonicalTerminalOperationCount, run.RunId);
+        RequireULong(report, "finalized_step", CanonicalFinalizedStep, run.RunId);
+        RequireInt(report, "step_count", CanonicalMeasurementStepCount, run.RunId);
+        RequireInt(report, "accepted_operation_loss", 0, run.RunId);
+        RequireBool(report, "hidden_solver_iteration_reduction", expected: false, run.RunId);
+        RequireLong(report, "persistence_metric_observer_failure_count", 0L, run.RunId);
+
+        var snapshot = RequireObject(report, "snapshot_summary", run.RunId);
+        RequireULong(snapshot, "snapshot_step", CanonicalSnapshotStep, run.RunId);
+        RequireBool(snapshot, "drain_completed", expected: true, run.RunId);
+        RequireInt(snapshot, "section_count", CanonicalSnapshotSectionCount, run.RunId);
+        var chunkCount = RequiredInt(snapshot, "chunk_count", run.RunId);
+        if (chunkCount <= 0)
+            throw new InvalidDataException($"QA-04 actual Step2 snapshot chunk count must be positive: {run.RunId}.");
+        _ = RequiredDigest(snapshot, "snapshot_digest", run.RunId);
+        _ = RequiredDigest(snapshot, "physical_manifest_digest", run.RunId);
+        _ = RequiredDigest(snapshot, "recovered_state_digest", run.RunId);
+
+        var evidence = RequireObject(report, "determinism_evidence", run.RunId);
+        var finalStateDigest = RequiredDigest(evidence, "final_state_digest", run.RunId);
+        var reportFinalStateDigest = RequiredDigest(report, "final_state_digest", run.RunId);
+        if (!string.Equals(finalStateDigest, reportFinalStateDigest, StringComparison.Ordinal))
+            throw new InvalidDataException($"QA-04 actual Step2 final State digest does not match report: {run.RunId}.");
+
+        var candidateIdSequenceDigest = RequiredDigest(report, "candidate_id_sequence_digest", run.RunId);
+        var finalHistoryDigest = RequiredDigest(report, "final_history_digest", run.RunId);
+        var finalContinuityToken = RequiredDigest(report, "final_continuity_token", run.RunId);
+        var performanceFailures = response.FailureCodes
+            .Concat(ReadStringArray(report, "failure_codes"))
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static value => value, StringComparer.Ordinal)
+            .ToArray();
+
+        return new Gate4Step2ActualRunEvidenceRow
+        {
+            RunId = run.RunId,
+            WorkerCount = run.WorkerCount,
+            RunOrdinal = run.RunOrdinal,
+            TransitionCount = CanonicalTransitionCount,
+            TerminalOperationCount = CanonicalTerminalOperationCount,
+            FinalizedStep = CanonicalFinalizedStep,
+            MeasurementStepCount = CanonicalMeasurementStepCount,
+            SnapshotStep = CanonicalSnapshotStep,
+            SnapshotDrainCompleted = true,
+            SnapshotSectionCount = CanonicalSnapshotSectionCount,
+            SnapshotChunkCount = chunkCount,
+            AcceptedOperationLoss = 0,
+            HiddenSolverIterationReduction = false,
+            PersistenceMetricObserverFailureCount = 0,
+            CandidateIdSequenceDigest = candidateIdSequenceDigest,
+            FinalHistoryDigest = finalHistoryDigest,
+            FinalContinuityToken = finalContinuityToken,
+            FinalStateDigest = finalStateDigest,
+            TransitionCommittedDigest = RequiredDigest(evidence, "transition_committed_digest", run.RunId),
+            OperationTerminalSemanticDigest = RequiredDigest(evidence, "operation_terminal_semantic_digest", run.RunId),
+            ConfigHistoryDigest = RequiredDigest(evidence, "config_history_digest", run.RunId),
+            PromotionDeferralOrderDigest = RequiredDigest(evidence, "promotion_deferral_order_digest", run.RunId),
+            PerformanceFailureCodes = performanceFailures,
+        };
+    }
+
+    internal static string VerifyActualMatrix(string matrixPath)
+    {
+        var rows = Program.ReadJson<Gate4Step2ActualRunEvidenceRow[]>(
+            matrixPath,
+            "Gate4 Step2 actual determinism matrix");
+        var summary = ValidateActualMatrix(rows);
+        Console.WriteLine("Gate4 Step2 actual determinism matrix PASS");
+        Console.WriteLine($"actual_run_count={rows.Length}");
+        Console.WriteLine($"determinism_digest_summary={summary}");
+        foreach (var row in rows.OrderBy(static value => value.WorkerCount).ThenBy(static value => value.RunOrdinal))
+        {
+            Console.WriteLine(
+                $"run={row.RunId} workers={row.WorkerCount} ordinal={row.RunOrdinal} transitions={row.TransitionCount} terminal_operations={row.TerminalOperationCount} final_state_digest={row.FinalStateDigest}");
+            if (row.PerformanceFailureCodes.Length != 0)
+                Console.WriteLine(
+                    $"run={row.RunId} step3_performance_failures={string.Join(",", row.PerformanceFailureCodes)}");
+        }
+        return summary;
+    }
+
+    private static string ValidateActualMatrix(IReadOnlyCollection<Gate4Step2ActualRunEvidenceRow> rows)
+    {
+        if (rows.Count != 12)
+            throw new InvalidDataException($"QA-04 actual Step2 matrix must contain 12 runs, found {rows.Count}.");
+        if (rows.Select(static row => row.RunId).Any(string.IsNullOrWhiteSpace) ||
+            rows.Select(static row => row.RunId).Distinct(StringComparer.Ordinal).Count() != rows.Count)
+            throw new InvalidDataException("QA-04 actual Step2 matrix contains empty or duplicate run ids.");
+
+        foreach (var worker in new[] { 1, 4, 8, 16 })
+        {
+            var workerRows = rows.Where(row => row.WorkerCount == worker)
+                .OrderBy(static row => row.RunOrdinal)
+                .ToArray();
+            if (workerRows.Length != 3 ||
+                !workerRows.Select(static row => row.RunOrdinal).SequenceEqual(new[] { 1, 2, 3 }))
+                throw new InvalidDataException($"QA-04 actual Step2 worker {worker} matrix is incomplete.");
+        }
+        if (rows.Any(static row => row.WorkerCount is not (1 or 4 or 8 or 16)))
+            throw new InvalidDataException("QA-04 actual Step2 matrix contains a non-canonical worker count.");
+
+        foreach (var row in rows)
+        {
+            if (row.TransitionCount != CanonicalTransitionCount ||
+                row.TerminalOperationCount != CanonicalTerminalOperationCount ||
+                row.FinalizedStep != CanonicalFinalizedStep ||
+                row.MeasurementStepCount != CanonicalMeasurementStepCount ||
+                row.SnapshotStep != CanonicalSnapshotStep ||
+                !row.SnapshotDrainCompleted ||
+                row.SnapshotSectionCount != CanonicalSnapshotSectionCount ||
+                row.SnapshotChunkCount <= 0 ||
+                row.AcceptedOperationLoss != 0 ||
+                row.HiddenSolverIterationReduction ||
+                row.PersistenceMetricObserverFailureCount != 0)
+                throw new InvalidDataException($"QA-04 actual Step2 production contract drifted: {row.RunId}.");
+
+            Program.RequireLowerHex(row.CandidateIdSequenceDigest, 64, $"candidate_id_sequence_digest:{row.RunId}");
+            Program.RequireLowerHex(row.FinalHistoryDigest, 64, $"final_history_digest:{row.RunId}");
+            Program.RequireLowerHex(row.FinalContinuityToken, 64, $"final_continuity_token:{row.RunId}");
+            if (row.PerformanceFailureCodes.Any(string.IsNullOrWhiteSpace) ||
+                row.PerformanceFailureCodes.Distinct(StringComparer.Ordinal).Count() != row.PerformanceFailureCodes.Length)
+                throw new InvalidDataException($"QA-04 actual Step2 performance failure codes are malformed: {row.RunId}.");
+        }
+
+        return ValidateAndSummarize(rows.Select(static row => new EvidenceRow(
+                row.RunId,
+                row.FinalStateDigest,
+                row.TransitionCommittedDigest,
+                row.OperationTerminalSemanticDigest,
+                row.ConfigHistoryDigest,
+                row.PromotionDeferralOrderDigest))
+            .ToArray());
     }
 
     internal static void VerifyAndBind(
@@ -172,6 +348,62 @@ internal static class Qa04DeterminismEvidenceVerifier
         Program.WriteJson(fragmentPath, fragment);
     }
 
+    private static JsonElement RequireObject(JsonElement parent, string property, string runId)
+    {
+        if (!parent.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException($"QA-04 actual Step2 object missing: {runId}:{property}.");
+        return value;
+    }
+
+    private static void RequireString(JsonElement parent, string property, string expected, string runId)
+    {
+        if (!parent.TryGetProperty(property, out var value) ||
+            value.ValueKind != JsonValueKind.String ||
+            !string.Equals(value.GetString(), expected, StringComparison.Ordinal))
+            throw new InvalidDataException($"QA-04 actual Step2 string drift: {runId}:{property}.");
+    }
+
+    private static int RequiredInt(JsonElement parent, string property, string runId)
+    {
+        if (!parent.TryGetProperty(property, out var value) ||
+            value.ValueKind != JsonValueKind.Number ||
+            !value.TryGetInt32(out var result))
+            throw new InvalidDataException($"QA-04 actual Step2 integer missing: {runId}:{property}.");
+        return result;
+    }
+
+    private static void RequireInt(JsonElement parent, string property, int expected, string runId)
+    {
+        if (RequiredInt(parent, property, runId) != expected)
+            throw new InvalidDataException($"QA-04 actual Step2 integer drift: {runId}:{property}.");
+    }
+
+    private static void RequireLong(JsonElement parent, string property, long expected, string runId)
+    {
+        if (!parent.TryGetProperty(property, out var value) ||
+            value.ValueKind != JsonValueKind.Number ||
+            !value.TryGetInt64(out var actual) ||
+            actual != expected)
+            throw new InvalidDataException($"QA-04 actual Step2 integer drift: {runId}:{property}.");
+    }
+
+    private static void RequireULong(JsonElement parent, string property, ulong expected, string runId)
+    {
+        if (!parent.TryGetProperty(property, out var value) ||
+            value.ValueKind != JsonValueKind.Number ||
+            !value.TryGetUInt64(out var actual) ||
+            actual != expected)
+            throw new InvalidDataException($"QA-04 actual Step2 unsigned integer drift: {runId}:{property}.");
+    }
+
+    private static void RequireBool(JsonElement parent, string property, bool expected, string runId)
+    {
+        if (!parent.TryGetProperty(property, out var value) ||
+            value.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
+            value.GetBoolean() != expected)
+            throw new InvalidDataException($"QA-04 actual Step2 boolean drift: {runId}:{property}.");
+    }
+
     private static string RequiredDigest(JsonElement parent, string property, string runId)
     {
         if (!parent.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.String)
@@ -212,6 +444,62 @@ internal static class Qa04DeterminismEvidenceVerifier
         }
         throw new InvalidDataException(message);
     }
+
+    private static Gate4Step2ActualRunEvidenceRow SelfTestActualRow(int worker, int ordinal)
+        => new()
+        {
+            RunId = $"selftest.actual.{worker}.{ordinal}",
+            WorkerCount = worker,
+            RunOrdinal = ordinal,
+            TransitionCount = CanonicalTransitionCount,
+            TerminalOperationCount = CanonicalTerminalOperationCount,
+            FinalizedStep = CanonicalFinalizedStep,
+            MeasurementStepCount = CanonicalMeasurementStepCount,
+            SnapshotStep = CanonicalSnapshotStep,
+            SnapshotDrainCompleted = true,
+            SnapshotSectionCount = CanonicalSnapshotSectionCount,
+            SnapshotChunkCount = 1,
+            AcceptedOperationLoss = 0,
+            HiddenSolverIterationReduction = false,
+            PersistenceMetricObserverFailureCount = 0,
+            CandidateIdSequenceDigest = new string('9', 64),
+            FinalHistoryDigest = new string('8', 64),
+            FinalContinuityToken = new string('7', 64),
+            FinalStateDigest = new string('a', 64),
+            TransitionCommittedDigest = new string('b', 64),
+            OperationTerminalSemanticDigest = new string('c', 64),
+            ConfigHistoryDigest = new string('d', 64),
+            PromotionDeferralOrderDigest = new string('e', 64),
+            PerformanceFailureCodes = [],
+        };
+
+    private static Gate4Step2ActualRunEvidenceRow CloneActualRow(Gate4Step2ActualRunEvidenceRow row)
+        => new()
+        {
+            RunId = row.RunId,
+            WorkerCount = row.WorkerCount,
+            RunOrdinal = row.RunOrdinal,
+            TransitionCount = row.TransitionCount,
+            TerminalOperationCount = row.TerminalOperationCount,
+            FinalizedStep = row.FinalizedStep,
+            MeasurementStepCount = row.MeasurementStepCount,
+            SnapshotStep = row.SnapshotStep,
+            SnapshotDrainCompleted = row.SnapshotDrainCompleted,
+            SnapshotSectionCount = row.SnapshotSectionCount,
+            SnapshotChunkCount = row.SnapshotChunkCount,
+            AcceptedOperationLoss = row.AcceptedOperationLoss,
+            HiddenSolverIterationReduction = row.HiddenSolverIterationReduction,
+            PersistenceMetricObserverFailureCount = row.PersistenceMetricObserverFailureCount,
+            CandidateIdSequenceDigest = row.CandidateIdSequenceDigest,
+            FinalHistoryDigest = row.FinalHistoryDigest,
+            FinalContinuityToken = row.FinalContinuityToken,
+            FinalStateDigest = row.FinalStateDigest,
+            TransitionCommittedDigest = row.TransitionCommittedDigest,
+            OperationTerminalSemanticDigest = row.OperationTerminalSemanticDigest,
+            ConfigHistoryDigest = row.ConfigHistoryDigest,
+            PromotionDeferralOrderDigest = row.PromotionDeferralOrderDigest,
+            PerformanceFailureCodes = row.PerformanceFailureCodes.ToArray(),
+        };
 
     private sealed record EvidenceRow(
         string RunId,
