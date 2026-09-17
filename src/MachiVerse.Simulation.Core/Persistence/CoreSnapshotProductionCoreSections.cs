@@ -55,7 +55,8 @@ public static class CoreSnapshotProductionSectionProviderV1
                 cut.BasisStep,
                 cut.DurableOperations,
                 prefix,
-                transactions)
+                cut.CrossDomainTransactions
+                    ?? throw new InvalidDataException("snapshot-core.production-qa04-transaction-custody-missing"))
             : CoreOperationStateSnapshotSectionProviderV2.Create(
                 cut.BasisStep,
                 cut.DurableOperations,
