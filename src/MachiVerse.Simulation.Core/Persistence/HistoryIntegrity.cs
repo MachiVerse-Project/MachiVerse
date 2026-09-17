@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 
 namespace MachiVerse.Simulation.Core.Persistence;
