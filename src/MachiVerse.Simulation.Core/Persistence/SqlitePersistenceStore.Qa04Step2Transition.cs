@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Performance;
@@ -276,9 +277,9 @@ WHERE singleton=1;
         }
     }
 
-    public async Task<IReadOnlyList<Qa04TransitionCommittedAuthorityV1>> ReadQa04CanonicalTransitionHistoryAfterAsync(
+    public async IAsyncEnumerable<Qa04TransitionCommittedAuthorityV1> StreamQa04CanonicalTransitionHistoryAfterAsync(
         ulong historyAnchorSequence,
-        CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         OpaqueId128 worldId;
         await using (var meta = _connection.CreateCommand())
@@ -301,7 +302,6 @@ ORDER BY sequence ASC;
 """;
         command.Parameters.AddWithValue("$anchor_sequence", U64Be.Encode(historyAnchorSequence));
 
-        var authorities = new List<Qa04TransitionCommittedAuthorityV1>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -314,7 +314,7 @@ ORDER BY sequence ASC;
             if (majorRaw is < 0 or > ushort.MaxValue || minorRaw is < 0 or > ushort.MaxValue)
                 throw new InvalidDataException("persistence.qa04-transition-replay.schema-version-invalid");
 
-            authorities.Add(Qa04TransitionCommittedAuthorityV1.RestorePersistedAndValidate(
+            yield return Qa04TransitionCommittedAuthorityV1.RestorePersistedAndValidate(
                 worldId,
                 sequence,
                 previousRecordDigest,
@@ -324,10 +324,8 @@ ORDER BY sequence ASC;
                 checked((ushort)minorRaw),
                 (byte[])reader[6],
                 (byte[])reader[7],
-                (byte[])reader[8]));
+                (byte[])reader[8]);
         }
-
-        return Array.AsReadOnly(authorities.ToArray());
     }
 
 }
