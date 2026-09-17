@@ -1,0 +1,235 @@
+name: INT-03 Gate4 Step2 actual determinism matrix
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/int-03-canonical-snapshot-recovery
+    paths:
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDeterminismEvidence.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04Step2DeterminismAuthority.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionCommittedAuthority.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionHistoryTailReplay.cs'
+      - 'src/MachiVerse.Simulation.Core/Persistence/SqlitePersistenceStore.Qa04Step2Transition.cs'
+      - 'tools/MachiVerse.Qa04RuntimeTarget/**'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/**'
+      - 'tools/MachiVerse.PerformanceHarness/**'
+      - '.github/workflows/int03-gate4-step2-actual-run-worker.yml'
+      - '.github/workflows/int03-gate4-step2-actual-determinism.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-gate4-step2-actual-determinism-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize actual Step2 evidence execution
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      evidence_head: ${{ steps.gate.outputs.evidence_head }}
+    steps:
+      - name: Resolve explicit evidence request
+        id: gate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "evidence_head=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$HEAD_MESSAGE" == *"[gate4-step2-evidence]"* ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Gate4 Step2 actual evidence execution authorized for $HEAD_SHA"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Gate4 Step2 actual evidence is marker-gated; no production runs requested."
+          fi
+
+  w1r1:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 1
+      run_ordinal: 1
+
+  w1r2:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 1
+      run_ordinal: 2
+
+  w1r3:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 1
+      run_ordinal: 3
+
+  w4r1:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 4
+      run_ordinal: 1
+
+  w4r2:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 4
+      run_ordinal: 2
+
+  w4r3:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 4
+      run_ordinal: 3
+
+  w8r1:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 8
+      run_ordinal: 1
+
+  w8r2:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 8
+      run_ordinal: 2
+
+  w8r3:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 8
+      run_ordinal: 3
+
+  w16r1:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 16
+      run_ordinal: 1
+
+  w16r2:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 16
+      run_ordinal: 2
+
+  w16r3:
+    needs: authorize
+    if: needs.authorize.outputs.run == 'true'
+    uses: ./.github/workflows/int03-gate4-step2-actual-run-worker.yml
+    with:
+      evidence_head: ${{ needs.authorize.outputs.evidence_head }}
+      worker_count: 16
+      run_ordinal: 3
+
+  aggregate:
+    name: Gate4 Step2 12-run equality / completion proof
+    needs: [authorize, w1r1, w1r2, w1r3, w4r1, w4r2, w4r3, w8r1, w8r2, w8r3, w16r1, w16r2, w16r3]
+    if: needs.authorize.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ROW_W1R1: ${{ needs.w1r1.outputs.row_json }}
+      ROW_W1R2: ${{ needs.w1r2.outputs.row_json }}
+      ROW_W1R3: ${{ needs.w1r3.outputs.row_json }}
+      ROW_W4R1: ${{ needs.w4r1.outputs.row_json }}
+      ROW_W4R2: ${{ needs.w4r2.outputs.row_json }}
+      ROW_W4R3: ${{ needs.w4r3.outputs.row_json }}
+      ROW_W8R1: ${{ needs.w8r1.outputs.row_json }}
+      ROW_W8R2: ${{ needs.w8r2.outputs.row_json }}
+      ROW_W8R3: ${{ needs.w8r3.outputs.row_json }}
+      ROW_W16R1: ${{ needs.w16r1.outputs.row_json }}
+      ROW_W16R2: ${{ needs.w16r2.outputs.row_json }}
+      ROW_W16R3: ${{ needs.w16r3.outputs.row_json }}
+    steps:
+      - name: Checkout exact evidence head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.evidence_head }}
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Build Step2 verifier and performance plan
+        run: |
+          dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
+          dotnet build tools/MachiVerse.PerformanceHarness/MachiVerse.PerformanceHarness.csproj --configuration Release
+          dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release --no-build --             materialize "$RUNNER_TEMP/qa04-plan"
+
+      - name: Assemble 12 actual process-run rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/gate4-step2-matrix.json" <<'PY'
+          import json, os, sys
+          keys = ['ROW_W1R1', 'ROW_W1R2', 'ROW_W1R3', 'ROW_W4R1', 'ROW_W4R2', 'ROW_W4R3', 'ROW_W8R1', 'ROW_W8R2', 'ROW_W8R3', 'ROW_W16R1', 'ROW_W16R2', 'ROW_W16R3']
+          rows = [json.loads(os.environ[key]) for key in keys]
+          rows.sort(key=lambda row: (row['workerCount'], row['runOrdinal'], row['runId']))
+          with open(sys.argv[1], 'w', encoding='utf-8') as handle:
+              json.dump(rows, handle, separators=(',', ':'))
+              handle.write('\n')
+          PY
+
+      - name: Verify exact run contract and five-digest equality
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build --             verify-step2 "$RUNNER_TEMP/gate4-step2-matrix.json" "$RUNNER_TEMP/qa04-plan"             | tee "$RUNNER_TEMP/gate4-step2-verification.log"
+
+      - name: Publish Gate4 Step2 evidence summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/gate4-step2-matrix.json" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as handle:
+              rows = json.load(handle)
+          with open(sys.argv[2], 'a', encoding='utf-8') as out:
+              out.write("## Gate4 Step2 actual determinism matrix\n\n")
+              out.write("| workers | run | transitions | terminal Operations | final state digest |\n")
+              out.write("|---:|---:|---:|---:|---|\n")
+              for row in rows:
+                  out.write(
+                      f"| {row['workerCount']} | {row['runOrdinal']} | {row['transitionCount']} | "
+                      f"{row['terminalOperationCount']} | `{row['finalStateDigest']}` |\n")
+              out.write("\nAll 12 rows are actual production runs. Final equality is enforced by the C# Gate4 Step2 verifier.\n")
+          PY
