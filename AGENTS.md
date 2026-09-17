@@ -68,9 +68,10 @@ work branch
 2. responsibility branch から `develop`、`documentation` から `develop`、`promotion` から `develop`、および `develop` から `main` など、常設ブランチから別の常設ブランチへ成果を統合する Pull Request は `merge commit` を使用する。
 3. `develop` または `main` から responsibility branch へ変更を取り込む場合など、常設ブランチ間の同期を目的とする Pull Request も `merge commit` を使用する。これにより、同期元ブランチの commit ancestry を保持し、実内容が同一であるにもかかわらず履歴上の不要な divergence が累積することを避ける。
 4. 常設ブランチ間の統合・同期では `squash merge` および `rebase merge` を使用しない。通常作業PRと常設ブランチ間PRのマージ方式を混在させない。
-5. Ruleset が通常の Pull Request に `squash` のみを許可している場合、常設ブランチ間の統合・同期に限り、Repository admin の `Allow for pull requests only` bypass を使用して `merge commit` を行う。
-6. Ruleset bypass は前項の常設ブランチ間 `merge commit` のためにのみ使用し、レビュー、必須チェック、レビュー会話の解決、その他の保護要件を回避する目的では使用しない。bypass を使用する場合も必ず Pull Request を経由する。
-7. 作業ブランチから常設ブランチへの通常PRで `merge commit` を使用してはならない。例外が必要な場合は、事前にユーザーから明示的な承認を得る。
+5. 通常作業PRと常設ブランチ間PRの両方を受け入れる常設ブランチの Ruleset では、必要に応じて `squash` と `merge` の両方を許可する。Ruleset の bypass を、通常は許可されていないマージ方式を表示・選択するための仕組みとして扱わない。
+6. Ruleset bypass は、通常のマージ方式切替には使用しない。レビュー、必須チェック、レビュー会話の解決その他の保護要件を回避するためにも使用せず、緊急対応その他の明示的な例外が必要な場合に限り、ユーザーの事前承認を得たうえで Pull Request 経由で使用する。
+7. 常設ブランチ間の統合・同期で競合解消が必要な場合は、専用の一時同期ブランチを作成してよい。その場合は、同期対象の常設ブランチ双方を親に持つ解決済み `merge commit` を一時同期ブランチ上へ作成し、採用する実内容を明示的に確定してから Pull Request で対象常設ブランチへ統合する。このPRは常設ブランチ間同期の一部として扱い、`squash merge` せず `merge commit` を使用して commit ancestry を保持する。
+8. 作業ブランチから常設ブランチへの通常PRで `merge commit` を使用してはならない。また、常設ブランチ間の統合・同期で `squash merge` または `rebase merge` を使用してはならない。例外が必要な場合は、事前にユーザーから明示的な承認を得る。
 
 マージ方式を含む基本的な流れは以下とする。
 
