@@ -37,9 +37,11 @@ internal static class Program
                 return 0;
             }
 
-            if (string.Equals(args[0], "verify-step2", StringComparison.Ordinal) && args.Length == 2)
+            if (string.Equals(args[0], "verify-step2", StringComparison.Ordinal) && args.Length is 2 or 3)
             {
-                _ = Qa04DeterminismEvidenceVerifier.VerifyActualMatrix(Path.GetFullPath(args[1]));
+                _ = Qa04DeterminismEvidenceVerifier.VerifyActualMatrix(
+                    Path.GetFullPath(args[1]),
+                    args.Length == 3 ? Path.GetFullPath(args[2]) : null);
                 return 0;
             }
 
@@ -71,7 +73,7 @@ internal static class Program
             }
 
             throw new ArgumentException(
-                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run-step2 <source-commit> <adapter-executable> <plan-directory> <worker-count> <run-ordinal> <output.json>|verify-step2 <matrix.json>|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]");
+                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run-step2 <source-commit> <adapter-executable> <plan-directory> <worker-count> <run-ordinal> <output.json>|verify-step2 <matrix.json> [plan-directory]|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]");
         }
         catch (Exception ex)
         {
