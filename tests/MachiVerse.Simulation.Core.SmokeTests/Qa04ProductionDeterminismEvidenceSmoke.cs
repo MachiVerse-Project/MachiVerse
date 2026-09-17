@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Persistence;
@@ -258,7 +259,7 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
     }
 
     private static Qa04TransitionCommittedAuthorityV1 CreateTransition(
-        Qa04ReferenceConfigAuthorityV1 config,
+        EffectiveCoreConfig config,
         Qa04DetailDecisionAuthorityV1 detailDecision,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
         IReadOnlyList<TerminalOperationCommit> outcomes,
@@ -324,7 +325,7 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
 
     private sealed record StepFixture(
         ulong InjectionStep,
-        Qa04ReferenceConfigAuthorityV1 Config,
+        EffectiveCoreConfig Config,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> Bindings,
         IReadOnlyList<TerminalOperationCommit> Outcomes,
         Qa04DetailDecisionAuthorityV1 DetailDecision,
