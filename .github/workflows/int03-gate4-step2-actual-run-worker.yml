@@ -1,0 +1,87 @@
+name: INT-03 Gate4 Step2 actual run worker
+
+on:
+  workflow_call:
+    inputs:
+      evidence_head:
+        description: Exact commit SHA to validate
+        required: true
+        type: string
+      worker_count:
+        description: Canonical worker count
+        required: true
+        type: number
+      run_ordinal:
+        description: Canonical process run ordinal
+        required: true
+        type: number
+    outputs:
+      row_json:
+        description: Validated Gate4 Step2 actual-run evidence row
+        value: ${{ jobs.actual-run.outputs.row_json }}
+
+permissions:
+  contents: read
+
+jobs:
+  actual-run:
+    name: workers=${{ inputs.worker_count }} / run=${{ inputs.run_ordinal }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      row_json: ${{ steps.capture.outputs.row_json }}
+    steps:
+      - name: Checkout exact evidence head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.evidence_head }}
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Build actual production evidence executables
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release
+          dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
+          dotnet build tools/MachiVerse.PerformanceHarness/MachiVerse.PerformanceHarness.csproj --configuration Release
+
+      - name: Materialize canonical QA-04 plan
+        run: |
+          dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release --no-build --             materialize "$RUNNER_TEMP/qa04-plan"
+
+      - name: Execute exact 27,000-transition production run
+        id: capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          adapter="$GITHUB_WORKSPACE/tools/MachiVerse.Qa04RuntimeTarget/bin/Release/net10.0/MachiVerse.Qa04RuntimeTarget"
+          output="$RUNNER_TEMP/gate4-step2-row.json"
+          export MACHIVERSE_QA04_CORE_EXECUTABLE="$core"
+
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build --             run-step2             "${{ inputs.evidence_head }}"             "$adapter"             "$RUNNER_TEMP/qa04-plan"             "${{ inputs.worker_count }}"             "${{ inputs.run_ordinal }}"             "$output"
+
+          row_json="$(python3 - "$output" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as handle:
+              print(json.dumps(json.load(handle), separators=(',', ':')))
+          PY
+          )"
+          echo "row_json=$row_json" >> "$GITHUB_OUTPUT"
+
+          python3 - "$output" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as handle:
+              row = json.load(handle)
+          with open(sys.argv[2], 'a', encoding='utf-8') as out:
+              out.write(f"### Gate4 Step2 actual run\n\n")
+              out.write(f"- run: `{row['runId']}`\n")
+              out.write(f"- workers: `{row['workerCount']}`\n")
+              out.write(f"- ordinal: `{row['runOrdinal']}`\n")
+              out.write(f"- transitions: `{row['transitionCount']}`\n")
+              out.write(f"- terminal Operations: `{row['terminalOperationCount']}`\n")
+              out.write(f"- final state digest: `{row['finalStateDigest']}`\n")
+          PY
