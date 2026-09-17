@@ -31,7 +31,7 @@ public sealed record Qa04ProductionAuthoritativeStepExecutionV1(
 /// </summary>
 public static class Qa04ProductionAuthoritativeStepExecutorV1
 {
-    public static async Task<Qa04ProductionAuthoritativeStepExecutionV1> ExecuteAsync(
+    public static Task<Qa04ProductionAuthoritativeStepExecutionV1> ExecuteAsync(
         ulong injectionStep,
         int workerCount,
         WorldStateV1 partitionAuthorityState,
@@ -43,6 +43,35 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
         OperationSchedulerStateV1 scheduler,
         Qa04ProductionStepCandidateIdentityRegistryV1 candidateIdentities,
         CancellationToken cancellationToken = default)
+        => ExecuteAsync(
+            injectionStep,
+            workerCount,
+            partitionAuthorityState,
+            mutationState,
+            domainAuthorities,
+            references,
+            crossDomainTransactions,
+            crossDomainTransactions,
+            Array.Empty<CrossDomainTransactionStateV1>(),
+            store,
+            scheduler,
+            candidateIdentities,
+            cancellationToken);
+
+    public static async Task<Qa04ProductionAuthoritativeStepExecutionV1> ExecuteAsync(
+        ulong injectionStep,
+        int workerCount,
+        WorldStateV1 partitionAuthorityState,
+        Qa04CanonicalOperationMutationStateV1 mutationState,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> domainAuthorities,
+        IDomainRecordSchemaResolverV1 references,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> basisCrossDomainTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> resultingCrossDomainTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
+        SqlitePersistenceStore store,
+        OperationSchedulerStateV1 scheduler,
+        Qa04ProductionStepCandidateIdentityRegistryV1 candidateIdentities,
+        CancellationToken cancellationToken = default)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.production-loop.worker-count-not-canonical");
@@ -50,7 +79,9 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
         ArgumentNullException.ThrowIfNull(mutationState);
         ArgumentNullException.ThrowIfNull(domainAuthorities);
         ArgumentNullException.ThrowIfNull(references);
-        ArgumentNullException.ThrowIfNull(crossDomainTransactions);
+        ArgumentNullException.ThrowIfNull(basisCrossDomainTransactions);
+        ArgumentNullException.ThrowIfNull(resultingCrossDomainTransactions);
+        ArgumentNullException.ThrowIfNull(crossDomainTransactionStateChanges);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(candidateIdentities);
@@ -65,6 +96,12 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
             throw new InvalidDataException("qa04.production-loop.current-step-scheduler-not-empty-before-admission");
         if (domainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-loop.domain-authority-count-not-97");
+        if (basisCrossDomainTransactions.Count != checked((int)Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount) ||
+            resultingCrossDomainTransactions.Count != checked((int)Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount))
+            throw new InvalidDataException("qa04.production-loop.transaction-active-count-drift");
+        if (crossDomainTransactionStateChanges.Count != 0 &&
+            crossDomainTransactionStateChanges.Count != checked((int)(Qa04CrossDomainTransactionTurnoverMaterializerV1.CohortSize * 2UL)))
+            throw new InvalidDataException("qa04.production-loop.transaction-turnover-change-count-drift");
 
         var candidateIdentity = candidateIdentities.DeriveAndRegister(
             partitionAuthorityState.Header.WorldId,
@@ -107,12 +144,12 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
             partitionAuthorityState,
             scheduler,
             durableCatalog,
-            crossDomainTransactions);
+            basisCrossDomainTransactions);
         Qa04ProductionStepBasisAuthorityV1.ValidateBoundCoreAuthorityV2(
             basisState,
             scheduler,
             durableCatalog,
-            crossDomainTransactions);
+            basisCrossDomainTransactions);
 
         var frozen = StepInputFreezerV1.Freeze(basisState, scheduler);
         if (frozen.ScheduledOperations.Count != bindings.Length)
@@ -159,7 +196,9 @@ public static class Qa04ProductionAuthoritativeStepExecutorV1
                 preparation,
                 terminals,
                 cancellationToken,
-                crossDomainTransactions)
+                crossDomainTransactions: basisCrossDomainTransactions,
+                resultingCrossDomainTransactions: resultingCrossDomainTransactions,
+                crossDomainTransactionStateChanges: crossDomainTransactionStateChanges)
             .ConfigureAwait(false);
         var verification = finalized.PostCommitVerification
             ?? throw new InvalidDataException("qa04.production-loop.post-commit-verification-missing");
