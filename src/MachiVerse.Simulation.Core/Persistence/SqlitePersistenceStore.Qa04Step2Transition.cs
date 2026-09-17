@@ -275,4 +275,59 @@ WHERE singleton=1;
             throw;
         }
     }
+
+    public async Task<IReadOnlyList<Qa04TransitionCommittedAuthorityV1>> ReadQa04CanonicalTransitionHistoryAfterAsync(
+        ulong historyAnchorSequence,
+        CancellationToken cancellationToken = default)
+    {
+        OpaqueId128 worldId;
+        await using (var meta = _connection.CreateCommand())
+        {
+            meta.CommandText = "SELECT world_id FROM persistence_meta WHERE singleton=1;";
+            var raw = await meta.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidDataException("persistence.qa04-transition-replay.meta-missing");
+            worldId = OpaqueId128.FromBytes((byte[])raw);
+        }
+
+        await using var command = _connection.CreateCommand();
+        command.CommandText = """
+SELECT sequence, previous_record_digest, record_type, payload_schema_id,
+       payload_schema_major, payload_schema_minor, payload_bytes,
+       normalized_payload_digest, record_digest
+FROM history_record
+WHERE sequence > $anchor_sequence
+  AND record_type = 'transition.committed.v1'
+ORDER BY sequence ASC;
+""";
+        command.Parameters.AddWithValue("$anchor_sequence", U64Be.Encode(historyAnchorSequence));
+
+        var authorities = new List<Qa04TransitionCommittedAuthorityV1>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var sequence = U64Be.Decode((byte[])reader[0]);
+            var previousRecordDigest = (byte[])reader[1];
+            var recordType = reader.GetString(2);
+            var payloadSchemaId = reader.GetString(3);
+            var majorRaw = reader.GetInt32(4);
+            var minorRaw = reader.GetInt32(5);
+            if (majorRaw is < 0 or > ushort.MaxValue || minorRaw is < 0 or > ushort.MaxValue)
+                throw new InvalidDataException("persistence.qa04-transition-replay.schema-version-invalid");
+
+            authorities.Add(Qa04TransitionCommittedAuthorityV1.RestorePersistedAndValidate(
+                worldId,
+                sequence,
+                previousRecordDigest,
+                recordType,
+                payloadSchemaId,
+                checked((ushort)majorRaw),
+                checked((ushort)minorRaw),
+                (byte[])reader[6],
+                (byte[])reader[7],
+                (byte[])reader[8]));
+        }
+
+        return Array.AsReadOnly(authorities.ToArray());
+    }
+
 }
