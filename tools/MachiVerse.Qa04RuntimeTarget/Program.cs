@@ -295,7 +295,7 @@ internal static class Program
                     persistenceRoot,
                 },
                 timeout: null);
-            ValidateProductionReferenceRun(production, run);
+            var determinism = ValidateProductionReferenceRun(production, run);
 
             var failures = MergeFailures(production.FailureCodes);
             var measurement = production.Measurement;
@@ -350,6 +350,14 @@ internal static class Program
                         recovered_state_digest = production.SnapshotRecoveredStateDigest,
                     },
                     publication_summary = new { measured = false, profile = PublicationProfile },
+                    determinism_evidence = new
+                    {
+                        final_state_digest = determinism.FinalStateDigest,
+                        transition_committed_digest = determinism.TransitionCommittedDigest,
+                        operation_terminal_semantic_digest = determinism.OperationTerminalSemanticDigest,
+                        config_history_digest = determinism.ConfigHistoryDigest,
+                        promotion_deferral_order_digest = determinism.PromotionDeferralOrderDigest,
+                    },
                     final_state_digest = production.FinalStateDigest,
                     final_history_sequence = production.FinalHistorySequence,
                     final_history_digest = production.FinalHistoryDigest,
@@ -368,7 +376,7 @@ internal static class Program
         }
     }
 
-    private static void ValidateProductionReferenceRun(ProductionReferenceRun production, RunDescriptor run)
+    private static ProductionDeterminismEvidence ValidateProductionReferenceRun(ProductionReferenceRun production, RunDescriptor run)
     {
         if (!string.Equals(production.SchemaVersion, "1.0", StringComparison.Ordinal) ||
             !string.Equals(production.ProfileId, ReferenceProfile, StringComparison.Ordinal) ||
@@ -392,6 +400,17 @@ internal static class Program
         RequireLowerHex(production.SnapshotDigest, 64, "snapshotDigest");
         RequireLowerHex(production.SnapshotPhysicalManifestDigest, 64, "snapshotPhysicalManifestDigest");
         RequireLowerHex(production.SnapshotRecoveredStateDigest, 64, "snapshotRecoveredStateDigest");
+
+        var evidence = production.DeterminismEvidence
+            ?? throw new InvalidDataException("Simulation Core production reference run is missing determinismEvidence.");
+        RequireLowerHex(evidence.FinalStateDigest, 64, "determinismEvidence.finalStateDigest");
+        RequireLowerHex(evidence.TransitionCommittedDigest, 64, "determinismEvidence.transitionCommittedDigest");
+        RequireLowerHex(evidence.OperationTerminalSemanticDigest, 64, "determinismEvidence.operationTerminalSemanticDigest");
+        RequireLowerHex(evidence.ConfigHistoryDigest, 64, "determinismEvidence.configHistoryDigest");
+        RequireLowerHex(evidence.PromotionDeferralOrderDigest, 64, "determinismEvidence.promotionDeferralOrderDigest");
+        if (!string.Equals(evidence.FinalStateDigest, production.FinalStateDigest, StringComparison.Ordinal))
+            throw new InvalidDataException("Simulation Core determinism final State digest does not match the production run result.");
+        return evidence;
     }
 
     private static async Task<Response> PersistenceAsync(Request request, string coreExecutable)
@@ -702,6 +721,7 @@ internal static class Program
         public int TransitionCount { get; set; }
         public ulong FinalizedStep { get; set; }
         public string FinalStateDigest { get; set; } = "";
+        public ProductionDeterminismEvidence? DeterminismEvidence { get; set; }
         public ulong FinalHistorySequence { get; set; }
         public string FinalHistoryDigest { get; set; } = "";
         public string FinalContinuityToken { get; set; } = "";
@@ -721,6 +741,15 @@ internal static class Program
         public long PersistenceMetricObserverFailureCount { get; set; }
         public bool Passed { get; set; }
         public string[] FailureCodes { get; set; } = [];
+    }
+
+    private sealed class ProductionDeterminismEvidence
+    {
+        public string FinalStateDigest { get; set; } = "";
+        public string TransitionCommittedDigest { get; set; } = "";
+        public string OperationTerminalSemanticDigest { get; set; } = "";
+        public string ConfigHistoryDigest { get; set; } = "";
+        public string PromotionDeferralOrderDigest { get; set; } = "";
     }
 
     private sealed class MeasurementSnapshot
