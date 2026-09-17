@@ -11,6 +11,9 @@ Tracking: Issue #61
 
 したがって本ロードマップでは、設計フェーズを再実行せず、確定済みの `ImplementationWorkId` と dependency DAG を実装マイルストーンへ再編する。
 
+> **Alpha 1.0 と本ロードマップの関係**  
+> `v1.0.0-alpha.1` は Simulation Core / Gateway / General View / Administration View を実接続した公開済み vertical slice であり、本ロードマップの M0〜M6 そのものを完了済みとみなすものではない。M0〜M6 は、その Alpha vertical slice で得た接続実績とは別軸で、Phase 4 の確定設計に基づく **production implementation** を段階的に完成させるための実装ロードマップである。
+
 ## 2. 正本と優先順位
 
 実装契約の正本はロードマップではなく設計文書である。
