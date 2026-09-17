@@ -8,10 +8,26 @@ namespace MachiVerse.Simulation.Core.Persistence;
 
 public sealed partial class SqlitePersistenceStore
 {
+    public Task<DurableTransitionResult> PersistQa04CanonicalTransitionCommitAsync(
+        ulong injectionStep,
+        Qa04TransitionCommittedAuthorityV1 authority,
+        IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        Qa04OperationClosedPrefixV1 basisPrefix,
+        Qa04OperationClosedPrefixV1 resultingPrefix,
+        CancellationToken cancellationToken = default)
+        => PersistQa04CanonicalTransitionCommitAsync(
+            injectionStep,
+            authority,
+            terminalOperations,
+            basisPrefix,
+            resultingPrefix,
+            Array.Empty<CrossDomainTransactionStateV1>(),
+            cancellationToken);
+
     /// <summary>
-    /// Gate4 Step2 transition COMMIT path. Unlike the legacy compact transition seam, this path
-    /// strictly decodes the stored physical transition wrapper and cross-checks the reconstructed
-    /// semantic authority against the exact finalization material before any authoritative mutation.
+    /// Gate4 Step2 transition COMMIT path. The compact Operation transition, complete
+    /// transition.committed.v1 semantic authority, and any canonical CrossDomainTransaction
+    /// turnover changes become durable in the same SQLite transaction.
     /// </summary>
     public async Task<DurableTransitionResult> PersistQa04CanonicalTransitionCommitAsync(
         ulong injectionStep,
@@ -19,12 +35,14 @@ public sealed partial class SqlitePersistenceStore
         IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
         Qa04OperationClosedPrefixV1 basisPrefix,
         Qa04OperationClosedPrefixV1 resultingPrefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(terminalOperations);
         ArgumentNullException.ThrowIfNull(basisPrefix);
         ArgumentNullException.ThrowIfNull(resultingPrefix);
+        ArgumentNullException.ThrowIfNull(crossDomainTransactionStateChanges);
         var effectiveStep = authority.EffectiveStep;
         var resultingStep = authority.ResultingStep;
         if (effectiveStep != checked(injectionStep + 1UL) || resultingStep != checked(effectiveStep + 1UL))
@@ -50,11 +68,16 @@ public sealed partial class SqlitePersistenceStore
             _ = new StableToken(terminal.ResultCode);
         }
 
+        var transactionChanges = crossDomainTransactionStateChanges
+            .OrderBy(static state => state.TransactionId)
+            .ToArray();
+        if (transactionChanges.Select(static state => state.TransactionId).Distinct().Count() != transactionChanges.Length ||
+            transactionChanges.Any(state => state.UpdatedStep != resultingStep))
+            throw new InvalidDataException("persistence.qa04-canonical-transition.transaction-change-shape-drift");
+
         using var transaction = _connection.BeginTransaction();
         try
         {
-            // Persistence deliberately decodes the physical payload here rather than trusting the
-            // in-memory builder object. This is the required semantic cross-check boundary.
             var decoded = Qa04TransitionCommittedAuthorityV1.DecodeAndValidate(authority.History);
             Qa04TransitionCommittedAuthorityV1.RequireEquivalent(
                 decoded,
@@ -131,10 +154,16 @@ public sealed partial class SqlitePersistenceStore
                     authority.ResultingStateContinuityToken))
                 throw new InvalidDataException("persistence.qa04-canonical-transition.resulting-continuity-drift");
 
-            // At this point the decoded state diagnostic / partition digests have already been
-            // checked byte-for-byte against the builder authority captured from Prepared State(S+1).
-            // Only now may the transition history and closed-prefix mutation become durable.
             await InsertHistoryRecordAsync(authority.History, transaction, cancellationToken).ConfigureAwait(false);
+
+            foreach (var state in transactionChanges)
+            {
+                await UpsertCrossDomainTransactionStateInTransitionAsync(
+                        CrossDomainTransactionStateCommitV1.CreateCanonical(state),
+                        transaction,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             await using (var removeSchedule = _connection.CreateCommand())
             {
