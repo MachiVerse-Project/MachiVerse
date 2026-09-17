@@ -52,7 +52,7 @@ internal static class Qa04Step2DeterminismAuthoritySmoke
         Require(configHistory.Count == 1 && configHistory.Digest.Length == 32,
             "Step2 config-history accumulator did not bind the initial config authority.");
 
-        VerifyCompleteTransitionAuthority(bindings, terminals, config, anchor);
+        VerifyCompleteTransitionAuthority(bindings, terminals, config.Digest, anchor);
 
         var gapRejected = false;
         try
@@ -69,7 +69,7 @@ internal static class Qa04Step2DeterminismAuthoritySmoke
     private static void VerifyCompleteTransitionAuthority(
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
         IReadOnlyList<TerminalOperationCommit> terminals,
-        Qa04ReferenceConfigAuthorityV1 config,
+        byte[] configDigest,
         HistoryAnchor anchor)
     {
         var previousContinuity = HashSuite.Hash256([7, 7, 7]);
@@ -82,7 +82,7 @@ internal static class Qa04Step2DeterminismAuthoritySmoke
             effectiveStep: 1,
             resultingStep: 2,
             activeConfigGeneration: 1,
-            activeConfigDigest: config.Digest,
+            activeConfigDigest: configDigest,
             appliedOperationIds: bindings.Select(static binding => binding.SourceDescriptor.OperationId).ToArray(),
             operationOutcomes: terminals,
             previousStateContinuityToken: previousContinuity,
