@@ -119,6 +119,7 @@ develop
 simulation
   ↓
 feature/support-core-gateway-v1.1
+
 gateway
   ↓
 feature/support-core-gateway-v1.1
