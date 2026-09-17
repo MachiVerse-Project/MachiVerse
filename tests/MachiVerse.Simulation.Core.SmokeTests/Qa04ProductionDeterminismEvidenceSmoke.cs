@@ -15,14 +15,17 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
         var fixture = CreateCanonicalFirstStepFixture();
 
         VerifyCanonicalAppend(fixture);
+        VerifyAccumulatorBoundariesRejected();
         VerifyMissingAuthorityRejected(fixture);
         VerifyOrdinalGapAndDuplicateRejected(fixture);
         VerifyTransitionStepDriftRejected(fixture);
         VerifyConfigAuthorityDriftRejected(fixture);
+        VerifyConfigDigestDriftRejected(fixture);
         VerifyOperationCardinalityDriftRejected(fixture);
         VerifyOperationOrderDriftRejected(fixture);
         VerifyDetailDecisionDriftRejected(fixture);
         VerifyOperationPrefixDriftRejected(fixture);
+        VerifyMissingCompletionAuthorityRejected();
         VerifyIncompleteRunRejected();
     }
 
@@ -41,6 +44,32 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
             "QA-04 determinism producer terminal operation count drifted after canonical append.");
     }
 
+    private static void VerifyAccumulatorBoundariesRejected()
+    {
+        var ordinalGap = new Qa04Step2DeterminismAccumulatorV1("mv.qa04-test-ordinal-gap.v1");
+        RequireInvalidData(
+            () => ordinalGap.Append(2, HashSuite.Hash256([0x11])),
+            "qa04.determinism-accumulator.ordinal-gap");
+        Require(ordinalGap.Count == 0,
+            "QA-04 determinism accumulator mutated after rejecting an ordinal gap.");
+
+        var duplicate = new Qa04Step2DeterminismAccumulatorV1("mv.qa04-test-duplicate.v1");
+        duplicate.Append(1, HashSuite.Hash256([0x12]));
+        var digestBeforeDuplicate = duplicate.Digest;
+        RequireInvalidData(
+            () => duplicate.Append(1, HashSuite.Hash256([0x13])),
+            "qa04.determinism-accumulator.ordinal-gap");
+        Require(duplicate.Count == 1 && duplicate.Digest.AsSpan().SequenceEqual(digestBeforeDuplicate),
+            "QA-04 determinism accumulator mutated after rejecting a duplicate ordinal.");
+
+        var malformed = new Qa04Step2DeterminismAccumulatorV1("mv.qa04-test-malformed-item.v1");
+        RequireThrows<ArgumentException>(
+            () => malformed.Append(1, new byte[31]),
+            "QA-04 determinism accumulator must reject a noncanonical item digest length.");
+        Require(malformed.Count == 0,
+            "QA-04 determinism accumulator mutated after rejecting a noncanonical item digest.");
+    }
+
     private static void VerifyMissingAuthorityRejected(StepFixture fixture)
     {
         var producer = new Qa04ProductionDeterminismEvidenceProducerV1();
@@ -51,6 +80,22 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
                 fixture.DetailDecision,
                 fixture.ResultingPrefix),
             "QA-04 determinism producer must fail closed when transition authority is missing.");
+        RequireThrows<ArgumentNullException>(
+            () => producer.Append(
+                fixture.InjectionStep,
+                fixture.Transition,
+                null!,
+                fixture.ResultingPrefix),
+            "QA-04 determinism producer must fail closed when detail decision authority is missing.");
+        RequireThrows<ArgumentNullException>(
+            () => producer.Append(
+                fixture.InjectionStep,
+                fixture.Transition,
+                fixture.DetailDecision,
+                null!),
+            "QA-04 determinism producer must fail closed when resulting operation prefix is missing.");
+        Require(producer.CommittedTransitionCount == 0 && producer.TerminalOperationCount == 0,
+            "QA-04 determinism producer mutated after rejecting missing authority input.");
     }
 
     private static void VerifyOrdinalGapAndDuplicateRejected(StepFixture fixture)
@@ -106,6 +151,26 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
             fixture.Bindings,
             fixture.Outcomes,
             activeConfigGeneration: checked(fixture.Config.Generation + 1UL));
+        var producer = new Qa04ProductionDeterminismEvidenceProducerV1();
+        RequireInvalidData(
+            () => producer.Append(
+                fixture.InjectionStep,
+                transition,
+                fixture.DetailDecision,
+                fixture.ResultingPrefix),
+            "qa04.determinism-evidence.config-authority-drift");
+    }
+
+    private static void VerifyConfigDigestDriftRejected(StepFixture fixture)
+    {
+        var driftedDigest = fixture.Config.Digest.ToArray();
+        driftedDigest[0] ^= 0x01;
+        var transition = CreateTransition(
+            fixture.Config,
+            fixture.DetailDecision,
+            fixture.Bindings,
+            fixture.Outcomes,
+            activeConfigDigest: driftedDigest);
         var producer = new Qa04ProductionDeterminismEvidenceProducerV1();
         RequireInvalidData(
             () => producer.Append(
@@ -189,6 +254,18 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
                 fixture.DetailDecision,
                 driftedPrefix),
             "qa04.determinism-evidence.operation-prefix-drift");
+    }
+
+    private static void VerifyMissingCompletionAuthorityRejected()
+    {
+        var producer = new Qa04ProductionDeterminismEvidenceProducerV1();
+        var state = CreateMinimalWorldState();
+        RequireThrows<ArgumentNullException>(
+            () => producer.Complete(null!, Qa04OperationClosedPrefixV1.Empty()),
+            "QA-04 determinism producer must fail closed when final state authority is missing.");
+        RequireThrows<ArgumentNullException>(
+            () => producer.Complete(state, null!),
+            "QA-04 determinism producer must fail closed when final operation prefix authority is missing.");
     }
 
     private static void VerifyIncompleteRunRejected()
@@ -294,7 +371,8 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
         IReadOnlyList<TerminalOperationCommit> outcomes,
         ulong effectiveStep = 1,
         ulong resultingStep = 2,
-        ulong? activeConfigGeneration = null)
+        ulong? activeConfigGeneration = null,
+        byte[]? activeConfigDigest = null)
         => Qa04TransitionCommittedAuthorityV1.Create(
             Qa04ReferenceLoadV1.WorldId,
             historySequence: checked(detailDecision.History.Sequence + 1UL),
@@ -302,7 +380,7 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
             effectiveStep,
             resultingStep,
             activeConfigGeneration ?? config.Generation,
-            activeConfigDigest: config.Digest,
+            activeConfigDigest: activeConfigDigest ?? config.Digest,
             appliedOperationIds: bindings.Select(static binding => binding.SourceDescriptor.OperationId).ToArray(),
             operationOutcomes: outcomes,
             previousStateContinuityToken: HashSuite.Hash256([0x41]),
