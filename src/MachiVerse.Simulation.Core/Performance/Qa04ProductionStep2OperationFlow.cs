@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains;
 using MachiVerse.Simulation.Core.Domains.Environment;
 using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
 using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
