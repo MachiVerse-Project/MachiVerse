@@ -35,12 +35,21 @@ public static class Qa04CanonicalOperationStepFinalizationV1
         Qa04CanonicalOperationStepPreparationResultV1 preparation,
         IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
         CancellationToken cancellationToken = default,
-        IReadOnlyCollection<CrossDomainTransactionStateV1>? crossDomainTransactions = null)
+        IReadOnlyCollection<CrossDomainTransactionStateV1>? crossDomainTransactions = null,
+        IReadOnlyCollection<CrossDomainTransactionStateV1>? resultingCrossDomainTransactions = null,
+        IReadOnlyCollection<CrossDomainTransactionStateV1>? crossDomainTransactionStateChanges = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(preparation);
         ArgumentNullException.ThrowIfNull(terminalOperations);
+
+        if (crossDomainTransactions is null &&
+            (resultingCrossDomainTransactions is not null ||
+             crossDomainTransactionStateChanges is { Count: > 0 }))
+            throw new InvalidDataException("qa04.full-step.finalization-transaction-authority-without-basis");
+        resultingCrossDomainTransactions ??= crossDomainTransactions;
+        var transactionChanges = crossDomainTransactionStateChanges ?? Array.Empty<CrossDomainTransactionStateV1>();
 
         var step5Candidate = preparation.Candidate;
         var step5Prepared = preparation.PreparedState;
@@ -99,6 +108,8 @@ public static class Qa04CanonicalOperationStepFinalizationV1
         }
         else
         {
+            if (resultingCrossDomainTransactions is null)
+                throw new InvalidDataException("qa04.full-step.finalization-resulting-transaction-authority-missing");
             var expectedBasisOperation = CoreOperationStateSubstateV2.Canonicalize(
                 durableBefore,
                 crossDomainTransactions,
@@ -112,7 +123,7 @@ public static class Qa04CanonicalOperationStepFinalizationV1
             operationCore = CoreOperationStateSubstateV2.CreatePostTransitionCandidate(
                 basisState,
                 durableBefore,
-                crossDomainTransactions,
+                resultingCrossDomainTransactions,
                 orderedTerminal,
                 step5Candidate.BasisStep,
                 transitionSequence);
@@ -172,8 +183,12 @@ public static class Qa04CanonicalOperationStepFinalizationV1
             orderedTerminal);
 
         // This is the real authority boundary. StepFinalizationCoordinatorV1 keeps the scheduler
-        // frozen and returns no publishable receipt if SQLite COMMIT fails.
-        var receipt = await new StepFinalizationCoordinatorV1(new SqliteStepTransitionDurabilityV1(store))
+        // frozen and returns no publishable receipt if SQLite COMMIT fails. On turnover Steps the
+        // transaction changes are committed inside the same SQLite transaction.
+        IStepTransitionDurabilityV1 durability = crossDomainTransactions is null
+            ? new SqliteStepTransitionDurabilityV1(store)
+            : new Qa04CrossDomainStepTransitionDurabilityV1(store, transactionChanges);
+        var receipt = await new StepFinalizationCoordinatorV1(durability)
             .FinalizeAsync(candidate, scheduler, material, cancellationToken)
             .ConfigureAwait(false);
 
@@ -194,6 +209,17 @@ public static class Qa04CanonicalOperationStepFinalizationV1
             scheduler.NextSchedulableStep != candidate.TargetStep ||
             scheduler.ForEffectiveStep(candidate.BasisStep).Count != 0)
             throw new InvalidDataException("qa04.full-step.finalization-scheduler-post-commit-drift");
+
+        if (transactionChanges.Count > 0)
+        {
+            if (resultingCrossDomainTransactions is null)
+                throw new InvalidDataException("qa04.full-step.finalization-resulting-transaction-authority-missing");
+            await Qa04CrossDomainDurableAuthorityVerifierV1.RequireActiveAuthorityAsync(
+                    store,
+                    resultingCrossDomainTransactions,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         var durableOperations = new List<DurableOperationStateV1>(orderedTerminal.Count);
         foreach (var expected in orderedTerminal)
@@ -234,7 +260,7 @@ public static class Qa04CanonicalOperationStepFinalizationV1
             authoritative.State,
             scheduler,
             durableCatalog,
-            crossDomainTransactions);
+            resultingCrossDomainTransactions);
 
         return new Qa04CanonicalOperationStepFinalizationResultV1(
             preparation,
