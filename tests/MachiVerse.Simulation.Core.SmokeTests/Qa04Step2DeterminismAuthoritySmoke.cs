@@ -52,6 +52,8 @@ internal static class Qa04Step2DeterminismAuthoritySmoke
         Require(configHistory.Count == 1 && configHistory.Digest.Length == 32,
             "Step2 config-history accumulator did not bind the initial config authority.");
 
+        VerifyCompleteTransitionAuthority(bindings, terminals, config, anchor);
+
         var gapRejected = false;
         try
         {
@@ -62,6 +64,65 @@ internal static class Qa04Step2DeterminismAuthoritySmoke
             gapRejected = true;
         }
         Require(gapRejected, "Step2 determinism accumulator must fail closed on an ordinal gap.");
+    }
+
+    private static void VerifyCompleteTransitionAuthority(
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        IReadOnlyList<TerminalOperationCommit> terminals,
+        Qa04ReferenceConfigAuthorityV1 config,
+        HistoryAnchor anchor)
+    {
+        var previousContinuity = HashSuite.Hash256([7, 7, 7]);
+        var resultingStateDigest = HashSuite.Hash256([8, 8, 8]);
+        var partitionDigest = HashSuite.Hash256([9, 9, 9]);
+        var authority = Qa04TransitionCommittedAuthorityV1.Create(
+            Qa04ReferenceLoadV1.WorldId,
+            historySequence: 2,
+            previousHistoryRecordDigest: anchor.Digest,
+            effectiveStep: 1,
+            resultingStep: 2,
+            activeConfigGeneration: 1,
+            activeConfigDigest: config.Digest,
+            appliedOperationIds: bindings.Select(static binding => binding.SourceDescriptor.OperationId).ToArray(),
+            operationOutcomes: terminals,
+            previousStateContinuityToken: previousContinuity,
+            stateDiagnosticHash: resultingStateDigest,
+            partitionDigests:
+            [
+                new Qa04TransitionPartitionDigestV1("resident.identity", partitionDigest),
+            ]);
+        var decoded = Qa04TransitionCommittedAuthorityV1.DecodeAndValidate(authority.History);
+        Qa04TransitionCommittedAuthorityV1.RequireEquivalent(
+            decoded,
+            authority,
+            "qa04.transition-smoke.roundtrip-drift");
+        Require(authority.History.NormalizedPayloadDigest.Length == 32 &&
+                authority.ResultingStateContinuityToken.Length == 32,
+            "Step2 complete transition authority did not materialize canonical digests.");
+
+        var tamperedPhysical = authority.History.PayloadBytes.ToArray();
+        tamperedPhysical[^1] ^= 0x01;
+        var tamperedHistory = HistoryRecordMaterial.Create(
+            authority.History.WorldId,
+            authority.History.Sequence,
+            authority.History.PreviousRecordDigest,
+            authority.History.RecordType,
+            authority.History.PayloadSchemaId,
+            authority.History.PayloadSchemaMajor,
+            authority.History.PayloadSchemaMinor,
+            tamperedPhysical,
+            writer => writer.WriteCanonicalValue(authority.History.NormalizedPayloadBytes));
+        var tamperRejected = false;
+        try
+        {
+            _ = Qa04TransitionCommittedAuthorityV1.DecodeAndValidate(tamperedHistory);
+        }
+        catch (InvalidDataException)
+        {
+            tamperRejected = true;
+        }
+        Require(tamperRejected,
+            "Step2 transition decoder must fail closed when the physical wrapper drifts from semantic authority.");
     }
 
     private static void Require(bool condition, string message)
