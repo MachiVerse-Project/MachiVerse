@@ -1,9 +1,11 @@
 using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.Runtime;
+using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04ProductionDeterminismEvidenceSmoke
 {
@@ -192,7 +194,7 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
     private static void VerifyIncompleteRunRejected()
     {
         var producer = new Qa04ProductionDeterminismEvidenceProducerV1();
-        var state = Qa04ProductionReferenceWorldAssemblerV1.AssembleCanonical().PartitionAuthorityState;
+        var state = CreateMinimalWorldState();
         RequireInvalidData(
             () => producer.Complete(state, Qa04OperationClosedPrefixV1.Empty()),
             "qa04.determinism-evidence.append-count-mismatch");
@@ -256,6 +258,33 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
             detailDecision,
             transition,
             resultingPrefix);
+    }
+
+    private static WorldStateV1 CreateMinimalWorldState()
+    {
+        var partitions = StandardDomainPartitionRegistry.Entries.Select(entry => new PartitionStateRefV1(
+            new PartitionStateHeaderV1(
+                entry,
+                revision: 1,
+                basisStep: 0,
+                detailLevel: DetailLevelV1.D0Entity,
+                itemCount: 0,
+                canonicalDigest: HashSuite.Hash256(System.Text.Encoding.ASCII.GetBytes(entry.PartitionId.Value)))));
+
+        return new WorldStateV1(
+            new WorldStateHeaderV1(
+                Qa04ReferenceLoadV1.WorldId,
+                step: 0,
+                worldSeedDigest: new byte[32],
+                configGeneration: 1,
+                masterGeneration: 1,
+                rateGeneration: 1),
+            new OrderedPartitionDirectoryV1(partitions),
+            WorldStateV1.EmptySubstate("core.scheduler-state"),
+            WorldStateV1.EmptySubstate("core.operation-state"),
+            WorldStateV1.EmptySubstate("core.detail-state"),
+            WorldStateV1.EmptySubstate("core.domain-registry-state"),
+            HashSuite.Hash256([0x44]));
     }
 
     private static Qa04TransitionCommittedAuthorityV1 CreateTransition(
