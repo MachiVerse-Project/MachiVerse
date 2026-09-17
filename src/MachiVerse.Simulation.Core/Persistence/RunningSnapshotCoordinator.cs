@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -18,9 +19,16 @@ public sealed record RunningSnapshotCutV1(
     /// <summary>
     /// Same-SQLite-read CrossDomainTransaction custody frozen with Operation/Scheduler state.
     /// This remains raw durable-row material until core.operation-state /2.0 provider validation.
+    /// QA-04 compact cuts contain only the active transaction set at the frozen Snapshot boundary.
     /// </summary>
     public IReadOnlyList<DurableCrossDomainTransactionStateV1> CrossDomainTransactions { get; init; }
         = Array.Empty<DurableCrossDomainTransactionStateV1>();
+
+    /// <summary>
+    /// Closed perf.reference.v1 Operation prefix frozen in the same SQLite read transaction.
+    /// Null means the ordinary core.operation-state authority path is in use.
+    /// </summary>
+    public Qa04OperationClosedPrefixV1? Qa04OperationClosedPrefix { get; init; }
 
     /// <summary>
     /// Present only when the strict owner-material freeze overload was used. The material remains
@@ -94,7 +102,8 @@ public sealed class RunningSnapshotCoordinatorV1
     /// Strict running-snapshot freeze for core.operation-state /2.0. The same SQLite recovery cut
     /// freezes durable Operation rows and persistent CrossDomainTransaction rows, decodes the latter
     /// at the frozen finalized Step, and validates the combined v2 authority before exposing the cut.
-    /// Existing v1 callers are unchanged.
+    /// When a QA-04 closed prefix exists, the compact prefix plus mutable rows plus active transaction
+    /// set are recomputed instead of the ordinary full Operation-state authority.
     /// </summary>
     public Task<RunningSnapshotCutV1?> TryFreezeWithCoreOwnerMaterialV2IfDueAsync(
         WorldStateV1 finalizedState,
@@ -146,10 +155,16 @@ public sealed class RunningSnapshotCoordinatorV1
             transactions = CoreOperationStateSnapshotCutV2.DecodeTransactions(
                 recovery.CrossDomainTransactions,
                 recovery.FinalizedStep);
-            operationAuthority = CoreOperationStateSubstateV2.Canonicalize(
-                recovery.DurableOperations,
-                transactions,
-                recovery.FinalizedStep);
+            operationAuthority = recovery.Qa04OperationClosedPrefix is { } prefix
+                ? Qa04OperationAuthorityV1.Canonicalize(
+                    recovery.DurableOperations,
+                    prefix,
+                    transactions,
+                    recovery.FinalizedStep)
+                : CoreOperationStateSubstateV2.Canonicalize(
+                    recovery.DurableOperations,
+                    transactions,
+                    recovery.FinalizedStep);
         }
         else
         {
@@ -158,7 +173,9 @@ public sealed class RunningSnapshotCoordinatorV1
 
         if (!SubstateEquals(finalizedState.OperationState, operationAuthority))
             throw new InvalidDataException(operationAuthorityV2
-                ? "snapshot-running.operation-v2-authority-mismatch"
+                ? recovery.Qa04OperationClosedPrefix is null
+                    ? "snapshot-running.operation-v2-authority-mismatch"
+                    : "snapshot-running.qa04-operation-v2-authority-mismatch"
                 : "snapshot-running.operation-authority-mismatch");
 
         var schedulerProjection = new OperationSchedulerStateV1(
@@ -174,18 +191,33 @@ public sealed class RunningSnapshotCoordinatorV1
         CoreSnapshotOwnerMaterialCutV1? coreOwnerMaterial = null;
         if (supplementalOwnerMaterial is not null)
         {
-            coreOwnerMaterial = operationAuthorityV2
-                ? CoreSnapshotOwnerMaterialCutV1.CreateV2(
-                    finalizedState,
-                    recovery.DurableOperations,
-                    recovery.ScheduledOperations,
-                    transactions ?? throw new InvalidDataException("snapshot-running.operation-v2-material-missing"),
-                    supplementalOwnerMaterial)
-                : CoreSnapshotOwnerMaterialCutV1.Create(
+            if (operationAuthorityV2)
+            {
+                var frozenTransactions = transactions
+                    ?? throw new InvalidDataException("snapshot-running.operation-v2-material-missing");
+                coreOwnerMaterial = recovery.Qa04OperationClosedPrefix is { } prefix
+                    ? CoreSnapshotOwnerMaterialCutV1.CreateQa04V2(
+                        finalizedState,
+                        recovery.DurableOperations,
+                        recovery.ScheduledOperations,
+                        frozenTransactions,
+                        prefix,
+                        supplementalOwnerMaterial)
+                    : CoreSnapshotOwnerMaterialCutV1.CreateV2(
+                        finalizedState,
+                        recovery.DurableOperations,
+                        recovery.ScheduledOperations,
+                        frozenTransactions,
+                        supplementalOwnerMaterial);
+            }
+            else
+            {
+                coreOwnerMaterial = CoreSnapshotOwnerMaterialCutV1.Create(
                     finalizedState,
                     recovery.DurableOperations,
                     recovery.ScheduledOperations,
                     supplementalOwnerMaterial);
+            }
         }
 
         var snapshotId = DeriveSnapshotId(
@@ -203,6 +235,7 @@ public sealed class RunningSnapshotCoordinatorV1
             recovery.ScheduledOperations)
         {
             CrossDomainTransactions = recovery.CrossDomainTransactions,
+            Qa04OperationClosedPrefix = recovery.Qa04OperationClosedPrefix,
             CoreOwnerMaterial = coreOwnerMaterial,
         };
 

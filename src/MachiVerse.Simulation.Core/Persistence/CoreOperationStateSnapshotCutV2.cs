@@ -14,10 +14,16 @@ public static class CoreOperationStateSnapshotCutV2
     {
         ArgumentNullException.ThrowIfNull(cut);
         var transactions = DecodeTransactions(cut.CrossDomainTransactions, cut.FinalizedStep);
-        return CoreOperationStateSnapshotSectionProviderV2.Create(
-            cut.FinalizedStep,
-            cut.DurableOperations,
-            transactions);
+        return cut.Qa04OperationClosedPrefix is { } prefix
+            ? Qa04CompactOperationStateSnapshotSectionProviderV1.Create(
+                cut.FinalizedStep,
+                cut.DurableOperations,
+                prefix,
+                transactions)
+            : CoreOperationStateSnapshotSectionProviderV2.Create(
+                cut.FinalizedStep,
+                cut.DurableOperations,
+                transactions);
     }
 
     public static IReadOnlyList<CrossDomainTransactionStateV1> DecodeTransactions(

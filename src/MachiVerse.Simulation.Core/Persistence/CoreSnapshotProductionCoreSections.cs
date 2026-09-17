@@ -50,10 +50,16 @@ public static class CoreSnapshotProductionSectionProviderV1
                 section.SectionId,
                 CoreSnapshotOwnerSectionRegistryV1.OperationState,
                 StringComparison.Ordinal));
-        var operation = CoreOperationStateSnapshotSectionProviderV2.Create(
-            cut.BasisStep,
-            cut.DurableOperations,
-            transactions);
+        var operation = cut.Qa04OperationClosedPrefix is { } prefix
+            ? Qa04CompactOperationStateSnapshotSectionProviderV1.Create(
+                cut.BasisStep,
+                cut.DurableOperations,
+                prefix,
+                transactions)
+            : CoreOperationStateSnapshotSectionProviderV2.Create(
+                cut.BasisStep,
+                cut.DurableOperations,
+                transactions);
         var sections = primary
             .Append(operation)
             .Concat(new[]

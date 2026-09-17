@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -69,7 +70,8 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
         IReadOnlyList<DurableOperationStateV1> durableOperations,
         IReadOnlyList<ScheduledOperationRefV1> scheduledOperations,
         IReadOnlyDictionary<string, IFrozenCoreSnapshotOwnerMaterialV1> supplemental,
-        IReadOnlyList<CrossDomainTransactionStateV1>? crossDomainTransactions = null)
+        IReadOnlyList<CrossDomainTransactionStateV1>? crossDomainTransactions = null,
+        Qa04OperationClosedPrefixV1? qa04OperationClosedPrefix = null)
     {
         Header = CloneHeader(header);
         DurableOperations = Array.AsReadOnly(durableOperations.Select(CloneDurableOperation).ToArray());
@@ -77,6 +79,9 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
         CrossDomainTransactions = crossDomainTransactions is null
             ? null
             : Array.AsReadOnly(crossDomainTransactions.Select(CloneCrossDomainTransaction).ToArray());
+        Qa04OperationClosedPrefix = qa04OperationClosedPrefix is null
+            ? null
+            : CloneQa04Prefix(qa04OperationClosedPrefix);
         _supplemental = supplemental;
     }
 
@@ -85,7 +90,9 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
     public IReadOnlyList<DurableOperationStateV1> DurableOperations { get; }
     public IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations { get; }
     public IReadOnlyList<CrossDomainTransactionStateV1>? CrossDomainTransactions { get; }
+    public Qa04OperationClosedPrefixV1? Qa04OperationClosedPrefix { get; }
     public bool HasOperationAuthorityV2 => CrossDomainTransactions is not null;
+    public bool HasQa04CompactOperationAuthority => Qa04OperationClosedPrefix is not null;
     public IReadOnlyCollection<string> SupplementalSectionIds => _supplemental.Keys.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
 
     public IFrozenCoreSnapshotOwnerMaterialV1 GetSupplemental(string sectionId)
@@ -112,6 +119,14 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
     {
         if (CrossDomainTransactions is null)
             throw new InvalidOperationException("snapshot-running.operation-v2-material-missing");
+        if (Qa04OperationClosedPrefix is { } prefix)
+        {
+            return Qa04OperationAuthorityV1.Canonicalize(
+                DurableOperations,
+                prefix,
+                CrossDomainTransactions,
+                BasisStep);
+        }
         return CoreOperationStateSubstateV2.Canonicalize(
             DurableOperations,
             CrossDomainTransactions,
@@ -175,6 +190,42 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
             cut.RecomputeOperationAuthorityV2(),
             frozenState.OperationState,
             "snapshot-running.operation-v2-owner-material-mismatch");
+        ValidateSupplementalAuthorities(frozenState, byId);
+        return cut;
+    }
+
+    public static CoreSnapshotOwnerMaterialCutV1 CreateQa04V2(
+        WorldStateV1 frozenState,
+        IReadOnlyList<DurableOperationStateV1> mutableOperations,
+        IReadOnlyList<ScheduledOperationRefV1> scheduledOperations,
+        IReadOnlyList<CrossDomainTransactionStateV1> activeTransactions,
+        Qa04OperationClosedPrefixV1 closedPrefix,
+        IEnumerable<IFrozenCoreSnapshotOwnerMaterialV1> supplementalOwnerMaterial)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        ArgumentNullException.ThrowIfNull(mutableOperations);
+        ArgumentNullException.ThrowIfNull(scheduledOperations);
+        ArgumentNullException.ThrowIfNull(activeTransactions);
+        ArgumentNullException.ThrowIfNull(closedPrefix);
+        ArgumentNullException.ThrowIfNull(supplementalOwnerMaterial);
+        closedPrefix.Validate(frozenState.Header.Step);
+
+        var byId = ValidateSupplemental(frozenState, supplementalOwnerMaterial);
+        var cut = new CoreSnapshotOwnerMaterialCutV1(
+            frozenState.Header,
+            mutableOperations,
+            scheduledOperations,
+            byId,
+            activeTransactions,
+            closedPrefix);
+        RequireSubstate(
+            cut.RecomputeSchedulerAuthority(),
+            frozenState.SchedulerState,
+            "snapshot-running.scheduler-owner-material-mismatch");
+        RequireSubstate(
+            cut.RecomputeOperationAuthorityV2(),
+            frozenState.OperationState,
+            "snapshot-running.qa04-operation-v2-owner-material-mismatch");
         ValidateSupplementalAuthorities(frozenState, byId);
         return cut;
     }
@@ -271,6 +322,12 @@ public sealed class CoreSnapshotOwnerMaterialCutV1
             scheduled.OperationId,
             scheduled.EffectiveStep,
             SameStepOrderKey.FromDatabaseBytes(scheduled.OrderKey.ToDatabaseBytes()));
+    }
+
+    private static Qa04OperationClosedPrefixV1 CloneQa04Prefix(Qa04OperationClosedPrefixV1 prefix)
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+        return prefix with { TerminalSemanticDigest = prefix.TerminalSemanticDigest.ToArray() };
     }
 
     private static CrossDomainTransactionStateV1 CloneCrossDomainTransaction(CrossDomainTransactionStateV1 state)

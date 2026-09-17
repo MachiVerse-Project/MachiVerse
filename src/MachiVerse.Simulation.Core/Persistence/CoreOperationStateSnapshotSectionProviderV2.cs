@@ -84,6 +84,12 @@ public static class CoreOperationStateSnapshotSectionProviderV2
             CoreOperationStateSnapshotAuthorityV2.Schema,
             fragments =>
             {
+                if (Qa04CompactOperationStateSnapshotSectionProviderV1.TryVerify(
+                        fragments,
+                        expectedBasisStep,
+                        out var compactVerification))
+                    return compactVerification;
+
                 var authority = DecodeAuthority(fragments, expectedBasisStep);
                 return new SnapshotSectionSemanticVerificationV1(
                     authority.LogicalItemCount,

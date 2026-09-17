@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Runtime;
 using Microsoft.Data.Sqlite;
 
@@ -12,7 +13,15 @@ public sealed record SnapshotRecoveryStateCutV1(
     HistoryAnchor HistoryAnchor,
     IReadOnlyList<DurableOperationStateV1> DurableOperations,
     IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations,
-    IReadOnlyList<DurableCrossDomainTransactionStateV1> CrossDomainTransactions);
+    IReadOnlyList<DurableCrossDomainTransactionStateV1> CrossDomainTransactions)
+{
+    /// <summary>
+    /// Present only when the persisted world is using the closed perf.reference.v1 Operation set.
+    /// The prefix is captured in the same SQLite read transaction as the Snapshot head, mutable
+    /// Operation rows, scheduler rows, and active CrossDomainTransaction custody.
+    /// </summary>
+    public Qa04OperationClosedPrefixV1? Qa04OperationClosedPrefix { get; init; }
+}
 
 public sealed partial class SqlitePersistenceStore
 {
@@ -20,6 +29,9 @@ public sealed partial class SqlitePersistenceStore
     /// Captures mutable recovery authority for a running snapshot in one SQLite read transaction.
     /// The result may be serialized after the Step-boundary barrier is released without re-reading
     /// operation/scheduler/transaction tables that may have advanced in the meantime.
+    /// For the canonical QA-04 closed Operation set, the cut freezes the compact prefix certificate
+    /// and only the current active CrossDomainTransaction set; historical terminal generated
+    /// Operations and terminal transactions are not expanded into Snapshot material.
     /// </summary>
     public async Task<SnapshotRecoveryStateCutV1> ReadSnapshotRecoveryCutAsync(
         CancellationToken cancellationToken = default)
@@ -29,9 +41,14 @@ public sealed partial class SqlitePersistenceStore
         {
             var head = await ReadSnapshotHeadAsync(transaction, cancellationToken).ConfigureAwait(false);
             var context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
+            var qa04Prefix = await ReadQa04OperationClosedPrefixAsync(transaction, cancellationToken).ConfigureAwait(false);
+            qa04Prefix?.Validate(head.FinalizedStep);
             var operations = await ReadSnapshotOperationStatesAsync(transaction, cancellationToken).ConfigureAwait(false);
             var scheduled = await ReadSnapshotScheduledOperationsAsync(transaction, cancellationToken).ConfigureAwait(false);
-            var crossDomainTransactions = await ReadSnapshotCrossDomainTransactionStatesAsync(transaction, cancellationToken).ConfigureAwait(false);
+            var crossDomainTransactions = await ReadSnapshotCrossDomainTransactionStatesAsync(
+                transaction,
+                activeOnly: qa04Prefix is not null,
+                cancellationToken).ConfigureAwait(false);
             transaction.Commit();
             return new SnapshotRecoveryStateCutV1(
                 head.FinalizedStep,
@@ -41,7 +58,10 @@ public sealed partial class SqlitePersistenceStore
                 context.Anchor,
                 operations,
                 scheduled,
-                crossDomainTransactions);
+                crossDomainTransactions)
+            {
+                Qa04OperationClosedPrefix = qa04Prefix,
+            };
         }
         catch
         {
@@ -123,21 +143,33 @@ ORDER BY effective_step ASC, order_key ASC, operation_id ASC;
 
     private async Task<IReadOnlyList<DurableCrossDomainTransactionStateV1>> ReadSnapshotCrossDomainTransactionStatesAsync(
         SqliteTransaction transaction,
+        bool activeOnly,
         CancellationToken cancellationToken)
     {
         await using var command = _connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
+        command.CommandText = activeOnly
+            ? """
+SELECT transaction_id, lifecycle, created_step, updated_step, terminal_step, state_wire, state_digest
+FROM cross_domain_transaction_state
+WHERE lifecycle=$active
+ORDER BY transaction_id ASC;
+"""
+            : """
 SELECT transaction_id, lifecycle, created_step, updated_step, terminal_step, state_wire, state_digest
 FROM cross_domain_transaction_state
 ORDER BY transaction_id ASC;
 """;
+        if (activeOnly)
+            command.Parameters.AddWithValue("$active", checked((int)TransactionLifecycleV1.Active));
         var result = new List<DurableCrossDomainTransactionStateV1>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             result.Add(ReadCrossDomainTransactionState(reader));
         if (result.Select(static value => value.TransactionId).Distinct().Count() != result.Count)
             throw new InvalidDataException("snapshot-cut.cross-domain-transaction-duplicate-id");
+        if (activeOnly && result.Any(static value => value.Lifecycle != TransactionLifecycleV1.Active || value.TerminalStep is not null))
+            throw new InvalidDataException("snapshot-cut.qa04-active-transaction-set-invalid");
         return Array.AsReadOnly(result.ToArray());
     }
 }
