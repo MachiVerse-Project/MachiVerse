@@ -1,6 +1,7 @@
 name: INT-03 Gate4 Step2 actual determinism matrix
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches:
