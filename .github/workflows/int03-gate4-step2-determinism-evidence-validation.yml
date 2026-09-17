@@ -1,0 +1,57 @@
+name: INT-03 Gate4 Step2 determinism evidence validation
+
+on:
+  push:
+    branches:
+      - release/int-03-canonical-snapshot-recovery
+    paths:
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDeterminismEvidence.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04Step2DeterminismAuthority.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionCommittedAuthority.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04ProductionDeterminismEvidenceSmoke.cs'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/Qa04DeterminismEvidenceVerifier.cs'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunnerVerification.cs'
+      - '.github/workflows/int03-gate4-step2-determinism-evidence-validation.yml'
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDeterminismEvidence.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04Step2DeterminismAuthority.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionCommittedAuthority.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04ProductionDeterminismEvidenceSmoke.cs'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/Qa04DeterminismEvidenceVerifier.cs'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunnerVerification.cs'
+      - '.github/workflows/int03-gate4-step2-determinism-evidence-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-gate4-step2-determinism-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  determinism-evidence:
+    name: Production determinism producer / verifier contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Simulation Core smoke tests
+        run: dotnet build tests/MachiVerse.Simulation.Core.SmokeTests/MachiVerse.Simulation.Core.SmokeTests.csproj --configuration Release
+      - name: Verify production determinism evidence fail-closed contract
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.SmokeTests/MachiVerse.Simulation.Core.SmokeTests.csproj --configuration Release --no-build
+      - name: Build release evidence verifier
+        run: dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
+      - name: Verify five-digest release evidence contract
+        run: dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- verify
