@@ -22,6 +22,8 @@ public sealed record Qa04ProductionStep2FinalizationResultV1(
     Qa04OperationClosedPrefixV1 ClosedPrefix,
     byte[] ResultingContinuityToken,
     Qa04TransitionCommittedAuthorityV1 TransitionAuthority,
+    DetailDirectoryV1? DetailDirectory,
+    Qa04DetailDecisionAuthorityV1? DetailDecisionAuthority,
     Qa04CanonicalOperationPostCommitVerificationV1 PostCommitVerification);
 
 public sealed record Qa04ProductionStep2AuthoritativeStepExecutionV1(
@@ -177,7 +179,9 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         SqlitePersistenceStore store,
         OperationSchedulerStateV1 scheduler,
         Qa04ProductionStepCandidateIdentityRegistryV1 candidateIdentities,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DetailDirectoryV1? basisDetailDirectory = null,
+        DetailTransitionPolicyV1? detailPolicy = null)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.step2.production-loop.worker-count-not-canonical");
@@ -192,6 +196,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(candidateIdentities);
+        if ((basisDetailDirectory is null) != (detailPolicy is null))
+            throw new InvalidDataException("qa04.step2.production-loop.detail-input-pair-drift");
 
         var basisStep = checked(injectionStep + 1UL);
         var resultingStep = checked(basisStep + 1UL);
@@ -264,6 +270,16 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         if (frozen.ScheduledOperations.Count != bindings.Length)
             throw new InvalidDataException("qa04.step2.production-loop.frozen-operation-count-drift");
 
+        Qa04ProductionDetailTransitionStepV1? detailTransition = null;
+        if (basisDetailDirectory is not null)
+        {
+            detailTransition = Qa04ProductionDetailTransitionV1.Prepare(
+                basisState,
+                frozen,
+                basisDetailDirectory,
+                detailPolicy!);
+        }
+
         var runtimeOutputs = await DomainRuntimeExecutorV1.ExecuteAsync(
                 StandardDomainExecutionPlanV1.Create(),
                 basisState,
@@ -308,7 +324,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             basisCrossDomainTransactions,
             resultingCrossDomainTransactions,
             crossDomainTransactionStateChanges,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            detailTransition).ConfigureAwait(false);
         var verification = finalized.PostCommitVerification;
         var nextPrefix = finalized.ClosedPrefix;
         if (verification.ResultingStep != resultingStep ||
@@ -316,6 +333,9 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             verification.TerminalOperationCount != bindings.Length ||
             scheduler.FreezeStep is not null || scheduler.NextSchedulableStep != resultingStep)
             throw new InvalidDataException("qa04.step2.production-loop.post-commit-authority-drift");
+        if (detailTransition is not null &&
+            (finalized.DetailDirectory is null || finalized.DetailDecisionAuthority is null))
+            throw new InvalidDataException("qa04.step2.production-loop.detail-result-missing");
 
         var resultingAuthorities = Qa04ProductionDomainSnapshotAuthorityBuilderV1.CreateResultingState(
             finalized.AuthoritativeState.State,
@@ -406,7 +426,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         IReadOnlyCollection<CrossDomainTransactionStateV1> basisActiveTransactions,
         IReadOnlyCollection<CrossDomainTransactionStateV1> resultingActiveTransactions,
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Qa04ProductionDetailTransitionStepV1? detailTransition = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -428,6 +449,12 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             throw new InvalidDataException("qa04.step2.finalization-candidate-invalid");
         if (step5Candidate.CoreSubstateCandidates.Count != 0 || step5Candidate.TransactionCandidates.Count != 0)
             throw new InvalidDataException("qa04.step2.finalization-step5-authority-surface-drift");
+        if (detailTransition is not null &&
+            (detailTransition.Plan.BasisStep != step5Candidate.BasisStep ||
+             detailTransition.Projection.Candidate.Kind != StepCoreSubstateKindV1.Detail ||
+             detailTransition.Projection.Candidate.BasisStep != step5Candidate.BasisStep ||
+             detailTransition.Projection.Candidate.TargetStep != step5Candidate.TargetStep))
+            throw new InvalidDataException("qa04.step2.finalization-detail-transition-drift");
 
         basisPrefix.Validate(step5Candidate.BasisStep);
         Qa04ProductionCrossDomainTurnoverContractV1.Validate(
@@ -498,7 +525,10 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             step5Candidate.BasisStep,
             basisState.OperationState,
             resultingOperation);
-        var coreCandidates = new[] { schedulerCore, operationCore }
+        var coreCandidates = detailTransition is null
+            ? new[] { schedulerCore, operationCore }
+            : new[] { schedulerCore, operationCore, detailTransition.Projection.Candidate };
+        coreCandidates = coreCandidates
             .OrderBy(static value => value.Kind)
             .ToArray();
 
@@ -511,7 +541,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             invariantResults: step5Candidate.InvariantResults,
             coreSubstateCandidates: coreCandidates);
         RequirePartitionCandidateStability(step5Candidate, candidate);
-        if (!candidate.CommitDecision.CanCommit || candidate.CoreSubstateCandidates.Count != 2)
+        var expectedCoreCount = detailTransition is null ? 2 : 3;
+        if (!candidate.CommitDecision.CanCommit || candidate.CoreSubstateCandidates.Count != expectedCoreCount)
             throw new InvalidDataException("qa04.step2.finalization-core-candidate-drift");
 
         var partitionMaterials = candidate.PartitionCandidates
@@ -530,8 +561,24 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             throw new InvalidDataException("qa04.step2.finalization-premature-publishable-state");
 
         var anchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
-        if (anchor.Sequence == ulong.MaxValue)
+        var requiredHistoryRecords = detailTransition is null ? 1UL : 2UL;
+        if (anchor.Sequence > ulong.MaxValue - requiredHistoryRecords)
             throw new InvalidDataException("qa04.step2.finalization-history-sequence-overflow");
+
+        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority = null;
+        var transitionSequence = checked(anchor.Sequence + 1UL);
+        var transitionPreviousDigest = anchor.Digest;
+        if (detailTransition is not null)
+        {
+            detailDecisionAuthority = Qa04DetailDecisionAuthorityBuilderV1.Create(
+                candidate.WorldId,
+                anchor,
+                candidate.BasisStep,
+                detailTransition.Plan);
+            transitionSequence = checked(detailDecisionAuthority.History.Sequence + 1UL);
+            transitionPreviousDigest = detailDecisionAuthority.History.RecordDigest;
+        }
+
         var partitionDigests = candidate.PartitionCandidates
             .Select(partition => new Qa04TransitionPartitionDigestV1(
                 partition.PartitionId.Value,
@@ -539,8 +586,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             .ToArray();
         var transitionAuthority = Qa04TransitionCommittedAuthorityV1.Create(
             candidate.WorldId,
-            checked(anchor.Sequence + 1UL),
-            anchor.Digest,
+            transitionSequence,
+            transitionPreviousDigest,
             candidate.BasisStep,
             candidate.TargetStep,
             candidate.ConfigGeneration,
@@ -564,7 +611,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             basisPrefix,
             resultingPrefix,
             transitionAuthority,
-            crossDomainTransactionStateChanges);
+            crossDomainTransactionStateChanges,
+            detailDecisionAuthority);
         var receipt = await new StepFinalizationCoordinatorV1(durability)
             .FinalizeAsync(candidate, scheduler, material, cancellationToken)
             .ConfigureAwait(false);
@@ -592,6 +640,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         var authoritative = StepStateApplicationV1.Publish(prepared, receipt);
         if (!authoritative.IsPublishable || authoritative.State.Header.Step != candidate.TargetStep)
             throw new InvalidDataException("qa04.step2.finalization-published-state-drift");
+        var resultingDetailDirectory = detailTransition?.Projection.ResultingDirectory;
         var verification = VerifyCompactPostCommit(
             preparation,
             prepared,
@@ -599,7 +648,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             authoritative.State,
             scheduler,
             resultingPrefix,
-            resultingActiveTransactions);
+            resultingActiveTransactions,
+            resultingDetailDirectory);
 
         return new Qa04ProductionStep2FinalizationResultV1(
             preparation,
@@ -609,6 +659,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             resultingPrefix,
             resultingContinuity.ToArray(),
             transitionAuthority,
+            resultingDetailDirectory,
+            detailDecisionAuthority,
             verification);
     }
 
@@ -641,7 +693,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         WorldStateV1 publishedState,
         OperationSchedulerStateV1 scheduler,
         Qa04OperationClosedPrefixV1 closedPrefix,
-        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions)
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions,
+        DetailDirectoryV1? detailDirectory)
     {
         var step5Candidate = step5Preparation.Candidate;
         if (!receipt.IsPublishable || receipt.ResultingStep != publishedState.Header.Step ||
@@ -688,6 +741,14 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             operationAuthority,
             publishedState.OperationState,
             "qa04.step2.post-commit-operation-substate-drift");
+        if (detailDirectory is not null)
+        {
+            var detailAuthority = DetailDirectorySubstateV1.Canonicalize(detailDirectory);
+            Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
+                detailAuthority,
+                publishedState.DetailState,
+                "qa04.step2.post-commit-detail-substate-drift");
+        }
 
         var reconstructed = new WorldStateV1(
             new WorldStateHeaderV1(
@@ -754,7 +815,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         Qa04OperationClosedPrefixV1 basisPrefix,
         Qa04OperationClosedPrefixV1 resultingPrefix,
         Qa04TransitionCommittedAuthorityV1 transitionAuthority,
-        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges) : IStepTransitionDurabilityV1
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
+        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority) : IStepTransitionDurabilityV1
     {
         public Task<DurableTransitionResult> CommitAsync(
             StepCandidateV1 candidate,
@@ -776,7 +838,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                 basisPrefix,
                 resultingPrefix,
                 crossDomainTransactionStateChanges,
-                cancellationToken);
+                cancellationToken,
+                detailDecisionAuthority);
         }
     }
 }
