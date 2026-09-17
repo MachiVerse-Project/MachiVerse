@@ -19,6 +19,9 @@ on:
       - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04ProductionDeterminismEvidenceSmoke.cs'
       - 'tools/MachiVerse.Qa04RuntimeTarget/Program.cs'
       - 'tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/Models.cs'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/Program.cs'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunner.cs'
       - 'tools/MachiVerse.ReleaseEvidenceRunner/Qa04DeterminismEvidenceVerifier.cs'
       - 'tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunnerVerification.cs'
       - '.github/workflows/int03-gate4-step2-determinism-evidence-validation.yml'
@@ -41,6 +44,9 @@ on:
       - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04ProductionDeterminismEvidenceSmoke.cs'
       - 'tools/MachiVerse.Qa04RuntimeTarget/Program.cs'
       - 'tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/Models.cs'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/Program.cs'
+      - 'tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunner.cs'
       - 'tools/MachiVerse.ReleaseEvidenceRunner/Qa04DeterminismEvidenceVerifier.cs'
       - 'tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunnerVerification.cs'
       - '.github/workflows/int03-gate4-step2-determinism-evidence-validation.yml'
@@ -73,5 +79,5 @@ jobs:
         run: dotnet build tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release
       - name: Build release evidence verifier
         run: dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
-      - name: Verify five-digest release evidence contract
+      - name: Verify five-digest and actual Step2 matrix contracts
         run: dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- verify
