@@ -18,13 +18,13 @@ on:
     outputs:
       row_json:
         description: Validated Gate4 Step2 actual-run evidence row
-        value: ${{ jobs.actual-run.outputs.row_json }}
+        value: ${{ jobs.actual_run.outputs.row_json }}
 
 permissions:
   contents: read
 
 jobs:
-  actual-run:
+  actual_run:
     name: workers=${{ inputs.worker_count }} / run=${{ inputs.run_ordinal }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
