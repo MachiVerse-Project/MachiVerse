@@ -54,4 +54,26 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
         IntentId.ToBytes().CopyTo(bytes.AsSpan(39, 16));
         return bytes;
     }
+
+    public static SameStepOrderKey FromDatabaseBytes(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length != DatabaseKeyLength)
+            throw new ArgumentException($"SameStepOrderKey database encoding must be {DatabaseKeyLength} bytes.", nameof(bytes));
+
+        var phase = bytes[0];
+        var domainRank = BinaryPrimitives.ReadUInt16BigEndian(bytes.Slice(1, 2));
+        var conflictScopeDigest = bytes.Slice(3, ConflictScopeDigestLength).ToArray();
+        var sortablePriority = BinaryPrimitives.ReadUInt32BigEndian(bytes.Slice(35, 4));
+        var semanticPriority = unchecked((int)(sortablePriority ^ 0x80000000u));
+        var intentId = OpaqueId128.FromBytes(bytes.Slice(39, 16));
+        var decoded = new SameStepOrderKey(
+            phase,
+            domainRank,
+            conflictScopeDigest,
+            semanticPriority,
+            intentId);
+        if (!decoded.ToDatabaseBytes().AsSpan().SequenceEqual(bytes))
+            throw new InvalidDataException("same-step-order-key.noncanonical-database-encoding");
+        return decoded;
+    }
 }

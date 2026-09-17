@@ -1,0 +1,243 @@
+name: INT-03 runtime target validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/**'
+      - 'tools/MachiVerse.Qa04RuntimeTarget/**'
+      - '.github/workflows/int03-runtime-target-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-runtime-target-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  core-reference-load:
+    name: Core QA-04 reference-load / process target contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Simulation Core and external runtime adapter
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release
+      - name: Run Simulation Core smoke tests
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.SmokeTests --configuration Release
+      - name: Probe assembled Simulation Core process target
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          printf '%s\n' '{"schemaVersion":"1.0","command":"inspect","workerCount":0,"recordCount":0,"persistenceRoot":""}' \
+            | "$core" qa04-target > "$RUNNER_TEMP/core-inspect.json"
+          printf '%s\n' '{"schemaVersion":"1.0","command":"worker-probe","workerCount":16,"recordCount":0,"persistenceRoot":""}' \
+            | "$core" qa04-target > "$RUNNER_TEMP/core-worker.json"
+          python3 - "$RUNNER_TEMP/core-inspect.json" "$RUNNER_TEMP/core-worker.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              inspect = json.load(f)
+          with open(sys.argv[2], encoding='utf-8') as f:
+              worker = json.load(f)
+          assert inspect['profileId'] == 'perf.reference.v1', inspect
+          assert inspect['canonicalWorkerCounts'] == [1, 4, 8, 16], inspect
+          assert inspect['standardDomainCount'] == 8, inspect
+          assert inspect['standardPartitionCount'] == 97, inspect
+          assert inspect['residentIdentityMaterializationAvailable'] is True, inspect
+          assert inspect['canonicalResidentCount'] == 1000000, inspect
+          assert inspect['initialResidentLifecycle'] == 'alive', inspect
+          assert inspect['authoritativeStepStructuralBridgeAvailable'] is True, inspect
+          assert inspect['coreSubstateTwoStepBridgeAvailable'] is True, inspect
+          assert inspect['referenceWorldMaterialized'] is False, inspect
+          assert inspect['authoritativeStepLoopAvailable'] is False, inspect
+          assert inspect['releaseEvidenceCapable'] is False, inspect
+          assert worker['workerCount'] == 16, worker
+          assert worker['domainCount'] == 8, worker
+          assert worker['maxObservedConcurrency'] == 8, worker
+          assert worker['workerCountAppliedToDomainExecutor'] is True, worker
+          assert worker['releaseEvidenceCapable'] is False, worker
+          PY
+      - name: Materialize canonical 1,000,000 Resident identity records
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          printf '%s\n' '{"schemaVersion":"1.0","command":"resident-materialize-probe","workerCount":0,"recordCount":1000000,"persistenceRoot":""}' \
+            | "$core" qa04-target > "$RUNNER_TEMP/core-resident-materialization.json"
+          python3 - "$RUNNER_TEMP/core-resident-materialization.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['profileId'] == 'perf.reference.v1', result
+          assert result['partitionId'] == 'resident.identity_lifecycle', result
+          assert result['requestedRecordCount'] == 1000000, result
+          assert result['materializedRecordCount'] == 1000000, result
+          assert result['canonicalResidentCount'] == 1000000, result
+          assert result['d0Count'] == 100000, result
+          assert result['d1Count'] == 300000, result
+          assert result['d2Count'] == 400000, result
+          assert result['d3Count'] == 200000, result
+          assert result['canonicalResidentPopulationComplete'] is True, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
+          PY
+      - name: Prove reduced QA-04 Step materializes State S+1 and publishes only after real SQLite COMMIT
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          persistence="$RUNNER_TEMP/qa04-structural-persistence"
+          request=$(python3 - "$persistence" <<'PY'
+          import json, sys
+          print(json.dumps({
+              'schemaVersion':'1.0',
+              'command':'authoritative-step-probe',
+              'workerCount':4,
+              'recordCount':128,
+              'persistenceRoot':sys.argv[1],
+          }, separators=(',', ':')))
+          PY
+          )
+          printf '%s\n' "$request" | "$core" qa04-target > "$RUNNER_TEMP/core-authoritative-step.json"
+          python3 - "$RUNNER_TEMP/core-authoritative-step.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['basisStep'] == 0 and result['resultingStep'] == 1, result
+          assert result['workerCount'] == 4, result
+          assert result['residentRecordCount'] == 128, result
+          assert result['domainOutputCount'] == 8, result
+          assert result['partitionCandidateCount'] == 1, result
+          assert result['candidatePublishableBeforeCommit'] is False, result
+          assert result['preparedStatePublishableBeforeCommit'] is False, result
+          assert result['durableReceiptPublishable'] is True, result
+          assert result['resultingWorldStatePublishable'] is True, result
+          assert result['schedulerReopenedAfterCommit'] is True, result
+          assert result['realSqliteCommitObserved'] is True, result
+          assert result['resultingResidentPartitionRevision'] == 2, result
+          assert result['resultingResidentPartitionBasisStep'] == 1, result
+          assert result['basisStateDigest'] == result['previousStateDigest'], result
+          assert result['basisStateDigest'] != result['resultingStateDigest'], result
+          for key in ('candidateDiagnosticDigest','basisStateDigest','previousStateDigest','resultingStateDigest','resultingContinuityToken'):
+              digest = result[key]
+              assert len(digest) == 64 and set(digest) != {'0'}, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['authoritativeStepLoopAvailable'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
+          assert 'qa04.target.core-substate-mutation-application-not-assembled' in result['blockingFailureCodes'], result
+          assert 'qa04.target.resulting-world-state-materialization-not-assembled' not in result['blockingFailureCodes'], result
+          PY
+      - name: Prove scheduler and Operation authority survives two consecutive SQLite COMMIT Steps
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          persistence="$RUNNER_TEMP/qa04-core-substate-persistence"
+          request=$(python3 - "$persistence" <<'PY'
+          import json, sys
+          print(json.dumps({
+              'schemaVersion':'1.0',
+              'command':'core-substate-two-step-probe',
+              'workerCount':4,
+              'recordCount':128,
+              'persistenceRoot':sys.argv[1],
+          }, separators=(',', ':')))
+          PY
+          )
+          printf '%s\n' "$request" | "$core" qa04-target > "$RUNNER_TEMP/core-substate-two-step.json"
+          python3 - "$RUNNER_TEMP/core-substate-two-step.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['basisStep'] == 0, result
+          assert result['firstResultingStep'] == 1 and result['finalResultingStep'] == 2, result
+          assert result['workerCount'] == 4 and result['residentRecordCount'] == 128, result
+          assert result['firstStepCoreSubstateCandidateCount'] == 2, result
+          assert result['secondStepCoreSubstateCandidateCount'] == 2, result
+          assert result['firstStepFrozenOperationCount'] == 1, result
+          assert result['secondStepFrozenOperationCount'] == 1, result
+          assert result['futureOperationCarriedToSecondStep'] is True, result
+          for key in (
+              'firstStepSchedulerDigestMatchedDurableRuntime',
+              'firstStepOperationDigestMatchedSqlite',
+              'secondStepSchedulerDigestMatchedDurableRuntime',
+              'secondStepOperationDigestMatchedSqlite',
+              'firstOperationTerminalDurable',
+              'secondOperationTerminalDurable',
+              'firstStateChainValid',
+              'secondStateChainValid',
+              'realSqliteCommitObservedThroughStepTwo',
+              'reducedTwoStepAuthorityAvailable',
+          ):
+              assert result[key] is True, result
+          assert result['basisStateDigest'] != result['firstStateDigest'], result
+          assert result['firstStateDigest'] != result['finalStateDigest'], result
+          for key in ('basisStateDigest','firstStateDigest','finalStateDigest','finalContinuityToken'):
+              digest = result[key]
+              assert len(digest) == 64 and set(digest) != {'0'}, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['authoritativeStepLoopAvailable'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
+          assert 'qa04.target.core-substate-mutation-application-not-assembled' not in result['blockingFailureCodes'], result
+          assert 'qa04.target.detail-substate-mutation-application-not-assembled' in result['blockingFailureCodes'], result
+          PY
+      - name: Prove external adapter reaches Core and fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          adapter="$GITHUB_WORKSPACE/tools/MachiVerse.Qa04RuntimeTarget/bin/Release/net10.0/MachiVerse.Qa04RuntimeTarget"
+          export MACHIVERSE_QA04_CORE_EXECUTABLE="$core"
+          request='{"schemaVersion":"1.0","requestKind":"benchmark-run","executionClass":"release","requestId":"qa04.runtime.boundary","sourceCommit":"1111111111111111111111111111111111111111","qa04ManifestSha256":"5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423","profileId":"perf.reference.v1","run":{"runId":"qa04.runtime.boundary","benchmarkProfileId":"perf.reference.v1","workerCount":4,"runOrdinal":1,"warmupSteps":9000,"measurementSteps":18000,"worldSeed":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"},"profile":{}}'
+          printf '%s\n' "$request" | "$adapter" > "$RUNNER_TEMP/runtime-adapter-response.json"
+          python3 - "$RUNNER_TEMP/runtime-adapter-response.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              response = json.load(f)
+          assert response['executionClass'] == 'release', response
+          assert response['responseKind'] == 'performance-benchmark-report-v1', response
+          assert response['passed'] is False, response
+          assert 'qa04.target.reference-world-not-materialized' in response['failureCodes'], response
+          assert response['report']['worker_count'] == 4, response
+          assert response['report']['step_count'] == 0, response
+          PY
+      - name: Prove ReleaseEvidenceRunner consumes runtime adapter without false PASS
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          adapter="$GITHUB_WORKSPACE/tools/MachiVerse.Qa04RuntimeTarget/bin/Release/net10.0/MachiVerse.Qa04RuntimeTarget"
+          export MACHIVERSE_QA04_CORE_EXECUTABLE="$core"
+          dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release -- materialize "$RUNNER_TEMP/qa04-plan"
+          set +e
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- \
+            run contract-smoke 1111111111111111111111111111111111111111 "$adapter" "$RUNNER_TEMP/qa04-plan" "$RUNNER_TEMP/runtime-adapter-smoke"
+          status=$?
+          set -e
+          if [[ "$status" != 2 ]]; then
+            echo "Expected incomplete real runtime adapter to fail closed with exit 2; got $status" >&2
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/runtime-adapter-smoke/qa04-evidence-fragment.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              fragment = json.load(f)
+          assert fragment['executionClass'] == 'contract-smoke', fragment
+          assert fragment['releaseEligible'] is False, fragment
+          assert len(fragment['performanceReports']) == 3, fragment
+          assert all(report['passed'] is False for report in fragment['performanceReports']), fragment
+          assert fragment['soak']['passed'] is False, fragment
+          assert fragment['soak']['durationSeconds'] == 0, fragment
+          PY

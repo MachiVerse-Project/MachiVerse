@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package machiverse.persistence.v1;
+
+// Normative P4-04 amendment for the six required Core snapshot sections.
+// Protobuf serialized bytes are transport only. Logical digests are computed
+// from decoded semantic values using the rules in
+// phase4-core-snapshot-section-wire.md.
+
+message SchemaRefSnapshotWireV1 {
+  string schema_id = 1;
+  uint32 major = 2;
+  uint32 minor = 3;
+}
+
+message CoreWorldStateHeaderSnapshotWireV1 {
+  bytes world_id = 1;                 // exactly 16 bytes
+  uint64 step = 2;
+  bytes world_seed_digest = 3;        // exactly 32 bytes
+  uint64 config_generation = 4;       // >= 1
+  uint64 master_generation = 5;       // >= 1
+  uint32 rate_generation = 6;
+  optional bytes previous_state_digest = 7; // exactly 32 bytes when present
+}
+
+message CoreSchedulerStateSnapshotFragmentWireV1 {
+  uint64 world_step = 1;
+  uint64 next_schedulable_step = 2;
+  optional uint64 freeze_step = 3;
+  repeated CoreScheduledOperationSnapshotWireV1 scheduled_operations = 4;
+}
+
+message CoreScheduledOperationSnapshotWireV1 {
+  bytes operation_id = 1;             // exactly 16 bytes, ZERO invalid
+  uint64 effective_step = 2;
+  bytes same_step_order_key = 3;      // exactly 55 bytes
+}
+
+enum DurableOperationLifecycleSnapshotWireV1 {
+  DURABLE_OPERATION_LIFECYCLE_UNSPECIFIED = 0;
+  ACCEPTED_DURABLE = 1;
+  SCHEDULED_DURABLE = 2;
+  TERMINAL_DURABLE = 3;
+}
+
+enum CoreOperationResultStatusSnapshotWireV1 {
+  CORE_OPERATION_RESULT_STATUS_UNSPECIFIED = 0;
+  SUCCESS = 1;
+  ACCEPTED = 2;
+  PENDING = 3;
+  NO_CHANGE = 4;
+  DUPLICATE = 5;
+  REJECTED = 6;
+  FAILED = 7;
+}
+
+message CoreOperationStateSnapshotFragmentWireV1 {
+  uint64 basis_step = 1;
+  repeated DurableOperationStateSnapshotWireV1 operations = 2;
+}
+
+message DurableOperationStateSnapshotWireV1 {
+  bytes operation_id = 1;             // exactly 16 bytes, ZERO invalid
+  bytes operation_payload_digest = 2; // exactly 32 bytes
+  DurableOperationLifecycleSnapshotWireV1 lifecycle = 3;
+  optional uint64 accepted_sequence = 4;
+  optional uint64 scheduled_sequence = 5;
+  optional uint64 effective_step = 6;
+  optional uint64 terminal_sequence = 7;
+  optional CoreOperationResultStatusSnapshotWireV1 terminal_status = 8;
+  optional string result_code = 9;     // StableToken when present
+  optional bytes rich_result_payload = 10;
+}
+
+enum DetailLevelSnapshotWireV1 {
+  DETAIL_LEVEL_UNSPECIFIED = 0;
+  D0_ENTITY = 1;
+  D1_LOCAL_AGGREGATE = 2;
+  D2_REGIONAL_AGGREGATE = 3;
+  D3_BOUNDARY_SUMMARY = 4;
+}
+
+enum DetailTransitionTriggerSourceSnapshotWireV1 {
+  DETAIL_TRANSITION_TRIGGER_SOURCE_UNSPECIFIED = 0;
+  SCHEDULED_OPERATION = 1;
+  DOMAIN_EVENT = 2;
+  MUTATION_INTENT = 3;
+  TRANSACTION = 4;
+  CONFIG_POLICY = 5;
+}
+
+message CoreDetailDirectorySnapshotFragmentWireV1 {
+  uint64 basis_step = 1;
+  repeated DetailDirectoryItemSnapshotWireV1 items = 2;
+}
+
+message DetailDirectoryItemSnapshotWireV1 {
+  oneof item {
+    DetailRegionSnapshotWireV1 region = 1;
+    DetailPendingTransitionSnapshotWireV1 pending_transition = 2;
+  }
+}
+
+message DetailRegionSnapshotWireV1 {
+  bytes detail_region_id = 1;         // exactly 16 bytes, ZERO invalid
+  bytes spatial_scope_ref = 2;        // exactly 16 bytes, ZERO invalid
+  uint32 lineage_generation = 3;
+  uint64 last_transition_step = 4;
+  repeated DetailDomainLevelSnapshotWireV1 level_by_domain = 5;
+  repeated string active_guards = 6;  // StableToken values
+}
+
+message DetailDomainLevelSnapshotWireV1 {
+  string domain_token = 1;
+  DetailLevelSnapshotWireV1 detail_level = 2;
+}
+
+message DetailPendingTransitionSnapshotWireV1 {
+  bytes detail_region_id = 1;         // exactly 16 bytes, ZERO invalid
+  string domain_token = 2;
+  DetailLevelSnapshotWireV1 current_level = 3;
+  DetailLevelSnapshotWireV1 target_level = 4;
+  uint64 required_effective_step = 5;
+  int32 semantic_priority = 6;
+  DetailTransitionTriggerSourceSnapshotWireV1 trigger_source = 7;
+  bytes trigger_id = 8;               // exactly 16 bytes, ZERO invalid
+  uint64 trigger_observed_step = 9;
+  uint32 estimated_record_count = 10; // >= 1
+}
+
+message CoreDomainRegistrySnapshotFragmentWireV1 {
+  uint64 basis_step = 1;
+  uint32 registry_generation = 2;     // >= 1 for initialized standard worlds
+  repeated DomainRuntimeDescriptorSnapshotWireV1 domains = 3;
+}
+
+message DomainRuntimeDescriptorSnapshotWireV1 {
+  string domain_token = 1;
+  uint32 domain_rank = 2;             // must fit uint16
+  SchemaRefSnapshotWireV1 domain_schema = 3;
+  repeated string owned_partitions = 4;
+  repeated string state_read_dependencies = 5;
+  repeated string same_step_dependencies = 6;
+  repeated string accepted_intent_kinds = 7;
+  repeated string emitted_intent_kinds = 8;
+  repeated string emitted_event_kinds = 9;
+  repeated string invariant_ids = 10;
+}
+
+message CoreConfigStateSnapshotFragmentWireV1 {
+  uint64 basis_step = 1;
+  uint64 generation = 2;              // >= 1
+  string schema_version = 3;          // exactly "1.0" for this schema
+  string component = 4;               // exactly "simulation-core"
+  repeated CoreConfigFieldSnapshotWireV1 fields = 5;
+}
+
+message CoreConfigFieldSnapshotWireV1 {
+  string path = 1;
+  oneof value {
+    sint64 int64_value = 2;
+    bool bool_value = 3;
+    string string_value = 4;
+  }
+}

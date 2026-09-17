@@ -163,6 +163,8 @@ one diver_ref   -> at most one ACTIVE resident_id
 
 A new `participation.binding.create` cannot overwrite an existing ACTIVE binding. A release/rebind must use its explicit operation kind and expected current generation.
 
+#240の承認決定により、Residentに一度Diverを割り当てた後、通常のuser-level release/rebindで存命ResidentのDiverを交代させてはならない。存命中の変更は管理者権限による明示的変更に限定し、binding authority generationを進めて旧generationの操作をstaleとして拒否する。disconnect / reconnect / logout / 長期不在によるbinding解除・変更、および別Diverへの自動再割り当ては禁止する。Resident死亡時はbindingを終了可能とし、死亡後の同じDiverは参加規則に従い別の既存Residentへbindできる。既存の一対一制約とhistory保持は継続する。
+
 ## 8. Component ownership
 
 The protocol docs and `.proto` files are the cross-component source of truth.

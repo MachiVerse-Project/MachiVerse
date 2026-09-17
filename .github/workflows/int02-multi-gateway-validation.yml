@@ -1,0 +1,283 @@
+name: INT-02 multi-Gateway integration
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int02-multi-gateway-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  multi-gateway-failover:
+    name: Core + 4 Gateway failover / resync / View churn
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build INT-02 runtime and probes
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release
+          dotnet build tests/MachiVerse.Gateway.SmokeTests/MachiVerse.Gateway.SmokeTests.csproj --configuration Release
+          dotnet build tests/MachiVerse.Simulation.Core.SmokeTests/MachiVerse.Simulation.Core.SmokeTests.csproj --configuration Release
+          dotnet build tools/MachiVerse.Int01ViewProbe/MachiVerse.Int01ViewProbe.csproj --configuration Release
+      - name: Verify stale-generation and custody convergence regressions
+        run: |
+          dotnet run --project tests/MachiVerse.Simulation.Core.SmokeTests --configuration Release --no-build
+          dotnet run --project tests/MachiVerse.Gateway.SmokeTests --configuration Release --no-build
+      - name: Run Core + 4 Gateway failover and View churn
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          core_log="$RUNNER_TEMP/int02-core.log"
+          ids=(
+            00000000000000000000000000000011
+            00000000000000000000000000000012
+            00000000000000000000000000000013
+            00000000000000000000000000000014
+          )
+          component_ids=(
+            00000000000000000000000000000021
+            00000000000000000000000000000022
+            00000000000000000000000000000023
+            00000000000000000000000000000024
+          )
+          restart_component_ids=(
+            00000000000000000000000000000031
+            00000000000000000000000000000032
+            00000000000000000000000000000033
+            00000000000000000000000000000034
+          )
+          ports=(5521 5522 5523 5524)
+          pids=(0 0 0 0)
+          slow_pid=0
+
+          MACHIVERSE_ALPHA_LOCAL=1 \
+          MACHIVERSE_ALPHA_MULTI_GATEWAY=1 \
+          MACHIVERSE_WORLD_ROOT="$RUNNER_TEMP/int02-world" \
+          Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:5511 \
+          Kestrel__Endpoints__Grpc__Protocols=Http2 \
+          Kestrel__Endpoints__Health__Url=http://127.0.0.1:5510 \
+          Kestrel__Endpoints__Health__Protocols=Http1 \
+          dotnet run --project src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --no-build >"$core_log" 2>&1 &
+          core_pid=$!
+
+          cleanup() {
+            for pid in "${pids[@]}"; do
+              if [[ "$pid" != 0 ]]; then kill "$pid" 2>/dev/null || true; fi
+            done
+            if [[ "$slow_pid" != 0 ]]; then kill "$slow_pid" 2>/dev/null || true; fi
+            if [[ "$core_pid" != 0 ]]; then kill "$core_pid" 2>/dev/null || true; fi
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:5510/healthz >"$RUNNER_TEMP/int02-core-health.json"; then
+              break
+            fi
+            if ! kill -0 "$core_pid" 2>/dev/null; then
+              cat "$core_log"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          start_gateway() {
+            local index="$1"
+            local component="$2"
+            local port="${ports[$index]}"
+            local log="$RUNNER_TEMP/int02-gateway-$index.log"
+            MACHIVERSE_ALPHA_LOCAL=1 \
+            MACHIVERSE_ALPHA_MULTI_VIEW=1 \
+            MACHIVERSE_CORE_ENDPOINT=http://127.0.0.1:5511 \
+            MACHIVERSE_GATEWAY_LOGICAL_ID="${ids[$index]}" \
+            MACHIVERSE_GATEWAY_COMPONENT_INSTANCE_ID="$component" \
+            MACHIVERSE_GATEWAY_CONFIG="$GITHUB_WORKSPACE/config/gateway.toml" \
+            MACHIVERSE_GATEWAY_DATA_ROOT="$RUNNER_TEMP/int02-gateway-data-$index" \
+            ASPNETCORE_URLS="http://127.0.0.1:$port" \
+            dotnet run --project src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release --no-build >"$log" 2>&1 &
+            pids[$index]=$!
+          }
+
+          for index in 0 1 2 3; do
+            start_gateway "$index" "${component_ids[$index]}"
+          done
+
+          check_cluster() {
+            local expected_count="$1"
+            local min_generation="$2"
+            local excluded_index="${3:--1}"
+            curl --fail --silent http://127.0.0.1:5510/healthz >"$RUNNER_TEMP/int02-core-health.json" || return 1
+            local health_args=()
+            for index in 0 1 2 3; do
+              if [[ "$index" == "$excluded_index" ]]; then continue; fi
+              curl --fail --silent "http://127.0.0.1:${ports[$index]}/healthz" >"$RUNNER_TEMP/int02-gateway-$index-health.json" || return 1
+              health_args+=("$index" "$RUNNER_TEMP/int02-gateway-$index-health.json")
+            done
+            python3 - "$RUNNER_TEMP/int02-core-health.json" "$expected_count" "$min_generation" "$excluded_index" "${health_args[@]}" <<'PY'
+          import json, sys
+
+          core_path, expected_count, min_generation, excluded = sys.argv[1:5]
+          with open(core_path, encoding='utf-8') as handle:
+              core = json.load(handle)
+          expected_count = int(expected_count)
+          min_generation = int(min_generation)
+          assert core.get('status') == 'ready', core
+          assert core.get('multiGatewayAlpha') is True, core
+          assert core.get('registeredGatewayCount') == expected_count, core
+          generation = int(core.get('masterGeneration', 0))
+          assert generation >= min_generation, core
+          master = (core.get('currentMasterGatewayId') or '').lower()
+          assert master, core
+
+          ids = [
+              '00000000000000000000000000000011',
+              '00000000000000000000000000000012',
+              '00000000000000000000000000000013',
+              '00000000000000000000000000000014',
+          ]
+          live = []
+          args = sys.argv[5:]
+          for offset in range(0, len(args), 2):
+              index = int(args[offset])
+              with open(args[offset + 1], encoding='utf-8') as handle:
+                  gateway = json.load(handle)
+              link = gateway.get('core') or {}
+              assert gateway.get('status') == 'ready', gateway
+              assert link.get('negotiated') is True, gateway
+              assert link.get('syncState') == 'Synced', gateway
+              assert int(link.get('masterGeneration', 0)) == generation, (core, gateway)
+              live.append((index, bool(link.get('localMaster'))))
+          assert sum(1 for _, is_master in live if is_master) == 1, (core, live)
+          master_indexes = [index for index, is_master in live if is_master]
+          assert ids[master_indexes[0]] == master, (core, live)
+          PY
+          }
+
+          for _ in $(seq 1 75); do
+            if check_cluster 4 3; then break; fi
+            for index in 0 1 2 3; do
+              if ! kill -0 "${pids[$index]}" 2>/dev/null; then
+                cat "$RUNNER_TEMP/int02-gateway-$index.log"
+                cat "$core_log"
+                exit 1
+              fi
+            done
+            sleep 1
+          done
+          check_cluster 4 3
+
+          initial_generation=$(python3 - "$RUNNER_TEMP/int02-core-health.json" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding='utf-8'))['masterGeneration'])
+          PY
+          )
+          initial_master=$(python3 - "$RUNNER_TEMP/int02-core-health.json" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding='utf-8'))['currentMasterGatewayId'].lower())
+          PY
+          )
+
+          master_index=-1
+          for index in 0 1 2 3; do
+            if [[ "${ids[$index]}" == "$initial_master" ]]; then master_index="$index"; break; fi
+          done
+          if [[ "$master_index" == -1 ]]; then
+            echo "Initial Master was not one of the four Gateway identities: $initial_master" >&2
+            exit 1
+          fi
+
+          kill "${pids[$master_index]}"
+          wait "${pids[$master_index]}" 2>/dev/null || true
+          pids[$master_index]=0
+
+          failover_generation=$((initial_generation + 1))
+          for _ in $(seq 1 60); do
+            if check_cluster 3 "$failover_generation" "$master_index"; then break; fi
+            sleep 1
+          done
+          check_cluster 3 "$failover_generation" "$master_index"
+          actual_failover_generation=$(python3 - "$RUNNER_TEMP/int02-core-health.json" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding='utf-8'))['masterGeneration'])
+          PY
+          )
+          failover_master=$(python3 - "$RUNNER_TEMP/int02-core-health.json" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding='utf-8'))['currentMasterGatewayId'].lower())
+          PY
+          )
+          if [[ "$failover_master" == "$initial_master" ]]; then
+            echo "Master identity did not change after process termination" >&2
+            exit 1
+          fi
+
+          start_gateway "$master_index" "${restart_component_ids[$master_index]}"
+          for _ in $(seq 1 75); do
+            if check_cluster 4 "$actual_failover_generation"; then break; fi
+            if ! kill -0 "${pids[$master_index]}" 2>/dev/null; then
+              cat "$RUNNER_TEMP/int02-gateway-$master_index.log"
+              cat "$core_log"
+              exit 1
+            fi
+            sleep 1
+          done
+          check_cluster 4 "$actual_failover_generation"
+
+          # Keep one subscribed View socket intentionally unread while normal View sessions churn.
+          dotnet run --project tools/MachiVerse.Int01ViewProbe --configuration Release --no-build -- \
+            http://127.0.0.1:5521 ws://127.0.0.1:5521/ws/v1/view 10000 \
+            >"$RUNNER_TEMP/int02-slow-view.log" 2>&1 &
+          slow_pid=$!
+          sleep 1
+
+          probe_pids=()
+          probe_logs=()
+          for round in 1 2 3; do
+            for port in "${ports[@]}"; do
+              log="$RUNNER_TEMP/int02-view-$round-$port.log"
+              dotnet run --project tools/MachiVerse.Int01ViewProbe --configuration Release --no-build -- \
+                "http://127.0.0.1:$port" "ws://127.0.0.1:$port/ws/v1/view" \
+                >"$log" 2>&1 &
+              probe_pids+=("$!")
+              probe_logs+=("$log")
+            done
+          done
+          for index in "${!probe_pids[@]}"; do
+            if ! wait "${probe_pids[$index]}"; then
+              cat "${probe_logs[$index]}"
+              cat "$RUNNER_TEMP/int02-slow-view.log" || true
+              for gateway_index in 0 1 2 3; do cat "$RUNNER_TEMP/int02-gateway-$gateway_index.log" || true; done
+              cat "$core_log" || true
+              exit 1
+            fi
+          done
+          if ! wait "$slow_pid"; then
+            cat "$RUNNER_TEMP/int02-slow-view.log"
+            exit 1
+          fi
+          slow_pid=0
+
+          check_cluster 4 "$actual_failover_generation"
+          final_master=$(python3 - "$RUNNER_TEMP/int02-core-health.json" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding='utf-8'))['currentMasterGatewayId'].lower())
+          PY
+          )
+          if [[ "$final_master" != "$failover_master" ]]; then
+            echo "Restart/View churn unexpectedly changed a healthy Master" >&2
+            exit 1
+          fi
+
+          echo "INT-02 PASS: initial_generation=$initial_generation failover_generation=$actual_failover_generation initial_master=$initial_master failover_master=$failover_master"
