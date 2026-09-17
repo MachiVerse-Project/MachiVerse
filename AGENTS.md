@@ -62,6 +62,30 @@ work branch
 
 ここで `responsibility branch` は、対象に応じて `simulation`、`gateway`、`view`、`administration-view`、`documentation`、`promotion` のいずれかを指す。
 
+### Pull Request のマージ方式
+
+1. 作業ブランチから responsibility branch へ統合する通常の Pull Request は `squash merge` を使用する。作業ブランチ内の途中コミットを常設ブランチへそのまま持ち込まず、1つの作業単位を1つの統合コミットとして保持する。
+2. responsibility branch から `develop`、`documentation` から `develop`、`promotion` から `develop`、および `develop` から `main` など、常設ブランチから別の常設ブランチへ成果を統合する Pull Request は `merge commit` を使用する。
+3. `develop` または `main` から responsibility branch へ変更を取り込む場合など、常設ブランチ間の同期を目的とする Pull Request も `merge commit` を使用する。これにより、同期元ブランチの commit ancestry を保持し、実内容が同一であるにもかかわらず履歴上の不要な divergence が累積することを避ける。
+4. 常設ブランチ間の統合・同期では `squash merge` および `rebase merge` を使用しない。通常作業PRと常設ブランチ間PRのマージ方式を混在させない。
+5. Ruleset が通常の Pull Request に `squash` のみを許可している場合、常設ブランチ間の統合・同期に限り、Repository admin の `Allow for pull requests only` bypass を使用して `merge commit` を行う。
+6. Ruleset bypass は前項の常設ブランチ間 `merge commit` のためにのみ使用し、レビュー、必須チェック、レビュー会話の解決、その他の保護要件を回避する目的では使用しない。bypass を使用する場合も必ず Pull Request を経由する。
+7. 作業ブランチから常設ブランチへの通常PRで `merge commit` を使用してはならない。例外が必要な場合は、事前にユーザーから明示的な承認を得る。
+
+マージ方式を含む基本的な流れは以下とする。
+
+```text
+work branch
+  ↓ squash merge
+responsibility branch
+  ↓ merge commit
+develop
+  ↓ merge commit
+main
+```
+
+常設ブランチ間の逆方向同期も `merge commit` とする。
+
 ### ドキュメント編集フロー
 
 1. `README`、`CONTRIBUTING.md`、`SUPPORT.md`、`docs/architecture/`、`docs/protocols/` その他のリポジトリ共通ドキュメントは、原則として `documentation` の責任分野として扱う。
@@ -133,7 +157,7 @@ feature/support-core-gateway-v1.1
 
 他コンポーネント、プロトコル、共通ドキュメント等の変更を取り込む必要がある場合は、対象コンポーネントの作業と矛盾しないタイミングで `develop` の変更をコンポーネントブランチへ取り込み、統合時に大規模な差分・競合を一度に発生させないようにする。
 
-具体的な同期頻度や merge / rebase の採用方針は現時点では固定しない。
+具体的な同期頻度は固定しないが、`develop` とコンポーネント常設ブランチの間で同期する場合は、前述の常設ブランチ間ルールに従い `merge commit` を使用し、`squash merge` または `rebase merge` で同期しない。
 
 ### documentation と develop の同期
 
@@ -141,7 +165,7 @@ feature/support-core-gateway-v1.1
 
 コンポーネント統合やリポジトリ共通運用の変更によりドキュメントの前提が更新された場合は、ドキュメント作業と矛盾しないタイミングで `develop` の変更を `documentation` へ取り込み、正本となる文書が古い統合状態を前提にし続けないようにする。
 
-具体的な同期頻度や merge / rebase の採用方針は現時点では固定しない。
+具体的な同期頻度は固定しないが、`documentation` と `develop` の間で同期する場合は、前述の常設ブランチ間ルールに従い `merge commit` を使用し、`squash merge` または `rebase merge` で同期しない。
 
 ### ブランチ境界とコンポーネント独立性
 
