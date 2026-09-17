@@ -44,21 +44,17 @@ public static class Qa04TransitionHistoryTailReplayV1
 
         _ = await store.ValidateHistoryLinkChainAsync(CanonicalHistoryTypes, cancellationToken)
             .ConfigureAwait(false);
-        var transitions = await store.ReadQa04CanonicalTransitionHistoryAfterAsync(
-                snapshotHistoryAnchorSequence,
-                cancellationToken)
-            .ConfigureAwait(false);
-
         var expectedTransitionCount = checked(finalState.Header.Step - snapshotStep);
-        if ((ulong)transitions.Count != expectedTransitionCount)
-            throw new InvalidDataException("qa04.transition-replay.transition-count-drift");
-
         var expectedEffectiveStep = snapshotStep;
         var continuity = snapshotContinuityToken.ToArray();
-        for (var index = 0; index < transitions.Count; index++)
+        var transitionCount = 0;
+        Qa04TransitionCommittedAuthorityV1? last = null;
+        await foreach (var transition in store.StreamQa04CanonicalTransitionHistoryAfterAsync(
+                           snapshotHistoryAnchorSequence,
+                           cancellationToken)
+                           .ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var transition = transitions[index];
             var expectedResultingStep = checked(expectedEffectiveStep + 1UL);
             if (transition.EffectiveStep != expectedEffectiveStep ||
                 transition.ResultingStep != expectedResultingStep)
@@ -97,14 +93,18 @@ public static class Qa04TransitionHistoryTailReplayV1
 
             continuity = transition.ResultingStateContinuityToken.ToArray();
             expectedEffectiveStep = expectedResultingStep;
+            transitionCount++;
+            last = transition;
         }
 
+        if ((ulong)transitionCount != expectedTransitionCount)
+            throw new InvalidDataException("qa04.transition-replay.transition-count-drift");
         if (expectedEffectiveStep != finalState.Header.Step)
             throw new InvalidDataException("qa04.transition-replay.final-step-drift");
         if (!CryptographicOperations.FixedTimeEquals(continuity, finalContinuityToken.Span))
             throw new InvalidDataException("qa04.transition-replay.final-continuity-drift");
-        var last = transitions[^1];
-        if (!CryptographicOperations.FixedTimeEquals(
+        if (last is null ||
+            !CryptographicOperations.FixedTimeEquals(
                 last.StateDiagnosticHash,
                 finalState.Diagnostic.StateDigest))
             throw new InvalidDataException("qa04.transition-replay.final-state-diagnostic-drift");
@@ -112,7 +112,7 @@ public static class Qa04TransitionHistoryTailReplayV1
         return new Qa04TransitionHistoryTailReplayProofV1(
             snapshotStep,
             finalState.Header.Step,
-            transitions.Count,
+            transitionCount,
             continuity);
     }
 }
