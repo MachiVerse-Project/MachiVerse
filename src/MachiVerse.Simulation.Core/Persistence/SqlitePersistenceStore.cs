@@ -40,6 +40,7 @@ public sealed partial class SqlitePersistenceStore : IAsyncDisposable
             var store = new SqlitePersistenceStore(connection);
             await store.ApplyAndValidateRequiredPragmasAsync(cancellationToken);
             await store.CreateInitialSchemaAsync(cancellationToken);
+            await store.EnsureQa04Step2OperationSchemaAsync(cancellationToken);
             await store.ValidateQuickCheckAsync(cancellationToken);
             return store;
         }
