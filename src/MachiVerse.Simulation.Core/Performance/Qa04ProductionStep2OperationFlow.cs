@@ -35,12 +35,6 @@ public sealed record Qa04ProductionStep2AuthoritativeStepExecutionV1(
     Qa04OperationClosedPrefixV1 ClosedPrefix,
     Qa04ProductionStep2FinalizationResultV1 Finalization);
 
-/// <summary>
-/// Gate4 Step2 Operation-core authority. Historical perf.reference.v1 generated Operations are
-/// represented by the closed-prefix certificate; only the current not-yet-closed scheduled batch is
-/// materialized as mutable operation_state rows. This keeps State authority O(current Step) instead
-/// of O(world-lifetime generated Operations).
-/// </summary>
 public static class Qa04ProductionStep2BasisAuthorityV1
 {
     public static WorldStateV1 Bind(
@@ -138,13 +132,9 @@ public static class Qa04ProductionStep2BasisAuthorityV1
     }
 }
 
-/// <summary>
-/// Production Step2 executor using compact generated-Operation admission and closed-prefix
-/// finalization. The ordinary executor remains intact for non-Step2 and non-profile paths.
-/// </summary>
 public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
 {
-    public static async Task<Qa04ProductionStep2AuthoritativeStepExecutionV1> ExecuteAsync(
+    public static Task<Qa04ProductionStep2AuthoritativeStepExecutionV1> ExecuteAsync(
         ulong injectionStep,
         int workerCount,
         WorldStateV1 partitionAuthorityState,
@@ -157,6 +147,37 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         OperationSchedulerStateV1 scheduler,
         Qa04ProductionStepCandidateIdentityRegistryV1 candidateIdentities,
         CancellationToken cancellationToken = default)
+        => ExecuteAsync(
+            injectionStep,
+            workerCount,
+            partitionAuthorityState,
+            mutationState,
+            domainAuthorities,
+            references,
+            crossDomainTransactions,
+            crossDomainTransactions,
+            Array.Empty<CrossDomainTransactionStateV1>(),
+            closedPrefix,
+            store,
+            scheduler,
+            candidateIdentities,
+            cancellationToken);
+
+    public static async Task<Qa04ProductionStep2AuthoritativeStepExecutionV1> ExecuteAsync(
+        ulong injectionStep,
+        int workerCount,
+        WorldStateV1 partitionAuthorityState,
+        Qa04CanonicalOperationMutationStateV1 mutationState,
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> domainAuthorities,
+        IDomainRecordSchemaResolverV1 references,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> basisCrossDomainTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> resultingCrossDomainTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
+        Qa04OperationClosedPrefixV1 closedPrefix,
+        SqlitePersistenceStore store,
+        OperationSchedulerStateV1 scheduler,
+        Qa04ProductionStepCandidateIdentityRegistryV1 candidateIdentities,
+        CancellationToken cancellationToken = default)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.step2.production-loop.worker-count-not-canonical");
@@ -164,17 +185,26 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         ArgumentNullException.ThrowIfNull(mutationState);
         ArgumentNullException.ThrowIfNull(domainAuthorities);
         ArgumentNullException.ThrowIfNull(references);
-        ArgumentNullException.ThrowIfNull(crossDomainTransactions);
+        ArgumentNullException.ThrowIfNull(basisCrossDomainTransactions);
+        ArgumentNullException.ThrowIfNull(resultingCrossDomainTransactions);
+        ArgumentNullException.ThrowIfNull(crossDomainTransactionStateChanges);
         ArgumentNullException.ThrowIfNull(closedPrefix);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(candidateIdentities);
 
         var basisStep = checked(injectionStep + 1UL);
+        var resultingStep = checked(basisStep + 1UL);
         if (partitionAuthorityState.Header.WorldId != Qa04ReferenceLoadV1.WorldId ||
             partitionAuthorityState.Header.Step != basisStep)
             throw new InvalidDataException("qa04.step2.production-loop.basis-state-drift");
         closedPrefix.Validate(basisStep);
+        Qa04ProductionCrossDomainTurnoverContractV1.Validate(
+            basisStep,
+            resultingStep,
+            basisCrossDomainTransactions,
+            resultingCrossDomainTransactions,
+            crossDomainTransactionStateChanges);
         if (scheduler.FreezeStep is not null || scheduler.NextSchedulableStep != basisStep ||
             scheduler.CanonicalBuckets.Any())
             throw new InvalidDataException("qa04.step2.production-loop.scheduler-not-closed-at-basis");
@@ -184,7 +214,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         var expectedClosedOperation = Qa04OperationAuthorityV1.Canonicalize(
             Array.Empty<DurableOperationStateV1>(),
             closedPrefix,
-            crossDomainTransactions,
+            basisCrossDomainTransactions,
             basisStep);
         Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
             expectedClosedOperation,
@@ -194,7 +224,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         var candidateIdentity = candidateIdentities.DeriveAndRegister(
             partitionAuthorityState.Header.WorldId,
             basisStep);
-        if (candidateIdentity.TargetStep != checked(basisStep + 1UL))
+        if (candidateIdentity.TargetStep != resultingStep)
             throw new InvalidDataException("qa04.step2.production-loop.candidate-target-step-drift");
 
         var bindings = Qa04ReferenceLoadV1.OperationsForStep(injectionStep)
@@ -229,7 +259,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             scheduler,
             batch.ScheduledOperations,
             closedPrefix,
-            crossDomainTransactions);
+            basisCrossDomainTransactions);
         var frozen = StepInputFreezerV1.Freeze(basisState, scheduler);
         if (frozen.ScheduledOperations.Count != bindings.Length)
             throw new InvalidDataException("qa04.step2.production-loop.frozen-operation-count-drift");
@@ -275,11 +305,12 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             batch.ScheduledOperations,
             terminals,
             closedPrefix,
-            crossDomainTransactions,
+            basisCrossDomainTransactions,
+            resultingCrossDomainTransactions,
+            crossDomainTransactionStateChanges,
             cancellationToken).ConfigureAwait(false);
         var verification = finalized.PostCommitVerification;
         var nextPrefix = finalized.ClosedPrefix;
-        var resultingStep = checked(basisStep + 1UL);
         if (verification.ResultingStep != resultingStep ||
             finalized.AuthoritativeState.State.Header.Step != resultingStep ||
             verification.TerminalOperationCount != bindings.Length ||
@@ -341,7 +372,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
 
 public static class Qa04ProductionStep2OperationFinalizationV1
 {
-    public static async Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishAsync(
+    public static Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishAsync(
         SqlitePersistenceStore store,
         OperationSchedulerStateV1 scheduler,
         Qa04CanonicalOperationStepPreparationResultV1 preparation,
@@ -351,6 +382,31 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         Qa04OperationClosedPrefixV1 basisPrefix,
         IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions,
         CancellationToken cancellationToken = default)
+        => CommitAndPublishAsync(
+            store,
+            scheduler,
+            preparation,
+            bindings,
+            mutableOperations,
+            terminalOperations,
+            basisPrefix,
+            activeTransactions,
+            activeTransactions,
+            Array.Empty<CrossDomainTransactionStateV1>(),
+            cancellationToken);
+
+    public static async Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishAsync(
+        SqlitePersistenceStore store,
+        OperationSchedulerStateV1 scheduler,
+        Qa04CanonicalOperationStepPreparationResultV1 preparation,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        IReadOnlyCollection<DurableOperationStateV1> mutableOperations,
+        IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        Qa04OperationClosedPrefixV1 basisPrefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> basisActiveTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> resultingActiveTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -359,7 +415,9 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         ArgumentNullException.ThrowIfNull(mutableOperations);
         ArgumentNullException.ThrowIfNull(terminalOperations);
         ArgumentNullException.ThrowIfNull(basisPrefix);
-        ArgumentNullException.ThrowIfNull(activeTransactions);
+        ArgumentNullException.ThrowIfNull(basisActiveTransactions);
+        ArgumentNullException.ThrowIfNull(resultingActiveTransactions);
+        ArgumentNullException.ThrowIfNull(crossDomainTransactionStateChanges);
 
         var step5Candidate = preparation.Candidate;
         var step5Prepared = preparation.PreparedState;
@@ -372,6 +430,12 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             throw new InvalidDataException("qa04.step2.finalization-step5-authority-surface-drift");
 
         basisPrefix.Validate(step5Candidate.BasisStep);
+        Qa04ProductionCrossDomainTurnoverContractV1.Validate(
+            step5Candidate.BasisStep,
+            step5Candidate.TargetStep,
+            basisActiveTransactions,
+            resultingActiveTransactions,
+            crossDomainTransactionStateChanges);
         var alignedTerminal = AlignTerminalCoverage(bindings, terminalOperations);
         if (mutableOperations.Count != bindings.Count)
             throw new InvalidDataException("qa04.step2.finalization-mutable-operation-count-drift");
@@ -385,12 +449,21 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         var expectedBasisOperation = Qa04OperationAuthorityV1.Canonicalize(
             mutableOperations,
             basisPrefix,
-            activeTransactions,
+            basisActiveTransactions,
             step5Candidate.BasisStep);
         Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
             expectedBasisOperation,
             basisState.OperationState,
             "qa04.step2.finalization-operation-basis-drift");
+
+        if (crossDomainTransactionStateChanges.Count > 0)
+        {
+            await Qa04CrossDomainDurableAuthorityVerifierV1.RequireActiveAuthorityAsync(
+                    store,
+                    basisActiveTransactions,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         var terminalBatchDigest = Qa04TerminalSemanticAuthorityV1.ComputeBatchDigest(bindings, alignedTerminal);
         var terminalStepDigest = Qa04TerminalSemanticAuthorityV1.ComputeStepItemDigest(
@@ -418,7 +491,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         var resultingOperation = Qa04OperationAuthorityV1.Canonicalize(
             Array.Empty<DurableOperationStateV1>(),
             resultingPrefix,
-            activeTransactions,
+            resultingActiveTransactions,
             step5Candidate.TargetStep);
         var operationCore = new StepCoreSubstateCandidateV1(
             StepCoreSubstateKindV1.Operation,
@@ -490,7 +563,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             injectionStep,
             basisPrefix,
             resultingPrefix,
-            transitionAuthority);
+            transitionAuthority,
+            crossDomainTransactionStateChanges);
         var receipt = await new StepFinalizationCoordinatorV1(durability)
             .FinalizeAsync(candidate, scheduler, material, cancellationToken)
             .ConfigureAwait(false);
@@ -506,6 +580,15 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             scheduler.ForEffectiveStep(candidate.BasisStep).Count != 0)
             throw new InvalidDataException("qa04.step2.finalization-scheduler-post-commit-drift");
 
+        if (crossDomainTransactionStateChanges.Count > 0)
+        {
+            await Qa04CrossDomainDurableAuthorityVerifierV1.RequireActiveAuthorityAsync(
+                    store,
+                    resultingActiveTransactions,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         var authoritative = StepStateApplicationV1.Publish(prepared, receipt);
         if (!authoritative.IsPublishable || authoritative.State.Header.Step != candidate.TargetStep)
             throw new InvalidDataException("qa04.step2.finalization-published-state-drift");
@@ -516,7 +599,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             authoritative.State,
             scheduler,
             resultingPrefix,
-            activeTransactions);
+            resultingActiveTransactions);
 
         return new Qa04ProductionStep2FinalizationResultV1(
             preparation,
@@ -670,7 +753,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         ulong injectionStep,
         Qa04OperationClosedPrefixV1 basisPrefix,
         Qa04OperationClosedPrefixV1 resultingPrefix,
-        Qa04TransitionCommittedAuthorityV1 transitionAuthority) : IStepTransitionDurabilityV1
+        Qa04TransitionCommittedAuthorityV1 transitionAuthority,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges) : IStepTransitionDurabilityV1
     {
         public Task<DurableTransitionResult> CommitAsync(
             StepCandidateV1 candidate,
@@ -691,6 +775,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                 material.TerminalOperations,
                 basisPrefix,
                 resultingPrefix,
+                crossDomainTransactionStateChanges,
                 cancellationToken);
         }
     }
