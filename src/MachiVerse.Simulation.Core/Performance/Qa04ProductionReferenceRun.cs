@@ -63,12 +63,19 @@ public static class Qa04ProductionReferenceRunV1
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceWorldMaterialContractV1.RequireAllProductionMaterializersAvailable();
         Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
+        Qa04CrossDomainTransactionTurnoverMaterializerV1.ValidateCanonicalContract();
         _ = Qa04AlgorithmIterationBudgetGuardV1.ValidateCanonicalContract();
 
         var assembly = Qa04ProductionReferenceWorldAssemblerV1.AssembleCanonical();
         if (assembly.Validation.CanonicalInitialRecordCount != Qa04ReferenceLoadV1.CanonicalInitialRecordCount ||
             assembly.BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-run.reference-world-incomplete");
+
+        var turnoverAuthority = Qa04ProductionCrossDomainTurnoverAuthorityBuilderV1.CreateCanonical(
+            assembly.ActiveTransactions);
+        IReadOnlyList<Qa04ActiveTransactionSlotV1> currentActiveSlots = turnoverAuthority.ActiveSlots;
+        IReadOnlyList<CrossDomainTransactionStateV1> currentActiveTransactions = Array.AsReadOnly(
+            currentActiveSlots.Select(static slot => slot.State).ToArray());
 
         var scheduler = new OperationSchedulerStateV1(
             nextSchedulableStep: Qa04ProductionReferenceWorldAssemblerV1.CanonicalBasisStep,
@@ -78,7 +85,7 @@ public static class Qa04ProductionReferenceRunV1
             assembly.PartitionAuthorityState,
             scheduler,
             Array.Empty<DurableOperationStateV1>(),
-            assembly.ActiveTransactions);
+            currentActiveTransactions);
 
         var paths = PersistenceLayout.Resolve(persistenceRoot, Qa04ReferenceLoadV1.WorldId, 1);
         PersistenceLayout.EnsureGenerationDirectories(paths);
@@ -95,13 +102,13 @@ public static class Qa04ProductionReferenceRunV1
         var initialContinuity = await InitializePersistenceGenesisAsync(
             store,
             basisState,
-            assembly.ActiveTransactions,
+            currentActiveTransactions,
             cancellationToken).ConfigureAwait(false);
         _ = await Qa04ProductionBasisPersistenceV1.PersistAsync(
             store,
             basisState,
             initialContinuity,
-            assembly.ActiveTransactions,
+            currentActiveTransactions,
             cancellationToken).ConfigureAwait(false);
 
         var currentState = basisState;
@@ -109,17 +116,53 @@ public static class Qa04ProductionReferenceRunV1
         IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> currentDomainAuthorities = assembly.BasisDomainAuthorities;
         var commitMetricAttached = false;
         var snapshotCommitted = false;
+        var turnoverCount = 0;
 
         try
         {
             for (ulong injectionStep = 0; injectionStep < CanonicalTransitionCount; injectionStep++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var basisStep = checked(injectionStep + 1UL);
                 var resultingStep = checked(injectionStep + 2UL);
                 if (!commitMetricAttached && resultingStep == Qa04MeasurementPhaseContractV1.MeasurementFirstFinalizedStep)
                 {
                     store.AttachCommitMetricSink(collector);
                     commitMetricAttached = true;
+                }
+
+                var basisTransactions = currentActiveTransactions;
+                IReadOnlyList<CrossDomainTransactionStateV1> resultingTransactions = basisTransactions;
+                IReadOnlyList<CrossDomainTransactionStateV1> transactionChanges = Array.Empty<CrossDomainTransactionStateV1>();
+                IReadOnlyList<Qa04ActiveTransactionSlotV1>? pendingActiveSlots = null;
+
+                if (basisStep % Qa04CrossDomainTransactionTurnoverMaterializerV1.TurnoverCadenceSteps == 0)
+                {
+                    var beforeBySlot = currentActiveSlots.ToDictionary(static slot => slot.SlotOrdinal);
+                    var turnover = Qa04CrossDomainTransactionTurnoverMaterializerV1.Apply(
+                        basisStep,
+                        currentActiveSlots,
+                        turnoverAuthority.CanonicalRecordPools);
+                    var replacements = turnover.ActiveSlots
+                        .Where(slot => slot.State.TransactionId != beforeBySlot[slot.SlotOrdinal].State.TransactionId)
+                        .OrderBy(static slot => slot.SlotOrdinal)
+                        .ToArray();
+                    if (turnover.CommittedStates.Count != checked((int)Qa04CrossDomainTransactionTurnoverMaterializerV1.CohortSize) ||
+                        replacements.Length != checked((int)Qa04CrossDomainTransactionTurnoverMaterializerV1.CohortSize) ||
+                        turnover.ActiveSlots.Count != checked((int)Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount))
+                        throw new InvalidDataException("qa04.production-run.transaction-turnover-cardinality-drift");
+
+                    transactionChanges = Array.AsReadOnly(turnover.CommittedStates
+                        .Concat(replacements.Select(static slot => slot.State))
+                        .OrderBy(static state => state.TransactionId)
+                        .ToArray());
+                    if (transactionChanges.Count != checked((int)(Qa04CrossDomainTransactionTurnoverMaterializerV1.CohortSize * 2UL)) ||
+                        transactionChanges.Any(state => state.UpdatedStep != resultingStep))
+                        throw new InvalidDataException("qa04.production-run.transaction-turnover-change-drift");
+
+                    resultingTransactions = Array.AsReadOnly(
+                        turnover.ActiveSlots.Select(static slot => slot.State).ToArray());
+                    pendingActiveSlots = turnover.ActiveSlots;
                 }
 
                 Qa04ProductionAuthoritativeStepExecutionV1? executed = null;
@@ -134,7 +177,9 @@ public static class Qa04ProductionReferenceRunV1
                             currentMutationState,
                             currentDomainAuthorities,
                             assembly.References,
-                            assembly.ActiveTransactions,
+                            basisTransactions,
+                            resultingTransactions,
+                            transactionChanges,
                             store,
                             scheduler,
                             candidateIdentities,
@@ -147,6 +192,13 @@ public static class Qa04ProductionReferenceRunV1
                 currentState = completed.Finalization.AuthoritativeState.State;
                 currentMutationState = completed.MutationState;
                 currentDomainAuthorities = completed.DomainAuthorities;
+
+                if (pendingActiveSlots is not null)
+                {
+                    currentActiveSlots = pendingActiveSlots;
+                    currentActiveTransactions = resultingTransactions;
+                    turnoverCount++;
+                }
 
                 if (resultingStep == RunningSnapshotCoordinatorV1.StandardIntervalSteps)
                 {
@@ -175,6 +227,11 @@ public static class Qa04ProductionReferenceRunV1
                         currentDomainAuthorities);
                 }
             }
+
+            var expectedTurnoverCount = CanonicalTransitionCount / checked((int)Qa04CrossDomainTransactionTurnoverMaterializerV1.TurnoverCadenceSteps);
+            if (turnoverCount != expectedTurnoverCount ||
+                currentActiveTransactions.Count != checked((int)Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount))
+                throw new InvalidDataException("qa04.production-run.transaction-turnover-run-coverage-drift");
 
             var candidateSequence = candidateIdentities.ValidateCompleteCanonicalRun();
             if (currentState.Header.Step != Qa04MeasurementPhaseContractV1.MeasurementLastFinalizedStep ||
@@ -211,6 +268,35 @@ public static class Qa04ProductionReferenceRunV1
             var finalRecovery = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
             if (finalRecovery.FinalizedStep != currentState.Header.Step)
                 throw new InvalidDataException("qa04.production-run.final-recovery-head-drift");
+
+            var finalDurableOperations = await store.ListOperationStatesCanonicalAsync(cancellationToken).ConfigureAwait(false);
+            var finalOperationAuthority = CoreOperationStateSubstateV2.Canonicalize(
+                finalDurableOperations,
+                currentActiveTransactions,
+                currentState.Header.Step);
+            if (finalOperationAuthority.Schema != currentState.OperationState.Schema ||
+                !CryptographicOperations.FixedTimeEquals(
+                    finalOperationAuthority.CanonicalDigest,
+                    currentState.OperationState.CanonicalDigest))
+                throw new InvalidDataException("qa04.production-run.final-transaction-operation-authority-drift");
+
+            await Qa04CrossDomainDurableAuthorityVerifierV1.RequireActiveAuthorityAsync(
+                store,
+                currentActiveTransactions,
+                cancellationToken).ConfigureAwait(false);
+            await using (var reopened = await SqlitePersistenceStore.OpenOrCreateAsync(paths, cancellationToken).ConfigureAwait(false))
+            {
+                await Qa04CrossDomainDurableAuthorityVerifierV1.RequireActiveAuthorityAsync(
+                    reopened,
+                    currentActiveTransactions,
+                    cancellationToken).ConfigureAwait(false);
+                var reopenedRecovery = await reopened.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
+                if (reopenedRecovery.FinalizedStep != currentState.Header.Step ||
+                    !CryptographicOperations.FixedTimeEquals(
+                        reopenedRecovery.ContinuityToken,
+                        finalRecovery.ContinuityToken))
+                    throw new InvalidDataException("qa04.production-run.reopened-transaction-recovery-head-drift");
+            }
 
             var candidateDigest = HashSuite.DomainHash("mv.qa04-step-candidate-sequence.v1", writer =>
             {
