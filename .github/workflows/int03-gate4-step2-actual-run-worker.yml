@@ -27,7 +27,7 @@ jobs:
   actual_run:
     name: workers=${{ inputs.worker_count }} / run=${{ inputs.run_ordinal }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     outputs:
       row_json: ${{ steps.capture.outputs.row_json }}
     steps:
