@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Performance;
@@ -99,10 +100,36 @@ INSERT INTO qa04_operation_closed_prefix (
         CancellationToken cancellationToken = default)
         => ReadQa04OperationClosedPrefixAsync(transaction: null, cancellationToken);
 
-    public async Task<Qa04ScheduledOperationBatchDurableResultV1> PersistQa04ScheduledOperationBatchAsync(
+    public Task<Qa04ScheduledOperationBatchDurableResultV1> PersistQa04ScheduledOperationBatchAsync(
         Qa04ScheduledOperationBatchAuthorityV1 authority,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
         CancellationToken cancellationToken = default)
+        => PersistQa04ScheduledOperationBatchCoreAsync(
+            authority,
+            bindings,
+            insertBatchSize: null,
+            cancellationToken);
+
+    public Task<Qa04ScheduledOperationBatchDurableResultV1> PersistQa04ScheduledOperationBatchBatchedAsync(
+        Qa04ScheduledOperationBatchAuthorityV1 authority,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        int insertBatchSize,
+        CancellationToken cancellationToken = default)
+    {
+        if (insertBatchSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(insertBatchSize));
+        return PersistQa04ScheduledOperationBatchCoreAsync(
+            authority,
+            bindings,
+            insertBatchSize,
+            cancellationToken);
+    }
+
+    private async Task<Qa04ScheduledOperationBatchDurableResultV1> PersistQa04ScheduledOperationBatchCoreAsync(
+        Qa04ScheduledOperationBatchAuthorityV1 authority,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        int? insertBatchSize,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -180,11 +207,24 @@ INSERT INTO qa04_operation_batch (
                     throw new InvalidDataException("persistence.qa04-operation-batch-insert-failed");
             }
 
-            foreach (var binding in bindings)
+            if (insertBatchSize is { } configuredBatchSize)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await InsertQa04ScheduledOperationAsync(binding, authority, transaction, cancellationToken)
+                await InsertQa04ScheduledOperationsBatchedAsync(
+                        bindings,
+                        authority,
+                        configuredBatchSize,
+                        transaction,
+                        cancellationToken)
                     .ConfigureAwait(false);
+            }
+            else
+            {
+                foreach (var binding in bindings)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await InsertQa04ScheduledOperationAsync(binding, authority, transaction, cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
 
             await UpdateHistoryAnchorAsync(authority.History, transaction, cancellationToken).ConfigureAwait(false);
@@ -366,6 +406,87 @@ WHERE singleton=1;
         {
             transaction.Rollback();
             throw;
+        }
+    }
+
+    private async Task InsertQa04ScheduledOperationsBatchedAsync(
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        Qa04ScheduledOperationBatchAuthorityV1 authority,
+        int insertBatchSize,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        for (var offset = 0; offset < bindings.Count; offset = checked(offset + insertBatchSize))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var count = Math.Min(insertBatchSize, bindings.Count - offset);
+
+            await using (var operation = _connection.CreateCommand())
+            {
+                operation.Transaction = transaction;
+                var sql = new StringBuilder(
+                    "INSERT INTO operation_state (" +
+                    "operation_id, payload_digest, lifecycle, accepted_sequence, scheduled_sequence, " +
+                    "effective_step, terminal_sequence, terminal_status, result_code, rich_result_payload) VALUES ");
+                operation.Parameters.AddWithValue("$lifecycle", ScheduledLifecycle);
+                operation.Parameters.AddWithValue("$sequence", U64Be.Encode(authority.History.Sequence));
+                operation.Parameters.AddWithValue("$effective_step", U64Be.Encode(authority.EffectiveStep));
+
+                for (var localIndex = 0; localIndex < count; localIndex++)
+                {
+                    var binding = bindings[offset + localIndex];
+                    var operationId = binding.SourceDescriptor.OperationId;
+                    var payloadDigest = binding.BoundDescriptor.PayloadDigest;
+                    var orderKey = binding.OrderKey.ToDatabaseBytes();
+                    if (operationId.IsZero ||
+                        payloadDigest.Length != 32 ||
+                        orderKey.Length != SameStepOrderKey.DatabaseKeyLength)
+                        throw new InvalidDataException("persistence.qa04-operation-batch-item-invalid");
+                    if (binding.ScheduledOperation.EffectiveStep != authority.EffectiveStep)
+                        throw new InvalidDataException("persistence.qa04-operation-batch-item-effective-step-drift");
+
+                    if (localIndex > 0) sql.Append(',');
+                    var idParameter = $"$operation_id_{localIndex}";
+                    var payloadParameter = $"$payload_digest_{localIndex}";
+                    sql.Append('(')
+                        .Append(idParameter).Append(',')
+                        .Append(payloadParameter).Append(',')
+                        .Append("$lifecycle,$sequence,$sequence,$effective_step,NULL,NULL,NULL,NULL)");
+                    operation.Parameters.AddWithValue(idParameter, operationId.ToBytes());
+                    operation.Parameters.AddWithValue(payloadParameter, payloadDigest);
+                }
+
+                operation.CommandText = sql.ToString();
+                if (await operation.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != count)
+                    throw new InvalidDataException("persistence.qa04-operation-batch-item-insert-failed");
+            }
+
+            await using (var schedule = _connection.CreateCommand())
+            {
+                schedule.Transaction = transaction;
+                var sql = new StringBuilder(
+                    "INSERT INTO scheduled_operation (effective_step, order_key, operation_id) VALUES ");
+                schedule.Parameters.AddWithValue("$effective_step", U64Be.Encode(authority.EffectiveStep));
+
+                for (var localIndex = 0; localIndex < count; localIndex++)
+                {
+                    var binding = bindings[offset + localIndex];
+                    var operationId = binding.SourceDescriptor.OperationId;
+                    var orderKey = binding.OrderKey.ToDatabaseBytes();
+                    if (localIndex > 0) sql.Append(',');
+                    var orderKeyParameter = $"$order_key_{localIndex}";
+                    var idParameter = $"$operation_id_{localIndex}";
+                    sql.Append("($effective_step,")
+                        .Append(orderKeyParameter).Append(',')
+                        .Append(idParameter).Append(')');
+                    schedule.Parameters.AddWithValue(orderKeyParameter, orderKey);
+                    schedule.Parameters.AddWithValue(idParameter, operationId.ToBytes());
+                }
+
+                schedule.CommandText = sql.ToString();
+                if (await schedule.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != count)
+                    throw new InvalidDataException("persistence.qa04-operation-batch-schedule-insert-failed");
+            }
         }
     }
 
