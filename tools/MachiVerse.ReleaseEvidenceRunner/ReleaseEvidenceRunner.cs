@@ -113,16 +113,65 @@ internal static class ReleaseEvidenceRunner
                 command = "production-step2-determinism-run",
                 workerCount,
                 transitionCount = plan.TransitionCount,
+                persistenceInsertBatchSize = plan.PersistenceInsertBatchSize,
+                progressIntervalTransitions = plan.ProgressIntervalTransitions,
                 persistenceRoot,
             };
             await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, JsonLine));
             process.StandardInput.Close();
 
+            Console.Error.WriteLine(
+                $"GATE4_STEP2_START workers={workerCount} run={runOrdinal} transitions={plan.TransitionCount} " +
+                $"persistence_batch_size={plan.PersistenceInsertBatchSize} progress_interval_transitions={plan.ProgressIntervalTransitions}");
+
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var stderrTask = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            var stderrBuffer = new StringBuilder();
+
+            async Task PumpStandardErrorAsync()
+            {
+                while (await process.StandardError.ReadLineAsync() is { } line)
+                {
+                    Console.Error.WriteLine(line);
+                    stderrBuffer.AppendLine(line);
+                }
+            }
+
+            using var heartbeatCancellation = new CancellationTokenSource();
+            async Task EmitHeartbeatAsync()
+            {
+                var elapsed = Stopwatch.StartNew();
+                try
+                {
+                    while (true)
+                    {
+                        await Task.Delay(
+                            TimeSpan.FromSeconds(plan.HeartbeatIntervalSeconds),
+                            heartbeatCancellation.Token);
+                        Console.Error.WriteLine(
+                            $"GATE4_STEP2_HEARTBEAT workers={workerCount} run={runOrdinal} " +
+                            $"elapsed_seconds={elapsed.Elapsed.TotalSeconds:F1}");
+                    }
+                }
+                catch (OperationCanceledException) when (heartbeatCancellation.IsCancellationRequested)
+                {
+                }
+            }
+
+            var stderrTask = PumpStandardErrorAsync();
+            var heartbeatTask = EmitHeartbeatAsync();
+            try
+            {
+                await process.WaitForExitAsync();
+            }
+            finally
+            {
+                heartbeatCancellation.Cancel();
+            }
+
             var stdout = await stdoutTask;
-            var stderr = await stderrTask;
+            await stderrTask;
+            await heartbeatTask;
+            var stderr = stderrBuffer.ToString();
             if (process.ExitCode != 0)
                 throw new InvalidDataException(
                     $"Simulation Core Gate4 Step2 process exited {process.ExitCode}: {Limit(stderr, 2000)}");
