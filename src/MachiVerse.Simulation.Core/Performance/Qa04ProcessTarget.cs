@@ -64,6 +64,11 @@ public static class Qa04ProcessTargetV1
                     request.WorkerCount,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "production-step2-determinism-run" => await Qa04ProductionStep2DeterminismRunV1.RunAsync(
+                    request.WorkerCount,
+                    request.TransitionCount,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 _ => throw new InvalidDataException("qa04.target.command-unsupported"),
             };
 
@@ -309,6 +314,7 @@ public sealed class Qa04ProcessRequestV1
     public string Command { get; set; } = "";
     public int WorkerCount { get; set; }
     public ulong RecordCount { get; set; }
+    public int TransitionCount { get; set; }
     public string PersistenceRoot { get; set; } = "";
 }
 
