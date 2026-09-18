@@ -20,21 +20,37 @@ public interface IDomainPartitionSnapshotAuthorityV1 : IDomainPartitionSnapshotR
 public sealed class DomainPartitionSnapshotAuthorityV1<TPayload> : IDomainPartitionSnapshotAuthorityV1
 {
     private readonly Func<TPayload, byte[]> _canonicalPayloadDigest;
+    private readonly bool _preparedHeaderVerified;
+    private IReadOnlyList<OpaqueId128>? _recordIdsCanonical;
 
     public DomainPartitionSnapshotAuthorityV1(
         DomainPartitionStateV1<TPayload> partition,
         PartitionStateHeaderV1 header,
         Func<TPayload, byte[]> canonicalPayloadDigest)
+        : this(partition, header, canonicalPayloadDigest, preparedHeaderVerified: false)
+    {
+        _ = RecordIdsCanonical;
+        VerifyBoundAuthority();
+    }
+
+    private DomainPartitionSnapshotAuthorityV1(
+        DomainPartitionStateV1<TPayload> partition,
+        PartitionStateHeaderV1 header,
+        Func<TPayload, byte[]> canonicalPayloadDigest,
+        bool preparedHeaderVerified)
     {
         Partition = partition ?? throw new ArgumentNullException(nameof(partition));
         Header = header ?? throw new ArgumentNullException(nameof(header));
         _canonicalPayloadDigest = canonicalPayloadDigest ?? throw new ArgumentNullException(nameof(canonicalPayloadDigest));
-        var recordIds = Partition.RecordsCanonical.Select(static record => record.RecordId).ToArray();
-        if (checked((ulong)recordIds.Length) != Partition.ItemCount)
-            throw new InvalidDataException($"persistence.snapshot.partition-authority-record-count:{Partition.Identity.PartitionId.Value}");
-        RecordIdsCanonical = Array.AsReadOnly(recordIds);
-        VerifyBoundAuthority();
+        _preparedHeaderVerified = preparedHeaderVerified;
+        RequireStructuralBinding();
     }
+
+    internal static DomainPartitionSnapshotAuthorityV1<TPayload> FromPreparedHeader(
+        DomainPartitionStateV1<TPayload> partition,
+        PartitionStateHeaderV1 header,
+        Func<TPayload, byte[]> canonicalPayloadDigest)
+        => new(partition, header, canonicalPayloadDigest, preparedHeaderVerified: true);
 
     public DomainPartitionStateV1<TPayload> Partition { get; }
     public StableToken PartitionId => Partition.Identity.PartitionId;
@@ -42,21 +58,16 @@ public sealed class DomainPartitionSnapshotAuthorityV1<TPayload> : IDomainPartit
     public PartitionStateHeaderV1 Header { get; }
     public ulong ActualItemCount => Partition.ItemCount;
     public SchemaRefV1 RecordSchema => Identity.RecordSchema;
-    public IReadOnlyList<OpaqueId128> RecordIdsCanonical { get; }
+    public IReadOnlyList<OpaqueId128> RecordIdsCanonical
+        => _recordIdsCanonical ??= Array.AsReadOnly(
+            Partition.RecordsCanonical.Select(static record => record.RecordId).ToArray());
 
     public void VerifyBoundAuthority()
     {
-        var standard = StandardDomainPartitionRegistry.Get(PartitionId.Value);
-        if (Identity != standard)
-            throw new InvalidDataException($"persistence.snapshot.partition-authority-identity-mismatch:{PartitionId.Value}");
-        if (Header.PartitionId != Identity.PartitionId ||
-            Header.OwnerDomain != Identity.OwnerDomain ||
-            Header.Schema != Identity.PartitionSchema)
-        {
-            throw new InvalidDataException($"persistence.snapshot.partition-header-identity-mismatch:{PartitionId.Value}");
-        }
-        if (Header.ItemCount != Partition.ItemCount)
-            throw new InvalidDataException($"persistence.snapshot.partition-header-item-count-mismatch:{PartitionId.Value}");
+        RequireStructuralBinding();
+        if (_preparedHeaderVerified)
+            return;
+
         if (ActualItemCount != checked((ulong)RecordIdsCanonical.Count))
             throw new InvalidDataException($"persistence.snapshot.partition-authority-record-count:{PartitionId.Value}");
 
@@ -93,6 +104,21 @@ public sealed class DomainPartitionSnapshotAuthorityV1<TPayload> : IDomainPartit
             throw new InvalidDataException($"persistence.snapshot.partition-header-material-mismatch:{PartitionId.Value}");
         }
     }
+
+    private void RequireStructuralBinding()
+    {
+        var standard = StandardDomainPartitionRegistry.Get(PartitionId.Value);
+        if (Identity != standard)
+            throw new InvalidDataException($"persistence.snapshot.partition-authority-identity-mismatch:{PartitionId.Value}");
+        if (Header.PartitionId != Identity.PartitionId ||
+            Header.OwnerDomain != Identity.OwnerDomain ||
+            Header.Schema != Identity.PartitionSchema)
+        {
+            throw new InvalidDataException($"persistence.snapshot.partition-header-identity-mismatch:{PartitionId.Value}");
+        }
+        if (Header.ItemCount != Partition.ItemCount)
+            throw new InvalidDataException($"persistence.snapshot.partition-header-item-count-mismatch:{PartitionId.Value}");
+    }
 }
 
 /// <summary>
@@ -108,6 +134,19 @@ public sealed class DomainPartitionSnapshotAuthoritySetV1
     public DomainPartitionSnapshotAuthoritySetV1(
         WorldStateV1 frozenState,
         IEnumerable<IDomainPartitionSnapshotAuthorityV1> authorities)
+        : this(frozenState, authorities, verifyBoundAuthorities: true)
+    {
+    }
+
+    internal static DomainPartitionSnapshotAuthoritySetV1 FromVerifiedAuthorities(
+        WorldStateV1 frozenState,
+        IEnumerable<IDomainPartitionSnapshotAuthorityV1> authorities)
+        => new(frozenState, authorities, verifyBoundAuthorities: false);
+
+    private DomainPartitionSnapshotAuthoritySetV1(
+        WorldStateV1 frozenState,
+        IEnumerable<IDomainPartitionSnapshotAuthorityV1> authorities,
+        bool verifyBoundAuthorities)
     {
         FrozenState = frozenState ?? throw new ArgumentNullException(nameof(frozenState));
         ArgumentNullException.ThrowIfNull(authorities);
@@ -120,7 +159,8 @@ public sealed class DomainPartitionSnapshotAuthoritySetV1
         foreach (var authority in materialized)
         {
             ArgumentNullException.ThrowIfNull(authority);
-            authority.VerifyBoundAuthority();
+            if (verifyBoundAuthorities)
+                authority.VerifyBoundAuthority();
             if (!StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedPartitionIdentity(authority.Identity))
                 throw new InvalidDataException($"persistence.snapshot.partition-authority-identity-mismatch:{authority.PartitionId.Value}");
             if (!map.TryAdd(authority.PartitionId.Value, authority))
