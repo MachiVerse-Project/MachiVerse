@@ -46,7 +46,7 @@ jobs:
           dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
           dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
 
-      # ReleaseEvidenceRunner forwards Core transition/phase progress and emits a heartbeat with the latest progress snapshot.
+      # ReleaseEvidenceRunner forwards Core transition/phase progress; prepared-header reuse and digest caching keep canonical semantics while avoiding duplicate work.
       - name: Execute bounded actual production determinism run with live progress
         id: capture
         shell: bash
