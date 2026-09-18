@@ -494,6 +494,9 @@ internal static class Qa04DeterminismEvidenceVerifier
             RequiredTurnoverCount = 3,
             RequiredDetailDecisionCount = 901,
             RequiredBurstStepCount = 1,
+            PersistenceInsertBatchSize = 400,
+            ProgressIntervalTransitions = 25,
+            HeartbeatIntervalSeconds = 300,
             SnapshotRecoveryEvidence = "reuse-gate3-exact103-production-proof",
             LongDurationEvidence = "gate4-step4-24h-soak",
         };
