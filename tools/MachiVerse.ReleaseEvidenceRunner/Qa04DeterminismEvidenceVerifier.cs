@@ -6,12 +6,7 @@ internal static class Qa04DeterminismEvidenceVerifier
 {
     private const string ProfileId = "perf.reference.v1";
     private const string SummaryDomain = "qa04.determinism-evidence.v1";
-    private const int CanonicalTransitionCount = 27_000;
-    private const ulong CanonicalTerminalOperationCount = 136_450_000UL;
-    private const ulong CanonicalFinalizedStep = 27_001UL;
-    private const int CanonicalMeasurementStepCount = 18_000;
-    private const ulong CanonicalSnapshotStep = 18_000UL;
-    private const int CanonicalSnapshotSectionCount = 103;
+    private const string Step2ProfileId = "gate4.step2.determinism.v1";
 
     internal static void VerifyContract()
     {
@@ -34,11 +29,13 @@ internal static class Qa04DeterminismEvidenceVerifier
             () => ValidateAndSummarize(mismatch),
             "QA-04 determinism evidence verifier must reject a cross-run promotion-order mismatch.");
 
+        var plan = SelfTestPlan();
+        ValidateActualPlan(plan);
         var actualRows = new List<Gate4Step2ActualRunEvidenceRow>(12);
-        foreach (var worker in new[] { 1, 4, 8, 16 })
-        foreach (var ordinal in new[] { 1, 2, 3 })
-            actualRows.Add(SelfTestActualRow(worker, ordinal));
-        var actualSummary = ValidateActualMatrix(actualRows);
+        foreach (var worker in plan.WorkerCounts)
+        foreach (var ordinal in Enumerable.Range(1, plan.ProcessRunsPerWorker))
+            actualRows.Add(SelfTestActualRow(plan, worker, ordinal));
+        var actualSummary = ValidateActualMatrix(plan, actualRows);
         Program.RequireLowerHex(actualSummary, 64, "QA-04 actual Step2 determinism summary self-test");
 
         var badTransitionCount = actualRows
@@ -46,182 +43,190 @@ internal static class Qa04DeterminismEvidenceVerifier
             .ToArray();
         badTransitionCount[0].TransitionCount--;
         RequireThrows<InvalidDataException>(
-            () => ValidateActualMatrix(badTransitionCount),
-            "QA-04 actual Step2 verifier must reject a non-canonical transition count.");
+            () => ValidateActualMatrix(plan, badTransitionCount),
+            "QA-04 actual Step2 verifier must reject a non-plan transition count.");
+    }
+
+    internal static void ValidateActualPlan(Gate4Step2DeterminismPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        if (!string.Equals(plan.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+            !string.Equals(plan.ProfileId, Step2ProfileId, StringComparison.Ordinal))
+            throw new InvalidDataException("Gate4 Step2 determinism plan schema/profile drifted.");
+        if (!plan.WorkerCounts.Order().SequenceEqual(new[] { 1, 4, 8, 16 }) ||
+            plan.ProcessRunsPerWorker != 3)
+            throw new InvalidDataException("Gate4 Step2 determinism plan worker/run matrix drifted.");
+        if (plan.TransitionCount <= 0 ||
+            plan.RequiredDetailDecisionCount != plan.TransitionCount ||
+            plan.ExpectedTerminalOperationCount == 0 ||
+            plan.RequiredTurnoverCount <= 0 ||
+            plan.RequiredBurstStepCount <= 0)
+            throw new InvalidDataException("Gate4 Step2 determinism plan does not cover the required production boundaries.");
+        if (!string.Equals(
+                plan.SnapshotRecoveryEvidence,
+                "reuse-gate3-exact103-production-proof",
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                plan.LongDurationEvidence,
+                "gate4-step4-24h-soak",
+                StringComparison.Ordinal))
+            throw new InvalidDataException("Gate4 Step2 determinism plan proof ownership drifted.");
     }
 
     internal static Gate4Step2ActualRunEvidenceRow ParseActualRun(
-        BenchmarkRunDescriptor run,
-        Qa04AdapterResponse response)
+        Gate4Step2DeterminismPlan plan,
+        string sourceCommit,
+        int workerCount,
+        int runOrdinal,
+        Gate4Step2CoreRunResult result)
     {
-        ArgumentNullException.ThrowIfNull(run);
-        ArgumentNullException.ThrowIfNull(response);
-        if (response.ReferenceWorldMaterialized != true ||
-            response.ReleaseEvidenceCapable != false ||
-            (response.BlockingFailureCodes?.Length ?? -1) != 0)
-            throw new InvalidDataException($"QA-04 actual Step2 readiness boundary drifted: {run.RunId}.");
-        if (!string.Equals(response.ExecutionClass, "release", StringComparison.Ordinal) ||
-            !string.Equals(response.ProfileId, ProfileId, StringComparison.Ordinal))
-            throw new InvalidDataException($"QA-04 actual Step2 response class/profile drifted: {run.RunId}.");
+        ValidateActualPlan(plan);
+        Program.RequireLowerHex(sourceCommit, 40, "sourceCommit");
+        ArgumentNullException.ThrowIfNull(result);
 
-        var report = response.Report;
-        RequireString(report, "benchmark_profile_id", ProfileId, run.RunId);
-        RequireString(report, "runtime_version", "assembled-core-production-reference-run.v1", run.RunId);
-        RequireInt(report, "worker_count", run.WorkerCount, run.RunId);
-        RequireInt(report, "run_ordinal", run.RunOrdinal, run.RunId);
-        RequireInt(report, "production_transition_count", CanonicalTransitionCount, run.RunId);
-        RequireULong(report, "terminal_operation_count", CanonicalTerminalOperationCount, run.RunId);
-        RequireULong(report, "finalized_step", CanonicalFinalizedStep, run.RunId);
-        RequireInt(report, "step_count", CanonicalMeasurementStepCount, run.RunId);
-        RequireInt(report, "accepted_operation_loss", 0, run.RunId);
-        RequireBool(report, "hidden_solver_iteration_reduction", expected: false, run.RunId);
-        RequireLong(report, "persistence_metric_observer_failure_count", 0L, run.RunId);
+        var runId = $"gate4.step2.w{workerCount}.r{runOrdinal}";
+        if (!plan.WorkerCounts.Contains(workerCount) ||
+            runOrdinal < 1 ||
+            runOrdinal > plan.ProcessRunsPerWorker)
+            throw new InvalidDataException($"Gate4 Step2 run identity is outside the plan: {runId}.");
 
-        var snapshot = RequireObject(report, "snapshot_summary", run.RunId);
-        RequireULong(snapshot, "snapshot_step", CanonicalSnapshotStep, run.RunId);
-        RequireBool(snapshot, "drain_completed", expected: true, run.RunId);
-        RequireInt(snapshot, "section_count", CanonicalSnapshotSectionCount, run.RunId);
-        var chunkCount = RequiredInt(snapshot, "chunk_count", run.RunId);
-        if (chunkCount <= 0)
-            throw new InvalidDataException($"QA-04 actual Step2 snapshot chunk count must be positive: {run.RunId}.");
-        _ = RequiredDigest(snapshot, "snapshot_digest", run.RunId);
-        _ = RequiredDigest(snapshot, "physical_manifest_digest", run.RunId);
-        _ = RequiredDigest(snapshot, "recovered_state_digest", run.RunId);
+        if (!string.Equals(result.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+            !string.Equals(result.ProfileId, Step2ProfileId, StringComparison.Ordinal) ||
+            result.WorkerCount != workerCount ||
+            result.TransitionCount != plan.TransitionCount ||
+            result.TerminalOperationCount != plan.ExpectedTerminalOperationCount ||
+            result.FinalizedStep != checked((ulong)plan.TransitionCount + 1UL) ||
+            result.TurnoverCount != plan.RequiredTurnoverCount ||
+            result.DetailDecisionCount != plan.RequiredDetailDecisionCount ||
+            result.BurstStepCount != plan.RequiredBurstStepCount ||
+            result.AcceptedOperationLoss != 0 ||
+            result.HiddenSolverIterationReduction ||
+            result.PersistenceMetricObserverFailureCount != 0 ||
+            !result.Passed ||
+            result.FailureCodes.Length != 0)
+            throw new InvalidDataException($"Gate4 Step2 bounded production contract drifted: {runId}.");
 
-        var evidence = RequireObject(report, "determinism_evidence", run.RunId);
-        var finalStateDigest = RequiredDigest(evidence, "final_state_digest", run.RunId);
-        var reportFinalStateDigest = RequiredDigest(report, "final_state_digest", run.RunId);
-        if (!string.Equals(finalStateDigest, reportFinalStateDigest, StringComparison.Ordinal))
-            throw new InvalidDataException($"QA-04 actual Step2 final State digest does not match report: {run.RunId}.");
+        var evidence = result.DeterminismEvidence
+            ?? throw new InvalidDataException($"Gate4 Step2 determinism evidence missing: {runId}.");
+        Program.RequireLowerHex(result.FinalStateDigest, 64, $"{runId}:final_state_digest");
+        Program.RequireLowerHex(evidence.FinalStateDigest, 64, $"{runId}:determinism.final_state_digest");
+        if (!string.Equals(result.FinalStateDigest, evidence.FinalStateDigest, StringComparison.Ordinal))
+            throw new InvalidDataException($"Gate4 Step2 final State digest mismatch: {runId}.");
 
-        var candidateIdSequenceDigest = RequiredDigest(report, "candidate_id_sequence_digest", run.RunId);
-        var finalHistoryDigest = RequiredDigest(report, "final_history_digest", run.RunId);
-        var finalContinuityToken = RequiredDigest(report, "final_continuity_token", run.RunId);
-        var performanceFailures = response.FailureCodes
-            .Concat(ReadStringArray(report, "failure_codes"))
-            .Where(static value => !string.IsNullOrWhiteSpace(value))
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(static value => value, StringComparer.Ordinal)
-            .ToArray();
+        foreach (var (value, name) in new[]
+        {
+            (result.CandidateIdSequenceDigest, "candidate_id_sequence_digest"),
+            (result.FinalHistoryDigest, "final_history_digest"),
+            (result.FinalContinuityToken, "final_continuity_token"),
+            (evidence.TransitionCommittedDigest, "transition_committed_digest"),
+            (evidence.OperationTerminalSemanticDigest, "operation_terminal_semantic_digest"),
+            (evidence.ConfigHistoryDigest, "config_history_digest"),
+            (evidence.PromotionDeferralOrderDigest, "promotion_deferral_order_digest"),
+        })
+            Program.RequireLowerHex(value, 64, $"{runId}:{name}");
 
         return new Gate4Step2ActualRunEvidenceRow
         {
-            RunId = run.RunId,
-            WorkerCount = run.WorkerCount,
-            RunOrdinal = run.RunOrdinal,
-            TransitionCount = CanonicalTransitionCount,
-            TerminalOperationCount = CanonicalTerminalOperationCount,
-            FinalizedStep = CanonicalFinalizedStep,
-            MeasurementStepCount = CanonicalMeasurementStepCount,
-            SnapshotStep = CanonicalSnapshotStep,
-            SnapshotDrainCompleted = true,
-            SnapshotSectionCount = CanonicalSnapshotSectionCount,
-            SnapshotChunkCount = chunkCount,
-            AcceptedOperationLoss = 0,
-            HiddenSolverIterationReduction = false,
-            PersistenceMetricObserverFailureCount = 0,
-            CandidateIdSequenceDigest = candidateIdSequenceDigest,
-            FinalHistoryDigest = finalHistoryDigest,
-            FinalContinuityToken = finalContinuityToken,
-            FinalStateDigest = finalStateDigest,
-            TransitionCommittedDigest = RequiredDigest(evidence, "transition_committed_digest", run.RunId),
-            OperationTerminalSemanticDigest = RequiredDigest(evidence, "operation_terminal_semantic_digest", run.RunId),
-            ConfigHistoryDigest = RequiredDigest(evidence, "config_history_digest", run.RunId),
-            PromotionDeferralOrderDigest = RequiredDigest(evidence, "promotion_deferral_order_digest", run.RunId),
-            PerformanceFailureCodes = performanceFailures,
+            RunId = runId,
+            WorkerCount = workerCount,
+            RunOrdinal = runOrdinal,
+            TransitionCount = result.TransitionCount,
+            TerminalOperationCount = result.TerminalOperationCount,
+            FinalizedStep = result.FinalizedStep,
+            TurnoverCount = result.TurnoverCount,
+            DetailDecisionCount = result.DetailDecisionCount,
+            BurstStepCount = result.BurstStepCount,
+            AcceptedOperationLoss = result.AcceptedOperationLoss,
+            HiddenSolverIterationReduction = result.HiddenSolverIterationReduction,
+            PersistenceMetricObserverFailureCount = result.PersistenceMetricObserverFailureCount,
+            CandidateIdSequenceDigest = result.CandidateIdSequenceDigest,
+            FinalHistoryDigest = result.FinalHistoryDigest,
+            FinalContinuityToken = result.FinalContinuityToken,
+            FinalStateDigest = result.FinalStateDigest,
+            TransitionCommittedDigest = evidence.TransitionCommittedDigest,
+            OperationTerminalSemanticDigest = evidence.OperationTerminalSemanticDigest,
+            ConfigHistoryDigest = evidence.ConfigHistoryDigest,
+            PromotionDeferralOrderDigest = evidence.PromotionDeferralOrderDigest,
         };
     }
 
-    internal static string VerifyActualMatrix(string matrixPath, string? planDirectory = null)
+    internal static string VerifyActualMatrix(string repositoryRoot, string matrixPath)
     {
+        var planPath = Path.Combine(
+            repositoryRoot,
+            "tests",
+            "performance-fixtures",
+            "v1",
+            "gate4-step2-determinism-plan.json");
+        var plan = Program.ReadJson<Gate4Step2DeterminismPlan>(
+            planPath,
+            "Gate4 Step2 bounded determinism plan");
+        ValidateActualPlan(plan);
+
         var rows = Program.ReadJson<Gate4Step2ActualRunEvidenceRow[]>(
             matrixPath,
             "Gate4 Step2 actual determinism matrix");
-        if (planDirectory is not null)
-            RequireCanonicalPlanRows(rows, planDirectory);
-        var summary = ValidateActualMatrix(rows);
-        Console.WriteLine("Gate4 Step2 actual determinism matrix PASS");
+        var summary = ValidateActualMatrix(plan, rows);
+        Console.WriteLine("Gate4 Step2 bounded actual determinism matrix PASS");
         Console.WriteLine($"actual_run_count={rows.Length}");
+        Console.WriteLine($"transition_count_per_run={plan.TransitionCount}");
+        Console.WriteLine($"terminal_operations_per_run={plan.ExpectedTerminalOperationCount}");
         Console.WriteLine($"determinism_digest_summary={summary}");
         foreach (var row in rows.OrderBy(static value => value.WorkerCount).ThenBy(static value => value.RunOrdinal))
-        {
             Console.WriteLine(
                 $"run={row.RunId} workers={row.WorkerCount} ordinal={row.RunOrdinal} transitions={row.TransitionCount} terminal_operations={row.TerminalOperationCount} final_state_digest={row.FinalStateDigest}");
-            if (row.PerformanceFailureCodes.Length != 0)
-                Console.WriteLine(
-                    $"run={row.RunId} step3_performance_failures={string.Join(",", row.PerformanceFailureCodes)}");
-        }
         return summary;
     }
 
-    private static void RequireCanonicalPlanRows(
-        IReadOnlyCollection<Gate4Step2ActualRunEvidenceRow> rows,
-        string planDirectory)
+    private static string ValidateActualMatrix(
+        Gate4Step2DeterminismPlan plan,
+        IReadOnlyCollection<Gate4Step2ActualRunEvidenceRow> rows)
     {
-        var planPath = Path.Combine(planDirectory, "reference-run-matrix.json");
-        var planned = Program.ReadJson<BenchmarkRunDescriptor[]>(
-            planPath,
-            "Gate4 Step2 canonical reference-run matrix");
-        if (planned.Length != 12)
-            throw new InvalidDataException("QA-04 canonical Step2 plan must contain exactly 12 runs.");
-
-        var expected = planned
-            .Select(static run => (run.RunId, run.WorkerCount, run.RunOrdinal))
-            .OrderBy(static value => value.WorkerCount)
-            .ThenBy(static value => value.RunOrdinal)
-            .ThenBy(static value => value.RunId, StringComparer.Ordinal)
-            .ToArray();
-        var actual = rows
-            .Select(static row => (row.RunId, row.WorkerCount, row.RunOrdinal))
-            .OrderBy(static value => value.WorkerCount)
-            .ThenBy(static value => value.RunOrdinal)
-            .ThenBy(static value => value.RunId, StringComparer.Ordinal)
-            .ToArray();
-        if (!expected.SequenceEqual(actual))
-            throw new InvalidDataException("QA-04 actual Step2 rows do not match the canonical materialized run plan.");
-    }
-
-    private static string ValidateActualMatrix(IReadOnlyCollection<Gate4Step2ActualRunEvidenceRow> rows)
-    {
-        if (rows.Count != 12)
-            throw new InvalidDataException($"QA-04 actual Step2 matrix must contain 12 runs, found {rows.Count}.");
+        ValidateActualPlan(plan);
+        var expectedRunCount = checked(plan.WorkerCounts.Length * plan.ProcessRunsPerWorker);
+        if (rows.Count != expectedRunCount)
+            throw new InvalidDataException(
+                $"QA-04 actual Step2 matrix must contain {expectedRunCount} runs, found {rows.Count}.");
         if (rows.Select(static row => row.RunId).Any(string.IsNullOrWhiteSpace) ||
             rows.Select(static row => row.RunId).Distinct(StringComparer.Ordinal).Count() != rows.Count)
             throw new InvalidDataException("QA-04 actual Step2 matrix contains empty or duplicate run ids.");
 
-        foreach (var worker in new[] { 1, 4, 8, 16 })
+        foreach (var worker in plan.WorkerCounts)
         {
             var workerRows = rows.Where(row => row.WorkerCount == worker)
                 .OrderBy(static row => row.RunOrdinal)
                 .ToArray();
-            if (workerRows.Length != 3 ||
-                !workerRows.Select(static row => row.RunOrdinal).SequenceEqual(new[] { 1, 2, 3 }))
+            if (workerRows.Length != plan.ProcessRunsPerWorker ||
+                !workerRows.Select(static row => row.RunOrdinal)
+                    .SequenceEqual(Enumerable.Range(1, plan.ProcessRunsPerWorker)))
                 throw new InvalidDataException($"QA-04 actual Step2 worker {worker} matrix is incomplete.");
+
+            foreach (var row in workerRows)
+            {
+                var expectedRunId = $"gate4.step2.w{worker}.r{row.RunOrdinal}";
+                if (!string.Equals(row.RunId, expectedRunId, StringComparison.Ordinal))
+                    throw new InvalidDataException($"QA-04 actual Step2 run id drifted: {row.RunId}.");
+            }
         }
-        if (rows.Any(static row => row.WorkerCount is not (1 or 4 or 8 or 16)))
-            throw new InvalidDataException("QA-04 actual Step2 matrix contains a non-canonical worker count.");
+        if (rows.Any(row => !plan.WorkerCounts.Contains(row.WorkerCount)))
+            throw new InvalidDataException("QA-04 actual Step2 matrix contains a non-plan worker count.");
 
         foreach (var row in rows)
         {
-            if (row.TransitionCount != CanonicalTransitionCount ||
-                row.TerminalOperationCount != CanonicalTerminalOperationCount ||
-                row.FinalizedStep != CanonicalFinalizedStep ||
-                row.MeasurementStepCount != CanonicalMeasurementStepCount ||
-                row.SnapshotStep != CanonicalSnapshotStep ||
-                !row.SnapshotDrainCompleted ||
-                row.SnapshotSectionCount != CanonicalSnapshotSectionCount ||
-                row.SnapshotChunkCount <= 0 ||
+            if (row.TransitionCount != plan.TransitionCount ||
+                row.TerminalOperationCount != plan.ExpectedTerminalOperationCount ||
+                row.FinalizedStep != checked((ulong)plan.TransitionCount + 1UL) ||
+                row.TurnoverCount != plan.RequiredTurnoverCount ||
+                row.DetailDecisionCount != plan.RequiredDetailDecisionCount ||
+                row.BurstStepCount != plan.RequiredBurstStepCount ||
                 row.AcceptedOperationLoss != 0 ||
                 row.HiddenSolverIterationReduction ||
                 row.PersistenceMetricObserverFailureCount != 0)
-                throw new InvalidDataException($"QA-04 actual Step2 production contract drifted: {row.RunId}.");
+                throw new InvalidDataException($"QA-04 actual Step2 bounded production contract drifted: {row.RunId}.");
 
             Program.RequireLowerHex(row.CandidateIdSequenceDigest, 64, $"candidate_id_sequence_digest:{row.RunId}");
             Program.RequireLowerHex(row.FinalHistoryDigest, 64, $"final_history_digest:{row.RunId}");
             Program.RequireLowerHex(row.FinalContinuityToken, 64, $"final_continuity_token:{row.RunId}");
-            if (row.PerformanceFailureCodes.Any(string.IsNullOrWhiteSpace) ||
-                row.PerformanceFailureCodes.Distinct(StringComparer.Ordinal).Count() != row.PerformanceFailureCodes.Length)
-                throw new InvalidDataException($"QA-04 actual Step2 performance failure codes are malformed: {row.RunId}.");
         }
 
         return ValidateAndSummarize(rows.Select(static row => new EvidenceRow(
@@ -474,20 +479,37 @@ internal static class Qa04DeterminismEvidenceVerifier
         throw new InvalidDataException(message);
     }
 
-    private static Gate4Step2ActualRunEvidenceRow SelfTestActualRow(int worker, int ordinal)
+    private static Gate4Step2DeterminismPlan SelfTestPlan()
         => new()
         {
-            RunId = $"selftest.actual.{worker}.{ordinal}",
+            SchemaVersion = "1.0",
+            ProfileId = Step2ProfileId,
+            WorkerCounts = [1, 4, 8, 16],
+            ProcessRunsPerWorker = 3,
+            TransitionCount = 901,
+            ExpectedTerminalOperationCount = 4_555_000,
+            RequiredTurnoverCount = 3,
+            RequiredDetailDecisionCount = 901,
+            RequiredBurstStepCount = 1,
+            SnapshotRecoveryEvidence = "reuse-gate3-exact103-production-proof",
+            LongDurationEvidence = "gate4-step4-24h-soak",
+        };
+
+    private static Gate4Step2ActualRunEvidenceRow SelfTestActualRow(
+        Gate4Step2DeterminismPlan plan,
+        int worker,
+        int ordinal)
+        => new()
+        {
+            RunId = $"gate4.step2.w{worker}.r{ordinal}",
             WorkerCount = worker,
             RunOrdinal = ordinal,
-            TransitionCount = CanonicalTransitionCount,
-            TerminalOperationCount = CanonicalTerminalOperationCount,
-            FinalizedStep = CanonicalFinalizedStep,
-            MeasurementStepCount = CanonicalMeasurementStepCount,
-            SnapshotStep = CanonicalSnapshotStep,
-            SnapshotDrainCompleted = true,
-            SnapshotSectionCount = CanonicalSnapshotSectionCount,
-            SnapshotChunkCount = 1,
+            TransitionCount = plan.TransitionCount,
+            TerminalOperationCount = plan.ExpectedTerminalOperationCount,
+            FinalizedStep = checked((ulong)plan.TransitionCount + 1UL),
+            TurnoverCount = plan.RequiredTurnoverCount,
+            DetailDecisionCount = plan.RequiredDetailDecisionCount,
+            BurstStepCount = plan.RequiredBurstStepCount,
             AcceptedOperationLoss = 0,
             HiddenSolverIterationReduction = false,
             PersistenceMetricObserverFailureCount = 0,
@@ -499,7 +521,6 @@ internal static class Qa04DeterminismEvidenceVerifier
             OperationTerminalSemanticDigest = new string('c', 64),
             ConfigHistoryDigest = new string('d', 64),
             PromotionDeferralOrderDigest = new string('e', 64),
-            PerformanceFailureCodes = [],
         };
 
     private static Gate4Step2ActualRunEvidenceRow CloneActualRow(Gate4Step2ActualRunEvidenceRow row)
@@ -511,11 +532,9 @@ internal static class Qa04DeterminismEvidenceVerifier
             TransitionCount = row.TransitionCount,
             TerminalOperationCount = row.TerminalOperationCount,
             FinalizedStep = row.FinalizedStep,
-            MeasurementStepCount = row.MeasurementStepCount,
-            SnapshotStep = row.SnapshotStep,
-            SnapshotDrainCompleted = row.SnapshotDrainCompleted,
-            SnapshotSectionCount = row.SnapshotSectionCount,
-            SnapshotChunkCount = row.SnapshotChunkCount,
+            TurnoverCount = row.TurnoverCount,
+            DetailDecisionCount = row.DetailDecisionCount,
+            BurstStepCount = row.BurstStepCount,
             AcceptedOperationLoss = row.AcceptedOperationLoss,
             HiddenSolverIterationReduction = row.HiddenSolverIterationReduction,
             PersistenceMetricObserverFailureCount = row.PersistenceMetricObserverFailureCount,
@@ -527,7 +546,6 @@ internal static class Qa04DeterminismEvidenceVerifier
             OperationTerminalSemanticDigest = row.OperationTerminalSemanticDigest,
             ConfigHistoryDigest = row.ConfigHistoryDigest,
             PromotionDeferralOrderDigest = row.PromotionDeferralOrderDigest,
-            PerformanceFailureCodes = row.PerformanceFailureCodes.ToArray(),
         };
 
     private sealed record EvidenceRow(
