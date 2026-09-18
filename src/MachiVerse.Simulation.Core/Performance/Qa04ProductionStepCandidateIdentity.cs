@@ -99,11 +99,16 @@ public sealed class Qa04ProductionStepCandidateIdentityRegistryV1
             .ToArray());
 
     public IReadOnlyList<Qa04ProductionStepCandidateIdentityV1> ValidateCompleteCanonicalRun()
-    {
-        var ordered = SnapshotCanonical();
-        var expectedCount = checked((int)(
+        => ValidateRun(checked((int)(
             Qa04MeasurementPhaseContractV1.WarmUpStepCount +
-            Qa04MeasurementPhaseContractV1.MeasurementStepCount));
+            Qa04MeasurementPhaseContractV1.MeasurementStepCount)));
+
+    public IReadOnlyList<Qa04ProductionStepCandidateIdentityV1> ValidateRun(int expectedCount)
+    {
+        if (expectedCount <= 0)
+            throw new ArgumentOutOfRangeException(nameof(expectedCount));
+
+        var ordered = SnapshotCanonical();
         if (ordered.Count != expectedCount)
             throw new InvalidDataException("qa04.production-candidate.sequence-count-drift");
 
@@ -124,7 +129,9 @@ public sealed class Qa04ProductionStepCandidateIdentityRegistryV1
             expectedBasis = checked(expectedBasis + 1UL);
         }
 
-        if (expectedBasis != Qa04MeasurementPhaseContractV1.MeasurementLastFinalizedStep)
+        var expectedFinalState = checked(
+            Qa04MeasurementPhaseContractV1.InitializationBasisStep + (ulong)expectedCount);
+        if (expectedBasis != expectedFinalState)
             throw new InvalidDataException("qa04.production-candidate.sequence-final-state-drift");
 
         return ordered;
