@@ -88,6 +88,24 @@ internal static class Qa04InfrastructureServiceQueueCanonicalMaterializationSmok
         Require(materialization.References.TryGetRecordSchema(transport0Ref, out var serviceSchema) &&
                 serviceSchema == StandardDomainPartitionRegistry.Get(InfrastructureTransportServicePayloadV1.PartitionId).RecordSchema,
             "Service authority resolver must retain actual service record schema.");
+
+        var facilityAuthority = Qa04FacilityServiceCanonicalAuthorityV1.MaterializeCanonical(
+            Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.MaterializeCanonical(),
+            materialization);
+        Require(facilityAuthority.FacilityServices.ItemCount == Qa04FacilityServiceCanonicalAuthorityV1.CanonicalCount,
+            "FacilityService authority must materialize exactly 15,000 records.");
+        Require(facilityAuthority.CanonicalServicePool.Count == checked((int)Qa04InfrastructureCanonicalServicePoolV1.CanonicalCount),
+            "Canonical service pool must retain exactly 55,000 refs after FacilityService composition.");
+        Require(facilityAuthority.CanonicalServicePool.All(facilityAuthority.References.Exists),
+            "FacilityService-composed resolver must close every canonical service pool ref.");
+        for (ulong ordinal = 0; ordinal < Qa04FacilityServiceCanonicalAuthorityV1.CanonicalCount; ordinal++)
+        {
+            var facilityRef = Qa04FacilityServiceCanonicalAuthorityV1.FacilityServiceRef(ordinal);
+            Require(
+                facilityAuthority.References.TryGetRecordSchema(facilityRef, out var facilitySchema) &&
+                facilitySchema == StandardDomainPartitionRegistry.Get(InfrastructureFacilityServicePayloadV1.PartitionId).RecordSchema,
+                "FacilityService authority resolver must retain every materialized facility_service record schema.");
+        }
     }
 
     private static DomainRecordEnvelopeV1<TPayload> FindDescriptorRecord<TPayload>(
