@@ -60,7 +60,10 @@ internal static class Qa04DeterminismEvidenceVerifier
             plan.RequiredDetailDecisionCount != plan.TransitionCount ||
             plan.ExpectedTerminalOperationCount == 0 ||
             plan.RequiredTurnoverCount <= 0 ||
-            plan.RequiredBurstStepCount <= 0)
+            plan.RequiredBurstStepCount <= 0 ||
+            plan.PersistenceInsertBatchSize <= 0 ||
+            plan.ProgressIntervalTransitions <= 0 ||
+            plan.HeartbeatIntervalSeconds <= 0)
             throw new InvalidDataException("Gate4 Step2 determinism plan does not cover the required production boundaries.");
         if (!string.Equals(
                 plan.SnapshotRecoveryEvidence,
