@@ -147,6 +147,54 @@ internal sealed class BenchmarkRunDescriptor
 }
 
 
+internal sealed class Gate4Step2DeterminismPlan
+{
+    public string SchemaVersion { get; set; } = "";
+    public string ProfileId { get; set; } = "";
+    public int[] WorkerCounts { get; set; } = [];
+    public int ProcessRunsPerWorker { get; set; }
+    public int TransitionCount { get; set; }
+    public ulong ExpectedTerminalOperationCount { get; set; }
+    public int RequiredTurnoverCount { get; set; }
+    public int RequiredDetailDecisionCount { get; set; }
+    public int RequiredBurstStepCount { get; set; }
+    public string SnapshotRecoveryEvidence { get; set; } = "";
+    public string LongDurationEvidence { get; set; } = "";
+}
+
+internal sealed class Gate4Step2CoreRunResult
+{
+    public string SchemaVersion { get; set; } = "";
+    public string ProfileId { get; set; } = "";
+    public int WorkerCount { get; set; }
+    public int TransitionCount { get; set; }
+    public ulong TerminalOperationCount { get; set; }
+    public ulong FinalizedStep { get; set; }
+    public int TurnoverCount { get; set; }
+    public int DetailDecisionCount { get; set; }
+    public int BurstStepCount { get; set; }
+    public string FinalStateDigest { get; set; } = "";
+    public Gate4Step2CoreDeterminismEvidence? DeterminismEvidence { get; set; }
+    public ulong FinalHistorySequence { get; set; }
+    public string FinalHistoryDigest { get; set; } = "";
+    public string FinalContinuityToken { get; set; } = "";
+    public string CandidateIdSequenceDigest { get; set; } = "";
+    public int AcceptedOperationLoss { get; set; }
+    public bool HiddenSolverIterationReduction { get; set; }
+    public long PersistenceMetricObserverFailureCount { get; set; }
+    public bool Passed { get; set; }
+    public string[] FailureCodes { get; set; } = [];
+}
+
+internal sealed class Gate4Step2CoreDeterminismEvidence
+{
+    public string FinalStateDigest { get; set; } = "";
+    public string TransitionCommittedDigest { get; set; } = "";
+    public string OperationTerminalSemanticDigest { get; set; } = "";
+    public string ConfigHistoryDigest { get; set; } = "";
+    public string PromotionDeferralOrderDigest { get; set; } = "";
+}
+
 internal sealed class Gate4Step2ActualRunEvidenceRow
 {
     public string RunId { get; set; } = "";
@@ -155,11 +203,9 @@ internal sealed class Gate4Step2ActualRunEvidenceRow
     public int TransitionCount { get; set; }
     public ulong TerminalOperationCount { get; set; }
     public ulong FinalizedStep { get; set; }
-    public int MeasurementStepCount { get; set; }
-    public ulong SnapshotStep { get; set; }
-    public bool SnapshotDrainCompleted { get; set; }
-    public int SnapshotSectionCount { get; set; }
-    public int SnapshotChunkCount { get; set; }
+    public int TurnoverCount { get; set; }
+    public int DetailDecisionCount { get; set; }
+    public int BurstStepCount { get; set; }
     public int AcceptedOperationLoss { get; set; }
     public bool HiddenSolverIterationReduction { get; set; }
     public long PersistenceMetricObserverFailureCount { get; set; }
@@ -171,7 +217,6 @@ internal sealed class Gate4Step2ActualRunEvidenceRow
     public string OperationTerminalSemanticDigest { get; set; } = "";
     public string ConfigHistoryDigest { get; set; } = "";
     public string PromotionDeferralOrderDigest { get; set; } = "";
-    public string[] PerformanceFailureCodes { get; set; } = [];
 }
 
 internal sealed class EvidenceFragment
