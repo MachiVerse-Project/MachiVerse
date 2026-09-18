@@ -6,6 +6,7 @@ on:
       - release/int-03-canonical-snapshot-recovery
     paths:
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDeterminismEvidence.cs'
+      - 'src/MachiVerse.Simulation.Core/WorldState/WorldStateLayout.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ClosedPrefixOperationResolver.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionHistoryTailReplay.cs'
       - 'src/MachiVerse.Simulation.Core/Persistence/HistoryIntegrity.cs'
@@ -38,6 +39,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDeterminismEvidence.cs'
+      - 'src/MachiVerse.Simulation.Core/WorldState/WorldStateLayout.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ClosedPrefixOperationResolver.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionHistoryTailReplay.cs'
       - 'src/MachiVerse.Simulation.Core/Persistence/HistoryIntegrity.cs'
