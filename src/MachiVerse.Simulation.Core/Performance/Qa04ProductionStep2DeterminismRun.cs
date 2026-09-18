@@ -135,6 +135,13 @@ public static class Qa04ProductionStep2DeterminismRunV1
         var turnoverCount = 0;
         var detailDecisionCount = 0;
         var burstStepCount = 0;
+        var actualProgress = Stopwatch.StartNew();
+        var lastProgressElapsedSeconds = 0d;
+        ulong lastProgressTerminalOperations = 0;
+
+        Console.Error.WriteLine(
+            $"QA04_PROGRESS phase=actual-run-start workers={workerCount} transitions=0/{transitionCount} " +
+            $"terminal_operations=0 total_elapsed_seconds={progress.Elapsed.TotalSeconds:F1} actual_elapsed_seconds=0");
 
         for (ulong injectionStep = 0; injectionStep < checked((ulong)transitionCount); injectionStep++)
         {
@@ -230,14 +237,24 @@ public static class Qa04ProductionStep2DeterminismRunV1
                 completedTransitions == transitionCount ||
                 completedTransitions % progressIntervalTransitions == 0)
             {
-                var elapsedSeconds = progress.Elapsed.TotalSeconds;
+                var totalElapsedSeconds = progress.Elapsed.TotalSeconds;
+                var actualElapsedSeconds = actualProgress.Elapsed.TotalSeconds;
                 var terminalOperations = determinismEvidence.TerminalOperationCount;
-                var operationRate = elapsedSeconds > 0
-                    ? terminalOperations / elapsedSeconds
+                var operationRate = actualElapsedSeconds > 0
+                    ? terminalOperations / actualElapsedSeconds
+                    : 0d;
+                var intervalElapsedSeconds = actualElapsedSeconds - lastProgressElapsedSeconds;
+                var intervalOperations = terminalOperations - lastProgressTerminalOperations;
+                var intervalOperationRate = intervalElapsedSeconds > 0
+                    ? intervalOperations / intervalElapsedSeconds
                     : 0d;
                 Console.Error.WriteLine(
                     $"QA04_PROGRESS phase=actual-run workers={workerCount} transitions={completedTransitions}/{transitionCount} " +
-                    $"terminal_operations={terminalOperations} elapsed_seconds={elapsedSeconds:F1} ops_per_second={operationRate:F1}");
+                    $"terminal_operations={terminalOperations} total_elapsed_seconds={totalElapsedSeconds:F1} " +
+                    $"actual_elapsed_seconds={actualElapsedSeconds:F1} ops_per_second={operationRate:F1} " +
+                    $"interval_ops_per_second={intervalOperationRate:F1}");
+                lastProgressElapsedSeconds = actualElapsedSeconds;
+                lastProgressTerminalOperations = terminalOperations;
             }
 
             if (pendingActiveSlots is not null)
