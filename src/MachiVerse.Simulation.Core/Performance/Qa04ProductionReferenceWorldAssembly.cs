@@ -185,11 +185,19 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
 
         var mutationReferences = new CompositeReferenceResolver(
             service.References,
+            facility.References,
             participation.References,
             physical.References,
             society.GovernanceReferences,
             environmentReferences,
             society.MarketReferences);
+
+        foreach (var serviceRef in facility.CanonicalServicePool)
+        {
+            if (!mutationReferences.Exists(serviceRef))
+                throw new InvalidDataException(
+                    $"qa04.production-reference-world.canonical-service-pool-reference-missing:{serviceRef.PartitionId.Value}");
+        }
 
         var mutationState = new Qa04CanonicalOperationMutationStateV1(
             service.ServiceQueue,
