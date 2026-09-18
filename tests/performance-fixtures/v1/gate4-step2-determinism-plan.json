@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0",
+  "profileId": "gate4.step2.determinism.v1",
+  "workerCounts": [1, 4, 8, 16],
+  "processRunsPerWorker": 3,
+  "transitionCount": 901,
+  "expectedTerminalOperationCount": 4555000,
+  "requiredTurnoverCount": 3,
+  "requiredDetailDecisionCount": 901,
+  "requiredBurstStepCount": 1,
+  "snapshotRecoveryEvidence": "reuse-gate3-exact103-production-proof",
+  "longDurationEvidence": "gate4-step4-24h-soak"
+}
