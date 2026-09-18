@@ -109,11 +109,21 @@ public sealed class Qa04ProductionDeterminismEvidenceProducerV1
     public Qa04ProductionDeterminismEvidenceV1 Complete(
         WorldStateV1 finalState,
         Qa04OperationClosedPrefixV1 finalPrefix)
+        => Complete(
+            finalState,
+            finalPrefix,
+            checked((ulong)Qa04ProductionReferenceRunV1.CanonicalTransitionCount));
+
+    public Qa04ProductionDeterminismEvidenceV1 Complete(
+        WorldStateV1 finalState,
+        Qa04OperationClosedPrefixV1 finalPrefix,
+        ulong expectedTransitionCount)
     {
         ArgumentNullException.ThrowIfNull(finalState);
         ArgumentNullException.ThrowIfNull(finalPrefix);
-
-        var expectedTransitionCount = checked((ulong)Qa04ProductionReferenceRunV1.CanonicalTransitionCount);
+        if (expectedTransitionCount == 0 ||
+            expectedTransitionCount > checked((ulong)Qa04ProductionReferenceRunV1.CanonicalTransitionCount))
+            throw new ArgumentOutOfRangeException(nameof(expectedTransitionCount));
         if (_transitionCommitted.Count != expectedTransitionCount ||
             _operationTerminal.Count != expectedTransitionCount ||
             _promotionDeferralOrder.Count != expectedTransitionCount)
