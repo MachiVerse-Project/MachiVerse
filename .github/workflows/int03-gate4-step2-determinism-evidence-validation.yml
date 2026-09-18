@@ -7,6 +7,9 @@ on:
     paths:
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDeterminismEvidence.cs'
       - 'src/MachiVerse.Simulation.Core/WorldState/WorldStateLayout.cs'
+      - 'src/MachiVerse.Simulation.Core/WorldState/DomainRecordEnvelope.cs'
+      - 'src/MachiVerse.Simulation.Core/Domains/SocietyEconomy/SocietyMarketTransactionPartitionStateV2.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04CanonicalOperationMutationBatch.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ClosedPrefixOperationResolver.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionHistoryTailReplay.cs'
       - 'src/MachiVerse.Simulation.Core/Persistence/HistoryIntegrity.cs'
@@ -44,6 +47,9 @@ on:
     paths:
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDeterminismEvidence.cs'
       - 'src/MachiVerse.Simulation.Core/WorldState/WorldStateLayout.cs'
+      - 'src/MachiVerse.Simulation.Core/WorldState/DomainRecordEnvelope.cs'
+      - 'src/MachiVerse.Simulation.Core/Domains/SocietyEconomy/SocietyMarketTransactionPartitionStateV2.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04CanonicalOperationMutationBatch.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ClosedPrefixOperationResolver.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionHistoryTailReplay.cs'
       - 'src/MachiVerse.Simulation.Core/Persistence/HistoryIntegrity.cs'
