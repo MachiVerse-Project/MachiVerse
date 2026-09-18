@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
@@ -42,6 +43,8 @@ public static class Qa04ProductionStep2DeterminismRunV1
     public static async Task<Qa04ProductionStep2DeterminismRunResultV1> RunAsync(
         int workerCount,
         int transitionCount,
+        int persistenceInsertBatchSize,
+        int progressIntervalTransitions,
         string persistenceRoot,
         CancellationToken cancellationToken = default)
     {
@@ -49,8 +52,16 @@ public static class Qa04ProductionStep2DeterminismRunV1
             throw new InvalidDataException("qa04.step2-determinism.worker-count-not-canonical");
         if (transitionCount <= 0 || transitionCount > Qa04ProductionReferenceRunV1.CanonicalTransitionCount)
             throw new ArgumentOutOfRangeException(nameof(transitionCount));
+        if (persistenceInsertBatchSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(persistenceInsertBatchSize));
+        if (progressIntervalTransitions <= 0)
+            throw new ArgumentOutOfRangeException(nameof(progressIntervalTransitions));
         if (string.IsNullOrWhiteSpace(persistenceRoot))
             throw new ArgumentException("persistenceRoot is required.", nameof(persistenceRoot));
+
+        var progress = Stopwatch.StartNew();
+        Console.Error.WriteLine(
+            $"QA04_PROGRESS phase=contract-validation workers={workerCount} transitions=0/{transitionCount} elapsed_seconds=0");
 
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
@@ -61,6 +72,8 @@ public static class Qa04ProductionStep2DeterminismRunV1
         Qa04CrossDomainTransactionTurnoverMaterializerV1.ValidateCanonicalContract();
         _ = Qa04AlgorithmIterationBudgetGuardV1.ValidateCanonicalContract();
 
+        Console.Error.WriteLine(
+            $"QA04_PROGRESS phase=reference-world-materialization workers={workerCount} transitions=0/{transitionCount} elapsed_seconds={progress.Elapsed.TotalSeconds:F1}");
         var assembly = Qa04ProductionReferenceWorldAssemblerV1.AssembleCanonical();
         if (assembly.Validation.CanonicalInitialRecordCount != Qa04ReferenceLoadV1.CanonicalInitialRecordCount ||
             assembly.BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
@@ -100,6 +113,8 @@ public static class Qa04ProductionStep2DeterminismRunV1
         var candidateIdentities = new Qa04ProductionStepCandidateIdentityRegistryV1();
         var determinismEvidence = new Qa04ProductionDeterminismEvidenceProducerV1();
 
+        Console.Error.WriteLine(
+            $"QA04_PROGRESS phase=persistence-initialization workers={workerCount} transitions=0/{transitionCount} elapsed_seconds={progress.Elapsed.TotalSeconds:F1}");
         await using var store = await SqlitePersistenceStore.OpenOrCreateAsync(paths, cancellationToken).ConfigureAwait(false);
         var initialContinuity = await InitializePersistenceGenesisAsync(
             store,
@@ -181,7 +196,8 @@ public static class Qa04ProductionStep2DeterminismRunV1
                 candidateIdentities,
                 cancellationToken,
                 currentDetailDirectory,
-                detailPolicy).ConfigureAwait(false);
+                detailPolicy,
+                persistenceInsertBatchSize).ConfigureAwait(false);
 
             var resultingDetailDirectory = completed.Finalization.DetailDirectory
                 ?? throw new InvalidDataException("qa04.step2-determinism.detail-directory-missing");
@@ -209,6 +225,21 @@ public static class Qa04ProductionStep2DeterminismRunV1
             currentDetailDirectory = resultingDetailDirectory;
             detailDecisionCount++;
 
+            var completedTransitions = checked((int)injectionStep + 1);
+            if (completedTransitions == 1 ||
+                completedTransitions == transitionCount ||
+                completedTransitions % progressIntervalTransitions == 0)
+            {
+                var elapsedSeconds = progress.Elapsed.TotalSeconds;
+                var terminalOperations = determinismEvidence.TerminalOperationCount;
+                var operationRate = elapsedSeconds > 0
+                    ? terminalOperations / elapsedSeconds
+                    : 0d;
+                Console.Error.WriteLine(
+                    $"QA04_PROGRESS phase=actual-run workers={workerCount} transitions={completedTransitions}/{transitionCount} " +
+                    $"terminal_operations={terminalOperations} elapsed_seconds={elapsedSeconds:F1} ops_per_second={operationRate:F1}");
+            }
+
             if (pendingActiveSlots is not null)
             {
                 currentActiveSlots = pendingActiveSlots;
@@ -230,6 +261,9 @@ public static class Qa04ProductionStep2DeterminismRunV1
             currentState.DetailState,
             "qa04.step2-determinism.final-detail-authority-drift");
 
+        Console.Error.WriteLine(
+            $"QA04_PROGRESS phase=final-verification workers={workerCount} transitions={transitionCount}/{transitionCount} " +
+            $"terminal_operations={determinismEvidence.TerminalOperationCount} elapsed_seconds={progress.Elapsed.TotalSeconds:F1}");
         var candidateSequence = candidateIdentities.ValidateRun(transitionCount);
         var expectedFinalizedStep = checked((ulong)transitionCount + Qa04MeasurementPhaseContractV1.InitializationBasisStep);
         if (currentState.Header.Step != expectedFinalizedStep)
