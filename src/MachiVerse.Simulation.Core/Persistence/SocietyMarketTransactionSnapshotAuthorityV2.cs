@@ -11,16 +11,33 @@ namespace MachiVerse.Simulation.Core.Persistence;
 /// </summary>
 public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartitionSnapshotAuthorityV1
 {
+    private readonly bool _preparedHeaderVerified;
+    private IReadOnlyList<OpaqueId128>? _recordIdsCanonical;
+
     public SocietyMarketTransactionSnapshotAuthorityV2(
         SocietyMarketTransactionPartitionStateV2 partition,
         PartitionStateHeaderV1 header)
+        : this(partition, header, preparedHeaderVerified: false)
+    {
+        _ = RecordIdsCanonical;
+        VerifyBoundAuthority();
+    }
+
+    private SocietyMarketTransactionSnapshotAuthorityV2(
+        SocietyMarketTransactionPartitionStateV2 partition,
+        PartitionStateHeaderV1 header,
+        bool preparedHeaderVerified)
     {
         Partition = partition ?? throw new ArgumentNullException(nameof(partition));
         Header = header ?? throw new ArgumentNullException(nameof(header));
-        RecordIdsCanonical = Array.AsReadOnly(
-            Partition.State.RecordsCanonical.Select(static record => record.RecordId).ToArray());
-        VerifyBoundAuthority();
+        _preparedHeaderVerified = preparedHeaderVerified;
+        RequireStructuralBinding();
     }
+
+    internal static SocietyMarketTransactionSnapshotAuthorityV2 FromPreparedHeader(
+        SocietyMarketTransactionPartitionStateV2 partition,
+        PartitionStateHeaderV1 header)
+        => new(partition, header, preparedHeaderVerified: true);
 
     public SocietyMarketTransactionPartitionStateV2 Partition { get; }
     public StableToken PartitionId => Identity.PartitionId;
@@ -28,7 +45,9 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
     public PartitionStateHeaderV1 Header { get; }
     public SchemaRefV1 RecordSchema => SocietyMarketTransactionRecordSchemaV2.RecordSchema;
     public ulong ActualItemCount => Partition.State.ItemCount;
-    public IReadOnlyList<OpaqueId128> RecordIdsCanonical { get; }
+    public IReadOnlyList<OpaqueId128> RecordIdsCanonical
+        => _recordIdsCanonical ??= Array.AsReadOnly(
+            Partition.State.RecordsCanonical.Select(static record => record.RecordId).ToArray());
 
     public static SocietyMarketTransactionSnapshotAuthorityV2 CreateCanonical(
         SocietyMarketTransactionPartitionStateV2 partition,
@@ -48,15 +67,11 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
 
     public void VerifyBoundAuthority()
     {
-        SocietyMarketTransactionPartitionIdentityV2.ValidateCanonicalContract();
-        if (Partition.State.Identity != Identity)
-            throw new InvalidDataException("persistence.snapshot.society-market-v2-authority-identity");
-        if (Header.PartitionId != Identity.PartitionId ||
-            Header.OwnerDomain != Identity.OwnerDomain ||
-            Header.Schema != Identity.PartitionSchema)
-            throw new InvalidDataException("persistence.snapshot.society-market-v2-header-identity");
-        if (Header.ItemCount != ActualItemCount ||
-            ActualItemCount != checked((ulong)RecordIdsCanonical.Count))
+        RequireStructuralBinding();
+        if (_preparedHeaderVerified)
+            return;
+
+        if (ActualItemCount != checked((ulong)RecordIdsCanonical.Count))
             throw new InvalidDataException("persistence.snapshot.society-market-v2-item-count");
 
         OpaqueId128? previous = null;
@@ -84,5 +99,18 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
             recomputed.ItemCount != Header.ItemCount ||
             !CryptographicOperations.FixedTimeEquals(recomputed.CanonicalDigest, Header.CanonicalDigest))
             throw new InvalidDataException("persistence.snapshot.society-market-v2-header-material");
+    }
+
+    private void RequireStructuralBinding()
+    {
+        SocietyMarketTransactionPartitionIdentityV2.ValidateCanonicalContract();
+        if (Partition.State.Identity != Identity)
+            throw new InvalidDataException("persistence.snapshot.society-market-v2-authority-identity");
+        if (Header.PartitionId != Identity.PartitionId ||
+            Header.OwnerDomain != Identity.OwnerDomain ||
+            Header.Schema != Identity.PartitionSchema)
+            throw new InvalidDataException("persistence.snapshot.society-market-v2-header-identity");
+        if (Header.ItemCount != ActualItemCount)
+            throw new InvalidDataException("persistence.snapshot.society-market-v2-item-count");
     }
 }
