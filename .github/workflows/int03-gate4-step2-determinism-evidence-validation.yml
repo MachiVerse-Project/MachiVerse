@@ -92,6 +92,8 @@ jobs:
       - name: Verify five-digest and actual Step2 matrix contracts
         run: dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- verify
 
+  # Bounded actual evidence is marker-gated so ordinary Step2 edits run only the lightweight contract.
+  # Long-duration stability belongs to Gate4 Step4 24h soak.
   w1r1:
     name: Actual workers=1 / run=1
     needs: determinism-evidence
