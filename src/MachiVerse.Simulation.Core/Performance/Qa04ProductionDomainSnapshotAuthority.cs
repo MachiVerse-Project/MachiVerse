@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Domains.Environment;
 using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
 using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
@@ -91,6 +92,11 @@ public sealed class Qa04ProductionDomainSnapshotAuthorityBuilderV1
             frozenState ?? throw new ArgumentNullException(nameof(frozenState)),
             StandardDomainPartitionRegistry.Entries.Select(identity => _byPartition[identity.PartitionId.Value]));
 
+    private DomainPartitionSnapshotAuthoritySetV1 BuildFromVerified(WorldStateV1 frozenState)
+        => DomainPartitionSnapshotAuthoritySetV1.FromVerifiedAuthorities(
+            frozenState ?? throw new ArgumentNullException(nameof(frozenState)),
+            StandardDomainPartitionRegistry.Entries.Select(identity => _byPartition[identity.PartitionId.Value]));
+
     public static DomainPartitionSnapshotAuthoritySetV1 CreateResultingState(
         WorldStateV1 resultingState,
         IEnumerable<IDomainPartitionSnapshotAuthorityV1> basisAuthorities,
@@ -126,6 +132,75 @@ public sealed class Qa04ProductionDomainSnapshotAuthorityBuilderV1
             static payload => payload.CanonicalDigest());
 
         return builder.Build(resultingState);
+    }
+
+    public static DomainPartitionSnapshotAuthoritySetV1 CreateResultingState(
+        WorldStateV1 resultingState,
+        IEnumerable<IDomainPartitionSnapshotAuthorityV1> basisAuthorities,
+        Qa04CanonicalOperationMutationStateV1 mutationState,
+        Qa04CanonicalOperationPartitionCandidateBatchV1 preparedPartitions)
+    {
+        ArgumentNullException.ThrowIfNull(resultingState);
+        ArgumentNullException.ThrowIfNull(basisAuthorities);
+        ArgumentNullException.ThrowIfNull(mutationState);
+        ArgumentNullException.ThrowIfNull(preparedPartitions);
+
+        if (preparedPartitions.TargetStep != resultingState.Header.Step ||
+            preparedPartitions.Partitions.Count != 6)
+            throw new InvalidDataException("qa04.gate3.domain-authority.prepared-partition-batch-drift");
+
+        var preparedByPartition = preparedPartitions.Partitions.ToDictionary(
+            static item => item.Material.ResultingHeader.PartitionId.Value,
+            static item => item.Material.ResultingHeader,
+            StringComparer.Ordinal);
+        if (preparedByPartition.Count != 6)
+            throw new InvalidDataException("qa04.gate3.domain-authority.prepared-partition-duplicate");
+
+        PartitionStateHeaderV1 PreparedHeader(string partitionId)
+        {
+            if (!preparedByPartition.TryGetValue(partitionId, out var prepared))
+                throw new InvalidDataException($"qa04.gate3.domain-authority.prepared-partition-missing:{partitionId}");
+            var published = resultingState.Partitions.Get(partitionId).Header;
+            if (prepared.PartitionId != published.PartitionId ||
+                prepared.OwnerDomain != published.OwnerDomain ||
+                prepared.Schema != published.Schema ||
+                prepared.Revision != published.Revision ||
+                prepared.BasisStep != published.BasisStep ||
+                prepared.DetailLevel != published.DetailLevel ||
+                prepared.ItemCount != published.ItemCount ||
+                !CryptographicOperations.FixedTimeEquals(prepared.CanonicalDigest, published.CanonicalDigest))
+            {
+                throw new InvalidDataException($"qa04.gate3.domain-authority.prepared-header-drift:{partitionId}");
+            }
+            return prepared;
+        }
+
+        var builder = new Qa04ProductionDomainSnapshotAuthorityBuilderV1(basisAuthorities);
+        builder.Replace(DomainPartitionSnapshotAuthorityV1<InfrastructureServiceQueuePayloadV1>.FromPreparedHeader(
+            mutationState.InfrastructureServiceQueue,
+            PreparedHeader(InfrastructureServiceQueuePayloadV1.PartitionId),
+            static payload => payload.CanonicalDigest()));
+        builder.Replace(DomainPartitionSnapshotAuthorityV1<ResidentBehaviorStatePayloadV1>.FromPreparedHeader(
+            mutationState.ResidentBehaviorState,
+            PreparedHeader(ResidentBehaviorStatePayloadV1.PartitionId),
+            static payload => payload.CanonicalDigest()));
+        builder.Replace(DomainPartitionSnapshotAuthorityV1<PhysicalPresencePayloadV1>.FromPreparedHeader(
+            mutationState.PhysicalPresence,
+            PreparedHeader(PhysicalPresencePayloadV1.PartitionId),
+            static payload => payload.CanonicalDigest()));
+        builder.Replace(SocietyMarketTransactionSnapshotAuthorityV2.FromPreparedHeader(
+            mutationState.MarketTransaction,
+            PreparedHeader(SocietyMarketTransactionRecordSchemaV2.PartitionId)));
+        builder.Replace(DomainPartitionSnapshotAuthorityV1<GovernanceSecurityIncidentPayloadV1>.FromPreparedHeader(
+            mutationState.GovernanceSecurityIncident,
+            PreparedHeader(GovernanceSecurityIncidentPayloadV1.PartitionId),
+            static payload => payload.CanonicalDigest()));
+        builder.Replace(DomainPartitionSnapshotAuthorityV1<EnvironmentHazardPayloadV1>.FromPreparedHeader(
+            mutationState.EnvironmentHazard,
+            PreparedHeader(EnvironmentHazardPayloadV1.PartitionId),
+            static payload => payload.CanonicalDigest()));
+
+        return builder.BuildFromVerified(resultingState);
     }
 
     private static DomainPartitionStateV1<TPayload> Empty<TPayload>(string partitionId)
