@@ -75,6 +75,7 @@ public static class Qa04ProductionStep2DeterminismRunV1
         Console.Error.WriteLine(
             $"QA04_PROGRESS phase=reference-world-materialization workers={workerCount} transitions=0/{transitionCount} elapsed_seconds={progress.Elapsed.TotalSeconds:F1}");
         var assembly = Qa04ProductionReferenceWorldAssemblerV1.AssembleCanonical();
+        var digestCache = new Qa04ProductionStep2CanonicalDigestCacheV1(assembly.References);
         if (assembly.Validation.CanonicalInitialRecordCount != Qa04ReferenceLoadV1.CanonicalInitialRecordCount ||
             assembly.BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.step2-determinism.reference-world-incomplete");
@@ -204,7 +205,8 @@ public static class Qa04ProductionStep2DeterminismRunV1
                 cancellationToken,
                 currentDetailDirectory,
                 detailPolicy,
-                persistenceInsertBatchSize).ConfigureAwait(false);
+                persistenceInsertBatchSize,
+                digestCache).ConfigureAwait(false);
 
             var resultingDetailDirectory = completed.Finalization.DetailDirectory
                 ?? throw new InvalidDataException("qa04.step2-determinism.detail-directory-missing");
