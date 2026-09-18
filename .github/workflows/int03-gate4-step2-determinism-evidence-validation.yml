@@ -22,6 +22,8 @@ on:
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceWorldAssembly.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04FacilityServiceCanonicalMaterialization.cs'
       - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04InfrastructureServiceQueueCanonicalMaterializationSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.Gate4Step2Precheck/MachiVerse.Simulation.Core.Gate4Step2Precheck.csproj'
+      - 'tests/MachiVerse.Simulation.Core.Gate4Step2Precheck/Program.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStep2DeterminismRun.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStep2CanonicalDigestCache.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDomainSnapshotAuthority.cs'
@@ -65,6 +67,8 @@ on:
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceWorldAssembly.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04FacilityServiceCanonicalMaterialization.cs'
       - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04InfrastructureServiceQueueCanonicalMaterializationSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.Gate4Step2Precheck/MachiVerse.Simulation.Core.Gate4Step2Precheck.csproj'
+      - 'tests/MachiVerse.Simulation.Core.Gate4Step2Precheck/Program.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStep2DeterminismRun.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStep2CanonicalDigestCache.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDomainSnapshotAuthority.cs'
@@ -95,8 +99,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  step2-quick-precheck:
+    name: Gate4 Step2 quick burst/reference precheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Validate burst step 900 service-reference closure
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.Gate4Step2Precheck/MachiVerse.Simulation.Core.Gate4Step2Precheck.csproj --configuration Release
+      - name: Publish quick precheck summary
+        if: success()
+        run: |
+          {
+            echo "## Gate4 Step2 quick precheck"
+            echo
+            echo "- targeted production authority materialization: PASS"
+            echo "- canonical service pool resolver closure: PASS"
+            echo "- burst step 900 Infrastructure binding/reference validation: PASS"
+            echo "- expensive 12-run matrix may proceed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   determinism-evidence:
     name: Production determinism producer / verifier contract
+    needs: step2-quick-precheck
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact validation head
