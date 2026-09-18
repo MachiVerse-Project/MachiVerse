@@ -183,7 +183,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         CancellationToken cancellationToken = default,
         DetailDirectoryV1? basisDetailDirectory = null,
         DetailTransitionPolicyV1? detailPolicy = null,
-        int? persistenceInsertBatchSize = null)
+        int? persistenceInsertBatchSize = null,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.step2.production-loop.worker-count-not-canonical");
@@ -326,7 +327,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             bindings,
             mutation,
             references,
-            runtimeOutputs);
+            runtimeOutputs,
+            digestCache);
         var terminals = bindings.Select(static binding => new TerminalOperationCommit(
             binding.SourceDescriptor.OperationId,
             (int)CoreOperationResultStatusV1.Success,
@@ -363,7 +365,9 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         var resultingAuthorities = Qa04ProductionDomainSnapshotAuthorityBuilderV1.CreateResultingState(
             finalized.AuthoritativeState.State,
             domainAuthorities,
-            mutation.State);
+            mutation.State,
+            preparation.PartitionBatch
+                ?? throw new InvalidDataException("qa04.step2.production-loop.prepared-partition-batch-missing"));
         if (resultingAuthorities.CanonicalAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.step2.production-loop.resulting-domain-authority-count-not-97");
         EmitPhase(injectionStep, workerCount, "snapshot-authority", phaseStarted);
