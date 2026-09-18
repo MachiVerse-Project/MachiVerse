@@ -62,60 +62,99 @@ internal static class ReleaseEvidenceRunner
     internal static async Task RunGate4Step2ActualRunAsync(
         string repositoryRoot,
         string sourceCommit,
-        string adapterExecutable,
-        string planDirectory,
+        string coreExecutable,
         int workerCount,
         int runOrdinal,
         string outputPath)
     {
         Program.RequireLowerHex(sourceCommit, 40, "sourceCommit");
-        if (!File.Exists(adapterExecutable))
-            throw new FileNotFoundException("QA-04 adapter executable was not found.", adapterExecutable);
-        if (!Directory.Exists(planDirectory))
-            throw new DirectoryNotFoundException($"QA-04 plan directory was not found: {planDirectory}");
-        if (workerCount is not (1 or 4 or 8 or 16))
-            throw new ArgumentOutOfRangeException(nameof(workerCount), "Gate4 Step2 worker count must be 1, 4, 8 or 16.");
-        if (runOrdinal is < 1 or > 3)
-            throw new ArgumentOutOfRangeException(nameof(runOrdinal), "Gate4 Step2 run ordinal must be 1..3.");
+        if (!File.Exists(coreExecutable))
+            throw new FileNotFoundException("Simulation Core executable was not found.", coreExecutable);
 
-        var manifestPath = Path.Combine(repositoryRoot, "tests", "performance-fixtures", "v1", "harness-manifest.json");
-        if (!string.Equals(Program.Sha256File(manifestPath), Program.CanonicalQa04ManifestSha256, StringComparison.Ordinal))
-            throw new InvalidDataException("Current QA-04 manifest is not the canonical release profile.");
+        var planPath = Path.Combine(
+            repositoryRoot,
+            "tests",
+            "performance-fixtures",
+            "v1",
+            "gate4-step2-determinism-plan.json");
+        var plan = Program.ReadJson<Gate4Step2DeterminismPlan>(
+            planPath,
+            "Gate4 Step2 bounded determinism plan");
+        Qa04DeterminismEvidenceVerifier.ValidateActualPlan(plan);
 
-        var benchmarkSummary = RequirePlanJson(planDirectory, "benchmark-summary.json");
-        var runMatrixPath = Path.Combine(planDirectory, "reference-run-matrix.json");
-        if (!File.Exists(runMatrixPath))
-            throw new InvalidDataException("Missing materialized reference-run-matrix.json.");
-        var runs = Program.ReadJson<BenchmarkRunDescriptor[]>(runMatrixPath, "QA-04 Gate4 Step2 run matrix");
-        ValidateRunMatrix(runs);
-        var run = runs.SingleOrDefault(value =>
-            value.WorkerCount == workerCount &&
-            value.RunOrdinal == runOrdinal)
-            ?? throw new InvalidDataException($"QA-04 Gate4 Step2 run descriptor missing: workers={workerCount} ordinal={runOrdinal}.");
+        if (!plan.WorkerCounts.Contains(workerCount))
+            throw new ArgumentOutOfRangeException(nameof(workerCount), "Gate4 Step2 worker count is not in the evidence plan.");
+        if (runOrdinal < 1 || runOrdinal > plan.ProcessRunsPerWorker)
+            throw new ArgumentOutOfRangeException(nameof(runOrdinal), "Gate4 Step2 run ordinal is outside the evidence plan.");
 
-        var request = NewRequest(
-            "benchmark-run",
-            "release",
-            run.RunId,
-            sourceCommit,
-            ReferenceProfile,
-            benchmarkSummary,
-            run);
-        var invocation = await InvokeAdapterAsync(adapterExecutable, request);
-        ValidateResponse(invocation.Response, request, "performance-benchmark-report-v1");
-        var row = Qa04DeterminismEvidenceVerifier.ParseActualRun(run, invocation.Response);
-        Program.WriteJson(outputPath, row);
+        var persistenceRoot = Path.Combine(
+            Path.GetTempPath(),
+            "machiverse-gate4-step2-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = coreExecutable,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("qa04-target");
 
-        Console.WriteLine(
-            $"Gate4 Step2 actual run captured: run={row.RunId} workers={row.WorkerCount} ordinal={row.RunOrdinal} transitions={row.TransitionCount} terminal_operations={row.TerminalOperationCount}");
-        Console.WriteLine($"final_state_digest={row.FinalStateDigest}");
-        Console.WriteLine($"transition_committed_digest={row.TransitionCommittedDigest}");
-        Console.WriteLine($"operation_terminal_semantic_digest={row.OperationTerminalSemanticDigest}");
-        Console.WriteLine($"config_history_digest={row.ConfigHistoryDigest}");
-        Console.WriteLine($"promotion_deferral_order_digest={row.PromotionDeferralOrderDigest}");
-        if (row.PerformanceFailureCodes.Length != 0)
+            using var process = new Process { StartInfo = startInfo };
+            if (!process.Start())
+                throw new InvalidOperationException("Failed to start Simulation Core Gate4 Step2 process.");
+
+            var request = new
+            {
+                schemaVersion = "1.0",
+                command = "production-step2-determinism-run",
+                workerCount,
+                transitionCount = plan.TransitionCount,
+                persistenceRoot,
+            };
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, JsonLine));
+            process.StandardInput.Close();
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            if (process.ExitCode != 0)
+                throw new InvalidDataException(
+                    $"Simulation Core Gate4 Step2 process exited {process.ExitCode}: {Limit(stderr, 2000)}");
+
+            var lines = stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length != 1)
+                throw new InvalidDataException(
+                    $"Simulation Core Gate4 Step2 process must emit exactly one JSON line; found {lines.Length}.");
+
+            var result = JsonSerializer.Deserialize<Gate4Step2CoreRunResult>(lines[0], JsonLine)
+                ?? throw new InvalidDataException("Simulation Core Gate4 Step2 result decoded to null.");
+            var row = Qa04DeterminismEvidenceVerifier.ParseActualRun(
+                plan,
+                sourceCommit,
+                workerCount,
+                runOrdinal,
+                result);
+            Program.WriteJson(outputPath, row);
+
             Console.WriteLine(
-                $"Step3 performance failures recorded but not used for Step2 completion: {string.Join(",", row.PerformanceFailureCodes)}");
+                $"Gate4 Step2 bounded actual run captured: run={row.RunId} workers={row.WorkerCount} ordinal={row.RunOrdinal} transitions={row.TransitionCount} terminal_operations={row.TerminalOperationCount}");
+            Console.WriteLine($"final_state_digest={row.FinalStateDigest}");
+            Console.WriteLine($"transition_committed_digest={row.TransitionCommittedDigest}");
+            Console.WriteLine($"operation_terminal_semantic_digest={row.OperationTerminalSemanticDigest}");
+            Console.WriteLine($"config_history_digest={row.ConfigHistoryDigest}");
+            Console.WriteLine($"promotion_deferral_order_digest={row.PromotionDeferralOrderDigest}");
+        }
+        finally
+        {
+            if (Directory.Exists(persistenceRoot))
+                Directory.Delete(persistenceRoot, recursive: true);
+        }
     }
 
     internal static async Task<int> RunAsync(
