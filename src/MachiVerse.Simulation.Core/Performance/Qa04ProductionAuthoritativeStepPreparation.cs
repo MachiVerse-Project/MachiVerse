@@ -25,7 +25,8 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
         Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
         IDomainRecordSchemaResolverV1 references,
-        IReadOnlyList<DomainCandidateOutputV1> runtimeOutputs)
+        IReadOnlyList<DomainCandidateOutputV1> runtimeOutputs,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null)
     {
         ArgumentNullException.ThrowIfNull(basisState);
         ArgumentNullException.ThrowIfNull(frozenInput);
@@ -113,7 +114,8 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             basisState,
             orderedBindings,
             mutationResult,
-            references);
+            references,
+            digestCache);
         var mutationOutputs = Qa04CanonicalOperationDomainOutputBinderV1.Bind(basisState, partitionBatch);
         var mutationByDomain = mutationOutputs.Outputs.ToDictionary(static output => output.DomainToken);
 
@@ -175,6 +177,7 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             prepared)
         {
             BasisState = basisState,
+            PartitionBatch = partitionBatch,
         };
     }
 }
