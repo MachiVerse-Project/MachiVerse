@@ -126,6 +126,7 @@ internal static class ReleaseEvidenceRunner
 
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrBuffer = new StringBuilder();
+            string latestProgress = "not-started";
 
             async Task PumpStandardErrorAsync()
             {
@@ -133,6 +134,8 @@ internal static class ReleaseEvidenceRunner
                 {
                     Console.Error.WriteLine(line);
                     stderrBuffer.AppendLine(line);
+                    if (line.StartsWith("QA04_PROGRESS ", StringComparison.Ordinal))
+                        Volatile.Write(ref latestProgress, line);
                 }
             }
 
@@ -147,9 +150,10 @@ internal static class ReleaseEvidenceRunner
                         await Task.Delay(
                             TimeSpan.FromSeconds(plan.HeartbeatIntervalSeconds),
                             heartbeatCancellation.Token);
+                        var progressSnapshot = Volatile.Read(ref latestProgress);
                         Console.Error.WriteLine(
                             $"GATE4_STEP2_HEARTBEAT workers={workerCount} run={runOrdinal} " +
-                            $"elapsed_seconds={elapsed.Elapsed.TotalSeconds:F1}");
+                            $"elapsed_seconds={elapsed.Elapsed.TotalSeconds:F1} latest_progress=\"{progressSnapshot}\"");
                     }
                 }
                 catch (OperationCanceledException) when (heartbeatCancellation.IsCancellationRequested)
