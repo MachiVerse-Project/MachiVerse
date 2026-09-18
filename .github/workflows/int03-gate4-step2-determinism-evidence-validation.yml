@@ -13,6 +13,10 @@ on:
       - 'src/MachiVerse.Simulation.Core/Persistence/SqlitePersistenceStore.Qa04Step2Transition.cs'
       - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04Step2DeterminismAuthoritySmoke.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStep2DeterminismRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStepCandidateIdentity.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProcessTarget.cs'
+      - 'tests/performance-fixtures/v1/gate4-step2-determinism-plan.json'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04Step2DeterminismAuthority.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionCommittedAuthority.cs'
       - 'src/MachiVerse.Simulation.Core/Persistence/Qa04CompactOperationStateSnapshot.cs'
@@ -39,6 +43,10 @@ on:
       - 'src/MachiVerse.Simulation.Core/Persistence/SqlitePersistenceStore.Qa04Step2Transition.cs'
       - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04Step2DeterminismAuthoritySmoke.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStep2DeterminismRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStepCandidateIdentity.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProcessTarget.cs'
+      - 'tests/performance-fixtures/v1/gate4-step2-determinism-plan.json'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04Step2DeterminismAuthority.cs'
       - 'src/MachiVerse.Simulation.Core/Performance/Qa04TransitionCommittedAuthority.cs'
       - 'src/MachiVerse.Simulation.Core/Persistence/Qa04CompactOperationStateSnapshot.cs'
@@ -235,12 +243,8 @@ jobs:
         with:
           dotnet-version: 10.0.400
 
-      - name: Build Step2 verifier and canonical plan
-        run: |
-          dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
-          dotnet build tools/MachiVerse.PerformanceHarness/MachiVerse.PerformanceHarness.csproj --configuration Release
-          dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release --no-build -- \
-            materialize "$RUNNER_TEMP/qa04-plan"
+      - name: Build bounded Step2 verifier
+        run: dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
 
       - name: Assemble 12 actual process-run rows
         shell: bash
@@ -261,7 +265,7 @@ jobs:
         run: |
           set -euo pipefail
           dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- \
-            verify-step2 "$RUNNER_TEMP/gate4-step2-matrix.json" "$RUNNER_TEMP/qa04-plan" \
+            verify-step2 "$RUNNER_TEMP/gate4-step2-matrix.json" \
             | tee "$RUNNER_TEMP/gate4-step2-verification.log"
 
       - name: Publish Gate4 Step2 evidence summary
@@ -273,12 +277,12 @@ jobs:
           with open(sys.argv[1], encoding='utf-8') as handle:
               rows = json.load(handle)
           with open(sys.argv[2], 'a', encoding='utf-8') as out:
-              out.write("## Gate4 Step2 actual determinism matrix\n\n")
+              out.write("## Gate4 Step2 bounded actual determinism matrix\n\n")
               out.write("| workers | run | transitions | terminal Operations | final state digest |\n")
               out.write("|---:|---:|---:|---:|---|\n")
               for row in rows:
                   out.write(
                       f"| {row['workerCount']} | {row['runOrdinal']} | {row['transitionCount']} | "
                       f"{row['terminalOperationCount']} | `{row['finalStateDigest']}` |\n")
-              out.write("\nAll 12 rows are actual production runs; five-digest equality is enforced by the C# verifier.\n")
+              out.write("\nAll 12 rows use the actual production path. Long-duration stability is owned by Gate4 Step4 24h soak; five-digest equality is enforced by the C# verifier.\n")
           PY
