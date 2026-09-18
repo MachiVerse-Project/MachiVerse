@@ -15,6 +15,7 @@ public sealed record Qa04CanonicalOperationStepPreparationResultV1(
     /// bind the standard scheduler/Operation core-substate candidates before SQLite COMMIT.
     /// </summary>
     public WorldStateV1 BasisState { get; init; } = null!;
+    public Qa04CanonicalOperationPartitionCandidateBatchV1? PartitionBatch { get; init; }
 }
 
 /// <summary>
@@ -105,6 +106,7 @@ public static class Qa04CanonicalOperationStepPreparationV1
             prepared)
         {
             BasisState = basisState,
+            PartitionBatch = partitionBatch,
         };
     }
 
