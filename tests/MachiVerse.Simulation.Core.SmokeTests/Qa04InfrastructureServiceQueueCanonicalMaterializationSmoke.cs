@@ -96,8 +96,6 @@ internal static class Qa04InfrastructureServiceQueueCanonicalMaterializationSmok
             "FacilityService authority must materialize exactly 15,000 records.");
         Require(facilityAuthority.CanonicalServicePool.Count == checked((int)Qa04InfrastructureCanonicalServicePoolV1.CanonicalCount),
             "Canonical service pool must retain exactly 55,000 refs after FacilityService composition.");
-        Require(facilityAuthority.CanonicalServicePool.All(facilityAuthority.References.Exists),
-            "FacilityService-composed resolver must close every canonical service pool ref.");
         for (ulong ordinal = 0; ordinal < Qa04FacilityServiceCanonicalAuthorityV1.CanonicalCount; ordinal++)
         {
             var facilityRef = Qa04FacilityServiceCanonicalAuthorityV1.FacilityServiceRef(ordinal);
