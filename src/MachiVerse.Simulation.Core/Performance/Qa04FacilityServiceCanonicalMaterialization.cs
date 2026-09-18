@@ -178,7 +178,7 @@ public static class Qa04FacilityServiceCanonicalAuthorityV1
                 Active);
             validator.Validate(InfrastructureFacilityServicePayloadV1.PartitionId, payload.ToStandardPayload(), resolver);
 
-            facilityRecords[checked((int)f)] = new DomainRecordEnvelopeV1<InfrastructureFacilityServicePayloadV1>(
+            var facilityRecord = new DomainRecordEnvelopeV1<InfrastructureFacilityServicePayloadV1>(
                 binding.Descriptor.RecordId,
                 facilityIdentity.RecordSchema,
                 revision: 1,
@@ -187,6 +187,12 @@ public static class Qa04FacilityServiceCanonicalAuthorityV1
                 binding.Descriptor.DetailLevel,
                 lineageRef: null,
                 payload);
+            facilityRecords[checked((int)f)] = facilityRecord;
+            resolver.Add(
+                new PartitionRecordRefV1(
+                    InfrastructureFacilityServicePayloadV1.PartitionId,
+                    facilityRecord.RecordId),
+                facilityRecord.RecordSchema);
         }
         ValidateFacilityServiceIdentityUniqueness(facilityRecords);
         var facilityPartition = new DomainPartitionStateV1<InfrastructureFacilityServicePayloadV1>(facilityIdentity, facilityRecords);
@@ -198,6 +204,12 @@ public static class Qa04FacilityServiceCanonicalAuthorityV1
         }
 
         var pool = Qa04InfrastructureCanonicalServicePoolV1.BuildCanonical(serviceAuthority, facilityPartition);
+        foreach (var serviceRef in pool)
+        {
+            if (!resolver.Exists(serviceRef))
+                throw new InvalidDataException(
+                    $"qa04.infrastructure.canonical-service-pool-reference-missing:{serviceRef.PartitionId.Value}");
+        }
         return new Qa04FacilityServiceCanonicalMaterializationV1(
             physicalAuthority,
             serviceAuthority,
