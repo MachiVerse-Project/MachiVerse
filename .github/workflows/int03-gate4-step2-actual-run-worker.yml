@@ -46,7 +46,7 @@ jobs:
           dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
           dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
 
-      # ReleaseEvidenceRunner forwards Core transition/phase progress; production mutation references include the full canonical service pool, including facility_service authority.
+      # ReleaseEvidenceRunner forwards Core transition/phase progress; quick burst/reference precheck gates this expensive evidence matrix before launch.
       - name: Execute bounded actual production determinism run with live progress
         id: capture
         shell: bash
