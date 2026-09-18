@@ -185,6 +185,7 @@ work branch
 11. Artifactや過去runを再利用する場合、production / reduced / preflight / synthetic等のprovenanceを保持し、異なるevidence classを代替扱いしないこと。production evidenceが必要な判定にreduced / synthetic evidenceを混入させない。
 12. CI変更時は少なくとも、**何を証明するCIか / どの変更で無効化されるか / 既存CIとの重複はないか / 高コストの場合に再実行をどう抑制するか / timeoutの根拠**を確認すること。高コストCIを追加・大幅拡張した場合は、初回実測後に所要時間とボトルネックを確認し、明らかな無駄を残したまま「greenだから完了」としない。
 13. documentation-only / metadata-only 等、当該proofの実行結果へ影響しない変更で高コストCIが発火した場合は、その実行自体を「念のため必要」と正当化せず、trigger / invalidation / reuse設計の改善対象として扱うこと。
+14. **30分以上の実行が見込まれるCI / Workflow / Jobは、途中でも正常に前進していることを判断できる進捗ログを必須とする。** 原則として10〜15分以内の間隔、または十分細かい処理単位ごとにheartbeat / progressを出力し、少なくとも現在phase、完了量/総量（Step・Operation・case等、対象に適した単位）、経過時間を示すこと。取得可能なら直近区間の処理速度、worker数 / run ordinal、Snapshot / recovery / aggregate等の境界通過、診断用のメモリ使用量も出力する。長時間無出力のままtimeoutまで待つ構成を避け、ログだけで「低速だが進行中」と「hang / stalled」を区別できるようにする。これらのwall-clock / telemetryは診断専用とし、world semanticsや決定論の入力には使用しない。
 
 ## 言語ルール
 
