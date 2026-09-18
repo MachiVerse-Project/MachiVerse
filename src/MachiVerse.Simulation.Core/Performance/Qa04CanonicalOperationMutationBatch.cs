@@ -353,6 +353,62 @@ public static class Qa04CanonicalOperationMutationBatchV1
             throw new InvalidDataException("qa04.full-step.mutation-environment-state-identity");
     }
 
+    private static T[] MergeCanonical<T>(
+        IEnumerable<T> initialCanonical,
+        int initialCount,
+        IReadOnlyList<T> additionsCanonical,
+        Func<T, OpaqueId128> idSelector)
+    {
+        ArgumentNullException.ThrowIfNull(initialCanonical);
+        ArgumentNullException.ThrowIfNull(additionsCanonical);
+        ArgumentNullException.ThrowIfNull(idSelector);
+        if (initialCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(initialCount));
+
+        var merged = new T[checked(initialCount + additionsCanonical.Count)];
+        using var initial = initialCanonical.GetEnumerator();
+        var hasInitial = initial.MoveNext();
+        var additionIndex = 0;
+        var outputIndex = 0;
+
+        while (hasInitial || additionIndex < additionsCanonical.Count)
+        {
+            if (!hasInitial)
+            {
+                merged[outputIndex++] = additionsCanonical[additionIndex++];
+                continue;
+            }
+
+            if (additionIndex >= additionsCanonical.Count)
+            {
+                merged[outputIndex++] = initial.Current;
+                hasInitial = initial.MoveNext();
+                continue;
+            }
+
+            var initialId = idSelector(initial.Current);
+            var additionId = idSelector(additionsCanonical[additionIndex]);
+            var comparison = initialId.CompareTo(additionId);
+            if (comparison < 0)
+            {
+                merged[outputIndex++] = initial.Current;
+                hasInitial = initial.MoveNext();
+            }
+            else if (comparison > 0)
+            {
+                merged[outputIndex++] = additionsCanonical[additionIndex++];
+            }
+            else
+            {
+                throw new InvalidDataException("qa04.mutation.canonical-merge-duplicate");
+            }
+        }
+
+        if (outputIndex != merged.Length)
+            throw new InvalidDataException("qa04.mutation.canonical-merge-count-drift");
+        return merged;
+    }
+
     private sealed class AdditionOverlayV1<TPayload>
     {
         private readonly DomainPartitionStateV1<TPayload> _initial;
@@ -371,9 +427,19 @@ public static class Qa04CanonicalOperationMutationBatchV1
         }
 
         public DomainPartitionStateV1<TPayload> Build()
-            => new(
+        {
+            var additions = _additions.Values
+                .OrderBy(static record => record.RecordId)
+                .ToArray();
+            var merged = MergeCanonical(
+                _initial.RecordsCanonical,
+                checked((int)_initial.ItemCount),
+                additions,
+                static record => record.RecordId);
+            return DomainPartitionStateV1<TPayload>.FromCanonicalRecords(
                 _initial.Identity,
-                _initial.RecordsCanonical.Concat(_additions.Values));
+                merged);
+        }
     }
 
     private sealed class RevisionOverlayV1<TPayload>
@@ -407,12 +473,21 @@ public static class Qa04CanonicalOperationMutationBatchV1
         }
 
         public DomainPartitionStateV1<TPayload> Build()
-            => new(
+        {
+            var rebuilt = new DomainRecordEnvelopeV1<TPayload>[checked((int)_initial.ItemCount)];
+            var index = 0;
+            foreach (var record in _initial.RecordsCanonical)
+            {
+                rebuilt[index++] = _replacements.TryGetValue(record.RecordId, out var replacement)
+                    ? replacement
+                    : record;
+            }
+            if (index != rebuilt.Length)
+                throw new InvalidDataException("qa04.mutation.revision-overlay-count-drift");
+            return DomainPartitionStateV1<TPayload>.FromCanonicalRecords(
                 _initial.Identity,
-                _initial.RecordsCanonical.Select(record =>
-                    _replacements.TryGetValue(record.RecordId, out var replacement)
-                        ? replacement
-                        : record));
+                rebuilt);
+        }
     }
 
     private sealed class MarketAdditionOverlayV1
@@ -445,6 +520,37 @@ public static class Qa04CanonicalOperationMutationBatchV1
         }
 
         public SocietyMarketTransactionPartitionStateV2 Build()
-            => new(_initial.RecordSet.RecordsCanonical.Concat(_additions.Values));
+        {
+            var additions = _additions.Values
+                .OrderBy(static record => record.RecordId)
+                .ToArray();
+            var initialRecords = _initial.RecordSet.RecordsCanonical;
+            var mergedRecords = MergeCanonical(
+                initialRecords,
+                initialRecords.Count,
+                additions,
+                static record => record.RecordId);
+
+            var additionEnvelopes = additions
+                .Select(static record => new DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>(
+                    record.RecordId,
+                    SocietyMarketTransactionRecordSchemaV2.RecordSchema,
+                    record.Revision,
+                    record.CreatedStep,
+                    record.RetiredStep,
+                    record.DetailLevel,
+                    record.LineageRef,
+                    record.Payload))
+                .ToArray();
+            var mergedEnvelopes = MergeCanonical(
+                _initial.State.RecordsCanonical,
+                checked((int)_initial.State.ItemCount),
+                additionEnvelopes,
+                static record => record.RecordId);
+
+            return SocietyMarketTransactionPartitionStateV2.FromCanonicalMaterial(
+                mergedRecords,
+                mergedEnvelopes);
+        }
     }
 }
