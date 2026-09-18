@@ -158,6 +158,9 @@ internal sealed class Gate4Step2DeterminismPlan
     public int RequiredTurnoverCount { get; set; }
     public int RequiredDetailDecisionCount { get; set; }
     public int RequiredBurstStepCount { get; set; }
+    public int PersistenceInsertBatchSize { get; set; }
+    public int ProgressIntervalTransitions { get; set; }
+    public int HeartbeatIntervalSeconds { get; set; }
     public string SnapshotRecoveryEvidence { get; set; } = "";
     public string LongDurationEvidence { get; set; } = "";
 }
