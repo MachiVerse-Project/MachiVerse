@@ -204,12 +204,6 @@ public static class Qa04FacilityServiceCanonicalAuthorityV1
         }
 
         var pool = Qa04InfrastructureCanonicalServicePoolV1.BuildCanonical(serviceAuthority, facilityPartition);
-        foreach (var serviceRef in pool)
-        {
-            if (!resolver.Exists(serviceRef))
-                throw new InvalidDataException(
-                    $"qa04.infrastructure.canonical-service-pool-reference-missing:{serviceRef.PartitionId.Value}");
-        }
         return new Qa04FacilityServiceCanonicalMaterializationV1(
             physicalAuthority,
             serviceAuthority,
