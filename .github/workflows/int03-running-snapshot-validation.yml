@@ -14,22 +14,28 @@ permissions:
   contents: read
 
 concurrency:
-  group: int03-running-snapshot-${{ github.event.pull_request.number }}
+  group: int03-running-snapshot-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   running-snapshot-process:
-    name: QA-04 running snapshot freeze / drain authority
+    name: QA-04 running / compact snapshot recovery authority
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout pull request
+      - name: Checkout exact validation head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.400
       - name: Build Simulation Core
         run: dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+      - name: Build Gate3 compact snapshot contract
+        run: dotnet build tests/MachiVerse.Simulation.Core.Gate3CoreSmokeTests/MachiVerse.Simulation.Core.Gate3CoreSmokeTests.csproj --configuration Release
+      - name: Prove QA-04 compact Operation Snapshot / recovery authority
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.Gate3CoreSmokeTests/MachiVerse.Simulation.Core.Gate3CoreSmokeTests.csproj --configuration Release --no-build
       - name: Prove running snapshot freeze / later Step / historical drain commit
         shell: bash
         run: |
@@ -75,5 +81,8 @@ jobs:
           assert result['snapshotCommitHistorySequence'] > result['frozenHistoryAnchorSequence'] + 1, result
           assert result['referenceWorldMaterialized'] is False, result
           assert result['releaseEvidenceCapable'] is False, result
-          assert 'qa04.target.canonical-103-section-snapshot-serialization-not-assembled' in result['blockingFailureCodes'], result
+          blockers = result['blockingFailureCodes']
+          assert 'qa04.target.canonical-103-section-snapshot-serialization-not-assembled' not in blockers, result
+          assert 'qa04.target.reference-world-not-materialized' in blockers, result
+          assert 'qa04.target.authoritative-step-loop-not-assembled' in blockers, result
           PY
