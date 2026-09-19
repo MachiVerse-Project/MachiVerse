@@ -338,6 +338,8 @@ internal static class Program
                 },
                 timeout: null);
             var determinism = ValidateProductionReferenceRun(production, run);
+            var cpu = production.CpuParallelism
+                ?? throw new InvalidDataException("Simulation Core production reference run is missing cpuParallelism.");
 
             var failures = MergeFailures(production.FailureCodes);
             var measurement = production.Measurement;
@@ -373,8 +375,27 @@ internal static class Program
                     step_mean_60s_ms = measurement.MaxRolling60SecondMeanMilliseconds ?? MissingMetricSentinelMilliseconds,
                     domain_cpu_summary = new
                     {
-                        measured = false,
-                        configured_worker_count = probe.WorkerCount,
+                        measured = true,
+                        configured_worker_count = cpu.ConfiguredWorkerCount,
+                        effective_worker_count = cpu.EffectiveWorkerCount,
+                        max_observed_concurrency = cpu.MaxObservedConcurrency,
+                        worker_budget_applied = cpu.WorkerBudgetApplied,
+                        parallel_execution_observed = cpu.ParallelExecutionObserved,
+                        operation_binding = new
+                        {
+                            effective_worker_count = cpu.OperationBinding.EffectiveWorkerCount,
+                            max_observed_concurrency = cpu.OperationBinding.MaxObservedConcurrency,
+                        },
+                        typed_mutation = new
+                        {
+                            effective_worker_count = cpu.TypedMutation.EffectiveWorkerCount,
+                            max_observed_concurrency = cpu.TypedMutation.MaxObservedConcurrency,
+                        },
+                        preparation = new
+                        {
+                            effective_worker_count = cpu.Preparation.EffectiveWorkerCount,
+                            max_observed_concurrency = cpu.Preparation.MaxObservedConcurrency,
+                        },
                         max_observed_probe_concurrency = probe.MaxObservedConcurrency,
                         production_transition_count = production.TransitionCount,
                         candidate_id_sequence_digest = production.CandidateIdSequenceDigest,
@@ -438,6 +459,37 @@ internal static class Program
 
         if (production.Measurement.StepSampleCount != 18_000)
             throw new InvalidDataException("Simulation Core production reference run did not produce 18,000 measurement Step samples.");
+
+        var cpu = production.CpuParallelism
+            ?? throw new InvalidDataException("Simulation Core production reference run is missing cpuParallelism.");
+        var expectedFamilyWorkers = Math.Min(run.WorkerCount, 6);
+        if (cpu.ConfiguredWorkerCount != run.WorkerCount ||
+            cpu.EffectiveWorkerCount != run.WorkerCount ||
+            cpu.MaxObservedConcurrency < 1 ||
+            cpu.MaxObservedConcurrency > run.WorkerCount ||
+            cpu.OperationBinding.EffectiveWorkerCount != run.WorkerCount ||
+            cpu.OperationBinding.MaxObservedConcurrency < 1 ||
+            cpu.OperationBinding.MaxObservedConcurrency > run.WorkerCount ||
+            cpu.TypedMutation.EffectiveWorkerCount != expectedFamilyWorkers ||
+            cpu.TypedMutation.MaxObservedConcurrency < 1 ||
+            cpu.TypedMutation.MaxObservedConcurrency > expectedFamilyWorkers ||
+            cpu.Preparation.EffectiveWorkerCount != expectedFamilyWorkers ||
+            cpu.Preparation.MaxObservedConcurrency < 1 ||
+            cpu.Preparation.MaxObservedConcurrency > expectedFamilyWorkers ||
+            !cpu.WorkerBudgetApplied ||
+            !cpu.ParallelExecutionObserved)
+        {
+            throw new InvalidDataException(
+                "Simulation Core production CPU parallelism evidence did not prove the requested worker budget.");
+        }
+        if (run.WorkerCount > 1 &&
+            (cpu.OperationBinding.MaxObservedConcurrency <= 1 ||
+             cpu.TypedMutation.MaxObservedConcurrency <= 1 ||
+             cpu.Preparation.MaxObservedConcurrency <= 1))
+        {
+            throw new InvalidDataException(
+                "Simulation Core production CPU parallelism evidence did not observe concurrent execution in every production CPU stage.");
+        }
 
         RequireLowerHex(production.FinalStateDigest, 64, "finalStateDigest");
         RequireLowerHex(production.FinalHistoryDigest, 64, "finalHistoryDigest");
@@ -1412,6 +1464,7 @@ internal static class Program
         public string SchemaVersion { get; set; } = "";
         public string ProfileId { get; set; } = "";
         public int WorkerCount { get; set; }
+        public ProductionCpuParallelism? CpuParallelism { get; set; }
         public int TransitionCount { get; set; }
         public ulong BasisStep { get; set; }
         public ulong FinalizedStep { get; set; }
@@ -1456,6 +1509,24 @@ internal static class Program
         public long PersistenceMetricObserverFailureCount { get; set; }
         public bool Passed { get; set; }
         public string[] FailureCodes { get; set; } = [];
+    }
+
+    private sealed class ProductionCpuParallelism
+    {
+        public int ConfiguredWorkerCount { get; set; }
+        public int EffectiveWorkerCount { get; set; }
+        public int MaxObservedConcurrency { get; set; }
+        public ProductionCpuParallelismStage OperationBinding { get; set; } = new();
+        public ProductionCpuParallelismStage TypedMutation { get; set; } = new();
+        public ProductionCpuParallelismStage Preparation { get; set; } = new();
+        public bool WorkerBudgetApplied { get; set; }
+        public bool ParallelExecutionObserved { get; set; }
+    }
+
+    private sealed class ProductionCpuParallelismStage
+    {
+        public int EffectiveWorkerCount { get; set; }
+        public int MaxObservedConcurrency { get; set; }
     }
 
     private sealed class ProductionDeterminismEvidence
