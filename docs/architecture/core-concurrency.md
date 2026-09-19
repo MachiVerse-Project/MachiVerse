@@ -29,7 +29,7 @@
 | 使用スレッド数 | シミュレーションコア | 外部Configから設定 |
 | worker budget上限 | シミュレーションコア | Config schema 1.0では4096。runtime内部に16固定上限を置かない |
 
-Configの具体的なキー名、ファイル形式、動的変更可否は現時点では未確定です。
+Config keyは`runtime.worker-count`とし、Config schema 1.0では`OPERATIONAL / RUNTIME_SAFE`としてquiescent boundaryでatomic applyする。Config document formatその他の共通契約は`docs/design/phase4-config-specification.md`を正本とする。
 
 ## 4. 並列実行の責務境界
 
@@ -45,9 +45,10 @@ Configの具体的なキー名、ファイル形式、動的変更可否は現�
 
 マルチスレッド化は、この30Hz計算を超大規模なシミュレーション処理で成立させるためのコア内部の実行手段として扱います。
 
-ただし、以下は現時点では確定しません。
+1ステップ内はDomainだけでなく、Domain内の独立work itemもcanonical unitへ分割して並列化する。parallel computeの完了順はauthorityにせず、canonical reduce/commit barrierで決定的順序へ戻す。
 
-- 1ステップ内はDomainだけでなく、Domain内の独立work itemもcanonical unitへ分割して並列化する
+以下の物理スケジューリング詳細は実装最適化として固定しない。
+
 - すべての処理を毎ステップ並列実行するか
 - スレッド間で処理を固定割当するか
 - ワークスティーリング等を採用するか
