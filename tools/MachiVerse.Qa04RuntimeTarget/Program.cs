@@ -656,30 +656,204 @@ internal static class Program
             });
     }
 
-    private static async Task<Response> SoakAsync(Request request, string coreExecutable)
+    private static async Task<Response> SoakAsync(
+        Request request,
+        string coreExecutable,
+        string gatewayExecutable)
     {
         RequireProfile(request, SoakProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
-        var failures = MergeFailures(inspection.BlockingFailureCodes, "qa04.target.soak-not-assembled");
-        return NewResponse(
-            request,
-            "soak-report-v1",
-            inspection.ReferenceWorldMaterialized,
-            releaseEvidenceCapable: false,
-            failures,
-            passed: false,
-            failures,
-            new
+        ValidateSoakProfile(request.Profile);
+
+        var releaseMode = string.Equals(request.ExecutionClass, "release", StringComparison.Ordinal);
+        var requestedDurationSeconds = releaseMode ? 86_400L : 2L;
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "machiverse-qa04-soak-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var gatewayRoot = Path.Combine(root, "gateway");
+            var coreRoot = Path.Combine(root, "core");
+            var startInfo = new ProcessStartInfo
             {
-                test_case_id = SoakProfile,
-                duration_seconds = 0,
-                parallel_verifier_digest_matched = false,
-                max_post_warmup_memory_growth_percent = 100.0,
-                accepted_operation_loss = 0,
-                history_audit_chain_valid = false,
-                no_unrecoverable_queue_deadlock = false,
-                failure_codes = failures,
-            });
+                FileName = coreExecutable,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("qa04-target");
+
+            using var process = new Process { StartInfo = startInfo };
+            var elapsed = Stopwatch.StartNew();
+            if (!process.Start())
+                throw new InvalidOperationException("Failed to start assembled Simulation Core soak target.");
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                schemaVersion = "1.0",
+                command = "production-soak-run",
+                persistenceRoot = coreRoot,
+                requestedDurationSeconds,
+                releaseMode,
+            }, Json)).ConfigureAwait(false);
+            process.StandardInput.Close();
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrPump = PumpSoakStderrAsync(process.StandardError);
+            var exitTask = process.WaitForExitAsync();
+            var gatewayCycleCount = 0;
+            var gatewayAuditValid = true;
+
+            async Task RunGatewayCycleAsync()
+            {
+                gatewayCycleCount++;
+                var cycle = await InvokeGatewayAsync<GatewaySoakCycle>(
+                    gatewayExecutable,
+                    new
+                    {
+                        schemaVersion = "1.0",
+                        command = "soak-operational-cycle-run",
+                        dataRoot = gatewayRoot,
+                        cycleOrdinal = gatewayCycleCount,
+                    }).ConfigureAwait(false);
+                if (!string.Equals(cycle.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+                    cycle.CycleOrdinal != (ulong)gatewayCycleCount ||
+                    !cycle.FailoverConverged ||
+                    !cycle.ReconnectResyncConverged ||
+                    !cycle.ViewChurnAndSlowConsumerLoadApplied ||
+                    !cycle.AuditChainValid ||
+                    !cycle.Passed ||
+                    cycle.FailureCodes.Length != 0)
+                    throw new InvalidDataException($"QA-04 Gateway soak operational cycle {gatewayCycleCount} failed.");
+                gatewayAuditValid &= cycle.AuditChainValid;
+                Console.Error.WriteLine(
+                    $"QA04_SOAK_GATEWAY_CYCLE ordinal={gatewayCycleCount} elapsed_seconds={(long)elapsed.Elapsed.TotalSeconds}");
+            }
+
+            await RunGatewayCycleAsync().ConfigureAwait(false);
+            var nextGatewayCycle = TimeSpan.FromMinutes(30);
+            var nextHeartbeat = TimeSpan.FromMinutes(5);
+
+            while (!exitTask.IsCompleted)
+            {
+                var nextEvent = releaseMode
+                    ? (nextGatewayCycle <= nextHeartbeat ? nextGatewayCycle : nextHeartbeat)
+                    : TimeSpan.FromSeconds(requestedDurationSeconds + 5);
+                var delay = nextEvent - elapsed.Elapsed;
+                if (delay < TimeSpan.FromMilliseconds(100))
+                    delay = TimeSpan.FromMilliseconds(100);
+
+                var completed = await Task.WhenAny(exitTask, Task.Delay(delay)).ConfigureAwait(false);
+                if (completed == exitTask) break;
+
+                if (releaseMode && elapsed.Elapsed >= nextGatewayCycle)
+                {
+                    await RunGatewayCycleAsync().ConfigureAwait(false);
+                    nextGatewayCycle += TimeSpan.FromMinutes(30);
+                }
+                if (releaseMode && elapsed.Elapsed >= nextHeartbeat)
+                {
+                    Console.Error.WriteLine(
+                        $"QA04_SOAK_HEARTBEAT elapsed_seconds={(long)elapsed.Elapsed.TotalSeconds} gateway_cycles={gatewayCycleCount}");
+                    nextHeartbeat += TimeSpan.FromMinutes(5);
+                }
+            }
+
+            await exitTask.ConfigureAwait(false);
+            elapsed.Stop();
+            var stdout = await stdoutTask.ConfigureAwait(false);
+            await stderrPump.ConfigureAwait(false);
+
+            if (process.ExitCode != 0)
+                throw new InvalidDataException(
+                    $"Simulation Core soak target exited {process.ExitCode}: see streamed QA04_SOAK diagnostics.");
+
+            var lines = stdout.Split(
+                ['\r', '\n'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length != 1)
+                throw new InvalidDataException(
+                    $"Simulation Core soak target must emit exactly one JSON line; found {lines.Length}.");
+            var core = JsonSerializer.Deserialize<SoakCoreTarget>(lines[0], Json)
+                ?? throw new InvalidDataException("Simulation Core soak target response decoded to null.");
+
+            if (!string.Equals(core.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+                !string.Equals(core.TestCaseId, SoakProfile, StringComparison.Ordinal) ||
+                core.ReleaseMode != releaseMode)
+                throw new InvalidDataException("Simulation Core soak target contract drift.");
+
+            var failures = inspection.BlockingFailureCodes
+                .Concat(core.FailureCodes)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static x => x, StringComparer.Ordinal)
+                .ToList();
+
+            var minimumGatewayCycles = releaseMode ? 48 : 1;
+            if (gatewayCycleCount < minimumGatewayCycles)
+                failures.Add("gateway-operational-cycle-count");
+            if (!gatewayAuditValid || !core.HistoryChainValid)
+                failures.Add("history-audit-chain-invalid");
+            if (!core.ParallelVerifierDigestMatched)
+                failures.Add("parallel-verifier-digest");
+            if (core.MaxPostWarmupMemoryGrowthPercent > 10.0)
+                failures.Add("post-warmup-memory-growth");
+            if (core.AcceptedOperationLoss != 0)
+                failures.Add("accepted-operation-loss");
+            if (!core.NoUnrecoverableQueueDeadlock)
+                failures.Add("unrecoverable-queue-deadlock");
+            if (releaseMode && core.DurationSeconds < 86_400)
+                failures.Add("soak-duration-short");
+
+            failures = failures.Distinct(StringComparer.Ordinal).OrderBy(static x => x, StringComparer.Ordinal).ToList();
+            var passed = releaseMode
+                ? core.Passed && failures.Count == 0
+                : false;
+            var releaseReady = releaseMode && passed;
+
+            return NewResponse(
+                request,
+                "soak-report-v1",
+                inspection.ReferenceWorldMaterialized,
+                releaseEvidenceCapable: releaseReady,
+                failures.ToArray(),
+                passed,
+                failures.ToArray(),
+                new
+                {
+                    test_case_id = SoakProfile,
+                    duration_seconds = core.DurationSeconds,
+                    canonical_cycle_count = core.CanonicalCycleCount,
+                    snapshot_recovery_checkpoint_count = core.SnapshotRecoveryCheckpointCount,
+                    parallel_verifier_checkpoint_count = core.ParallelVerifierCheckpointCount,
+                    parallel_verifier_digest_matched = core.ParallelVerifierDigestMatched,
+                    gateway_operational_cycle_count = gatewayCycleCount,
+                    gateway_reconnect_failover_interval_minutes = 30,
+                    view_churn_and_slow_consumer_load = gatewayCycleCount > 0,
+                    max_post_warmup_memory_growth_percent = core.MaxPostWarmupMemoryGrowthPercent,
+                    accepted_operation_loss = core.AcceptedOperationLoss,
+                    hidden_solver_iteration_reduction = core.HiddenSolverIterationReduction,
+                    history_audit_chain_valid = core.HistoryChainValid && gatewayAuditValid,
+                    no_unrecoverable_queue_deadlock = core.NoUnrecoverableQueueDeadlock,
+                    final_state_digest = core.FinalStateDigest,
+                    release_evidence_capable = releaseReady,
+                    adapter_elapsed_seconds = (long)Math.Floor(elapsed.Elapsed.TotalSeconds),
+                    failure_codes = failures,
+                });
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task PumpSoakStderrAsync(StreamReader reader)
+    {
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+            Console.Error.WriteLine(line);
     }
 
     private static async Task<Inspection> InspectCoreAsync(string coreExecutable)
