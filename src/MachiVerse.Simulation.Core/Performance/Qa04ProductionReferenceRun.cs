@@ -6,10 +6,17 @@ using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
+public sealed record Qa04ProductionCpuParallelismStageEvidenceV1(
+    int EffectiveWorkerCount,
+    int MaxObservedConcurrency);
+
 public sealed record Qa04ProductionCpuParallelismEvidenceV1(
     int ConfiguredWorkerCount,
     int EffectiveWorkerCount,
     int MaxObservedConcurrency,
+    Qa04ProductionCpuParallelismStageEvidenceV1 OperationBinding,
+    Qa04ProductionCpuParallelismStageEvidenceV1 TypedMutation,
+    Qa04ProductionCpuParallelismStageEvidenceV1 Preparation,
     bool WorkerBudgetApplied,
     bool ParallelExecutionObserved);
 
@@ -142,6 +149,10 @@ public static class Qa04ProductionReferenceRunV1
         var detailDecisionCount = 0;
         var effectiveCpuWorkerCount = 0;
         var maxObservedCpuParallelism = 0;
+        var mutationEffectiveWorkerCount = 0;
+        var mutationMaxObservedCpuParallelism = 0;
+        var preparationEffectiveWorkerCount = 0;
+        var preparationMaxObservedCpuParallelism = 0;
 
         try
         {
@@ -220,16 +231,40 @@ public static class Qa04ProductionReferenceRunV1
                 var completed = executed
                     ?? throw new InvalidDataException("qa04.production-run.step-result-missing");
                 var cpuObservation = completed.OperationBindingParallelism;
+                var mutationObservation = completed.TypedMutationParallelism;
+                var preparationObservation = completed.PreparationParallelism;
                 if (cpuObservation.RequestedWorkerCount != workerCount ||
                     cpuObservation.EffectiveWorkerCount != workerCount)
                     throw new InvalidDataException("qa04.production-run.worker-budget-not-applied");
+                var expectedFamilyWorkers = Math.Min(workerCount, 6);
+                if (mutationObservation.RequestedWorkerCount != workerCount ||
+                    mutationObservation.EffectiveWorkerCount != expectedFamilyWorkers ||
+                    preparationObservation.RequestedWorkerCount != workerCount ||
+                    preparationObservation.EffectiveWorkerCount != expectedFamilyWorkers)
+                    throw new InvalidDataException("qa04.production-run.stage-worker-budget-drift");
+
                 if (effectiveCpuWorkerCount == 0)
                     effectiveCpuWorkerCount = cpuObservation.EffectiveWorkerCount;
                 else if (effectiveCpuWorkerCount != cpuObservation.EffectiveWorkerCount)
                     throw new InvalidDataException("qa04.production-run.effective-worker-count-drift");
+                if (mutationEffectiveWorkerCount == 0)
+                    mutationEffectiveWorkerCount = mutationObservation.EffectiveWorkerCount;
+                else if (mutationEffectiveWorkerCount != mutationObservation.EffectiveWorkerCount)
+                    throw new InvalidDataException("qa04.production-run.mutation-effective-worker-count-drift");
+                if (preparationEffectiveWorkerCount == 0)
+                    preparationEffectiveWorkerCount = preparationObservation.EffectiveWorkerCount;
+                else if (preparationEffectiveWorkerCount != preparationObservation.EffectiveWorkerCount)
+                    throw new InvalidDataException("qa04.production-run.preparation-effective-worker-count-drift");
+
                 maxObservedCpuParallelism = Math.Max(
                     maxObservedCpuParallelism,
                     cpuObservation.MaxObservedConcurrency);
+                mutationMaxObservedCpuParallelism = Math.Max(
+                    mutationMaxObservedCpuParallelism,
+                    mutationObservation.MaxObservedConcurrency);
+                preparationMaxObservedCpuParallelism = Math.Max(
+                    preparationMaxObservedCpuParallelism,
+                    preparationObservation.MaxObservedConcurrency);
 
                 var resultingDetailDirectory = completed.Finalization.DetailDirectory
                     ?? throw new InvalidDataException("qa04.production-run.detail-directory-missing");
@@ -333,14 +368,39 @@ public static class Qa04ProductionReferenceRunV1
                 acceptedOperationLossCount: 0,
                 hiddenSolverIterationReductionCount: 0,
                 persistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount);
-            var workerBudgetApplied = effectiveCpuWorkerCount == workerCount;
-            var parallelExecutionObserved = workerCount == 1
+            var expectedFamilyWorkers = Math.Min(workerCount, 6);
+            var workerBudgetApplied =
+                effectiveCpuWorkerCount == workerCount &&
+                mutationEffectiveWorkerCount == expectedFamilyWorkers &&
+                preparationEffectiveWorkerCount == expectedFamilyWorkers;
+            var bindingParallelObserved = workerCount == 1
                 ? maxObservedCpuParallelism == 1
                 : maxObservedCpuParallelism > 1;
+            var mutationParallelObserved = workerCount == 1
+                ? mutationMaxObservedCpuParallelism == 1
+                : mutationMaxObservedCpuParallelism > 1;
+            var preparationParallelObserved = workerCount == 1
+                ? preparationMaxObservedCpuParallelism == 1
+                : preparationMaxObservedCpuParallelism > 1;
+            var parallelExecutionObserved =
+                bindingParallelObserved &&
+                mutationParallelObserved &&
+                preparationParallelObserved;
             var cpuParallelism = new Qa04ProductionCpuParallelismEvidenceV1(
                 workerCount,
                 effectiveCpuWorkerCount,
-                maxObservedCpuParallelism,
+                Math.Max(
+                    maxObservedCpuParallelism,
+                    Math.Max(mutationMaxObservedCpuParallelism, preparationMaxObservedCpuParallelism)),
+                new Qa04ProductionCpuParallelismStageEvidenceV1(
+                    effectiveCpuWorkerCount,
+                    maxObservedCpuParallelism),
+                new Qa04ProductionCpuParallelismStageEvidenceV1(
+                    mutationEffectiveWorkerCount,
+                    mutationMaxObservedCpuParallelism),
+                new Qa04ProductionCpuParallelismStageEvidenceV1(
+                    preparationEffectiveWorkerCount,
+                    preparationMaxObservedCpuParallelism),
                 workerBudgetApplied,
                 parallelExecutionObserved);
             var failureCodes = performance.FailureCodes
