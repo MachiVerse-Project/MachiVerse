@@ -2,7 +2,14 @@ using System.Net;
 using MachiVerse.Gateway.Audit;
 using MachiVerse.Gateway.Configuration;
 using MachiVerse.Gateway.Protocol;
+using MachiVerse.Gateway.Performance;
 using MachiVerse.Gateway.State;
+
+if (args.Length == 1 && string.Equals(args[0], "qa04-target", StringComparison.Ordinal))
+{
+    Environment.ExitCode = await Qa04GatewayTargetV1.RunAsync();
+    return;
+}
 
 var builder = WebApplication.CreateBuilder(args);
 var configPath = Environment.GetEnvironmentVariable("MACHIVERSE_GATEWAY_CONFIG")
