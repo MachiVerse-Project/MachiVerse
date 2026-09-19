@@ -6,10 +6,18 @@ using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
+public sealed record Qa04ProductionCpuParallelismEvidenceV1(
+    int ConfiguredWorkerCount,
+    int EffectiveWorkerCount,
+    int MaxObservedConcurrency,
+    bool WorkerBudgetApplied,
+    bool ParallelExecutionObserved);
+
 public sealed record Qa04ProductionReferenceRunResultV1(
     string SchemaVersion,
     string ProfileId,
     int WorkerCount,
+    Qa04ProductionCpuParallelismEvidenceV1 CpuParallelism,
     int TransitionCount,
     ulong TerminalOperationCount,
     ulong FinalizedStep,
@@ -132,6 +140,8 @@ public static class Qa04ProductionReferenceRunV1
         var snapshotCommitted = false;
         var turnoverCount = 0;
         var detailDecisionCount = 0;
+        var effectiveCpuWorkerCount = 0;
+        var maxObservedCpuParallelism = 0;
 
         try
         {
@@ -209,6 +219,18 @@ public static class Qa04ProductionReferenceRunV1
 
                 var completed = executed
                     ?? throw new InvalidDataException("qa04.production-run.step-result-missing");
+                var cpuObservation = completed.OperationBindingParallelism;
+                if (cpuObservation.RequestedWorkerCount != workerCount ||
+                    cpuObservation.EffectiveWorkerCount != workerCount)
+                    throw new InvalidDataException("qa04.production-run.worker-budget-not-applied");
+                if (effectiveCpuWorkerCount == 0)
+                    effectiveCpuWorkerCount = cpuObservation.EffectiveWorkerCount;
+                else if (effectiveCpuWorkerCount != cpuObservation.EffectiveWorkerCount)
+                    throw new InvalidDataException("qa04.production-run.effective-worker-count-drift");
+                maxObservedCpuParallelism = Math.Max(
+                    maxObservedCpuParallelism,
+                    cpuObservation.MaxObservedConcurrency);
+
                 var resultingDetailDirectory = completed.Finalization.DetailDirectory
                     ?? throw new InvalidDataException("qa04.production-run.detail-directory-missing");
                 var detailDecisionAuthority = completed.Finalization.DetailDecisionAuthority
@@ -311,6 +333,26 @@ public static class Qa04ProductionReferenceRunV1
                 acceptedOperationLossCount: 0,
                 hiddenSolverIterationReductionCount: 0,
                 persistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount);
+            var workerBudgetApplied = effectiveCpuWorkerCount == workerCount;
+            var parallelExecutionObserved = workerCount == 1
+                ? maxObservedCpuParallelism == 1
+                : maxObservedCpuParallelism > 1;
+            var cpuParallelism = new Qa04ProductionCpuParallelismEvidenceV1(
+                workerCount,
+                effectiveCpuWorkerCount,
+                maxObservedCpuParallelism,
+                workerBudgetApplied,
+                parallelExecutionObserved);
+            var failureCodes = performance.FailureCodes
+                .Concat(workerBudgetApplied
+                    ? Array.Empty<string>()
+                    : new[] { "qa04.production-run.worker-budget-not-applied" })
+                .Concat(parallelExecutionObserved
+                    ? Array.Empty<string>()
+                    : new[] { "qa04.production-run.cpu-parallelism-not-observed" })
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static code => code, StringComparer.Ordinal)
+                .ToArray();
 
             var finalHistory = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
             var finalRecovery = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
@@ -383,6 +425,7 @@ public static class Qa04ProductionReferenceRunV1
                 SchemaVersion: "1.0",
                 ProfileId: Qa04ReferenceLoadV1.BenchmarkProfileId,
                 WorkerCount: workerCount,
+                CpuParallelism: cpuParallelism,
                 TransitionCount: CanonicalTransitionCount,
                 TerminalOperationCount: determinismEvidence.TerminalOperationCount,
                 FinalizedStep: currentState.Header.Step,
@@ -405,8 +448,8 @@ public static class Qa04ProductionReferenceRunV1
                 AcceptedOperationLoss: 0,
                 HiddenSolverIterationReduction: false,
                 PersistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount,
-                Passed: performance.Passed,
-                FailureCodes: performance.FailureCodes);
+                Passed: performance.Passed && workerBudgetApplied && parallelExecutionObserved,
+                FailureCodes: failureCodes);
         }
         finally
         {
