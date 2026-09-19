@@ -71,6 +71,11 @@ public static class Qa04ProcessTargetV1
                 "persistence-history-tail-run" => await Qa04PersistenceHistoryTailV1.RunAsync(
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "production-soak-run" => await Qa04ProductionSoakRunV1.RunAsync(
+                    request.PersistenceRoot,
+                    request.RequestedDurationSeconds,
+                    request.ReleaseMode,
+                    cancellationToken).ConfigureAwait(false),
                 "persistence-crash-case-run" => await RunPersistenceCrashCaseAsync(
                     request.CrashStage,
                     request.PersistenceRoot,
@@ -353,6 +358,8 @@ public sealed class Qa04ProcessRequestV1
     public string CrashStage { get; set; } = "";
     public bool ExpectedDurable { get; set; }
     public int TargetStoredGiB { get; set; }
+    public long RequestedDurationSeconds { get; set; }
+    public bool ReleaseMode { get; set; }
 }
 
 public sealed class Qa04ProcessInspectionV1
