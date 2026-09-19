@@ -64,6 +64,10 @@ public static class Qa04ProcessTargetV1
                     request.WorkerCount,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "persistence-volume-stress-run" => await Qa04PersistenceVolumeStressV1.RunAsync(
+                    request.PersistenceRoot,
+                    request.TargetStoredGiB,
+                    cancellationToken).ConfigureAwait(false),
                 "persistence-crash-case-run" => await RunPersistenceCrashCaseAsync(
                     request.CrashStage,
                     request.PersistenceRoot,
@@ -345,6 +349,7 @@ public sealed class Qa04ProcessRequestV1
     public string PersistenceRoot { get; set; } = "";
     public string CrashStage { get; set; } = "";
     public bool ExpectedDurable { get; set; }
+    public int TargetStoredGiB { get; set; }
 }
 
 public sealed class Qa04ProcessInspectionV1
