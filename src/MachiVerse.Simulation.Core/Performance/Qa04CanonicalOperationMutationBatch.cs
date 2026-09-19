@@ -451,7 +451,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 return new FamilyMutationResultV1(
                     work.Family,
                     InfrastructureServiceQueue: overlay.Build(),
-                    Changes: Array.AsReadOnly(changes.ToArray()));
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
             }
             case ResidentFamily:
             {
@@ -480,7 +480,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 return new FamilyMutationResultV1(
                     work.Family,
                     ResidentBehaviorState: state,
-                    Changes: Array.AsReadOnly(changes.ToArray()));
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
             }
             case PhysicalFamily:
             {
@@ -512,7 +512,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 return new FamilyMutationResultV1(
                     work.Family,
                     PhysicalPresence: overlay.Build(),
-                    Changes: Array.AsReadOnly(changes.ToArray()));
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
             }
             case MarketFamily:
             {
@@ -543,7 +543,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 return new FamilyMutationResultV1(
                     work.Family,
                     MarketTransaction: overlay.Build(),
-                    Changes: Array.AsReadOnly(changes.ToArray()));
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
             }
             case GovernanceFamily:
             {
@@ -568,7 +568,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 return new FamilyMutationResultV1(
                     work.Family,
                     GovernanceSecurityIncident: overlay.Build(),
-                    Changes: Array.AsReadOnly(changes.ToArray()));
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
             }
             case EnvironmentFamily:
             {
@@ -592,7 +592,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 return new FamilyMutationResultV1(
                     work.Family,
                     EnvironmentHazard: overlay.Build(),
-                    Changes: Array.AsReadOnly(changes.ToArray()));
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
             }
             default:
                 throw new InvalidDataException($"qa04.full-step.mutation-family-unregistered:{work.Family}");
@@ -611,10 +611,10 @@ public static class Qa04CanonicalOperationMutationBatchV1
         SocietyMarketTransactionPartitionStateV2? MarketTransaction = null,
         DomainPartitionStateV1<GovernanceSecurityIncidentPayloadV1>? GovernanceSecurityIncident = null,
         DomainPartitionStateV1<EnvironmentHazardPayloadV1>? EnvironmentHazard = null,
-        IReadOnlyList<Qa04CanonicalOperationMutationChangeV1>? Changes = null)
+        IReadOnlyList<Qa04CanonicalOperationMutationChangeV1>? FamilyChanges = null)
     {
         public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Changes { get; } =
-            Changes ?? Array.Empty<Qa04CanonicalOperationMutationChangeV1>();
+            FamilyChanges ?? Array.Empty<Qa04CanonicalOperationMutationChangeV1>();
     }
 
     private static DomainPartitionStateV1<TPayload> EmptyLike<TPayload>(
