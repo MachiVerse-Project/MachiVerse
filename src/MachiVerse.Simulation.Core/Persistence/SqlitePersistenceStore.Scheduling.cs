@@ -31,6 +31,7 @@ public sealed partial class SqlitePersistenceStore
         if (databaseOrderKey.Length != SameStepOrderKey.DatabaseKeyLength)
             throw new InvalidDataException("persistence.same-step-order-key-length");
 
+        Qa04PersistenceCrashInjectionV1.Hit("operation-scheduling", "before-db-begin");
         using var transaction = _connection.BeginTransaction();
         try
         {
@@ -91,8 +92,12 @@ VALUES ($effective_step, $order_key, $operation_id);
                 await schedule.ExecuteNonQueryAsync(cancellationToken);
             }
 
+            Qa04PersistenceCrashInjectionV1.Hit("operation-scheduling", "mid-write");
             await UpdateHistoryAnchorAsync(history, transaction, cancellationToken);
+            Qa04PersistenceCrashInjectionV1.Hit("operation-scheduling", "before-fsync-or-commit");
             transaction.Commit();
+            Qa04PersistenceCrashInjectionV1.Hit("operation-scheduling", "immediately-after-commit");
+            Qa04PersistenceCrashInjectionV1.Hit("operation-scheduling", "before-response-or-publication");
             return new DurableSchedulingResult(DurableSchedulingStatus.Scheduled, history.Sequence, effectiveStep);
         }
         catch
