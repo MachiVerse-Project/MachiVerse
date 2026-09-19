@@ -97,22 +97,27 @@ jobs:
           $ErrorActionPreference = "Stop"
           $coreOut = Join-Path $env:RUNNER_TEMP "qa04-core"
           $adapterOut = Join-Path $env:RUNNER_TEMP "qa04-adapter"
+          $gatewayOut = Join-Path $env:RUNNER_TEMP "qa04-gateway"
           $plan = Join-Path $env:RUNNER_TEMP "qa04-plan"
           $output = Join-Path $env:RUNNER_TEMP "gate4-step4"
           New-Item -ItemType Directory -Force -Path $output | Out-Null
 
           dotnet publish src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --output $coreOut
           dotnet publish tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release --output $adapterOut
+          dotnet publish src/MachiVerse.Gateway/MachiVerse.Gateway.csproj --configuration Release --output $gatewayOut
           dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
           dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release -- materialize $plan
 
           $suffix = if ($IsWindows) { ".exe" } else { "" }
           $core = Join-Path $coreOut ("MachiVerse.Simulation.Core" + $suffix)
           $adapter = Join-Path $adapterOut ("MachiVerse.Qa04RuntimeTarget" + $suffix)
+          $gateway = Join-Path $gatewayOut ("MachiVerse.Gateway" + $suffix)
           if (-not (Test-Path $core)) { throw "Simulation Core executable not found: $core" }
           if (-not (Test-Path $adapter)) { throw "QA-04 runtime adapter not found: $adapter" }
+          if (-not (Test-Path $gateway)) { throw "Gateway executable not found: $gateway" }
 
           "MACHIVERSE_QA04_CORE_EXECUTABLE=$core" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "MACHIVERSE_QA04_GATEWAY_EXECUTABLE=$gateway" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "QA04_RUNTIME_ADAPTER=$adapter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "QA04_PLAN=$plan" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "QA04_STEP4_OUTPUT=$output" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
