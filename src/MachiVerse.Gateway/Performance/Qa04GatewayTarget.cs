@@ -191,7 +191,7 @@ public static class Qa04GatewayTargetV1
             slowConsumers = slowConsumerCount,
             slowConsumersDidNotBlockCustodyOrResult = true,
             continuityAfterCoalesceResync = true,
-            slowConsumerResyncCount,
+            slowConsumerResyncCount = slowResyncCount,
             totalCoalescedPublicationCount = totalCoalesced,
             finalPendingPublicationCount = publication.PendingCount,
             finalPendingResultCount = resultRouter.PendingCount,
