@@ -1,0 +1,64 @@
+name: INT-03 Gate4 Step2 Detail decision validation
+
+on:
+  push:
+    branches:
+      - release/int-03-canonical-snapshot-recovery
+    paths:
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDetailTransition.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStep2OperationFlow.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04Step2DeterminismAuthority.cs'
+      - 'src/MachiVerse.Simulation.Core/Persistence/SqlitePersistenceStore.Qa04Step2Transition.cs'
+      - 'src/MachiVerse.Simulation.Core/Runtime/DetailTransitions.cs'
+      - 'src/MachiVerse.Simulation.Core/Runtime/DetailSubstateAuthority.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04CanonicalDetailTransitionBindingSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04DetailDecisionPersistenceSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04Step2DeterminismAuthoritySmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Sim13DetailTransitionSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Sim13DetailConservationSmoke.cs'
+      - '.github/workflows/int03-gate4-step2-detail-decision-validation.yml'
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionDetailTransition.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionReferenceRun.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04ProductionStep2OperationFlow.cs'
+      - 'src/MachiVerse.Simulation.Core/Performance/Qa04Step2DeterminismAuthority.cs'
+      - 'src/MachiVerse.Simulation.Core/Persistence/SqlitePersistenceStore.Qa04Step2Transition.cs'
+      - 'src/MachiVerse.Simulation.Core/Runtime/DetailTransitions.cs'
+      - 'src/MachiVerse.Simulation.Core/Runtime/DetailSubstateAuthority.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04CanonicalDetailTransitionBindingSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04DetailDecisionPersistenceSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04Step2DeterminismAuthoritySmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Sim13DetailTransitionSmoke.cs'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Sim13DetailConservationSmoke.cs'
+      - '.github/workflows/int03-gate4-step2-detail-decision-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-gate4-step2-detail-decision-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detail-decision:
+    name: Detail promotion decision / SQLite chain authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact validation head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Simulation Core smoke tests
+        run: dotnet build tests/MachiVerse.Simulation.Core.SmokeTests/MachiVerse.Simulation.Core.SmokeTests.csproj --configuration Release
+      - name: Prove Detail decision planning, durability and reopen authority
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.SmokeTests/MachiVerse.Simulation.Core.SmokeTests.csproj --configuration Release --no-build

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using Microsoft.Data.Sqlite;
@@ -48,6 +49,7 @@ public sealed partial class SqlitePersistenceStore
             _ = new StableToken(terminal.ResultCode);
         }
 
+        Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "before-db-begin");
         using var transaction = _connection.BeginTransaction();
         try
         {
@@ -96,7 +98,13 @@ WHERE singleton=1;
                     throw new InvalidDataException("persistence.meta-update-failed");
             }
 
+            Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "mid-write");
+            Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "before-fsync-or-commit");
+            var commitStarted = Stopwatch.GetTimestamp();
             transaction.Commit();
+            ObserveSuccessfulCommit(Stopwatch.GetElapsedTime(commitStarted));
+            Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "immediately-after-commit");
+            Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "before-response-or-publication");
             return new DurableTransitionResult(resultingStep, history.Sequence);
         }
         catch
