@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
-internal static class ReleaseEvidenceRunner
+internal static partial class ReleaseEvidenceRunner
 {
     private const string SchemaVersion = "1.0";
     private const string ReferenceProfile = "perf.reference.v1";
