@@ -40,9 +40,9 @@ internal static class Program
             Response response = request.RequestKind switch
             {
                 "benchmark-run" => await BenchmarkAsync(request, coreExecutable),
-                "persistence-stress" => await PersistenceAsync(request, coreExecutable),
-                "publication-stress" => await PublicationAsync(request, coreExecutable),
-                "soak-run" => await SoakAsync(request, coreExecutable),
+                "persistence-stress" => await PersistenceAsync(request, coreExecutable, RequireGatewayExecutable()),
+                "publication-stress" => await PublicationAsync(request, coreExecutable, RequireGatewayExecutable()),
+                "soak-run" => await SoakAsync(request, coreExecutable, RequireGatewayExecutable()),
                 _ => throw new InvalidDataException($"Unknown requestKind: {request.RequestKind}"),
             };
             await Console.Out.WriteLineAsync(JsonSerializer.Serialize(response, Json));
@@ -53,6 +53,16 @@ internal static class Program
             await Console.Error.WriteLineAsync($"QA-04 runtime adapter FAILED: {ex.Message}");
             return 1;
         }
+    }
+
+    private static string RequireGatewayExecutable()
+    {
+        var executable = Environment.GetEnvironmentVariable("MACHIVERSE_QA04_GATEWAY_EXECUTABLE");
+        if (string.IsNullOrWhiteSpace(executable) || !File.Exists(executable))
+            throw new FileNotFoundException(
+                "MACHIVERSE_QA04_GATEWAY_EXECUTABLE must identify the assembled Gateway executable.",
+                executable);
+        return executable;
     }
 
     private static void ValidateRequest(Request request)
