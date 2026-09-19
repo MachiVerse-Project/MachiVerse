@@ -75,5 +75,12 @@ jobs:
           assert result['snapshotCommitHistorySequence'] > result['frozenHistoryAnchorSequence'] + 1, result
           assert result['referenceWorldMaterialized'] is False, result
           assert result['releaseEvidenceCapable'] is False, result
-          assert 'qa04.target.canonical-103-section-snapshot-serialization-not-assembled' in result['blockingFailureCodes'], result
+          blockers = result['blockingFailureCodes']
+          legacy = 'qa04.target.canonical-103-section-snapshot-serialization-not-assembled' in blockers
+          if legacy:
+              # Transitional compatibility while #430 moves Gate3-complete Core into develop.
+              assert result['referenceWorldMaterialized'] is False, result
+          else:
+              assert 'qa04.target.reference-world-not-materialized' in blockers, result
+              assert 'qa04.target.authoritative-step-loop-not-assembled' in blockers, result
           PY
