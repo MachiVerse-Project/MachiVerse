@@ -33,6 +33,7 @@ public sealed record Qa04ProductionStep2AuthoritativeStepExecutionV1(
     ulong ResultingStep,
     OpaqueId128 CandidateId,
     int OperationCount,
+    DeterministicCpuBatchObservationV1 OperationBindingParallelism,
     Qa04CanonicalOperationMutationStateV1 MutationState,
     IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> DomainAuthorities,
     Qa04OperationClosedPrefixV1 ClosedPrefix,
@@ -237,14 +238,32 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             throw new InvalidDataException("qa04.step2.production-loop.candidate-target-step-drift");
 
         var phaseStarted = Stopwatch.GetTimestamp();
-        var bindings = Qa04ReferenceLoadV1.OperationsForStep(injectionStep)
-            .Select(descriptor => Qa04CanonicalOperationBindingV1.Bind(
+        var descriptors = Qa04ReferenceLoadV1.OperationsForStep(injectionStep).ToArray();
+        var expectedOperationCount = checked((int)Qa04ReferenceLoadV1.OperationCountForStep(injectionStep));
+        if (descriptors.Length != expectedOperationCount)
+            throw new InvalidDataException("qa04.step2.production-loop.operation-count-drift");
+
+        var bindingBatch = await DeterministicBatchExecutor.RunCpuBoundAsync(
+            descriptors,
+            workerCount,
+            descriptor => Qa04CanonicalOperationBindingV1.Bind(
                 descriptor,
-                partitionAuthorityState.Header.ConfigGeneration))
+                partitionAuthorityState.Header.ConfigGeneration),
+            cancellationToken).ConfigureAwait(false);
+        var bindingParallelism = bindingBatch.Observation;
+        var expectedEffectiveWorkers = Math.Min(workerCount, descriptors.Length);
+        if (bindingParallelism.RequestedWorkerCount != workerCount ||
+            bindingParallelism.EffectiveWorkerCount != expectedEffectiveWorkers ||
+            bindingParallelism.MaxObservedConcurrency < 1 ||
+            bindingParallelism.MaxObservedConcurrency > expectedEffectiveWorkers)
+        {
+            throw new InvalidDataException("qa04.step2.production-loop.operation-binding-worker-budget-drift");
+        }
+
+        var bindings = bindingBatch.Outputs
             .OrderBy(static binding => binding.OrderKey)
             .ThenBy(static binding => binding.SourceDescriptor.OperationId)
             .ToArray();
-        var expectedOperationCount = checked((int)Qa04ReferenceLoadV1.OperationCountForStep(injectionStep));
         if (bindings.Length != expectedOperationCount)
             throw new InvalidDataException("qa04.step2.production-loop.operation-count-drift");
         EmitPhase(injectionStep, workerCount, "bind-operations", phaseStarted);
@@ -378,6 +397,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             resultingStep,
             candidateIdentity.CandidateId,
             bindings.Length,
+            bindingParallelism,
             mutation.State,
             Array.AsReadOnly(resultingAuthorities.CanonicalAuthorities.ToArray()),
             nextPrefix,
