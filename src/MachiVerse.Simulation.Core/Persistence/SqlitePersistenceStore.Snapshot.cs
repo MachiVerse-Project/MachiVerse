@@ -35,6 +35,7 @@ public sealed partial class SqlitePersistenceStore
         ValidateSnapshotRelativeDirectory(snapshot.RelativeDirectory);
         ValidateHistoryMaterial(history, "snapshot.committed.v1");
 
+        Qa04PersistenceCrashInjectionV1.Hit("snapshot-commit", "before-db-begin");
         using var transaction = _connection.BeginTransaction();
         try
         {
@@ -84,8 +85,12 @@ INSERT INTO snapshot_catalog (
                 await catalog.ExecuteNonQueryAsync(cancellationToken);
             }
 
+            Qa04PersistenceCrashInjectionV1.Hit("snapshot-commit", "mid-write");
             await UpdateHistoryAnchorAsync(history, transaction, cancellationToken);
+            Qa04PersistenceCrashInjectionV1.Hit("snapshot-commit", "before-fsync-or-commit");
             transaction.Commit();
+            Qa04PersistenceCrashInjectionV1.Hit("snapshot-commit", "immediately-after-commit");
+            Qa04PersistenceCrashInjectionV1.Hit("snapshot-commit", "before-response-or-publication");
             return new DurableSnapshotCommitResult(snapshot.SnapshotId, snapshot.SnapshotStep, history.Sequence);
         }
         catch
