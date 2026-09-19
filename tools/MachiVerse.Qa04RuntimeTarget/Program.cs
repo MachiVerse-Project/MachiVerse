@@ -1464,7 +1464,6 @@ internal static class Program
         public string SchemaVersion { get; set; } = "";
         public string ProfileId { get; set; } = "";
         public int WorkerCount { get; set; }
-        public ProductionCpuParallelism? CpuParallelism { get; set; }
         public int TransitionCount { get; set; }
         public ulong BasisStep { get; set; }
         public ulong FinalizedStep { get; set; }
@@ -1485,6 +1484,7 @@ internal static class Program
         public string SchemaVersion { get; set; } = "";
         public string ProfileId { get; set; } = "";
         public int WorkerCount { get; set; }
+        public ProductionCpuParallelism? CpuParallelism { get; set; }
         public int TransitionCount { get; set; }
         public ulong TerminalOperationCount { get; set; }
         public ulong FinalizedStep { get; set; }
