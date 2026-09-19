@@ -64,6 +64,15 @@ public static class Qa04ProcessTargetV1
                     request.WorkerCount,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "persistence-crash-case-run" => await RunPersistenceCrashCaseAsync(
+                    request.CrashStage,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
+                "persistence-crash-case-verify" => await Qa04PersistenceCrashCaseV1.VerifyAsync(
+                    request.CrashStage,
+                    request.PersistenceRoot,
+                    request.ExpectedDurable,
+                    cancellationToken).ConfigureAwait(false),
                 "production-step2-determinism-run" => await Qa04ProductionStep2DeterminismRunV1.RunAsync(
                     request.WorkerCount,
                     request.TransitionCount,
@@ -82,6 +91,20 @@ public static class Qa04ProcessTargetV1
             await Console.Error.WriteLineAsync($"QA-04 process target FAILED: {ex.Message}").ConfigureAwait(false);
             return 1;
         }
+    }
+
+    private static async Task<object> RunPersistenceCrashCaseAsync(
+        string stage,
+        string persistenceRoot,
+        CancellationToken cancellationToken)
+    {
+        await Qa04PersistenceCrashCaseV1.RunAsync(stage, persistenceRoot, cancellationToken).ConfigureAwait(false);
+        return new
+        {
+            schemaVersion = "1.0",
+            stage,
+            completedWithoutCrash = true,
+        };
     }
 
     private static Qa04ProcessInspectionV1 Inspect()
@@ -320,6 +343,8 @@ public sealed class Qa04ProcessRequestV1
     public int PersistenceInsertBatchSize { get; set; }
     public int ProgressIntervalTransitions { get; set; }
     public string PersistenceRoot { get; set; } = "";
+    public string CrashStage { get; set; } = "";
+    public bool ExpectedDurable { get; set; }
 }
 
 public sealed class Qa04ProcessInspectionV1
