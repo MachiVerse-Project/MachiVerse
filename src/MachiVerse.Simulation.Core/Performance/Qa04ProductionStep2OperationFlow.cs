@@ -34,6 +34,7 @@ public sealed record Qa04ProductionStep2AuthoritativeStepExecutionV1(
     OpaqueId128 CandidateId,
     int OperationCount,
     DeterministicCpuBatchObservationV1 OperationBindingParallelism,
+    DeterministicCpuBatchObservationV1 TypedMutationParallelism,
     Qa04CanonicalOperationMutationStateV1 MutationState,
     IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> DomainAuthorities,
     Qa04OperationClosedPrefixV1 ClosedPrefix,
@@ -332,14 +333,24 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         EmitPhase(injectionStep, workerCount, "domain-execution", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
-        var mutation = Qa04CanonicalOperationMutationBatchV1.Apply(
+        var mutation = await Qa04CanonicalOperationMutationBatchV1.ApplyParallelAsync(
             Qa04ReferenceLoadV1.WorldId,
             basisStep,
             bindings,
             mutationState,
-            references);
+            references,
+            workerCount,
+            cancellationToken).ConfigureAwait(false);
         if (mutation.AppliedOperationIds.Count != bindings.Length || mutation.Changes.Count != bindings.Length)
             throw new InvalidDataException("qa04.step2.production-loop.typed-mutation-coverage-drift");
+        var mutationParallelism = mutation.CpuParallelism
+            ?? throw new InvalidDataException("qa04.step2.production-loop.typed-mutation-parallelism-missing");
+        var expectedMutationWorkers = Math.Min(workerCount, 6);
+        if (mutationParallelism.RequestedWorkerCount != workerCount ||
+            mutationParallelism.EffectiveWorkerCount != expectedMutationWorkers ||
+            mutationParallelism.MaxObservedConcurrency < 1 ||
+            mutationParallelism.MaxObservedConcurrency > expectedMutationWorkers)
+            throw new InvalidDataException("qa04.step2.production-loop.typed-mutation-worker-budget-drift");
         EmitPhase(injectionStep, workerCount, "typed-mutation", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
@@ -402,6 +413,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             candidateIdentity.CandidateId,
             bindings.Length,
             bindingParallelism,
+            mutationParallelism,
             mutation.State,
             Array.AsReadOnly(resultingAuthorities.CanonicalAuthorities.ToArray()),
             nextPrefix,
