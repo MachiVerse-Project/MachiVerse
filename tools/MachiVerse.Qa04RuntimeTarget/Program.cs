@@ -958,6 +958,22 @@ internal static class Program
             throw new InvalidDataException("perf.publication.v1 profile drift.");
     }
 
+    private static void ValidateSoakProfile(JsonElement profile)
+    {
+        if (profile.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("performance.soak.24h profile must be an object.");
+        if (profile.GetProperty("durationHours").GetInt32() != 24 ||
+            profile.GetProperty("gatewayReconnectFailoverIntervalMinutes").GetInt32() != 30 ||
+            !profile.GetProperty("periodicSnapshotRecoveryCheckpoints").GetBoolean() ||
+            !profile.GetProperty("viewChurnAndSlowConsumerLoad").GetBoolean() ||
+            !profile.GetProperty("parallelVerifierDigestRequired").GetBoolean() ||
+            profile.GetProperty("maxPostWarmupMemoryGrowthPercent").GetDouble() != 10.0 ||
+            !profile.GetProperty("noAcceptedOperationLoss").GetBoolean() ||
+            !profile.GetProperty("historyAuditChainValid").GetBoolean() ||
+            !profile.GetProperty("noUnrecoverableQueueDeadlock").GetBoolean())
+            throw new InvalidDataException("performance.soak.24h profile drift.");
+    }
+
     private static void ValidateCrashVerification(
         PersistenceCrashVerification verification,
         string stage,
@@ -1146,6 +1162,40 @@ internal static class Program
     }
 
     private static string Limit(string value, int max) => value.Length <= max ? value : value[..max] + "...";
+
+    private sealed class SoakCoreTarget
+    {
+        public string SchemaVersion { get; set; } = "";
+        public string TestCaseId { get; set; } = "";
+        public bool ReleaseMode { get; set; }
+        public long DurationSeconds { get; set; }
+        public int CanonicalCycleCount { get; set; }
+        public int SnapshotRecoveryCheckpointCount { get; set; }
+        public int ParallelVerifierCheckpointCount { get; set; }
+        public bool ParallelVerifierDigestMatched { get; set; }
+        public double MaxPostWarmupMemoryGrowthPercent { get; set; }
+        public int AcceptedOperationLoss { get; set; }
+        public bool HiddenSolverIterationReduction { get; set; }
+        public bool HistoryChainValid { get; set; }
+        public bool NoUnrecoverableQueueDeadlock { get; set; }
+        public string FinalStateDigest { get; set; } = "";
+        public bool Passed { get; set; }
+        public string[] FailureCodes { get; set; } = [];
+    }
+
+    private sealed class GatewaySoakCycle
+    {
+        public string SchemaVersion { get; set; } = "";
+        public ulong CycleOrdinal { get; set; }
+        public bool FailoverConverged { get; set; }
+        public bool ReconnectResyncConverged { get; set; }
+        public bool ViewChurnAndSlowConsumerLoadApplied { get; set; }
+        public bool AuditChainValid { get; set; }
+        public ulong ResultingMasterGeneration { get; set; }
+        public int AuditRecordCount { get; set; }
+        public bool Passed { get; set; }
+        public string[] FailureCodes { get; set; } = [];
+    }
 
     private sealed class PersistenceVolumeStress
     {
