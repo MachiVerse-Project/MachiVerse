@@ -35,6 +35,7 @@ public sealed record Qa04ProductionStep2AuthoritativeStepExecutionV1(
     int OperationCount,
     DeterministicCpuBatchObservationV1 OperationBindingParallelism,
     DeterministicCpuBatchObservationV1 TypedMutationParallelism,
+    DeterministicCpuBatchObservationV1 PreparationParallelism,
     Qa04CanonicalOperationMutationStateV1 MutationState,
     IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> DomainAuthorities,
     Qa04OperationClosedPrefixV1 ClosedPrefix,
@@ -354,7 +355,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         EmitPhase(injectionStep, workerCount, "typed-mutation", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
-        var preparation = Qa04ProductionAuthoritativeStepPreparationV1.Prepare(
+        var preparation = await Qa04ProductionAuthoritativeStepPreparationV1.PrepareParallelAsync(
             candidateIdentity.CandidateId,
             basisState,
             frozen,
@@ -362,7 +363,17 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             mutation,
             references,
             runtimeOutputs,
-            digestCache);
+            workerCount,
+            digestCache,
+            cancellationToken).ConfigureAwait(false);
+        var preparationParallelism = preparation.PartitionBatch?.CpuParallelism
+            ?? throw new InvalidDataException("qa04.step2.production-loop.preparation-parallelism-missing");
+        var expectedPreparationWorkers = Math.Min(workerCount, 6);
+        if (preparationParallelism.RequestedWorkerCount != workerCount ||
+            preparationParallelism.EffectiveWorkerCount != expectedPreparationWorkers ||
+            preparationParallelism.MaxObservedConcurrency < 1 ||
+            preparationParallelism.MaxObservedConcurrency > expectedPreparationWorkers)
+            throw new InvalidDataException("qa04.step2.production-loop.preparation-worker-budget-drift");
         var terminals = bindings.Select(static binding => new TerminalOperationCommit(
             binding.SourceDescriptor.OperationId,
             (int)CoreOperationResultStatusV1.Success,
@@ -414,6 +425,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             bindings.Length,
             bindingParallelism,
             mutationParallelism,
+            preparationParallelism,
             mutation.State,
             Array.AsReadOnly(resultingAuthorities.CanonicalAuthorities.ToArray()),
             nextPrefix,
