@@ -1,0 +1,118 @@
+name: INT-03 Gate4 Step3 local release benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character release-candidate commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-gate4-local-release-evidence
+  cancel-in-progress: false
+
+jobs:
+  gate4-step3:
+    name: Gate4 Step3 canonical benchmark
+    runs-on: [self-hosted, machiverse-release-evidence]
+    timeout-minutes: 4320
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+    steps:
+      - name: Validate candidate input
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:CANDIDATE_SHA -notmatch '^[0-9a-f]{40}$') {
+            throw "candidate_sha must be exactly 40 lowercase hexadecimal characters."
+          }
+
+      - name: Ensure dedicated runner is idle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $busy = @(Get-Process | Where-Object { $_.ProcessName -like 'MachiVerse*' })
+          if ($busy.Count -ne 0) {
+            $busy | Select-Object ProcessName, Id | Format-Table | Out-String | Write-Host
+            throw "Another MachiVerse process is already running on the dedicated release-evidence host."
+          }
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 1
+          clean: true
+
+      - name: Verify checked-out candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $env:CANDIDATE_SHA) {
+            throw "Checked-out commit $actual does not match requested candidate $env:CANDIDATE_SHA."
+          }
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Record runner environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $output = Join-Path $env:RUNNER_TEMP "gate4-step3"
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          $record = [ordered]@{
+            schemaVersion = "1.0"
+            sourceCommit = $env:CANDIDATE_SHA
+            runnerName = $env:RUNNER_NAME
+            osDescription = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+            osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+            processorCount = [Environment]::ProcessorCount
+            dotnetSdk = (dotnet --version).Trim()
+          }
+          $record | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $output "runner-environment.json")
+          "QA04_STEP3_OUTPUT=$output" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build exact candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $coreOut = Join-Path $env:RUNNER_TEMP "qa04-core"
+          $adapterOut = Join-Path $env:RUNNER_TEMP "qa04-adapter"
+          $plan = Join-Path $env:RUNNER_TEMP "qa04-plan"
+          dotnet publish src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --output $coreOut
+          dotnet publish tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release --output $adapterOut
+          dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
+          dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release -- materialize $plan
+
+          $suffix = if ($IsWindows) { ".exe" } else { "" }
+          $core = Join-Path $coreOut ("MachiVerse.Simulation.Core" + $suffix)
+          $adapter = Join-Path $adapterOut ("MachiVerse.Qa04RuntimeTarget" + $suffix)
+          if (-not (Test-Path $core)) { throw "Simulation Core executable not found: $core" }
+          if (-not (Test-Path $adapter)) { throw "QA-04 runtime adapter not found: $adapter" }
+
+          "MACHIVERSE_QA04_CORE_EXECUTABLE=$core" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QA04_RUNTIME_ADAPTER=$adapter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QA04_PLAN=$plan" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run canonical Step3 release benchmark
+        shell: pwsh
+        run: dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- run-step3 release $env:CANDIDATE_SHA $env:QA04_RUNTIME_ADAPTER $env:QA04_PLAN $env:QA04_STEP3_OUTPUT
+
+      - name: Upload Step3 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gate4-step3-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/gate4-step3
+          if-no-files-found: error
