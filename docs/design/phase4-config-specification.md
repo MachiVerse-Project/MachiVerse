@@ -127,10 +127,12 @@ Cross constraints:
 
 | key | type | default | range | impact | mutability |
 |---|---|---:|---:|---|---|
-| `runtime.worker-count` | uint8 | 4 | 1..16 | OPERATIONAL | RUNTIME_SAFE |
+| `runtime.worker-count` | uint16 | 4 | 1..4096 | OPERATIONAL | RUNTIME_SAFE |
 | `runtime.domain-timeout-ms` | uint32 | 30000 | 100..300000 | OPERATIONAL | RUNTIME_SAFE |
 
 `runtime.worker-count`を変えてもStateDiagnosticが変化してはならない。
+
+`runtime.worker-count`はCPU実行予算であり、Domain数や16という固定値を実装上の並列度上限にしてはならない。Coreは少なくとも1/4/8/16 workerを標準受入profileとして扱い、同一実装で16を超えるworker budgetも受理できなければならない。実行時の同時CPU work数はwork item数・dependency・host schedulerによってrequested値未満になり得るが、Coreがrequested値を16へsilent clampしてはならない。requested worker countがhost logical processor countを超える場合はoperational oversubscriptionとして許可し、必要ならwarningを出せるが、world semanticsを変更しない。
 
 `domain-timeout-ms`はoperational failure detectionでありsimulation deadlineではない。
 
