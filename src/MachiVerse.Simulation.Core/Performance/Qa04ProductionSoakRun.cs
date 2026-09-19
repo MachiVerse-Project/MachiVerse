@@ -141,14 +141,11 @@ public static class Qa04ProductionSoakRunV1
 
                 if (!run.SnapshotDrainCompleted ||
                     run.SnapshotSectionCount != 103 ||
-                    !string.Equals(run.SnapshotRecoveredStateDigest, run.DeterminismEvidence.FinalStateDigest, StringComparison.Ordinal)
-                        && run.SnapshotStep == run.FinalizedStep)
-                {
-                    // The standard run snapshot is frozen at Step 18,000 while the final state is Step 27,001.
-                    // Snapshot recovery validity is proven by the production runner itself; this branch only guards shape.
-                    if (!run.SnapshotDrainCompleted || run.SnapshotSectionCount != 103)
-                        failures.Add("snapshot-recovery-checkpoint");
-                }
+                    run.SnapshotChunkCount <= 0 ||
+                    run.SnapshotRecoveredStateDigest.Length != 64 ||
+                    run.SnapshotDigest.Length != 64 ||
+                    run.SnapshotPhysicalManifestDigest.Length != 64)
+                    failures.Add("snapshot-recovery-checkpoint");
                 snapshotCheckpointCount++;
 
                 acceptedOperationLoss = checked(acceptedOperationLoss + run.AcceptedOperationLoss);
@@ -265,8 +262,8 @@ public static class Qa04ProductionSoakRunV1
         var started = Stopwatch.StartNew();
         var probe = await Qa04ProductionReferenceConnectionProbeV1.RunAsync(
             workerCount: 1,
-            probeRoot,
-            cancellationToken).ConfigureAwait(false);
+            persistenceRoot: probeRoot,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         var remaining = TimeSpan.FromSeconds(requestedDurationSeconds) - started.Elapsed;
         if (remaining > TimeSpan.Zero)
             await Task.Delay(remaining, cancellationToken).ConfigureAwait(false);
