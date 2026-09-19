@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
@@ -65,12 +66,15 @@ public static class Qa04ProductionReferenceRunV1
         int workerCount,
         string persistenceRoot,
         CancellationToken cancellationToken = default,
-        IQa04ProductionRunObserverV1? observer = null)
+        IQa04ProductionRunObserverV1? observer = null,
+        int progressHeartbeatSeconds = 60)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.production-run.worker-count-not-canonical");
         if (string.IsNullOrWhiteSpace(persistenceRoot))
             throw new ArgumentException("persistenceRoot is required.", nameof(persistenceRoot));
+        if (progressHeartbeatSeconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(progressHeartbeatSeconds));
 
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04MeasurementPhaseContractV1.ValidateCanonicalContract();
@@ -153,6 +157,45 @@ public static class Qa04ProductionReferenceRunV1
         var mutationMaxObservedCpuParallelism = 0;
         var preparationEffectiveWorkerCount = 0;
         var preparationMaxObservedCpuParallelism = 0;
+
+        var progressElapsed = Stopwatch.StartNew();
+        long completedTransitionsForProgress = 0;
+        long terminalOperationsForProgress = 0;
+        string progressPhase = "actual-run";
+        using var progressHeartbeatCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        async Task EmitProgressHeartbeatAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(progressHeartbeatSeconds),
+                        progressHeartbeatCancellation.Token).ConfigureAwait(false);
+                    var elapsedSeconds = progressElapsed.Elapsed.TotalSeconds;
+                    var transitions = Volatile.Read(ref completedTransitionsForProgress);
+                    var terminalOperations = Volatile.Read(ref terminalOperationsForProgress);
+                    var phase = Volatile.Read(ref progressPhase) ?? "unknown";
+                    var operationRate = elapsedSeconds > 0
+                        ? terminalOperations / elapsedSeconds
+                        : 0d;
+                    Console.Error.WriteLine(
+                        $"QA04_PROGRESS phase={phase} workers={workerCount} " +
+                        $"transitions={transitions}/{CanonicalTransitionCount} " +
+                        $"terminal_operations={terminalOperations} elapsed_seconds={elapsedSeconds:F1} " +
+                        $"ops_per_second={operationRate:F1}");
+                }
+            }
+            catch (OperationCanceledException) when (progressHeartbeatCancellation.IsCancellationRequested)
+            {
+            }
+        }
+
+        var progressHeartbeatTask = EmitProgressHeartbeatAsync();
+        Console.Error.WriteLine(
+            $"QA04_PROGRESS phase=actual-run-start workers={workerCount} " +
+            $"transitions=0/{CanonicalTransitionCount} terminal_operations=0 elapsed_seconds=0");
 
         try
         {
@@ -292,6 +335,12 @@ public static class Qa04ProductionReferenceRunV1
                 currentDetailDirectory = resultingDetailDirectory;
                 detailDecisionCount++;
 
+                Volatile.Write(ref completedTransitionsForProgress, checked((long)injectionStep + 1L));
+                Volatile.Write(
+                    ref terminalOperationsForProgress,
+                    checked((long)determinismEvidence.TerminalOperationCount));
+                Volatile.Write(ref progressPhase, "actual-run");
+
                 if (observer is not null && resultingStep % 300UL == 0)
                     await observer.ObserveFinalizedStateAsync(currentState, cancellationToken).ConfigureAwait(false);
 
@@ -348,6 +397,7 @@ public static class Qa04ProductionReferenceRunV1
                 frozenDomainAuthorities?.CanonicalAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
                 throw new InvalidDataException("qa04.production-run.snapshot-freeze-incomplete");
 
+            Volatile.Write(ref progressPhase, "snapshot-recovery");
             var snapshot = await DrainCommitAndRecoverSnapshotAsync(
                 snapshotCoordinator,
                 frozenSnapshot,
@@ -362,6 +412,7 @@ public static class Qa04ProductionReferenceRunV1
                     frozenSnapshot.FrozenState.Diagnostic.StateDigest))
                 throw new InvalidDataException("qa04.production-run.snapshot-semantic-rehash-drift");
 
+            Volatile.Write(ref progressPhase, "final-verification");
             var measurementSnapshot = measurement.Snapshot();
             var performance = Qa04PerformanceThresholdsV1.EvaluateCompleteMeasurement(
                 measurementSnapshot,
@@ -481,6 +532,12 @@ public static class Qa04ProductionReferenceRunV1
             if (observer is not null)
                 await observer.CompleteAsync(cancellationToken).ConfigureAwait(false);
 
+            Console.Error.WriteLine(
+                $"QA04_PROGRESS phase=run-complete workers={workerCount} " +
+                $"transitions={CanonicalTransitionCount}/{CanonicalTransitionCount} " +
+                $"terminal_operations={determinismEvidence.TerminalOperationCount} " +
+                $"elapsed_seconds={progressElapsed.Elapsed.TotalSeconds:F1}");
+
             return new Qa04ProductionReferenceRunResultV1(
                 SchemaVersion: "1.0",
                 ProfileId: Qa04ReferenceLoadV1.BenchmarkProfileId,
@@ -513,6 +570,15 @@ public static class Qa04ProductionReferenceRunV1
         }
         finally
         {
+            progressHeartbeatCancellation.Cancel();
+            try
+            {
+                await progressHeartbeatTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (progressHeartbeatCancellation.IsCancellationRequested)
+            {
+            }
+
             if (frozenSnapshot is not null && !snapshotCommitted)
                 snapshotCoordinator.Abandon(frozenSnapshot);
         }
