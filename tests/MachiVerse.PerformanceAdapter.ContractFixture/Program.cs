@@ -60,26 +60,26 @@ internal static class Program
             step_mean_60s_ms = 25.0,
             domain_cpu_summary = new
             {
-                measured = true,
+                measured = false,
                 configured_worker_count = run.WorkerCount,
-                effective_worker_count = run.WorkerCount,
-                max_observed_concurrency = run.WorkerCount,
-                worker_budget_applied = true,
-                parallel_execution_observed = true,
+                effective_worker_count = 0,
+                max_observed_concurrency = 0,
+                worker_budget_applied = false,
+                parallel_execution_observed = false,
                 operation_binding = new
                 {
-                    effective_worker_count = run.WorkerCount,
-                    max_observed_concurrency = run.WorkerCount,
+                    effective_worker_count = 0,
+                    max_observed_concurrency = 0,
                 },
                 typed_mutation = new
                 {
-                    effective_worker_count = Math.Min(run.WorkerCount, 6),
-                    max_observed_concurrency = Math.Min(run.WorkerCount, 6),
+                    effective_worker_count = 0,
+                    max_observed_concurrency = 0,
                 },
                 preparation = new
                 {
-                    effective_worker_count = Math.Min(run.WorkerCount, 6),
-                    max_observed_concurrency = Math.Min(run.WorkerCount, 6),
+                    effective_worker_count = 0,
+                    max_observed_concurrency = 0,
                 },
             },
             max_memory_bytes = 20L * 1024L * 1024L * 1024L,
