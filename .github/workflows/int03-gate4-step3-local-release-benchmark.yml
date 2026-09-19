@@ -53,20 +53,66 @@ jobs:
             throw "Another MachiVerse process is already running on the dedicated release-evidence host."
           }
 
-      - name: Checkout exact candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.candidate_sha }}
-          fetch-depth: 1
-          clean: true
+      - name: Materialize exact candidate without Git
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
 
-      - name: Verify checked-out candidate
+          $headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:GH_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "MachiVerse-Gate4-Release-Evidence"
+          }
+
+          $commit = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/MachiVerse-Project/MachiVerse/commits/$env:CANDIDATE_SHA"
+          if ($commit.sha -ne $env:CANDIDATE_SHA) {
+            throw "GitHub resolved candidate '$($commit.sha)' but '$env:CANDIDATE_SHA' was requested."
+          }
+
+          $workspace = $env:GITHUB_WORKSPACE
+          if ([string]::IsNullOrWhiteSpace($workspace)) {
+            throw "GITHUB_WORKSPACE is not available."
+          }
+
+          Get-ChildItem -LiteralPath $workspace -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+
+          $archive = Join-Path $env:RUNNER_TEMP ("machiverse-" + $env:CANDIDATE_SHA + ".zip")
+          $extract = Join-Path $env:RUNNER_TEMP ("machiverse-source-" + $env:CANDIDATE_SHA)
+          Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+
+          Invoke-WebRequest -Headers $headers -Uri "https://api.github.com/repos/MachiVerse-Project/MachiVerse/zipball/$env:CANDIDATE_SHA" -OutFile $archive
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $extract)
+
+          $roots = @(Get-ChildItem -LiteralPath $extract -Directory -Force)
+          if ($roots.Count -ne 1) {
+            throw "Expected exactly one source root in candidate archive, found $($roots.Count)."
+          }
+
+          Get-ChildItem -LiteralPath $roots[0].FullName -Force | Copy-Item -Destination $workspace -Recurse -Force
+          Set-Content -LiteralPath (Join-Path $workspace ".machiverse-source-commit") -Value $env:CANDIDATE_SHA -Encoding ascii
+
+          if (-not (Test-Path (Join-Path $workspace "MachiVerse.slnx"))) {
+            throw "Candidate source materialization did not produce the repository root."
+          }
+
+      - name: Verify materialized candidate
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $actual = (git rev-parse HEAD).Trim()
+          $marker = Join-Path $env:GITHUB_WORKSPACE ".machiverse-source-commit"
+          if (-not (Test-Path $marker)) {
+            throw "Candidate source marker is missing."
+          }
+          $actual = (Get-Content -LiteralPath $marker -Raw).Trim()
           if ($actual -ne $env:CANDIDATE_SHA) {
-            throw "Checked-out commit $actual does not match requested candidate $env:CANDIDATE_SHA."
+            throw "Materialized candidate $actual does not match requested candidate $env:CANDIDATE_SHA."
           }
 
       - name: Setup .NET SDK
