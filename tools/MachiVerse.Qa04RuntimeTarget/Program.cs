@@ -725,6 +725,162 @@ internal static class Program
             ?? throw new InvalidDataException("Simulation Core QA-04 target response decoded to null.");
     }
 
+    private static void ValidatePersistenceProfile(JsonElement profile)
+    {
+        if (profile.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("perf.persistence.v1 profile must be an object.");
+        if (profile.GetProperty("compressedSnapshotGiB").GetInt32() != 16 ||
+            profile.GetProperty("historyTailMinutes").GetInt32() != 10 ||
+            !profile.GetProperty("noDurableFactLoss").GetBoolean() ||
+            !profile.GetProperty("noUncommittedCandidatePublication").GetBoolean())
+            throw new InvalidDataException("perf.persistence.v1 scalar profile drift.");
+
+        var stages = profile.GetProperty("crashInjectionStages").EnumerateArray()
+            .Select(static x => x.GetString() ?? "")
+            .OrderBy(static x => x, StringComparer.Ordinal)
+            .ToArray();
+        var points = profile.GetProperty("crashInjectionPoints").EnumerateArray()
+            .Select(static x => x.GetString() ?? "")
+            .OrderBy(static x => x, StringComparer.Ordinal)
+            .ToArray();
+        if (!stages.SequenceEqual(PersistenceCrashStages, StringComparer.Ordinal) ||
+            !points.SequenceEqual(PersistenceCrashPoints, StringComparer.Ordinal))
+            throw new InvalidDataException("perf.persistence.v1 crash matrix drift.");
+    }
+
+    private static void ValidatePublicationProfile(JsonElement profile)
+    {
+        if (profile.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("perf.publication.v1 profile must be an object.");
+        if (profile.GetProperty("gatewayCount").GetInt32() != 1 ||
+            profile.GetProperty("viewSubscribers").GetInt32() != 100 ||
+            profile.GetProperty("slowConsumers").GetInt32() != 10 ||
+            !profile.GetProperty("slowConsumersMustNotBlockCustodyOrResult").GetBoolean() ||
+            !profile.GetProperty("continuityAfterCoalesceResyncRequired").GetBoolean())
+            throw new InvalidDataException("perf.publication.v1 profile drift.");
+    }
+
+    private static void ValidateCrashVerification(
+        PersistenceCrashVerification verification,
+        string stage,
+        bool expectedDurable)
+    {
+        if (!string.Equals(verification.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+            !string.Equals(verification.Stage, stage, StringComparison.Ordinal) ||
+            verification.ExpectedDurable != expectedDurable ||
+            verification.DurableFactPresent != expectedDurable ||
+            !verification.HistoryChainValid ||
+            !verification.NoHalfTransition)
+            throw new InvalidDataException($"QA-04 persistence crash verification failed for {stage}.");
+    }
+
+    private static Task<T> InvokeGatewayAsync<T>(string gatewayExecutable, object request)
+        => InvokeTargetAsync<T>(
+            gatewayExecutable,
+            request,
+            TimeSpan.FromSeconds(30),
+            "Gateway");
+
+    private static async Task<T> InvokeTargetAsync<T>(
+        string executable,
+        object request,
+        TimeSpan? timeout,
+        string componentName)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("qa04-target");
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start())
+            throw new InvalidOperationException($"Failed to start assembled {componentName} QA-04 target process.");
+        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, Json));
+        process.StandardInput.Close();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            if (timeout is { } bounded)
+            {
+                using var timeoutSource = new CancellationTokenSource(bounded);
+                await process.WaitForExitAsync(timeoutSource.Token);
+            }
+            else
+            {
+                await process.WaitForExitAsync();
+            }
+        }
+        catch
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            throw;
+        }
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+            throw new InvalidDataException($"{componentName} QA-04 target exited {process.ExitCode}: {Limit(stderr, 2000)}");
+        var lines = stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length != 1)
+            throw new InvalidDataException($"{componentName} QA-04 target must emit exactly one JSON line; found {lines.Length}.");
+        return JsonSerializer.Deserialize<T>(lines[0], Json)
+            ?? throw new InvalidDataException($"{componentName} QA-04 target response decoded to null.");
+    }
+
+    private static async Task InvokeCrashTargetAsync(
+        string executable,
+        object request,
+        string stage,
+        string point)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("qa04-target");
+        startInfo.Environment["MACHIVERSE_QA04_PERSISTENCE_CRASH_ARMED"] = "1";
+        startInfo.Environment["MACHIVERSE_QA04_PERSISTENCE_CRASH_STAGE"] = stage;
+        startInfo.Environment["MACHIVERSE_QA04_PERSISTENCE_CRASH_POINT"] = point;
+
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start())
+            throw new InvalidOperationException($"Failed to start QA-04 crash case {stage}/{point}.");
+        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, Json));
+        process.StandardInput.Close();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            using var timeoutSource = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            await process.WaitForExitAsync(timeoutSource.Token);
+        }
+        catch
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            throw;
+        }
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        if (process.ExitCode == 0)
+            throw new InvalidDataException($"QA-04 crash case {stage}/{point} completed without the required process crash.");
+        if (!string.IsNullOrWhiteSpace(stdout))
+            throw new InvalidDataException($"QA-04 crash case {stage}/{point} exposed a response before crash: {Limit(stdout, 1000)}");
+        if (string.IsNullOrWhiteSpace(stderr))
+            throw new InvalidDataException($"QA-04 crash case {stage}/{point} produced no crash diagnostic.");
+    }
+
     private static Response NewResponse(
         Request request,
         string responseKind,
