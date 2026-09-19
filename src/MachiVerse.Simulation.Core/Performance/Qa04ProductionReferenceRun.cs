@@ -49,7 +49,8 @@ public static class Qa04ProductionReferenceRunV1
     public static async Task<Qa04ProductionReferenceRunResultV1> RunCanonicalAsync(
         int workerCount,
         string persistenceRoot,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IQa04ProductionRunObserverV1? observer = null)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.production-run.worker-count-not-canonical");
@@ -234,6 +235,9 @@ public static class Qa04ProductionReferenceRunV1
                 currentDetailDirectory = resultingDetailDirectory;
                 detailDecisionCount++;
 
+                if (observer is not null && resultingStep % 300UL == 0)
+                    await observer.ObserveFinalizedStateAsync(currentState, cancellationToken).ConfigureAwait(false);
+
                 if (pendingActiveSlots is not null)
                 {
                     currentActiveSlots = pendingActiveSlots;
@@ -372,6 +376,8 @@ public static class Qa04ProductionReferenceRunV1
                     writer.WriteBytes(candidate.CandidateId.ToBytes());
             });
             var completedDeterminismEvidence = determinismEvidence.Complete(currentState, currentClosedPrefix);
+            if (observer is not null)
+                await observer.CompleteAsync(cancellationToken).ConfigureAwait(false);
 
             return new Qa04ProductionReferenceRunResultV1(
                 SchemaVersion: "1.0",
