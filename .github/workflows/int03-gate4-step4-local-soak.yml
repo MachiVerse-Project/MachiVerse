@@ -107,8 +107,11 @@ jobs:
           Get-ChildItem -LiteralPath $roots[0].FullName -Force | Copy-Item -Destination $workspace -Recurse -Force
           Set-Content -LiteralPath (Join-Path $workspace ".machiverse-source-commit") -Value $env:CANDIDATE_SHA -Encoding ascii
 
-          if (-not (Test-Path (Join-Path $workspace "MachiVerse.slnx"))) {
-            throw "Candidate source materialization did not produce the repository root."
+          $requiredRootPaths = @("AGENTS.md", "global.json", "src", "tools")
+          foreach ($required in $requiredRootPaths) {
+            if (-not (Test-Path (Join-Path $workspace $required))) {
+              throw "Candidate source materialization is missing required root path: $required"
+            }
           }
 
       - name: Verify materialized candidate
