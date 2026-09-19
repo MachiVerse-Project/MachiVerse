@@ -949,6 +949,48 @@ internal static class Program
 
     private static string Limit(string value, int max) => value.Length <= max ? value : value[..max] + "...";
 
+    private sealed class PersistenceVolumeStress
+    {
+        public string SchemaVersion { get; set; } = "";
+        public int TargetStoredGiB { get; set; }
+        public long StoredBytes { get; set; }
+        public int ChunkCount { get; set; }
+        public int LogicalChunkBytes { get; set; }
+        public bool ZstdRoundTripValidated { get; set; }
+    }
+
+    private sealed class PersistenceCrashVerification
+    {
+        public string SchemaVersion { get; set; } = "";
+        public string Stage { get; set; } = "";
+        public bool ExpectedDurable { get; set; }
+        public bool DurableFactPresent { get; set; }
+        public bool HistoryChainValid { get; set; }
+        public bool NoHalfTransition { get; set; }
+    }
+
+    private sealed record PersistenceCrashCaseResult(
+        string Stage,
+        string InjectionPoint,
+        bool ExpectedDurable);
+
+    private sealed class PublicationStressTarget
+    {
+        public string SchemaVersion { get; set; } = "";
+        public string ProfileId { get; set; } = "";
+        public int GatewayCount { get; set; }
+        public int ViewSubscribers { get; set; }
+        public int SlowConsumers { get; set; }
+        public bool SlowConsumersDidNotBlockCustodyOrResult { get; set; }
+        public bool ContinuityAfterCoalesceResync { get; set; }
+        public int SlowConsumerResyncCount { get; set; }
+        public ulong TotalCoalescedPublicationCount { get; set; }
+        public int FinalPendingPublicationCount { get; set; }
+        public int FinalPendingResultCount { get; set; }
+        public bool Passed { get; set; }
+        public string[] FailureCodes { get; set; } = [];
+    }
+
     private sealed class Request
     {
         public string SchemaVersion { get; set; } = "";
