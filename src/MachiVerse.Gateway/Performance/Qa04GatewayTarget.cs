@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using System.Text.Json;
+using Google.Protobuf;
 using MachiVerse.Gateway.Audit;
 using MachiVerse.Gateway.Auth;
 using MachiVerse.Gateway.Authorization;
@@ -37,6 +39,10 @@ public static class Qa04GatewayTargetV1
                     request.ExpectedDurable,
                     cancellationToken).ConfigureAwait(false),
                 "publication-stress-run" => RunPublicationStress(),
+                "soak-operational-cycle-run" => await RunSoakOperationalCycleAsync(
+                    request.DataRoot,
+                    request.CycleOrdinal,
+                    cancellationToken).ConfigureAwait(false),
                 _ => throw new InvalidDataException($"qa04.gateway.command-unsupported:{request.Command}"),
             };
 
@@ -91,6 +97,94 @@ public static class Qa04GatewayTargetV1
             historyChainValid = true,
             noHalfTransition = true,
             recordCount = records.Count,
+        };
+    }
+
+    private static async Task<object> RunSoakOperationalCycleAsync(
+        string dataRoot,
+        ulong cycleOrdinal,
+        CancellationToken cancellationToken)
+    {
+        RequireRoot(dataRoot);
+        if (cycleOrdinal == 0)
+            throw new InvalidDataException("qa04.soak.gateway-cycle-ordinal-zero");
+
+        var localId = ByteString.CopyFrom(Id(0x51));
+        var remoteId = ByteString.CopyFrom(Id(0x52));
+        var authority = new MasterAuthorityTracker(localId);
+        var firstGeneration = checked(cycleOrdinal * 2UL - 1UL);
+        var secondGeneration = checked(firstGeneration + 1UL);
+        authority.Apply(new MasterGenerationStateV1
+        {
+            MasterGeneration = firstGeneration,
+            CurrentMasterGatewayId = localId,
+        });
+        if (!authority.IsLocalMaster)
+            throw new InvalidDataException("qa04.soak.gateway-initial-master-not-local");
+        authority.Apply(new MasterGenerationStateV1
+        {
+            MasterGeneration = secondGeneration,
+            CurrentMasterGatewayId = remoteId,
+        });
+        if (authority.IsLocalMaster ||
+            authority.Current?.MasterGeneration != secondGeneration ||
+            authority.Current.CurrentMasterGatewayId is null ||
+            !authority.Current.CurrentMasterGatewayId.AsSpan().SequenceEqual(remoteId.Span))
+            throw new InvalidDataException("qa04.soak.gateway-failover-did-not-converge");
+
+        var cache = new ConfirmedProjectionCache();
+        var resync = new ResyncCoordinator(cache);
+        var initial = FullPublication(
+            publicationMarker: 0x61,
+            continuityMarker: 0x62,
+            schemaMarker: 0x63);
+        _ = resync.ApplyOrEnterSuspect(initial.Publication, checked(cycleOrdinal * 2UL - 1UL), [initial.Chunk]);
+        if (resync.State != GatewaySyncState.Synced || !resync.AllowsWorldAffectingAdmission)
+            throw new InvalidDataException("qa04.soak.gateway-initial-sync-failed");
+
+        resync.MarkSuspect("component.core-disconnected");
+        if (resync.State != GatewaySyncState.Suspect || resync.AllowsWorldAffectingAdmission)
+            throw new InvalidDataException("qa04.soak.gateway-disconnect-did-not-gate-admission");
+        var request = resync.BeginResync(ByteString.CopyFrom(Id(0x64)), forceFull: true);
+        if ((int)request.Preference != 2 || request.HasClientBasisStep || request.HasClientContinuityToken)
+            throw new InvalidDataException("qa04.soak.gateway-full-resync-request-drift");
+
+        var recovered = FullPublication(
+            publicationMarker: 0x65,
+            continuityMarker: 0x66,
+            schemaMarker: 0x63);
+        _ = resync.ApplyOrEnterSuspect(recovered.Publication, checked(cycleOrdinal * 2UL), [recovered.Chunk]);
+        if (resync.State != GatewaySyncState.Synced || !resync.AllowsWorldAffectingAdmission)
+            throw new InvalidDataException("qa04.soak.gateway-resync-did-not-recover");
+
+        _ = RunPublicationStress();
+
+        var auditRoot = Path.Combine(Path.GetFullPath(dataRoot), "gateway-audit");
+        await using var audit = new GatewayAuditStoreV1(auditRoot, queryMaxPageSize: 5000);
+        await audit.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        _ = await audit.AppendAsync(
+            SoakAuditDraft("audit.gateway.master-role-changed", cycleOrdinal, secondGeneration),
+            cancellationToken).ConfigureAwait(false);
+        _ = await audit.AppendAsync(
+            SoakAuditDraft("audit.persistence.recovery-completed", cycleOrdinal, secondGeneration),
+            cancellationToken).ConfigureAwait(false);
+        await audit.ValidateChainAsync(cancellationToken).ConfigureAwait(false);
+        var records = await audit.QueryAsync(null, 5000, cancellationToken).ConfigureAwait(false);
+        if (records.Count != checked((int)cycleOrdinal * 2))
+            throw new InvalidDataException("qa04.soak.gateway-audit-cardinality-drift");
+
+        return new
+        {
+            schemaVersion = "1.0",
+            cycleOrdinal,
+            failoverConverged = true,
+            reconnectResyncConverged = true,
+            viewChurnAndSlowConsumerLoadApplied = true,
+            auditChainValid = true,
+            resultingMasterGeneration = secondGeneration,
+            auditRecordCount = records.Count,
+            passed = true,
+            failureCodes = Array.Empty<string>(),
         };
     }
 
@@ -207,6 +301,65 @@ public static class Qa04GatewayTargetV1
         };
     }
 
+    private static (StatePublicationV1 Publication, StatePublicationChunkV1 Chunk) FullPublication(
+        byte publicationMarker,
+        byte continuityMarker,
+        byte schemaMarker)
+    {
+        var publicationId = ByteString.CopyFrom(Id(publicationMarker));
+        var publication = new StatePublicationV1
+        {
+            PublicationId = publicationId,
+            Kind = (PublicationKindV1)1,
+            StateContinuityToken = ByteString.CopyFrom(Enumerable.Repeat(continuityMarker, 32).ToArray()),
+            ChunkCount = 1,
+            ProjectionSchemaDigest = ByteString.CopyFrom(Enumerable.Repeat(schemaMarker, 32).ToArray()),
+        };
+        var payload = new ProjectionChunkPayloadV1
+        {
+            SubscriptionId = ByteString.CopyFrom(Id(0x67)),
+            PublicationId = publicationId,
+            ChunkIndex = 0,
+        }.ToByteArray();
+        var chunk = new StatePublicationChunkV1
+        {
+            PublicationId = publicationId,
+            ChunkIndex = 0,
+            ChunkCount = 1,
+            Compression = (CompressionKindV1)1,
+            UncompressedPayloadDigest = ByteString.CopyFrom(SHA256.HashData(payload)),
+            Payload = ByteString.CopyFrom(payload),
+        };
+        return (publication, chunk);
+    }
+
+    private static AuditRecordDraftV1 SoakAuditDraft(
+        string kind,
+        ulong cycleOrdinal,
+        ulong masterGeneration)
+        => new(
+            AuditKind: kind,
+            ObservedAtUnixNs: checked((long)cycleOrdinal),
+            Component: "gateway",
+            ComponentInstanceId: Id(0x51),
+            ActorRef: null,
+            SessionRefDigest: null,
+            OperationId: null,
+            CorrelationId: null,
+            TargetRef: "gateway",
+            WorldId: null,
+            SimulationStep: null,
+            ConfigGeneration: null,
+            RequestDigest: null,
+            ResultStatus: "success",
+            ResultCode: "qa04.soak.operational-cycle",
+            ApprovalEvidenceDigest: null,
+            SummaryFields: new SortedDictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["cycle"] = cycleOrdinal.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["master-generation"] = masterGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            });
+
     private static AuditRecordDraftV1 AuditDraft()
         => new(
             AuditKind: "audit.persistence.recovery-completed",
@@ -293,5 +446,6 @@ public static class Qa04GatewayTargetV1
         public string Command { get; set; } = "";
         public string DataRoot { get; set; } = "";
         public bool ExpectedDurable { get; set; }
+        public ulong CycleOrdinal { get; set; }
     }
 }
