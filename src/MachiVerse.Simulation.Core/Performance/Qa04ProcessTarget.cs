@@ -63,7 +63,10 @@ public static class Qa04ProcessTargetV1
                 "production-reference-run" => await Qa04ProductionReferenceRunV1.RunCanonicalAsync(
                     request.WorkerCount,
                     request.PersistenceRoot,
-                    cancellationToken).ConfigureAwait(false),
+                    cancellationToken,
+                    progressHeartbeatSeconds: request.ProgressHeartbeatSeconds > 0
+                        ? request.ProgressHeartbeatSeconds
+                        : 60).ConfigureAwait(false),
                 "persistence-volume-stress-run" => await Qa04PersistenceVolumeStressV1.RunAsync(
                     request.PersistenceRoot,
                     request.TargetStoredGiB,
@@ -354,6 +357,7 @@ public sealed class Qa04ProcessRequestV1
     public int TransitionCount { get; set; }
     public int PersistenceInsertBatchSize { get; set; }
     public int ProgressIntervalTransitions { get; set; }
+    public int ProgressHeartbeatSeconds { get; set; }
     public string PersistenceRoot { get; set; } = "";
     public string CrashStage { get; set; } = "";
     public bool ExpectedDurable { get; set; }
