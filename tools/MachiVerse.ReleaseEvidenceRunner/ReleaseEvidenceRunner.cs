@@ -10,6 +10,7 @@ internal static partial class ReleaseEvidenceRunner
     private const string PublicationProfile = "perf.publication.v1";
     private const string SoakProfile = "performance.soak.24h";
     private const long MinimumSoakSeconds = 86_400;
+    private const string Step3HeartbeatEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_HEARTBEAT_SECONDS";
 
     private static readonly JsonSerializerOptions JsonLine = new()
     {
@@ -424,7 +425,42 @@ internal static partial class ReleaseEvidenceRunner
         process.StandardInput.Close();
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = PumpAdapterStderrAsync(process.StandardError);
-        await process.WaitForExitAsync();
+
+        using var heartbeatCancellation = new CancellationTokenSource();
+        var heartbeatSeconds = Step3HeartbeatSeconds();
+        async Task EmitStep3HeartbeatAsync()
+        {
+            if (!string.Equals(request.RequestKind, "benchmark-run", StringComparison.Ordinal))
+                return;
+
+            try
+            {
+                while (true)
+                {
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(heartbeatSeconds),
+                        heartbeatCancellation.Token).ConfigureAwait(false);
+                    Console.Error.WriteLine(
+                        $"GATE4_STEP3_HEARTBEAT request_id={request.RequestId} " +
+                        $"workers={request.Run?.WorkerCount ?? 0} run={request.Run?.RunOrdinal ?? 0} " +
+                        $"elapsed_seconds={stopwatch.Elapsed.TotalSeconds:F1}");
+                }
+            }
+            catch (OperationCanceledException) when (heartbeatCancellation.IsCancellationRequested)
+            {
+            }
+        }
+
+        var heartbeatTask = EmitStep3HeartbeatAsync();
+        try
+        {
+            await process.WaitForExitAsync();
+        }
+        finally
+        {
+            heartbeatCancellation.Cancel();
+        }
+        await heartbeatTask.ConfigureAwait(false);
         stopwatch.Stop();
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
@@ -840,6 +876,17 @@ internal static partial class ReleaseEvidenceRunner
     {
         if (actual.Length != expected.Length || !actual.ToHashSet(StringComparer.Ordinal).SetEquals(expected))
             throw new InvalidDataException($"{name} does not match the canonical set.");
+    }
+
+    private static int Step3HeartbeatSeconds()
+    {
+        var raw = Environment.GetEnvironmentVariable(Step3HeartbeatEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(raw))
+            return 60;
+        if (!int.TryParse(raw, out var seconds) || seconds <= 0)
+            throw new InvalidDataException(
+                $"{Step3HeartbeatEnvironmentVariable} must be a positive integer number of seconds.");
+        return seconds;
     }
 
     private static string Limit(string value, int max)
