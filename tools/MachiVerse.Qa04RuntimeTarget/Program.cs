@@ -183,6 +183,13 @@ internal static class Program
                 {
                     measured = false,
                     configured_worker_count = probe.WorkerCount,
+                    effective_worker_count = 0,
+                    max_observed_concurrency = 0,
+                    worker_budget_applied = false,
+                    parallel_execution_observed = false,
+                    operation_binding = new { effective_worker_count = 0, max_observed_concurrency = 0 },
+                    typed_mutation = new { effective_worker_count = 0, max_observed_concurrency = 0 },
+                    preparation = new { effective_worker_count = 0, max_observed_concurrency = 0 },
                     max_observed_probe_concurrency = probe.MaxObservedConcurrency,
                 },
                 max_memory_bytes = long.MaxValue,
