@@ -491,11 +491,31 @@ internal static partial class ReleaseEvidenceRunner
         var reportFailures = ReadStringArray(report, "failure_codes");
         var combinedFailures = response.FailureCodes.Concat(reportFailures).Distinct(StringComparer.Ordinal).ToArray();
         var snapshot = report.GetProperty("snapshot_summary");
+        var cpu = report.GetProperty("domain_cpu_summary");
+        foreach (var field in new[]
+        {
+            "measured", "configured_worker_count", "effective_worker_count", "max_observed_concurrency",
+            "worker_budget_applied", "parallel_execution_observed", "operation_binding", "typed_mutation", "preparation"
+        })
+            if (!cpu.TryGetProperty(field, out _))
+                throw new InvalidDataException($"Benchmark domain_cpu_summary missing required field: {field}.");
+
+        var expectedFamilyWorkers = Math.Min(run.WorkerCount, 6);
+        RequireCpuStage(cpu.GetProperty("operation_binding"), run.WorkerCount, run.WorkerCount, "operation_binding");
+        RequireCpuStage(cpu.GetProperty("typed_mutation"), run.WorkerCount, expectedFamilyWorkers, "typed_mutation");
+        RequireCpuStage(cpu.GetProperty("preparation"), run.WorkerCount, expectedFamilyWorkers, "preparation");
+
         return new BenchmarkRunObservation
         {
             RunId = run.RunId,
             WorkerCount = run.WorkerCount,
             RunOrdinal = run.RunOrdinal,
+            CpuParallelismMeasured = GetBool(cpu, "measured"),
+            ConfiguredWorkerCount = GetInt(cpu, "configured_worker_count"),
+            EffectiveWorkerCount = GetInt(cpu, "effective_worker_count"),
+            MaxObservedCpuConcurrency = GetInt(cpu, "max_observed_concurrency"),
+            WorkerBudgetApplied = GetBool(cpu, "worker_budget_applied"),
+            ParallelExecutionObserved = GetBool(cpu, "parallel_execution_observed"),
             StepP95Ms = GetDouble(report, "step_p95_ms"),
             StepP99Ms = GetDouble(report, "step_p99_ms"),
             Mean60sStepMs = GetDouble(report, "step_mean_60s_ms"),
@@ -525,6 +545,16 @@ internal static partial class ReleaseEvidenceRunner
         {
             if (!observation.TargetPassed) failures.Add("target-report-failed");
             foreach (var code in observation.TargetFailureCodes) failures.Add($"target:{code}");
+            if (!observation.CpuParallelismMeasured) failures.Add("cpu-parallelism-unmeasured");
+            if (observation.ConfiguredWorkerCount != observation.WorkerCount) failures.Add("cpu-worker-configured-mismatch");
+            if (observation.EffectiveWorkerCount != observation.WorkerCount) failures.Add("cpu-worker-effective-mismatch");
+            if (!observation.WorkerBudgetApplied) failures.Add("cpu-worker-budget-not-applied");
+            if (!observation.ParallelExecutionObserved) failures.Add("cpu-parallelism-not-observed");
+            if (observation.MaxObservedCpuConcurrency < 1 ||
+                observation.MaxObservedCpuConcurrency > observation.WorkerCount)
+                failures.Add("cpu-max-observed-invalid");
+            if (observation.WorkerCount > 1 && observation.MaxObservedCpuConcurrency <= 1)
+                failures.Add("cpu-parallelism-not-observed");
         }
 
         var criteria = manifest.GetProperty("passCriteria");
@@ -557,6 +587,25 @@ internal static partial class ReleaseEvidenceRunner
             Passed = failures.Count == 0,
             FailureCodes = failures.ToArray(),
         };
+    }
+
+    private static void RequireCpuStage(
+        JsonElement stage,
+        int configuredWorkerCount,
+        int expectedEffectiveWorkerCount,
+        string stageName)
+    {
+        var effective = GetInt(stage, "effective_worker_count");
+        var maxObserved = GetInt(stage, "max_observed_concurrency");
+        if (effective != expectedEffectiveWorkerCount)
+            throw new InvalidDataException(
+                $"Benchmark {stageName} effective worker count {effective} did not match expected {expectedEffectiveWorkerCount} for configured worker count {configuredWorkerCount}.");
+        if (maxObserved < 1 || maxObserved > expectedEffectiveWorkerCount)
+            throw new InvalidDataException(
+                $"Benchmark {stageName} max observed concurrency {maxObserved} is outside 1..{expectedEffectiveWorkerCount}.");
+        if (configuredWorkerCount > 1 && maxObserved <= 1)
+            throw new InvalidDataException(
+                $"Benchmark {stageName} did not observe concurrent execution for configured worker count {configuredWorkerCount}.");
     }
 
     private static PerformanceReportEvidence EvaluatePersistence(
