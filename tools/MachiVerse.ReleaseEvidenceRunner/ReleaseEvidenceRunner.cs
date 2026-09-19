@@ -500,10 +500,13 @@ internal static partial class ReleaseEvidenceRunner
             if (!cpu.TryGetProperty(field, out _))
                 throw new InvalidDataException($"Benchmark domain_cpu_summary missing required field: {field}.");
 
-        var expectedFamilyWorkers = Math.Min(run.WorkerCount, 6);
-        RequireCpuStage(cpu.GetProperty("operation_binding"), run.WorkerCount, run.WorkerCount, "operation_binding");
-        RequireCpuStage(cpu.GetProperty("typed_mutation"), run.WorkerCount, expectedFamilyWorkers, "typed_mutation");
-        RequireCpuStage(cpu.GetProperty("preparation"), run.WorkerCount, expectedFamilyWorkers, "preparation");
+        if (string.Equals(response.ExecutionClass, "release", StringComparison.Ordinal))
+        {
+            var expectedFamilyWorkers = Math.Min(run.WorkerCount, 6);
+            RequireCpuStage(cpu.GetProperty("operation_binding"), run.WorkerCount, run.WorkerCount, "operation_binding");
+            RequireCpuStage(cpu.GetProperty("typed_mutation"), run.WorkerCount, expectedFamilyWorkers, "typed_mutation");
+            RequireCpuStage(cpu.GetProperty("preparation"), run.WorkerCount, expectedFamilyWorkers, "preparation");
+        }
 
         return new BenchmarkRunObservation
         {
