@@ -57,9 +57,18 @@ internal static class Program
             Response response = request.RequestKind switch
             {
                 "benchmark-run" => await BenchmarkAsync(request, coreExecutable),
-                "persistence-stress" => await PersistenceAsync(request, coreExecutable, RequireGatewayExecutable()),
-                "publication-stress" => await PublicationAsync(request, coreExecutable, RequireGatewayExecutable()),
-                "soak-run" => await SoakAsync(request, coreExecutable, RequireGatewayExecutable()),
+                "persistence-stress" => await PersistenceAsync(
+                    request,
+                    coreExecutable,
+                    ReleaseGatewayExecutable(request)),
+                "publication-stress" => await PublicationAsync(
+                    request,
+                    coreExecutable,
+                    ReleaseGatewayExecutable(request)),
+                "soak-run" => await SoakAsync(
+                    request,
+                    coreExecutable,
+                    ReleaseGatewayExecutable(request)),
                 _ => throw new InvalidDataException($"Unknown requestKind: {request.RequestKind}"),
             };
             await Console.Out.WriteLineAsync(JsonSerializer.Serialize(response, Json));
@@ -71,6 +80,11 @@ internal static class Program
             return 1;
         }
     }
+
+    private static string? ReleaseGatewayExecutable(Request request)
+        => string.Equals(request.ExecutionClass, "release", StringComparison.Ordinal)
+            ? RequireGatewayExecutable()
+            : null;
 
     private static string RequireGatewayExecutable()
     {
@@ -448,10 +462,32 @@ internal static class Program
     private static async Task<Response> PersistenceAsync(
         Request request,
         string coreExecutable,
-        string gatewayExecutable)
+        string? gatewayExecutable)
     {
         RequireProfile(request, PersistenceProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
+        if (!string.Equals(request.ExecutionClass, "release", StringComparison.Ordinal))
+        {
+            var boundedFailures = MergeFailures(inspection.BlockingFailureCodes, "qa04.target.persistence-stress-release-only");
+            return NewResponse(
+                request,
+                "persistence-stress-report-v1",
+                inspection.ReferenceWorldMaterialized,
+                releaseEvidenceCapable: false,
+                boundedFailures,
+                passed: false,
+                boundedFailures,
+                new
+                {
+                    profile_id = PersistenceProfile,
+                    crash_case_count = 0,
+                    no_durable_fact_loss = false,
+                    no_uncommitted_candidate_publication = false,
+                    history_chain_valid = false,
+                    failure_codes = boundedFailures,
+                });
+        }
+        gatewayExecutable ??= throw new InvalidDataException("release Gateway executable is required.");
         ValidatePersistenceProfile(request.Profile);
 
         var root = Path.Combine(
@@ -600,10 +636,33 @@ internal static class Program
     private static async Task<Response> PublicationAsync(
         Request request,
         string coreExecutable,
-        string gatewayExecutable)
+        string? gatewayExecutable)
     {
         RequireProfile(request, PublicationProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
+        if (!string.Equals(request.ExecutionClass, "release", StringComparison.Ordinal))
+        {
+            var boundedFailures = MergeFailures(inspection.BlockingFailureCodes, "qa04.target.publication-stress-release-only");
+            return NewResponse(
+                request,
+                "publication-stress-report-v1",
+                inspection.ReferenceWorldMaterialized,
+                releaseEvidenceCapable: false,
+                boundedFailures,
+                passed: false,
+                boundedFailures,
+                new
+                {
+                    profile_id = PublicationProfile,
+                    gateway_count = 0,
+                    view_subscribers = 0,
+                    slow_consumers = 0,
+                    slow_consumers_did_not_block_custody_or_result = false,
+                    continuity_after_coalesce_resync = false,
+                    failure_codes = boundedFailures,
+                });
+        }
+        gatewayExecutable ??= throw new InvalidDataException("release Gateway executable is required.");
         ValidatePublicationProfile(request.Profile);
 
         var target = await InvokeGatewayAsync<PublicationStressTarget>(
@@ -659,13 +718,36 @@ internal static class Program
     private static async Task<Response> SoakAsync(
         Request request,
         string coreExecutable,
-        string gatewayExecutable)
+        string? gatewayExecutable)
     {
         RequireProfile(request, SoakProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
-        ValidateSoakProfile(request.Profile);
-
         var releaseMode = string.Equals(request.ExecutionClass, "release", StringComparison.Ordinal);
+        if (!releaseMode)
+        {
+            var boundedFailures = MergeFailures(inspection.BlockingFailureCodes, "qa04.target.soak-release-only");
+            return NewResponse(
+                request,
+                "soak-report-v1",
+                inspection.ReferenceWorldMaterialized,
+                releaseEvidenceCapable: false,
+                boundedFailures,
+                passed: false,
+                boundedFailures,
+                new
+                {
+                    test_case_id = SoakProfile,
+                    duration_seconds = 0,
+                    parallel_verifier_digest_matched = false,
+                    max_post_warmup_memory_growth_percent = 100.0,
+                    accepted_operation_loss = 0,
+                    history_audit_chain_valid = false,
+                    no_unrecoverable_queue_deadlock = false,
+                    failure_codes = boundedFailures,
+                });
+        }
+        gatewayExecutable ??= throw new InvalidDataException("release Gateway executable is required.");
+        ValidateSoakProfile(request.Profile);
         var requestedDurationSeconds = releaseMode ? 86_400L : 2L;
         var root = Path.Combine(
             Path.GetTempPath(),
