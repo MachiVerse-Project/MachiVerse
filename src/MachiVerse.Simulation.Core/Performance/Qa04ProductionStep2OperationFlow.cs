@@ -246,9 +246,13 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         var bindingBatch = await DeterministicBatchExecutor.RunCpuBoundAsync(
             descriptors,
             workerCount,
-            descriptor => Qa04CanonicalOperationBindingV1.Bind(
-                descriptor,
-                partitionAuthorityState.Header.ConfigGeneration),
+            (descriptor, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                return Qa04CanonicalOperationBindingV1.Bind(
+                    descriptor,
+                    partitionAuthorityState.Header.ConfigGeneration);
+            },
             cancellationToken).ConfigureAwait(false);
         var bindingParallelism = bindingBatch.Observation;
         var expectedEffectiveWorkers = Math.Min(workerCount, descriptors.Length);
