@@ -171,6 +171,41 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
                 $"Gate2 QA-04 canonical change-set digest drift: {partitionId}");
         }
 
+        var authoritativeBasisState = BuildBasisState(effectiveStep, initial, references);
+        var authoritativeSequential = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.Bind(
+            authoritativeBasisState,
+            bindings,
+            mutation,
+            references);
+        foreach (var workerCount in new[] { 1, 4, 8, 16 })
+        {
+            var parallel = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.BindParallelAsync(
+                authoritativeBasisState,
+                bindings,
+                mutation,
+                references,
+                workerCount).GetAwaiter().GetResult();
+            var observation = parallel.CpuParallelism
+                ?? throw new InvalidOperationException("Gate2 parallel preparation observation missing.");
+            Require(observation.RequestedWorkerCount == workerCount &&
+                    observation.EffectiveWorkerCount == Math.Min(workerCount, 6) &&
+                    observation.MaxObservedConcurrency is >= 1 &&
+                    observation.MaxObservedConcurrency <= observation.EffectiveWorkerCount,
+                $"Gate2 parallel preparation worker observation drifted for workers={workerCount}.");
+            Require(parallel.Partitions.Count == authoritativeSequential.Partitions.Count,
+                $"Gate2 parallel preparation partition count drifted for workers={workerCount}.");
+            for (var index = 0; index < authoritativeSequential.Partitions.Count; index++)
+            {
+                var expected = authoritativeSequential.Partitions[index];
+                var actual = parallel.Partitions[index];
+                Require(actual.Candidate.PartitionId == expected.Candidate.PartitionId &&
+                        actual.Candidate.ChangeSetDigest.AsSpan().SequenceEqual(expected.Candidate.ChangeSetDigest) &&
+                        actual.Material.ResultingHeader.CanonicalDigest.AsSpan().SequenceEqual(
+                            expected.Material.ResultingHeader.CanonicalDigest),
+                    $"Gate2 parallel preparation canonical digest drifted for workers={workerCount} index={index}.");
+            }
+        }
+
         var marketBound = bound.Partitions.Single(static item =>
             item.Candidate.PartitionId.Value == SocietyMarketTransactionRecordSchemaV2.PartitionId);
         var marketBasisHeader = basisState.Partitions.Get(SocietyMarketTransactionRecordSchemaV2.PartitionId).Header;
