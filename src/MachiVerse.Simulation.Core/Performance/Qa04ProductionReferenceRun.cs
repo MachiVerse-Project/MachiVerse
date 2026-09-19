@@ -236,11 +236,11 @@ public static class Qa04ProductionReferenceRunV1
                 if (cpuObservation.RequestedWorkerCount != workerCount ||
                     cpuObservation.EffectiveWorkerCount != workerCount)
                     throw new InvalidDataException("qa04.production-run.worker-budget-not-applied");
-                var expectedFamilyWorkers = Math.Min(workerCount, 6);
+                var expectedStageWorkers = Math.Min(workerCount, 6);
                 if (mutationObservation.RequestedWorkerCount != workerCount ||
-                    mutationObservation.EffectiveWorkerCount != expectedFamilyWorkers ||
+                    mutationObservation.EffectiveWorkerCount != expectedStageWorkers ||
                     preparationObservation.RequestedWorkerCount != workerCount ||
-                    preparationObservation.EffectiveWorkerCount != expectedFamilyWorkers)
+                    preparationObservation.EffectiveWorkerCount != expectedStageWorkers)
                     throw new InvalidDataException("qa04.production-run.stage-worker-budget-drift");
 
                 if (effectiveCpuWorkerCount == 0)
