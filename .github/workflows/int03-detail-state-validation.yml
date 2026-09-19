@@ -1,0 +1,81 @@
+name: INT-03 detail state authority validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/**'
+      - '.github/workflows/int03-detail-state-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-detail-state-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detail-authority:
+    name: QA-04 detail substate two-Step authority
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Simulation Core
+        run: dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+      - name: Prove candidate-bound detail authority survives consecutive SQLite COMMIT Steps
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          persistence="$RUNNER_TEMP/qa04-detail-substate-persistence"
+          request=$(python3 - "$persistence" <<'PY'
+          import json, sys
+          print(json.dumps({
+              'schemaVersion':'1.0',
+              'command':'detail-substate-two-step-probe',
+              'workerCount':4,
+              'recordCount':128,
+              'persistenceRoot':sys.argv[1],
+          }, separators=(',', ':')))
+          PY
+          )
+          printf '%s\n' "$request" | "$core" qa04-target > "$RUNNER_TEMP/detail-substate-two-step.json"
+          python3 - "$RUNNER_TEMP/detail-substate-two-step.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              result = json.load(f)
+          assert result['basisStep'] == 0, result
+          assert result['firstResultingStep'] == 1 and result['finalResultingStep'] == 2, result
+          assert result['workerCount'] == 4 and result['residentRecordCount'] == 128, result
+          assert result['firstStepCoreSubstateCandidateCount'] == 3, result
+          assert result['secondStepCoreSubstateCandidateCount'] == 3, result
+          for key in (
+              'detailPromotionApplied',
+              'firstStepDetailDigestMatchedRuntime',
+              'secondStepDetailDigestMatchedRuntime',
+              'detailLineageCarriedToSecondStep',
+              'firstStateChainValid',
+              'secondStateChainValid',
+              'realSqliteCommitObservedThroughStepTwo',
+              'reducedDetailAuthorityAvailable',
+          ):
+              assert result[key] is True, result
+          assert result['basisDetailDigest'] != result['firstDetailDigest'], result
+          assert result['firstDetailDigest'] == result['finalDetailDigest'], result
+          for key in ('basisDetailDigest','firstDetailDigest','finalDetailDigest','finalContinuityToken'):
+              digest = result[key]
+              assert len(digest) == 64 and set(digest) != {'0'}, result
+          assert result['referenceWorldMaterialized'] is False, result
+          assert result['authoritativeStepLoopAvailable'] is False, result
+          assert result['releaseEvidenceCapable'] is False, result
+          assert 'qa04.target.detail-substate-mutation-application-not-assembled' not in result['blockingFailureCodes'], result
+          assert 'qa04.target.canonical-detail-workload-not-injected' in result['blockingFailureCodes'], result
+          PY

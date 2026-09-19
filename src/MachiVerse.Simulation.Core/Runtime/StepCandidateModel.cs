@@ -70,6 +70,7 @@ public sealed class StepCandidateV1
         IReadOnlyList<MutationIntentCandidateV1> orderedIntents,
         IReadOnlyList<ConflictGroupResolutionV1> conflictResolutions,
         IReadOnlyList<PartitionCandidateV1> partitionCandidates,
+        IReadOnlyList<StepCoreSubstateCandidateV1> coreSubstateCandidates,
         IReadOnlyList<CrossDomainTransactionCandidateV1> transactionCandidates,
         IReadOnlyList<InvariantResultV1> invariantResults,
         InvariantBarrierDecisionV1 commitDecision,
@@ -86,6 +87,7 @@ public sealed class StepCandidateV1
         OrderedIntents = orderedIntents;
         ConflictResolutions = conflictResolutions;
         PartitionCandidates = partitionCandidates;
+        CoreSubstateCandidates = coreSubstateCandidates;
         TransactionCandidates = transactionCandidates;
         InvariantResults = invariantResults;
         CommitDecision = commitDecision;
@@ -103,6 +105,7 @@ public sealed class StepCandidateV1
     public IReadOnlyList<MutationIntentCandidateV1> OrderedIntents { get; }
     public IReadOnlyList<ConflictGroupResolutionV1> ConflictResolutions { get; }
     public IReadOnlyList<PartitionCandidateV1> PartitionCandidates { get; }
+    public IReadOnlyList<StepCoreSubstateCandidateV1> CoreSubstateCandidates { get; }
     public IReadOnlyList<CrossDomainTransactionCandidateV1> TransactionCandidates { get; }
     public IReadOnlyList<InvariantResultV1> InvariantResults { get; }
     public InvariantBarrierDecisionV1 CommitDecision { get; }
@@ -117,7 +120,8 @@ public sealed class StepCandidateV1
         IEnumerable<ConflictGroupResolutionV1> conflictResolutions,
         IEnumerable<PartitionCandidateV1>? partitionCandidates = null,
         IEnumerable<InvariantResultV1>? invariantResults = null,
-        IEnumerable<CrossDomainTransactionCandidateV1>? transactionCandidates = null)
+        IEnumerable<CrossDomainTransactionCandidateV1>? transactionCandidates = null,
+        IEnumerable<StepCoreSubstateCandidateV1>? coreSubstateCandidates = null)
     {
         if (candidateId.IsZero) throw new ArgumentException("CandidateId ZERO is invalid.", nameof(candidateId));
         ArgumentNullException.ThrowIfNull(state);
@@ -179,6 +183,15 @@ public sealed class StepCandidateV1
                 throw new InvalidDataException("step-candidate.partition-basis-ahead");
         }
 
+        var coreSubstates = (coreSubstateCandidates ?? Array.Empty<StepCoreSubstateCandidateV1>())
+            .Select(candidate => candidate ?? throw new ArgumentNullException(nameof(coreSubstateCandidates)))
+            .OrderBy(static candidate => candidate.Kind)
+            .ToArray();
+        if (coreSubstates.Select(static candidate => candidate.Kind).Distinct().Count() != coreSubstates.Length)
+            throw new InvalidDataException("step-candidate.duplicate-core-substate-candidate");
+        foreach (var candidate in coreSubstates)
+            candidate.ValidateBasis(state);
+
         var transactions = (transactionCandidates ?? Array.Empty<CrossDomainTransactionCandidateV1>())
             .Select(candidate => candidate ?? throw new ArgumentNullException(nameof(transactionCandidates)))
             .OrderBy(static candidate => candidate.TransactionId)
@@ -209,6 +222,7 @@ public sealed class StepCandidateV1
             outputs,
             resolutions,
             partitions,
+            coreSubstates,
             transactions,
             invariants,
             targetStep);
@@ -225,6 +239,7 @@ public sealed class StepCandidateV1
             Array.AsReadOnly(intents),
             Array.AsReadOnly(resolutions),
             Array.AsReadOnly(partitions),
+            Array.AsReadOnly(coreSubstates),
             Array.AsReadOnly(transactions),
             Array.AsReadOnly(invariants),
             decision,
@@ -282,13 +297,16 @@ public sealed class StepCandidateV1
         IReadOnlyList<DomainCandidateOutputV1> outputs,
         IReadOnlyList<ConflictGroupResolutionV1> resolutions,
         IReadOnlyList<PartitionCandidateV1> partitions,
+        IReadOnlyList<StepCoreSubstateCandidateV1> coreSubstates,
         IReadOnlyList<CrossDomainTransactionCandidateV1> transactions,
         IReadOnlyList<InvariantResultV1> invariants,
         ulong targetStep)
         => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {
             var hasTransactions = transactions.Count != 0;
-            writer.WriteMapStart(hasTransactions ? 11UL : 10UL);
+            var hasCoreSubstates = coreSubstates.Count != 0;
+            var baseMapCount = hasTransactions ? 11UL : 10UL;
+            writer.WriteMapStart(baseMapCount + (hasCoreSubstates ? 1UL : 0UL));
             writer.WriteUnsigned(0); writer.WriteBytes(state.Header.WorldId.ToBytes());
             writer.WriteUnsigned(1); writer.WriteUnsigned(state.Header.Step);
             writer.WriteUnsigned(2); writer.WriteUnsigned(targetStep);
@@ -378,6 +396,18 @@ public sealed class StepCandidateV1
                 else
                 {
                     writer.WriteArrayStart(0);
+                }
+            }
+
+            if (hasCoreSubstates)
+            {
+                writer.WriteUnsigned(hasTransactions ? 11UL : 10UL);
+                writer.WriteArrayStart((ulong)coreSubstates.Count);
+                foreach (var core in coreSubstates)
+                {
+                    writer.WriteArrayStart(2);
+                    writer.WriteUnsigned((byte)core.Kind);
+                    writer.WriteBytes(core.CandidateDigest);
                 }
             }
         });

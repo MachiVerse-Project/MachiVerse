@@ -35,6 +35,7 @@ MachiVerse は、C# で開発する超大規模エージェントベースの世
 - `view`: 一般ビューの統合ブランチ。
 - `administration-view`: 管理ビューの統合ブランチ。
 - `documentation`: リポジトリ共通のドキュメント・設計文書・Protocol文書の統合ブランチ。
+- `promotion`: ブランド資産、Creative Asset、プロモーション資料および公開向けビジュアルの統合ブランチ。
 
 ブランチ名は原則として小文字を使用し、複数語はハイフンで区切る。
 
@@ -45,7 +46,7 @@ MachiVerse は、C# で開発する超大規模エージェントベースの世
 3. コンポーネント単位で `develop` へ統合可能な状態になった変更は、対象コンポーネントブランチから `develop` へ Pull Request で統合する。
 4. リポジトリ共通のドキュメント変更は `documentation` から作業ブランチを作成して行い、作業ブランチから `documentation`、`documentation` から `develop` の順に Pull Request で統合する。
 5. `develop` がリリース可能な状態になった場合、`develop` から `main` へ Pull Request で統合する。
-6. `main`、`develop`、各コンポーネント常設ブランチ、`documentation` 上で、通常の機能実装・修正・ドキュメント編集を直接コミットしないこと。
+6. `main`、`develop`、各コンポーネント常設ブランチ、`documentation`、`promotion` 上で、通常の機能実装・修正・ドキュメント編集を直接コミットしないこと。
 
 基本的な流れは以下とする。
 
@@ -59,7 +60,32 @@ responsibility branch
 work branch
 ```
 
-ここで `responsibility branch` は、対象に応じて `simulation`、`gateway`、`view`、`administration-view`、`documentation` のいずれかを指す。
+ここで `responsibility branch` は、対象に応じて `simulation`、`gateway`、`view`、`administration-view`、`documentation`、`promotion` のいずれかを指す。
+
+### Pull Request のマージ方式
+
+1. 作業ブランチから responsibility branch へ統合する通常の Pull Request は `squash merge` を使用する。作業ブランチ内の途中コミットを常設ブランチへそのまま持ち込まず、1つの作業単位を1つの統合コミットとして保持する。
+2. responsibility branch から `develop`、`documentation` から `develop`、`promotion` から `develop`、および `develop` から `main` など、常設ブランチから別の常設ブランチへ成果を統合する Pull Request は `merge commit` を使用する。
+3. `develop` または `main` から responsibility branch へ変更を取り込む場合など、常設ブランチ間の同期を目的とする Pull Request も `merge commit` を使用する。これにより、同期元ブランチの commit ancestry を保持し、実内容が同一であるにもかかわらず履歴上の不要な divergence が累積することを避ける。
+4. 常設ブランチ間の統合・同期では `squash merge` および `rebase merge` を使用しない。通常作業PRと常設ブランチ間PRのマージ方式を混在させない。
+5. 通常作業PRと常設ブランチ間PRの両方を受け入れる常設ブランチの Ruleset では、必要に応じて `squash` と `merge` の両方を許可する。Ruleset の bypass を、通常は許可されていないマージ方式を表示・選択するための仕組みとして扱わない。
+6. Ruleset bypass は、通常のマージ方式切替には使用しない。レビュー、必須チェック、レビュー会話の解決その他の保護要件を回避するためにも使用せず、緊急対応その他の明示的な例外が必要な場合に限り、ユーザーの事前承認を得たうえで Pull Request 経由で使用する。
+7. 常設ブランチ間の統合・同期で競合解消が必要な場合は、専用の一時同期ブランチを作成してよい。その場合は、同期対象の常設ブランチ双方を親に持つ解決済み `merge commit` を一時同期ブランチ上へ作成し、採用する実内容を明示的に確定してから Pull Request で対象常設ブランチへ統合する。このPRは常設ブランチ間同期の一部として扱い、`squash merge` せず `merge commit` を使用して commit ancestry を保持する。
+8. 作業ブランチから常設ブランチへの通常PRで `merge commit` を使用してはならない。また、常設ブランチ間の統合・同期で `squash merge` または `rebase merge` を使用してはならない。例外が必要な場合は、事前にユーザーから明示的な承認を得る。
+
+マージ方式を含む基本的な流れは以下とする。
+
+```text
+work branch
+  ↓ squash merge
+responsibility branch
+  ↓ merge commit
+develop
+  ↓ merge commit
+main
+```
+
+常設ブランチ間の逆方向同期も `merge commit` とする。
 
 ### ドキュメント編集フロー
 
@@ -132,7 +158,7 @@ feature/support-core-gateway-v1.1
 
 他コンポーネント、プロトコル、共通ドキュメント等の変更を取り込む必要がある場合は、対象コンポーネントの作業と矛盾しないタイミングで `develop` の変更をコンポーネントブランチへ取り込み、統合時に大規模な差分・競合を一度に発生させないようにする。
 
-具体的な同期頻度や merge / rebase の採用方針は現時点では固定しない。
+具体的な同期頻度は固定しないが、`develop` とコンポーネント常設ブランチの間で同期する場合は、前述の常設ブランチ間ルールに従い `merge commit` を使用し、`squash merge` または `rebase merge` で同期しない。
 
 ### documentation と develop の同期
 
@@ -140,7 +166,7 @@ feature/support-core-gateway-v1.1
 
 コンポーネント統合やリポジトリ共通運用の変更によりドキュメントの前提が更新された場合は、ドキュメント作業と矛盾しないタイミングで `develop` の変更を `documentation` へ取り込み、正本となる文書が古い統合状態を前提にし続けないようにする。
 
-具体的な同期頻度や merge / rebase の採用方針は現時点では固定しない。
+具体的な同期頻度は固定しないが、`documentation` と `develop` の間で同期する場合は、前述の常設ブランチ間ルールに従い `merge commit` を使用し、`squash merge` または `rebase merge` で同期しない。
 
 ### ブランチ境界とコンポーネント独立性
 
@@ -234,6 +260,10 @@ develop
 3. ドキュメント内の説明文、見出し、注釈も原則として日本語とする。
 4. 技術用語、API 名、クラス名、メソッド名、ライブラリ名、規格名など、英語表記が自然または必要なものは無理に日本語化しないこと。
 5. 英語版ドキュメントを作成する場合は、ユーザーから明示的な指示がある場合に限る。
+6. GitHub Issue のタイトル、本文、チェックリスト、進捗コメントは原則として日本語で記述すること。Issue番号、クラス名、Schema ID、TestCaseId、ブランチ名、ファイル名、コマンド名など、機械的な識別子や技術上そのまま扱うべき表記は変更しないこと。
+7. Pull Request のタイトル、本文、レビューコメント、進捗コメントも原則として日本語で記述すること。`feat:`、`fix:` 等の既存運用上必要な接頭辞や、コード・API・Schema名等は必要に応じて英語表記を維持してよい。
+8. Issue / Pull Request の見出しや状態説明では、意味のある日本語表現が可能な場合に `Current checkpoint`、`Remaining gate`、`Definition of Done`、`Remaining blockers` 等の一般英語見出しを常用せず、「現在の到達点」「残作業」「最終リリース条件」「未解決事項」等の日本語を優先すること。
+9. ラベル名、ブランチ名、Workflow名、Job名、TestCaseId、Schema ID、プロトコル上の識別子、外部ツールが要求する固定文字列は、互換性・検索性・自動化を損なうため無理に日本語化しないこと。
 
 ## 優先順位
 
