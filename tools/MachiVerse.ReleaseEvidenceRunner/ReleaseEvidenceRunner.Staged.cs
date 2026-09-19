@@ -29,9 +29,20 @@ internal static partial class ReleaseEvidenceRunner
         var reportsDirectory = Path.Combine(outputDirectory, "reports");
         Directory.CreateDirectory(reportsDirectory);
         var observations = new List<BenchmarkRunObservation>(runs.Length);
+        var orderedRuns = runs.OrderBy(static x => x.RunId, StringComparer.Ordinal).ToArray();
+        var heartbeatSeconds = Step3HeartbeatSeconds();
 
-        foreach (var run in runs.OrderBy(static x => x.RunId, StringComparer.Ordinal))
+        Console.Error.WriteLine(
+            $"GATE4_STEP3_MATRIX_START total_runs={orderedRuns.Length} heartbeat_seconds={heartbeatSeconds}");
+
+        var completedRuns = 0;
+        foreach (var run in orderedRuns)
         {
+            var matrixOrdinal = completedRuns + 1;
+            Console.Error.WriteLine(
+                $"GATE4_STEP3_RUN_START matrix_run={matrixOrdinal}/{orderedRuns.Length} " +
+                $"run_id={run.RunId} workers={run.WorkerCount} repetition={run.RunOrdinal}");
+
             var request = NewRequest(
                 "benchmark-run",
                 executionClass,
@@ -44,6 +55,14 @@ internal static partial class ReleaseEvidenceRunner
             ValidateResponse(invocation.Response, request, "performance-benchmark-report-v1");
             var artifact = WriteResponseArtifact(outputDirectory, reportsDirectory, run.RunId, invocation.Response);
             observations.Add(ParseBenchmarkObservation(run, invocation.Response, artifact.Ref, artifact.Digest));
+
+            completedRuns++;
+            Console.Error.WriteLine(
+                $"GATE4_STEP3_RUN_COMPLETE matrix_run={completedRuns}/{orderedRuns.Length} " +
+                $"run_id={run.RunId} workers={run.WorkerCount} repetition={run.RunOrdinal} " +
+                $"elapsed_seconds={invocation.Elapsed.TotalSeconds:F1}");
+            Console.Error.WriteLine(
+                $"GATE4_STEP3_MATRIX_PROGRESS completed={completedRuns}/{orderedRuns.Length}");
         }
 
         var aggregate = EvaluateReferenceProfile(manifest, observations, executionClass, sourceCommit);
