@@ -37,6 +37,8 @@ observability.log-level = warn
 
 SIMULATION Configはworker count run間で完全一致する。
 
+この1/4/8/16は`perf.reference.v1`のcanonical acceptance matrixであり、runtime capability上限ではない。16超のworker budgetは別途executor/runtime contract testで検証し、同一production code pathが32/64+へ拡張できることを確認する。
+
 ## 4. Initial world population
 
 At measurement start:
@@ -253,6 +255,8 @@ promotion deferral order identical
 
 Wall-clock metric/trace/log sequence need not match。
 
+Step3 evidenceでは`worker_count`が単なるmetadataではなくproduction CPU workへ適用されたことを、`effective_cpu_worker_count`および`max_observed_cpu_parallelism`で確認する。work item数またはdependencyによりrequested値へ到達不能なStepはあり得るが、16または8 Domainへ固定されたhidden ceilingはfailとする。
+
 ## 18. Persistence stress subprofile
 
 ```text
@@ -294,6 +298,8 @@ PerformanceBenchmarkReportV1 {
   hardware_profile_digest,
   config_digest,
   worker_count,
+  effective_cpu_worker_count,
+  max_observed_cpu_parallelism,
   run_ordinal,
   step_count,
   step_p50_ms,
