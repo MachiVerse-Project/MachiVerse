@@ -68,6 +68,9 @@ public static class Qa04ProcessTargetV1
                     request.PersistenceRoot,
                     request.TargetStoredGiB,
                     cancellationToken).ConfigureAwait(false),
+                "persistence-history-tail-run" => await Qa04PersistenceHistoryTailV1.RunAsync(
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 "persistence-crash-case-run" => await RunPersistenceCrashCaseAsync(
                     request.CrashStage,
                     request.PersistenceRoot,
