@@ -15,6 +15,23 @@ internal static class Program
     private const ulong CanonicalTerminalOperationCount = 136_450_000UL;
     private const string BenchmarkMeasurementCode = "qa04.measurement.step-sample-count";
     private const double MissingMetricSentinelMilliseconds = 1_000_000_000.0;
+    private static readonly string[] PersistenceCrashStages =
+    [
+        "audit-append",
+        "migration-generation-switch",
+        "operation-acceptance",
+        "operation-scheduling",
+        "snapshot-commit",
+        "transition-commit",
+    ];
+    private static readonly string[] PersistenceCrashPoints =
+    [
+        "before-db-begin",
+        "before-fsync-or-commit",
+        "before-response-or-publication",
+        "immediately-after-commit",
+        "mid-write",
+    ];
 
     private static readonly JsonSerializerOptions Json = new()
     {
