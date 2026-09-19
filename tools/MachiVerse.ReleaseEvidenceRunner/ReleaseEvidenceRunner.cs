@@ -423,7 +423,7 @@ internal static partial class ReleaseEvidenceRunner
         await process.StandardInput.WriteLineAsync(requestLine);
         process.StandardInput.Close();
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
+        var stderrTask = PumpAdapterStderrAsync(process.StandardError);
         await process.WaitForExitAsync();
         stopwatch.Stop();
         var stdout = await stdoutTask;
@@ -438,6 +438,19 @@ internal static partial class ReleaseEvidenceRunner
         var response = JsonSerializer.Deserialize<Qa04AdapterResponse>(lines[0], JsonLine)
             ?? throw new InvalidDataException($"QA-04 adapter response decoded to null for {request.RequestId}.");
         return new AdapterInvocation(response, stopwatch.Elapsed);
+    }
+
+    private static async Task<string> PumpAdapterStderrAsync(StreamReader reader)
+    {
+        var tail = new StringBuilder();
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            Console.Error.WriteLine(line);
+            tail.AppendLine(line);
+            if (tail.Length > 16_384)
+                tail.Remove(0, tail.Length - 8_192);
+        }
+        return tail.ToString();
     }
 
     private static void ValidateResponse(Qa04AdapterResponse response, Qa04AdapterRequest request, string expectedResponseKind)
