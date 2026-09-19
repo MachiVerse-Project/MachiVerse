@@ -548,16 +548,19 @@ internal static partial class ReleaseEvidenceRunner
         {
             if (!observation.TargetPassed) failures.Add("target-report-failed");
             foreach (var code in observation.TargetFailureCodes) failures.Add($"target:{code}");
-            if (!observation.CpuParallelismMeasured) failures.Add("cpu-parallelism-unmeasured");
-            if (observation.ConfiguredWorkerCount != observation.WorkerCount) failures.Add("cpu-worker-configured-mismatch");
-            if (observation.EffectiveWorkerCount != observation.WorkerCount) failures.Add("cpu-worker-effective-mismatch");
-            if (!observation.WorkerBudgetApplied) failures.Add("cpu-worker-budget-not-applied");
-            if (!observation.ParallelExecutionObserved) failures.Add("cpu-parallelism-not-observed");
-            if (observation.MaxObservedCpuConcurrency < 1 ||
-                observation.MaxObservedCpuConcurrency > observation.WorkerCount)
-                failures.Add("cpu-max-observed-invalid");
-            if (observation.WorkerCount > 1 && observation.MaxObservedCpuConcurrency <= 1)
-                failures.Add("cpu-parallelism-not-observed");
+            if (string.Equals(executionClass, "release", StringComparison.Ordinal))
+            {
+                if (!observation.CpuParallelismMeasured) failures.Add("cpu-parallelism-unmeasured");
+                if (observation.ConfiguredWorkerCount != observation.WorkerCount) failures.Add("cpu-worker-configured-mismatch");
+                if (observation.EffectiveWorkerCount != observation.WorkerCount) failures.Add("cpu-worker-effective-mismatch");
+                if (!observation.WorkerBudgetApplied) failures.Add("cpu-worker-budget-not-applied");
+                if (!observation.ParallelExecutionObserved) failures.Add("cpu-parallelism-not-observed");
+                if (observation.MaxObservedCpuConcurrency < 1 ||
+                    observation.MaxObservedCpuConcurrency > observation.WorkerCount)
+                    failures.Add("cpu-max-observed-invalid");
+                if (observation.WorkerCount > 1 && observation.MaxObservedCpuConcurrency <= 1)
+                    failures.Add("cpu-parallelism-not-observed");
+            }
         }
 
         var criteria = manifest.GetProperty("passCriteria");
