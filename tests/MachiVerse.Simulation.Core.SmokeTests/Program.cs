@@ -27,6 +27,8 @@ Require(DeterministicRandom.BoundedUInt64(seed, context, 1, 7) < 7, "Bounded ran
 var results = await DeterministicBatchExecutor.RunAsync(new[] { 4, 3, 2, 1 }, 4, static (value, _) => ValueTask.FromResult(value * value));
 Require(results.SequenceEqual(new[] { 16, 9, 4, 1 }), "Worker completion must not reorder semantic output slots.");
 
+await Sim01WorkerScalingSmoke.RunAsync();
+
 var scopeDigest = Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
 var intentA = OpaqueId128.Parse("00000000000000000000000000000010");
 var intentB = OpaqueId128.Parse("00000000000000000000000000000011");
