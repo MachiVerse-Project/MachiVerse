@@ -27,8 +27,6 @@ Require(DeterministicRandom.BoundedUInt64(seed, context, 1, 7) < 7, "Bounded ran
 var results = await DeterministicBatchExecutor.RunAsync(new[] { 4, 3, 2, 1 }, 4, static (value, _) => ValueTask.FromResult(value * value));
 Require(results.SequenceEqual(new[] { 16, 9, 4, 1 }), "Worker completion must not reorder semantic output slots.");
 
-await Sim01WorkerScalingSmoke.RunAsync();
-
 var scopeDigest = Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
 var intentA = OpaqueId128.Parse("00000000000000000000000000000010");
 var intentB = OpaqueId128.Parse("00000000000000000000000000000011");
@@ -256,11 +254,27 @@ finally
     if (Directory.Exists(persistenceRoot)) Directory.Delete(persistenceRoot, recursive: true);
 }
 
+await PartitionStateHeaderAsyncStreamingSmoke.RunAsync();
 SnapshotManifestSmoke.Run();
 await PersistenceSnapshotSmoke.RunAsync();
 await PersistenceMigrationSmoke.RunAsync();
 await PortableWorldExportSmoke.RunAsync();
+await CanonicalSnapshotStage2Smoke.RunAsync();
+await SpatialTerrainGeometryStreamingSemanticVerifierSmoke.RunAsync();
+await SpatialTerrainGeometryStagedRecoveryInitializer.RunAsync();
+await Qa04CrossDomainTransactionV2PhysicalExact103CanaryInitializer.RunAsync();
+await CrossDomainTransactionSqliteAuthoritySmoke.RunAsync();
+await Qa04AcceptedOperationLossGuardSqliteSmoke.RunAsync();
+await Qa04BenchmarkRunMeasurementSessionInitializer.RunAsync();
+await Qa04ReducedCommitMeasurementInitializer.RunAsync();
 Qa04ReferenceLoadSmoke.Run();
+Qa04InfrastructureServiceReserveApplicationSmoke.Run();
+Qa04ResidentActionApplicationSmoke.Run();
+Qa04PhysicalMoveApplicationSmoke.Run();
+Qa04MarketOrderApplicationSmoke.Run();
+Qa04CanonicalOperationMutationBatchSmoke.Run();
+Qa04CanonicalOperationPartitionCandidatesSmoke.Run();
+await Qa04CanonicalOperationStepFinalizationSmoke.RunAsync();
 await Qa04RuntimeTargetSmoke.RunAsync();
 await Qa04CoreSubstateAuthoritySmoke.RunAsync();
 Sim04WorldStateSmoke.Run();

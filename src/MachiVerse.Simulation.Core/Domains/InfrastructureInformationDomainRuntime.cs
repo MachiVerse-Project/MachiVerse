@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -8,9 +9,22 @@ public sealed class InfrastructureInformationDomainRuntimeV1 : DeterministicDoma
 {
     public InfrastructureInformationDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
-        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null,
+        InfrastructureInformationDomainStateV1? state = null)
         : base("infrastructure_information", intentEvaluator, partitionCandidateEvaluator)
     {
+        State = state;
+    }
+
+    public InfrastructureInformationDomainStateV1? State { get; }
+
+    public InfrastructureInformationDomainStateV1 RequireState()
+        => State ?? throw new InvalidDataException("infrastructure.runtime-state.unavailable");
+
+    public InfrastructureInformationDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        return RequireState().BindSnapshotMaterial(frozenState);
     }
 }
 
