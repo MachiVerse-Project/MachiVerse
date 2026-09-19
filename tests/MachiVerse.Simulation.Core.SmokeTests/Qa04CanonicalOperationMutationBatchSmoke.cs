@@ -123,6 +123,48 @@ internal static class Qa04CanonicalOperationMutationBatchSmoke
         Require(ReferenceEquals(result.State.ParticipationControlMode, controlModes),
             "Gate2 mutation stage must not mutate participation control authority");
 
+        foreach (var workerCount in new[] { 1, 4, 8, 16 })
+        {
+            var parallel = Qa04CanonicalOperationMutationBatchV1.ApplyParallelAsync(
+                Qa04ReferenceLoadV1.WorldId,
+                effectiveStep,
+                bindings,
+                initial,
+                references,
+                workerCount).GetAwaiter().GetResult();
+            var observation = parallel.CpuParallelism
+                ?? throw new InvalidOperationException("Gate2 parallel mutation observation missing.");
+            Require(observation.RequestedWorkerCount == workerCount &&
+                    observation.EffectiveWorkerCount == Math.Min(workerCount, 6) &&
+                    observation.MaxObservedConcurrency is >= 1 &&
+                    observation.MaxObservedConcurrency <= observation.EffectiveWorkerCount,
+                $"Gate2 parallel mutation worker observation drifted for workers={workerCount}.");
+            Require(parallel.AppliedOperationIds.SequenceEqual(result.AppliedOperationIds),
+                $"Gate2 parallel mutation operation order drifted for workers={workerCount}.");
+            Require(parallel.Changes.Count == result.Changes.Count,
+                $"Gate2 parallel mutation change cardinality drifted for workers={workerCount}.");
+            for (var index = 0; index < result.Changes.Count; index++)
+            {
+                var expected = result.Changes[index];
+                var actual = parallel.Changes[index];
+                Require(actual.OperationId == expected.OperationId &&
+                        actual.FamilyToken == expected.FamilyToken &&
+                        actual.PartitionId == expected.PartitionId &&
+                        actual.ChangedRecordId == expected.ChangedRecordId &&
+                        actual.ResultRevision == expected.ResultRevision &&
+                        actual.ImmutablePayloadDigest.SequenceEqual(expected.ImmutablePayloadDigest) &&
+                        actual.OrderKey.ToDatabaseBytes().SequenceEqual(expected.OrderKey.ToDatabaseBytes()),
+                    $"Gate2 parallel mutation semantic output drifted for workers={workerCount} index={index}.");
+            }
+            Require(parallel.State.InfrastructureServiceQueue.ItemCount == result.State.InfrastructureServiceQueue.ItemCount &&
+                    parallel.State.ResidentBehaviorState.ItemCount == result.State.ResidentBehaviorState.ItemCount &&
+                    parallel.State.PhysicalPresence.ItemCount == result.State.PhysicalPresence.ItemCount &&
+                    parallel.State.MarketTransaction.State.ItemCount == result.State.MarketTransaction.State.ItemCount &&
+                    parallel.State.GovernanceSecurityIncident.ItemCount == result.State.GovernanceSecurityIncident.ItemCount &&
+                    parallel.State.EnvironmentHazard.ItemCount == result.State.EnvironmentHazard.ItemCount,
+                $"Gate2 parallel mutation state cardinality drifted for workers={workerCount}.");
+        }
+
         var replay = Qa04CanonicalOperationMutationBatchV1.Apply(
             Qa04ReferenceLoadV1.WorldId,
             effectiveStep,
