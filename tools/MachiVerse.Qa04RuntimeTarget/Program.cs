@@ -445,51 +445,189 @@ internal static class Program
         return evidence;
     }
 
-    private static async Task<Response> PersistenceAsync(Request request, string coreExecutable)
+    private static async Task<Response> PersistenceAsync(
+        Request request,
+        string coreExecutable,
+        string gatewayExecutable)
     {
         RequireProfile(request, PersistenceProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
-        var failures = MergeFailures(inspection.BlockingFailureCodes, "qa04.target.persistence-stress-not-assembled");
-        return NewResponse(
-            request,
-            "persistence-stress-report-v1",
-            inspection.ReferenceWorldMaterialized,
-            releaseEvidenceCapable: false,
-            failures,
-            passed: false,
-            failures,
-            new
+        ValidatePersistenceProfile(request.Profile);
+
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "machiverse-qa04-persistence-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            var volume = await InvokeCoreAsync<PersistenceVolumeStress>(
+                coreExecutable,
+                new
+                {
+                    schemaVersion = "1.0",
+                    command = "persistence-volume-stress-run",
+                    persistenceRoot = Path.Combine(root, "volume"),
+                    targetStoredGiB = 16,
+                },
+                timeout: null);
+            if (!string.Equals(volume.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+                volume.TargetStoredGiB != 16 ||
+                volume.StoredBytes < 16L * 1024L * 1024L * 1024L ||
+                volume.ChunkCount <= 0 ||
+                !volume.ZstdRoundTripValidated)
+                throw new InvalidDataException("QA-04 persistence 16GiB compressed volume target did not complete canonically.");
+
+            var caseResults = new List<PersistenceCrashCaseResult>(30);
+            foreach (var stage in PersistenceCrashStages)
+            foreach (var point in PersistenceCrashPoints)
             {
-                profile_id = PersistenceProfile,
-                crash_case_count = 0,
-                no_durable_fact_loss = false,
-                no_uncommitted_candidate_publication = false,
-                history_chain_valid = false,
-                failure_codes = failures,
-            });
+                var caseRoot = Path.Combine(root, "cases", stage, point);
+                Directory.CreateDirectory(caseRoot);
+                var expectedDurable = point is "immediately-after-commit" or "before-response-or-publication";
+
+                if (string.Equals(stage, "audit-append", StringComparison.Ordinal))
+                {
+                    await InvokeCrashTargetAsync(
+                        gatewayExecutable,
+                        new
+                        {
+                            schemaVersion = "1.0",
+                            command = "audit-crash-case-run",
+                            dataRoot = caseRoot,
+                        },
+                        stage,
+                        point).ConfigureAwait(false);
+                    var verified = await InvokeGatewayAsync<PersistenceCrashVerification>(
+                        gatewayExecutable,
+                        new
+                        {
+                            schemaVersion = "1.0",
+                            command = "audit-crash-case-verify",
+                            dataRoot = caseRoot,
+                            expectedDurable,
+                        }).ConfigureAwait(false);
+                    ValidateCrashVerification(verified, stage, expectedDurable);
+                }
+                else
+                {
+                    await InvokeCrashTargetAsync(
+                        coreExecutable,
+                        new
+                        {
+                            schemaVersion = "1.0",
+                            command = "persistence-crash-case-run",
+                            crashStage = stage,
+                            persistenceRoot = caseRoot,
+                        },
+                        stage,
+                        point).ConfigureAwait(false);
+                    var verified = await InvokeCoreAsync<PersistenceCrashVerification>(
+                        coreExecutable,
+                        new
+                        {
+                            schemaVersion = "1.0",
+                            command = "persistence-crash-case-verify",
+                            crashStage = stage,
+                            persistenceRoot = caseRoot,
+                            expectedDurable,
+                        }).ConfigureAwait(false);
+                    ValidateCrashVerification(verified, stage, expectedDurable);
+                }
+
+                caseResults.Add(new PersistenceCrashCaseResult(stage, point, expectedDurable));
+            }
+
+            var failures = inspection.BlockingFailureCodes
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static x => x, StringComparer.Ordinal)
+                .ToArray();
+            var passed = failures.Length == 0 && caseResults.Count == 30;
+            return NewResponse(
+                request,
+                "persistence-stress-report-v1",
+                inspection.ReferenceWorldMaterialized,
+                releaseEvidenceCapable: false,
+                failures,
+                passed,
+                failures,
+                new
+                {
+                    profile_id = PersistenceProfile,
+                    compressed_snapshot_gib = 16,
+                    compressed_snapshot_stored_bytes = volume.StoredBytes,
+                    compressed_snapshot_chunk_count = volume.ChunkCount,
+                    zstd_roundtrip_validated = volume.ZstdRoundTripValidated,
+                    history_tail_minutes = 10,
+                    crash_case_count = caseResults.Count,
+                    crash_cases = caseResults,
+                    no_durable_fact_loss = true,
+                    no_uncommitted_candidate_publication = true,
+                    history_chain_valid = true,
+                    failure_codes = failures,
+                });
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
     }
 
-    private static async Task<Response> PublicationAsync(Request request, string coreExecutable)
+    private static async Task<Response> PublicationAsync(
+        Request request,
+        string coreExecutable,
+        string gatewayExecutable)
     {
         RequireProfile(request, PublicationProfile);
         var inspection = await InspectCoreAsync(coreExecutable);
-        var failures = MergeFailures(inspection.BlockingFailureCodes, "qa04.target.publication-stress-not-assembled");
+        ValidatePublicationProfile(request.Profile);
+
+        var target = await InvokeGatewayAsync<PublicationStressTarget>(
+            gatewayExecutable,
+            new
+            {
+                schemaVersion = "1.0",
+                command = "publication-stress-run",
+            }).ConfigureAwait(false);
+
+        var failures = inspection.BlockingFailureCodes
+            .Concat(target.FailureCodes)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static x => x, StringComparer.Ordinal)
+            .ToArray();
+        if (!string.Equals(target.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+            !string.Equals(target.ProfileId, PublicationProfile, StringComparison.Ordinal) ||
+            target.GatewayCount != 1 ||
+            target.ViewSubscribers != 100 ||
+            target.SlowConsumers != 10)
+            throw new InvalidDataException("QA-04 Gateway publication target cardinality/profile drift.");
+        if (!target.SlowConsumersDidNotBlockCustodyOrResult ||
+            !target.ContinuityAfterCoalesceResync ||
+            target.SlowConsumerResyncCount != 10 ||
+            target.TotalCoalescedPublicationCount == 0 ||
+            target.FinalPendingPublicationCount != 0 ||
+            target.FinalPendingResultCount != 0)
+            throw new InvalidDataException("QA-04 Gateway publication target did not prove coalesce/resync and result isolation.");
+        var passed = target.Passed && failures.Length == 0;
+
         return NewResponse(
             request,
             "publication-stress-report-v1",
             inspection.ReferenceWorldMaterialized,
             releaseEvidenceCapable: false,
             failures,
-            passed: false,
+            passed,
             failures,
             new
             {
                 profile_id = PublicationProfile,
-                gateway_count = 0,
-                view_subscribers = 0,
-                slow_consumers = 0,
-                slow_consumers_did_not_block_custody_or_result = false,
-                continuity_after_coalesce_resync = false,
+                gateway_count = target.GatewayCount,
+                view_subscribers = target.ViewSubscribers,
+                slow_consumers = target.SlowConsumers,
+                slow_consumers_did_not_block_custody_or_result = target.SlowConsumersDidNotBlockCustodyOrResult,
+                continuity_after_coalesce_resync = target.ContinuityAfterCoalesceResync,
+                slow_consumer_resync_count = target.SlowConsumerResyncCount,
+                total_coalesced_publication_count = target.TotalCoalescedPublicationCount,
                 failure_codes = failures,
             });
     }
