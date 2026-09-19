@@ -112,7 +112,7 @@ public static class Qa04GatewayTargetV1
                 subscription,
                 "view.public.v1",
                 auth,
-                SpectatorSession(marker),
+                SubscriberSession(index, marker),
                 expectedSessionGeneration: 1);
             if (index >= subscriberCount - slowConsumerCount)
                 slow.Add(Convert.ToHexStringLower(subscription));
@@ -189,6 +189,13 @@ public static class Qa04GatewayTargetV1
             gatewayCount = 1,
             viewSubscribers = subscriberCount,
             slowConsumers = slowConsumerCount,
+            subscriberClassMix = new
+            {
+                spectator = 60,
+                diver = 35,
+                moderator = 4,
+                generalViewAdministrator = 1,
+            },
             slowConsumersDidNotBlockCustodyOrResult = true,
             continuityAfterCoalesceResync = true,
             slowConsumerResyncCount = slowResyncCount,
@@ -223,17 +230,25 @@ public static class Qa04GatewayTargetV1
                 ["profile"] = "perf.persistence.v1",
             });
 
-    private static GatewaySessionSnapshot SpectatorSession(byte marker)
+    private static GatewaySessionSnapshot SubscriberSession(int index, byte marker)
     {
+        var role = index switch
+        {
+            < 60 => "view.spectator",
+            < 95 => "view.diver",
+            < 99 => "view.moderator",
+            99 => "view.administrator",
+            _ => throw new ArgumentOutOfRangeException(nameof(index)),
+        };
         var now = DateTimeOffset.UnixEpoch;
         var accountMarker = marker == byte.MaxValue ? (byte)1 : checked((byte)(marker + 1));
         return new GatewaySessionSnapshot(
             SessionId: Id(marker),
             AccountId: Id(accountMarker),
-            DiverRef: null,
+            DiverRef: role == "view.spectator" ? null : Id(checked((byte)(0x80 + index % 100))),
             AuthDomain: (AuthDomainWireV1)1,
-            EffectiveRoleSet: "view.spectator",
-            EffectivePermissions: ["view.world.read.public", "view.world.subscribe"],
+            EffectiveRoleSet: role,
+            EffectivePermissions: PermissionRegistry.ResolveGeneralRole(role),
             IssuedMasterGeneration: 1,
             SessionGeneration: 1,
             CreatedAt: now,
