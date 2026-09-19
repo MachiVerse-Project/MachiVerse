@@ -58,7 +58,30 @@ internal static class Program
             step_p95_ms = run.WorkerCount == 16 ? 33.0 : 25.0,
             step_p99_ms = 40.0,
             step_mean_60s_ms = 25.0,
-            domain_cpu_summary = new { },
+            domain_cpu_summary = new
+            {
+                measured = true,
+                configured_worker_count = run.WorkerCount,
+                effective_worker_count = run.WorkerCount,
+                max_observed_concurrency = run.WorkerCount,
+                worker_budget_applied = true,
+                parallel_execution_observed = true,
+                operation_binding = new
+                {
+                    effective_worker_count = run.WorkerCount,
+                    max_observed_concurrency = run.WorkerCount,
+                },
+                typed_mutation = new
+                {
+                    effective_worker_count = Math.Min(run.WorkerCount, 6),
+                    max_observed_concurrency = Math.Min(run.WorkerCount, 6),
+                },
+                preparation = new
+                {
+                    effective_worker_count = Math.Min(run.WorkerCount, 6),
+                    max_observed_concurrency = Math.Min(run.WorkerCount, 6),
+                },
+            },
             max_memory_bytes = 20L * 1024L * 1024L * 1024L,
             persistence_commit_p95_ms = 3.0,
             persistence_commit_p99_ms = 6.0,
