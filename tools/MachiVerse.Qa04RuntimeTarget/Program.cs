@@ -487,7 +487,8 @@ internal static class Program
                     failure_codes = boundedFailures,
                 });
         }
-        gatewayExecutable ??= throw new InvalidDataException("release Gateway executable is required.");
+        if (gatewayExecutable is null)
+            throw new InvalidDataException("release Gateway executable is required.");
         ValidatePersistenceProfile(request.Profile);
 
         var root = Path.Combine(
@@ -662,7 +663,8 @@ internal static class Program
                     failure_codes = boundedFailures,
                 });
         }
-        gatewayExecutable ??= throw new InvalidDataException("release Gateway executable is required.");
+        if (gatewayExecutable is null)
+            throw new InvalidDataException("release Gateway executable is required.");
         ValidatePublicationProfile(request.Profile);
 
         var target = await InvokeGatewayAsync<PublicationStressTarget>(
@@ -746,7 +748,8 @@ internal static class Program
                     failure_codes = boundedFailures,
                 });
         }
-        gatewayExecutable ??= throw new InvalidDataException("release Gateway executable is required.");
+        if (gatewayExecutable is null)
+            throw new InvalidDataException("release Gateway executable is required.");
         ValidateSoakProfile(request.Profile);
         var requestedDurationSeconds = releaseMode ? 86_400L : 2L;
         var root = Path.Combine(
