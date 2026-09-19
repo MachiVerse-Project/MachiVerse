@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -8,9 +9,22 @@ public sealed class SocietyEconomyDomainRuntimeV1 : DeterministicDomainRuntimeV1
 {
     public SocietyEconomyDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
-        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null,
+        SocietyEconomyDomainStateV1? state = null)
         : base("society_economy", intentEvaluator, partitionCandidateEvaluator)
     {
+        State = state;
+    }
+
+    public SocietyEconomyDomainStateV1? State { get; }
+
+    public SocietyEconomyDomainStateV1 RequireState()
+        => State ?? throw new InvalidDataException("society.runtime-state.unavailable");
+
+    public SocietyEconomyDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        return RequireState().BindSnapshotMaterial(frozenState);
     }
 }
 

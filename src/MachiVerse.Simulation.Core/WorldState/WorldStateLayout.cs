@@ -92,15 +92,7 @@ public sealed class PartitionStateHeaderV1
         if (revision == 0) throw new ArgumentOutOfRangeException(nameof(revision));
         if (!Enum.IsDefined(detailLevel)) throw new ArgumentOutOfRangeException(nameof(detailLevel));
 
-        foreach (var record in partition.RecordsCanonical)
-        {
-            if (record.CreatedStep > basisStep)
-                throw new InvalidDataException("domain.record-created-after-partition-basis");
-            if (record.RetiredStep is { } retired && retired > basisStep)
-                throw new InvalidDataException("domain.record-retired-after-partition-basis");
-        }
-
-        var digest = HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
+        var digest = HashSuite.DomainHashStreaming("mv.state-diagnostic.v1", writer =>
         {
             writer.WriteMapStart(8);
             writer.WriteUnsigned(0); writer.WriteAsciiText(partition.Identity.PartitionId.Value);
@@ -114,6 +106,11 @@ public sealed class PartitionStateHeaderV1
             writer.WriteArrayStart(partition.ItemCount);
             foreach (var record in partition.RecordsCanonical)
             {
+                if (record.CreatedStep > basisStep)
+                    throw new InvalidDataException("domain.record-created-after-partition-basis");
+                if (record.RetiredStep is { } retiredAfterBasis && retiredAfterBasis > basisStep)
+                    throw new InvalidDataException("domain.record-retired-after-partition-basis");
+
                 var payloadDigest = canonicalPayloadDigest(record.Payload)
                     ?? throw new InvalidDataException("domain.payload-digest-null");
                 if (payloadDigest.Length != 32)

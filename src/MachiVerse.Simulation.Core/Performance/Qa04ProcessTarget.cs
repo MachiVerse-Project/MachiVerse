@@ -48,7 +48,51 @@ public static class Qa04ProcessTargetV1
                     request.RecordCount,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
+                "authoritative-step-loop-probe" => await ProbeAuthoritativeStepLoopAsync(
+                    request.WorkerCount,
+                    request.RecordCount,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
                 "running-snapshot-probe" => await Qa04RunningSnapshotBridgeV1.RunReducedAsync(
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
+                "production-reference-connection-probe" => await Qa04ProductionReferenceConnectionProbeV1.RunAsync(
+                    request.WorkerCount,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
+                "production-reference-run" => await Qa04ProductionReferenceRunV1.RunCanonicalAsync(
+                    request.WorkerCount,
+                    request.PersistenceRoot,
+                    cancellationToken,
+                    progressHeartbeatSeconds: request.ProgressHeartbeatSeconds > 0
+                        ? request.ProgressHeartbeatSeconds
+                        : 60).ConfigureAwait(false),
+                "persistence-volume-stress-run" => await Qa04PersistenceVolumeStressV1.RunAsync(
+                    request.PersistenceRoot,
+                    request.TargetStoredGiB,
+                    cancellationToken).ConfigureAwait(false),
+                "persistence-history-tail-run" => await Qa04PersistenceHistoryTailV1.RunAsync(
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
+                "production-soak-run" => await Qa04ProductionSoakRunV1.RunAsync(
+                    request.PersistenceRoot,
+                    request.RequestedDurationSeconds,
+                    request.ReleaseMode,
+                    cancellationToken).ConfigureAwait(false),
+                "persistence-crash-case-run" => await RunPersistenceCrashCaseAsync(
+                    request.CrashStage,
+                    request.PersistenceRoot,
+                    cancellationToken).ConfigureAwait(false),
+                "persistence-crash-case-verify" => await Qa04PersistenceCrashCaseV1.VerifyAsync(
+                    request.CrashStage,
+                    request.PersistenceRoot,
+                    request.ExpectedDurable,
+                    cancellationToken).ConfigureAwait(false),
+                "production-step2-determinism-run" => await Qa04ProductionStep2DeterminismRunV1.RunAsync(
+                    request.WorkerCount,
+                    request.TransitionCount,
+                    request.PersistenceInsertBatchSize,
+                    request.ProgressIntervalTransitions,
                     request.PersistenceRoot,
                     cancellationToken).ConfigureAwait(false),
                 _ => throw new InvalidDataException("qa04.target.command-unsupported"),
@@ -64,17 +108,37 @@ public static class Qa04ProcessTargetV1
         }
     }
 
+    private static async Task<object> RunPersistenceCrashCaseAsync(
+        string stage,
+        string persistenceRoot,
+        CancellationToken cancellationToken)
+    {
+        await Qa04PersistenceCrashCaseV1.RunAsync(stage, persistenceRoot, cancellationToken).ConfigureAwait(false);
+        return new
+        {
+            schemaVersion = "1.0",
+            stage,
+            completedWithoutCrash = true,
+        };
+    }
+
     private static Qa04ProcessInspectionV1 Inspect()
     {
-        Qa04ReferenceLoadV1.ValidateCanonicalContract();
-        Qa04ReferenceScenariosV1.ValidateCanonicalContract();
-        Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
+        ValidateGate2CapabilityContracts();
+        var referenceWorldMaterialized = ReferenceWorldMaterialized();
+        var authoritativeStepLoopAvailable = AuthoritativeStepLoopAvailable(referenceWorldMaterialized);
+        var config = Qa04ReferenceConfigAuthorityV1.CreateCanonical();
+        var productionAvailable = referenceWorldMaterialized && authoritativeStepLoopAvailable;
+        var additionalBlockers = authoritativeStepLoopAvailable
+            ? Array.Empty<string>()
+            : new[] { "qa04.target.authoritative-step-loop-not-assembled" };
         return new Qa04ProcessInspectionV1
         {
             SchemaVersion = "1.0",
             ProfileId = Qa04ReferenceLoadV1.BenchmarkProfileId,
             WorldId = Qa04ReferenceLoadV1.WorldId.ToString(),
             WorldSeedSha256 = Convert.ToHexString(SHA256.HashData(Qa04ReferenceLoadV1.WorldSeed.ToBytes())).ToLowerInvariant(),
+            CanonicalConfigDigest = Convert.ToHexString(config.Digest).ToLowerInvariant(),
             CanonicalWorkerCounts = Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.ToArray(),
             StandardDomainCount = StandardDomainExecutionPlanV1.Create().Entries.Count,
             StandardPartitionCount = StandardDomainPartitionRegistry.StandardPartitionCount,
@@ -84,15 +148,14 @@ public static class Qa04ProcessTargetV1
             AuthoritativeStepStructuralBridgeAvailable = true,
             CoreSubstateTwoStepBridgeAvailable = true,
             DetailSubstateTwoStepBridgeAvailable = true,
+            ReducedAuthoritativeStepLoopAvailable = true,
             RunningSnapshotBridgeAvailable = true,
-            ReferenceWorldMaterialized = false,
-            AuthoritativeStepLoopAvailable = false,
+            ProductionReferenceConnectionProbeAvailable = productionAvailable,
+            ProductionReferenceRunAvailable = productionAvailable,
+            ReferenceWorldMaterialized = referenceWorldMaterialized,
+            AuthoritativeStepLoopAvailable = authoritativeStepLoopAvailable,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes =
-            [
-                "qa04.target.reference-world-not-materialized",
-                "qa04.target.authoritative-step-loop-not-assembled",
-            ],
+            BlockingFailureCodes = CurrentBlockingFailureCodes(additionalBlockers),
         };
     }
 
@@ -120,12 +183,25 @@ public static class Qa04ProcessTargetV1
             CanonicalResidentPopulationComplete = result.CanonicalResidentPopulationComplete,
             ReferenceWorldMaterialized = false,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes =
-            [
+            BlockingFailureCodes = CurrentBlockingFailureCodes(
                 "qa04.target.reference-world-other-partitions-not-materialized",
-                "qa04.target.authoritative-step-loop-not-assembled",
-            ],
+                "qa04.target.authoritative-step-loop-not-assembled"),
         };
+    }
+
+    private static async Task<Qa04AuthoritativeStepLoopProbeV1> ProbeAuthoritativeStepLoopAsync(
+        int workerCount,
+        ulong recordCount,
+        string persistenceRoot,
+        CancellationToken cancellationToken)
+    {
+        var materialized = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(recordCount);
+        _ = Qa04ReducedWorldTypedAuthorityV1.BindAll97(materialized);
+        return await Qa04AuthoritativeStepLoopBridgeV1.RunReducedAsync(
+            workerCount,
+            recordCount,
+            persistenceRoot,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<Qa04ProcessWorkerProbeV1> ProbeWorkerAsync(
@@ -142,6 +218,7 @@ public static class Qa04ProcessTargetV1
         var state = CreateProbeWorldState();
         var scheduler = new OperationSchedulerStateV1(0, null, Array.Empty<ScheduledOperationRefV1>());
         var receipt = await target.ExecuteDomainsAsync(state, scheduler, cancellationToken).ConfigureAwait(false);
+        var referenceWorldMaterialized = ReferenceWorldMaterialized();
         return new Qa04ProcessWorkerProbeV1
         {
             SchemaVersion = "1.0",
@@ -150,10 +227,48 @@ public static class Qa04ProcessTargetV1
             DomainCount = receipt.DomainOutputs.Count,
             MaxObservedConcurrency = probe.MaxConcurrency,
             WorkerCountAppliedToDomainExecutor = receipt.WorkerCount == workerCount && probe.MaxConcurrency == expectedConcurrency,
-            ReferenceWorldMaterialized = false,
+            ReferenceWorldMaterialized = referenceWorldMaterialized,
             ReleaseEvidenceCapable = false,
-            BlockingFailureCodes = ["qa04.target.reference-world-not-materialized"],
+            BlockingFailureCodes = CurrentBlockingFailureCodes(),
         };
+    }
+
+    private static void ValidateGate2CapabilityContracts()
+    {
+        Qa04ReferenceLoadV1.ValidateCanonicalContract();
+        Qa04ReferenceScenariosV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldMaterializerV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldMaterialContractV1.ValidateCanonicalContract();
+        Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
+    }
+
+    private static bool ReferenceWorldMaterialized()
+    {
+        Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
+        Qa04ReferenceWorldMaterialContractV1.ValidateCanonicalContract();
+        return Qa04ReferenceWorldDependencyContractV1.Blockers.Count == 0 &&
+               Qa04ReferenceWorldMaterialContractV1.AllProductionMaterializersAvailable;
+    }
+
+    private static bool AuthoritativeStepLoopAvailable(bool referenceWorldMaterialized)
+    {
+        Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
+        return referenceWorldMaterialized &&
+               Qa04CanonicalOperationBindingV1.PendingAuthorityFamilies.Count == 0 &&
+               Qa04CanonicalOperationBindingV1.BoundFamilies.Count == Qa04ReferenceLoadV1.OperationFamilies.Count;
+    }
+
+    private static string[] CurrentBlockingFailureCodes(params string[] additional)
+    {
+        Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
+        return Qa04ReferenceWorldDependencyContractV1.FailureCodes
+            .Select(static code => code.Value)
+            .Concat(additional)
+            .Where(static code => !string.IsNullOrWhiteSpace(code))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static code => code, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static WorldStateV1 CreateProbeWorldState()
@@ -239,7 +354,16 @@ public sealed class Qa04ProcessRequestV1
     public string Command { get; set; } = "";
     public int WorkerCount { get; set; }
     public ulong RecordCount { get; set; }
+    public int TransitionCount { get; set; }
+    public int PersistenceInsertBatchSize { get; set; }
+    public int ProgressIntervalTransitions { get; set; }
+    public int ProgressHeartbeatSeconds { get; set; }
     public string PersistenceRoot { get; set; } = "";
+    public string CrashStage { get; set; } = "";
+    public bool ExpectedDurable { get; set; }
+    public int TargetStoredGiB { get; set; }
+    public long RequestedDurationSeconds { get; set; }
+    public bool ReleaseMode { get; set; }
 }
 
 public sealed class Qa04ProcessInspectionV1
@@ -248,6 +372,7 @@ public sealed class Qa04ProcessInspectionV1
     public string ProfileId { get; set; } = "";
     public string WorldId { get; set; } = "";
     public string WorldSeedSha256 { get; set; } = "";
+    public string CanonicalConfigDigest { get; set; } = "";
     public int[] CanonicalWorkerCounts { get; set; } = [];
     public int StandardDomainCount { get; set; }
     public int StandardPartitionCount { get; set; }
@@ -257,7 +382,10 @@ public sealed class Qa04ProcessInspectionV1
     public bool AuthoritativeStepStructuralBridgeAvailable { get; set; }
     public bool CoreSubstateTwoStepBridgeAvailable { get; set; }
     public bool DetailSubstateTwoStepBridgeAvailable { get; set; }
+    public bool ReducedAuthoritativeStepLoopAvailable { get; set; }
     public bool RunningSnapshotBridgeAvailable { get; set; }
+    public bool ProductionReferenceConnectionProbeAvailable { get; set; }
+    public bool ProductionReferenceRunAvailable { get; set; }
     public bool ReferenceWorldMaterialized { get; set; }
     public bool AuthoritativeStepLoopAvailable { get; set; }
     public bool ReleaseEvidenceCapable { get; set; }
