@@ -132,6 +132,7 @@ VALUES (1, $master_generation, 0, NULL);
         RequireHash256(operationPayloadDigest, nameof(operationPayloadDigest));
         ValidateHistoryMaterial(history, "operation.accepted.v1");
 
+        Qa04PersistenceCrashInjectionV1.Hit("operation-acceptance", "before-db-begin");
         using var transaction = _connection.BeginTransaction();
         try
         {
@@ -167,8 +168,12 @@ INSERT INTO operation_state (
                 await operation.ExecuteNonQueryAsync(cancellationToken);
             }
 
+            Qa04PersistenceCrashInjectionV1.Hit("operation-acceptance", "mid-write");
             await UpdateHistoryAnchorAsync(history, transaction, cancellationToken);
+            Qa04PersistenceCrashInjectionV1.Hit("operation-acceptance", "before-fsync-or-commit");
             transaction.Commit();
+            Qa04PersistenceCrashInjectionV1.Hit("operation-acceptance", "immediately-after-commit");
+            Qa04PersistenceCrashInjectionV1.Hit("operation-acceptance", "before-response-or-publication");
             return new DurableAcceptanceResult(DurableAcceptanceStatus.Accepted, history.Sequence);
         }
         catch
