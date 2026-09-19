@@ -477,6 +477,26 @@ internal static class Program
                 !volume.ZstdRoundTripValidated)
                 throw new InvalidDataException("QA-04 persistence 16GiB compressed volume target did not complete canonically.");
 
+            var historyTail = await InvokeCoreAsync<PersistenceHistoryTail>(
+                coreExecutable,
+                new
+                {
+                    schemaVersion = "1.0",
+                    command = "persistence-history-tail-run",
+                    persistenceRoot = Path.Combine(root, "history-tail"),
+                },
+                timeout: null);
+            if (!string.Equals(historyTail.SchemaVersion, "1.0", StringComparison.Ordinal) ||
+                historyTail.EquivalentMinutes != 10 ||
+                historyTail.TransitionCount != 18_000 ||
+                historyTail.FinalizedStep != 18_000 ||
+                historyTail.FinalHistorySequence != 18_001 ||
+                !historyTail.HistoryChainValid ||
+                !historyTail.ReopenRecoveryMatched)
+                throw new InvalidDataException("QA-04 persistence 10-minute equivalent history tail did not complete canonically.");
+            RequireLowerHex(historyTail.FinalHistoryDigest, 64, "historyTail.finalHistoryDigest");
+            RequireLowerHex(historyTail.FinalContinuityToken, 64, "historyTail.finalContinuityToken");
+
             var caseResults = new List<PersistenceCrashCaseResult>(30);
             foreach (var stage in PersistenceCrashStages)
             foreach (var point in PersistenceCrashPoints)
@@ -557,7 +577,11 @@ internal static class Program
                     compressed_snapshot_stored_bytes = volume.StoredBytes,
                     compressed_snapshot_chunk_count = volume.ChunkCount,
                     zstd_roundtrip_validated = volume.ZstdRoundTripValidated,
-                    history_tail_minutes = 10,
+                    history_tail_minutes = historyTail.EquivalentMinutes,
+                    history_tail_transition_count = historyTail.TransitionCount,
+                    history_tail_final_history_digest = historyTail.FinalHistoryDigest,
+                    history_tail_final_continuity_token = historyTail.FinalContinuityToken,
+                    history_tail_reopen_recovery_matched = historyTail.ReopenRecoveryMatched,
                     crash_case_count = caseResults.Count,
                     crash_cases = caseResults,
                     no_durable_fact_loss = true,
@@ -957,6 +981,19 @@ internal static class Program
         public int ChunkCount { get; set; }
         public int LogicalChunkBytes { get; set; }
         public bool ZstdRoundTripValidated { get; set; }
+    }
+
+    private sealed class PersistenceHistoryTail
+    {
+        public string SchemaVersion { get; set; } = "";
+        public int EquivalentMinutes { get; set; }
+        public int TransitionCount { get; set; }
+        public ulong FinalizedStep { get; set; }
+        public ulong FinalHistorySequence { get; set; }
+        public string FinalHistoryDigest { get; set; } = "";
+        public string FinalContinuityToken { get; set; } = "";
+        public bool HistoryChainValid { get; set; }
+        public bool ReopenRecoveryMatched { get; set; }
     }
 
     private sealed class PersistenceCrashVerification
