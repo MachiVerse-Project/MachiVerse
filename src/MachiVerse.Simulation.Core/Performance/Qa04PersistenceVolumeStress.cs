@@ -61,13 +61,22 @@ public static class Qa04PersistenceVolumeStressV1
         if (firstPath is null || lastPath is null)
             throw new InvalidDataException("qa04.persistence.volume-no-chunks");
 
-        var first = await SnapshotChunkFile.ValidateAsync(firstPath, cancellationToken).ConfigureAwait(false);
-        var last = await SnapshotChunkFile.ValidateAsync(lastPath, cancellationToken).ConfigureAwait(false);
-        if (first.Compression != SnapshotCompression.Zstd ||
-            last.Compression != SnapshotCompression.Zstd ||
-            first.UncompressedLength != (ulong)logical.Length ||
-            last.UncompressedLength != (ulong)logical.Length)
-            throw new InvalidDataException("qa04.persistence.volume-chunk-header-drift");
+        long validatedStoredBytes = 0;
+        var validatedChunkCount = 0;
+        foreach (var path in Directory.EnumerateFiles(directory, "*.mvchunk", SearchOption.TopDirectoryOnly)
+                     .OrderBy(static path => path, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var header = await SnapshotChunkFile.ValidateAsync(path, cancellationToken).ConfigureAwait(false);
+            if (header.Compression != SnapshotCompression.Zstd ||
+                header.UncompressedLength != (ulong)logical.Length ||
+                header.StoredLength != (ulong)stored.Length)
+                throw new InvalidDataException("qa04.persistence.volume-chunk-header-drift");
+            validatedStoredBytes = checked(validatedStoredBytes + SnapshotChunkFile.HeaderLength + (long)header.StoredLength);
+            validatedChunkCount++;
+        }
+        if (validatedChunkCount != index || validatedStoredBytes != written)
+            throw new InvalidDataException("qa04.persistence.volume-full-load-validation-drift");
 
         var decoded = codec.Decode(stored, checked((ulong)logical.Length));
         if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(decoded), logicalDigest))
