@@ -81,15 +81,13 @@ jobs:
             throw "GitHub resolved candidate '$($commit.sha)' but '$env:CANDIDATE_SHA' was requested."
           }
 
-          $workspace = $env:GITHUB_WORKSPACE
-          if ([string]::IsNullOrWhiteSpace($workspace)) {
-            throw "GITHUB_WORKSPACE is not available."
+          $runnerRoot = Split-Path (Split-Path $env:RUNNER_TEMP -Parent) -Parent
+          if ([string]::IsNullOrWhiteSpace($runnerRoot)) {
+            throw "Could not resolve runner root from RUNNER_TEMP."
           }
 
-          Get-ChildItem -LiteralPath $workspace -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
-
           $archive = Join-Path $env:RUNNER_TEMP ("machiverse-" + $env:CANDIDATE_SHA + ".zip")
-          $extract = Join-Path $env:RUNNER_TEMP ("machiverse-source-" + $env:CANDIDATE_SHA)
+          $extract = Join-Path $runnerRoot "_gate4-source"
           Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $extract | Out-Null
@@ -104,21 +102,26 @@ jobs:
             throw "Expected exactly one source root in candidate archive, found $($roots.Count)."
           }
 
-          Get-ChildItem -LiteralPath $roots[0].FullName -Force | Copy-Item -Destination $workspace -Recurse -Force
-          Set-Content -LiteralPath (Join-Path $workspace ".machiverse-source-commit") -Value $env:CANDIDATE_SHA -Encoding ascii
+          $sourceRoot = $roots[0].FullName
+          Set-Content -LiteralPath (Join-Path $sourceRoot ".machiverse-source-commit") -Value $env:CANDIDATE_SHA -Encoding ascii
 
           $requiredRootPaths = @("AGENTS.md", "global.json", "src", "tools")
           foreach ($required in $requiredRootPaths) {
-            if (-not (Test-Path (Join-Path $workspace $required))) {
+            if (-not (Test-Path (Join-Path $sourceRoot $required))) {
               throw "Candidate source materialization is missing required root path: $required"
             }
           }
+
+          "QA04_SOURCE_ROOT=$sourceRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Verify materialized candidate
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $marker = Join-Path $env:GITHUB_WORKSPACE ".machiverse-source-commit"
+          if ([string]::IsNullOrWhiteSpace($env:QA04_SOURCE_ROOT)) {
+            throw "QA04_SOURCE_ROOT is not available."
+          }
+          $marker = Join-Path $env:QA04_SOURCE_ROOT ".machiverse-source-commit"
           if (-not (Test-Path $marker)) {
             throw "Candidate source marker is missing."
           }
@@ -144,6 +147,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
+          Set-Location -LiteralPath $env:QA04_SOURCE_ROOT
           $coreOut = Join-Path $env:RUNNER_TEMP "qa04-core"
           $adapterOut = Join-Path $env:RUNNER_TEMP "qa04-adapter"
           $gatewayOut = Join-Path $env:RUNNER_TEMP "qa04-gateway"
@@ -174,7 +178,9 @@ jobs:
 
       - name: Run Step4 fail-closed preflight then 24h soak
         shell: powershell
-        run: dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- run-step4 release $env:CANDIDATE_SHA $env:QA04_RUNTIME_ADAPTER $env:QA04_PLAN $env:QA04_STEP3_EVIDENCE $env:QA04_STEP4_OUTPUT
+        run: |
+          Set-Location -LiteralPath $env:QA04_SOURCE_ROOT
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- run-step4 release $env:CANDIDATE_SHA $env:QA04_RUNTIME_ADAPTER $env:QA04_PLAN $env:QA04_STEP3_EVIDENCE $env:QA04_STEP4_OUTPUT
 
       - name: Upload Step4 evidence
         if: always()
