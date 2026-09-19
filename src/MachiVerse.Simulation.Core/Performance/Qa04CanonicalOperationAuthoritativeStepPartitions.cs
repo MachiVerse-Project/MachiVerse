@@ -143,6 +143,138 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             Array.AsReadOnly(bound));
     }
 
+
+    public static async Task<Qa04CanonicalOperationPartitionCandidateBatchV1> BindParallelAsync(
+        WorldStateV1 basisState,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+        IDomainRecordSchemaResolverV1 references,
+        int workerCount,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(basisState);
+        ArgumentNullException.ThrowIfNull(orderedBindings);
+        ArgumentNullException.ThrowIfNull(mutationResult);
+        ArgumentNullException.ThrowIfNull(mutationResult.State);
+        ArgumentNullException.ThrowIfNull(references);
+        if (workerCount < 1) throw new ArgumentOutOfRangeException(nameof(workerCount));
+
+        if (basisState.Header.WorldId != Qa04ReferenceLoadV1.WorldId)
+            throw new InvalidDataException("qa04.full-step.authoritative-partition-world-id-drift");
+        if (basisState.Header.Step == 0)
+            throw new InvalidDataException("qa04.full-step.authoritative-partition-effective-step-zero");
+        if (basisState.Header.Step == ulong.MaxValue)
+            throw new InvalidDataException("qa04.full-step.authoritative-partition-step-overflow");
+        if (mutationResult.EffectiveStep != basisState.Header.Step)
+            throw new InvalidDataException("qa04.full-step.authoritative-partition-effective-step-drift");
+
+        var targetStep = checked(basisState.Header.Step + 1UL);
+        var bindingsByFamily = ValidateAndGroupBindings(
+            orderedBindings,
+            mutationResult,
+            basisState.Header.Step);
+        var state = mutationResult.State;
+        var families = new[]
+        {
+            InfrastructureFamily,
+            ResidentFamily,
+            PhysicalFamily,
+            MarketFamily,
+            GovernanceFamily,
+            EnvironmentFamily,
+        };
+
+        var batch = await DeterministicBatchExecutor.RunCpuBoundAsync(
+            families,
+            workerCount,
+            (family, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                return family switch
+                {
+                    InfrastructureFamily => BindStandard(
+                        basisState,
+                        targetStep,
+                        bindingsByFamily[InfrastructureFamily],
+                        state.InfrastructureServiceQueue,
+                        payload => digestCache?.Infrastructure(payload) ??
+                            StandardDomainPayloadCanonicalDigestV1.Compute(
+                                InfrastructureServiceQueuePayloadV1.PartitionId,
+                                payload.ToStandardPayload(),
+                                references: references)),
+                    ResidentFamily => BindStandard(
+                        basisState,
+                        targetStep,
+                        bindingsByFamily[ResidentFamily],
+                        state.ResidentBehaviorState,
+                        payload => digestCache?.Resident(payload) ??
+                            StandardDomainPayloadCanonicalDigestV1.Compute(
+                                ResidentBehaviorStatePayloadV1.PartitionId,
+                                payload.ToStandardPayload(),
+                                references: references)),
+                    PhysicalFamily => BindStandard(
+                        basisState,
+                        targetStep,
+                        bindingsByFamily[PhysicalFamily],
+                        state.PhysicalPresence,
+                        payload => digestCache?.Physical(payload) ??
+                            StandardDomainPayloadCanonicalDigestV1.Compute(
+                                PhysicalPresencePayloadV1.PartitionId,
+                                payload.ToStandardPayload(),
+                                references: references)),
+                    MarketFamily => BindMarket(
+                        basisState,
+                        targetStep,
+                        bindingsByFamily[MarketFamily],
+                        state.MarketTransaction,
+                        references,
+                        digestCache),
+                    GovernanceFamily => BindStandard(
+                        basisState,
+                        targetStep,
+                        bindingsByFamily[GovernanceFamily],
+                        state.GovernanceSecurityIncident,
+                        payload => digestCache?.Governance(payload) ??
+                            StandardDomainPayloadCanonicalDigestV1.Compute(
+                                GovernanceSecurityIncidentPayloadV1.PartitionId,
+                                payload.ToStandardPayload(),
+                                references: references)),
+                    EnvironmentFamily => BindStandard(
+                        basisState,
+                        targetStep,
+                        bindingsByFamily[EnvironmentFamily],
+                        state.EnvironmentHazard,
+                        payload => digestCache?.Environment(payload) ??
+                            StandardDomainPayloadCanonicalDigestV1.Compute(
+                                EnvironmentHazardPayloadV1.PartitionId,
+                                payload.ToStandardPayload(),
+                                references: references)),
+                    _ => throw new InvalidDataException(
+                        $"qa04.full-step.authoritative-partition-family-unregistered:{family}"),
+                };
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        var bound = batch.Outputs
+            .OrderBy(static item => item.Candidate.PartitionId.Value, StringComparer.Ordinal)
+            .ToArray();
+        if (bound.Length != 6 || bound.Select(static item => item.Candidate.PartitionId).Distinct().Count() != 6)
+            throw new InvalidDataException("qa04.full-step.authoritative-partition-coverage-drift");
+        if (bound.Any(item => item.Candidate.BasisStep != basisState.Header.Step ||
+                              item.Candidate.TargetStep != targetStep ||
+                              item.Material.ResultingHeader.BasisStep != targetStep))
+            throw new InvalidDataException("qa04.full-step.authoritative-partition-step-drift");
+
+        return new Qa04CanonicalOperationPartitionCandidateBatchV1(
+            basisState.Header.Step,
+            targetStep,
+            Array.AsReadOnly(bound))
+        {
+            CpuParallelism = batch.Observation,
+        };
+    }
+
     private static IReadOnlyDictionary<string, IReadOnlyList<Qa04CanonicalOperationBindingResultV1>> ValidateAndGroupBindings(
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
         Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
