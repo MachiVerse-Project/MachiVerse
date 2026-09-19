@@ -59,6 +59,157 @@ internal static class ReleaseEvidenceRunner
         Console.WriteLine("Contract-smoke output is never release-eligible.");
     }
 
+    internal static async Task RunGate4Step2ActualRunAsync(
+        string repositoryRoot,
+        string sourceCommit,
+        string coreExecutable,
+        int workerCount,
+        int runOrdinal,
+        string outputPath)
+    {
+        Program.RequireLowerHex(sourceCommit, 40, "sourceCommit");
+        if (!File.Exists(coreExecutable))
+            throw new FileNotFoundException("Simulation Core executable was not found.", coreExecutable);
+
+        var planPath = Path.Combine(
+            repositoryRoot,
+            "tests",
+            "performance-fixtures",
+            "v1",
+            "gate4-step2-determinism-plan.json");
+        var plan = Program.ReadJson<Gate4Step2DeterminismPlan>(
+            planPath,
+            "Gate4 Step2 bounded determinism plan");
+        Qa04DeterminismEvidenceVerifier.ValidateActualPlan(plan);
+
+        if (!plan.WorkerCounts.Contains(workerCount))
+            throw new ArgumentOutOfRangeException(nameof(workerCount), "Gate4 Step2 worker count is not in the evidence plan.");
+        if (runOrdinal < 1 || runOrdinal > plan.ProcessRunsPerWorker)
+            throw new ArgumentOutOfRangeException(nameof(runOrdinal), "Gate4 Step2 run ordinal is outside the evidence plan.");
+
+        var persistenceRoot = Path.Combine(
+            Path.GetTempPath(),
+            "machiverse-gate4-step2-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = coreExecutable,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("qa04-target");
+
+            using var process = new Process { StartInfo = startInfo };
+            if (!process.Start())
+                throw new InvalidOperationException("Failed to start Simulation Core Gate4 Step2 process.");
+
+            var request = new
+            {
+                schemaVersion = "1.0",
+                command = "production-step2-determinism-run",
+                workerCount,
+                transitionCount = plan.TransitionCount,
+                persistenceInsertBatchSize = plan.PersistenceInsertBatchSize,
+                progressIntervalTransitions = plan.ProgressIntervalTransitions,
+                persistenceRoot,
+            };
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, JsonLine));
+            process.StandardInput.Close();
+
+            Console.Error.WriteLine(
+                $"GATE4_STEP2_START workers={workerCount} run={runOrdinal} transitions={plan.TransitionCount} " +
+                $"persistence_batch_size={plan.PersistenceInsertBatchSize} progress_interval_transitions={plan.ProgressIntervalTransitions}");
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrBuffer = new StringBuilder();
+            string latestProgress = "not-started";
+
+            async Task PumpStandardErrorAsync()
+            {
+                while (await process.StandardError.ReadLineAsync() is { } line)
+                {
+                    Console.Error.WriteLine(line);
+                    stderrBuffer.AppendLine(line);
+                    if (line.StartsWith("QA04_PROGRESS ", StringComparison.Ordinal))
+                        Volatile.Write(ref latestProgress, line);
+                }
+            }
+
+            using var heartbeatCancellation = new CancellationTokenSource();
+            async Task EmitHeartbeatAsync()
+            {
+                var elapsed = Stopwatch.StartNew();
+                try
+                {
+                    while (true)
+                    {
+                        await Task.Delay(
+                            TimeSpan.FromSeconds(plan.HeartbeatIntervalSeconds),
+                            heartbeatCancellation.Token);
+                        var progressSnapshot = Volatile.Read(ref latestProgress);
+                        Console.Error.WriteLine(
+                            $"GATE4_STEP2_HEARTBEAT workers={workerCount} run={runOrdinal} " +
+                            $"elapsed_seconds={elapsed.Elapsed.TotalSeconds:F1} latest_progress=\"{progressSnapshot}\"");
+                    }
+                }
+                catch (OperationCanceledException) when (heartbeatCancellation.IsCancellationRequested)
+                {
+                }
+            }
+
+            var stderrTask = PumpStandardErrorAsync();
+            var heartbeatTask = EmitHeartbeatAsync();
+            try
+            {
+                await process.WaitForExitAsync();
+            }
+            finally
+            {
+                heartbeatCancellation.Cancel();
+            }
+
+            var stdout = await stdoutTask;
+            await stderrTask;
+            await heartbeatTask;
+            var stderr = stderrBuffer.ToString();
+            if (process.ExitCode != 0)
+                throw new InvalidDataException(
+                    $"Simulation Core Gate4 Step2 process exited {process.ExitCode}: {Limit(stderr, 2000)}");
+
+            var lines = stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length != 1)
+                throw new InvalidDataException(
+                    $"Simulation Core Gate4 Step2 process must emit exactly one JSON line; found {lines.Length}.");
+
+            var result = JsonSerializer.Deserialize<Gate4Step2CoreRunResult>(lines[0], JsonLine)
+                ?? throw new InvalidDataException("Simulation Core Gate4 Step2 result decoded to null.");
+            var row = Qa04DeterminismEvidenceVerifier.ParseActualRun(
+                plan,
+                sourceCommit,
+                workerCount,
+                runOrdinal,
+                result);
+            Program.WriteJson(outputPath, row);
+
+            Console.WriteLine(
+                $"Gate4 Step2 bounded actual run captured: run={row.RunId} workers={row.WorkerCount} ordinal={row.RunOrdinal} transitions={row.TransitionCount} terminal_operations={row.TerminalOperationCount}");
+            Console.WriteLine($"final_state_digest={row.FinalStateDigest}");
+            Console.WriteLine($"transition_committed_digest={row.TransitionCommittedDigest}");
+            Console.WriteLine($"operation_terminal_semantic_digest={row.OperationTerminalSemanticDigest}");
+            Console.WriteLine($"config_history_digest={row.ConfigHistoryDigest}");
+            Console.WriteLine($"promotion_deferral_order_digest={row.PromotionDeferralOrderDigest}");
+        }
+        finally
+        {
+            if (Directory.Exists(persistenceRoot))
+                Directory.Delete(persistenceRoot, recursive: true);
+        }
+    }
+
     internal static async Task<int> RunAsync(
         string repositoryRoot,
         string executionClass,

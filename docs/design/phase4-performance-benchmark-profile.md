@@ -44,7 +44,6 @@ At measurement start:
 | state class | count |
 |---|---:|
 | Resident persistent identity | 1,000,000 |
-| Participation control_mode | 1,000,000 |
 | Resident D0 | 100,000 |
 | Resident D1 | 300,000 |
 | Resident D2 | 400,000 |
@@ -58,8 +57,6 @@ At measurement start:
 | active CrossDomainTransaction | 10,000 |
 
 Countはrecord creation ordinalからdeterministic identityをderiveする。
-
-#240の承認により、Residentごとにexactly one `participation.control_mode` を追加する。上表のResident D0〜D3はidentityの内訳であり二重計上しない。canonical record totalは5,760,000から6,760,000へ改定する。identity / exact Token / genesis / DetailLevel / production測定契約は `phase4-alpha11-participation-control-mode-authority-audit.md` を正本とする。これは負荷定義の改定でありproduction accepted countの更新ではない。
 
 ## 5. Spatial distribution
 
