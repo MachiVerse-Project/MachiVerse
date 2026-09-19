@@ -298,6 +298,12 @@ internal sealed class BenchmarkRunObservation
     public string RunId { get; set; } = "";
     public int WorkerCount { get; set; }
     public int RunOrdinal { get; set; }
+    public bool CpuParallelismMeasured { get; set; }
+    public int ConfiguredWorkerCount { get; set; }
+    public int EffectiveWorkerCount { get; set; }
+    public int MaxObservedCpuConcurrency { get; set; }
+    public bool WorkerBudgetApplied { get; set; }
+    public bool ParallelExecutionObserved { get; set; }
     public double StepP95Ms { get; set; }
     public double StepP99Ms { get; set; }
     public double Mean60sStepMs { get; set; }
