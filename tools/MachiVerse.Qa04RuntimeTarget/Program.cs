@@ -15,6 +15,7 @@ internal static class Program
     private const ulong CanonicalTerminalOperationCount = 136_450_000UL;
     private const string BenchmarkMeasurementCode = "qa04.measurement.step-sample-count";
     private const double MissingMetricSentinelMilliseconds = 1_000_000_000.0;
+    private const string Step3HeartbeatEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_HEARTBEAT_SECONDS";
     private static readonly string[] PersistenceCrashStages =
     [
         "audit-append",
@@ -341,6 +342,7 @@ internal static class Program
                     schemaVersion = "1.0",
                     command = "production-reference-run",
                     workerCount = run.WorkerCount,
+                    progressHeartbeatSeconds = Step3HeartbeatSeconds(),
                     persistenceRoot,
                 },
                 timeout: null);
@@ -1046,7 +1048,7 @@ internal static class Program
         await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, Json));
         process.StandardInput.Close();
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
+        var stderrTask = PumpCoreStderrAsync(process.StandardError);
         if (timeout is { } bounded)
         {
             using var timeoutSource = new CancellationTokenSource(bounded);
@@ -1065,6 +1067,30 @@ internal static class Program
             throw new InvalidDataException($"Simulation Core QA-04 target must emit exactly one JSON line; found {lines.Length}.");
         return JsonSerializer.Deserialize<T>(lines[0], Json)
             ?? throw new InvalidDataException("Simulation Core QA-04 target response decoded to null.");
+    }
+
+    private static async Task<string> PumpCoreStderrAsync(StreamReader reader)
+    {
+        var tail = new StringBuilder();
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            Console.Error.WriteLine(line);
+            tail.AppendLine(line);
+            if (tail.Length > 16_384)
+                tail.Remove(0, tail.Length - 8_192);
+        }
+        return tail.ToString();
+    }
+
+    private static int Step3HeartbeatSeconds()
+    {
+        var raw = Environment.GetEnvironmentVariable(Step3HeartbeatEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(raw))
+            return 60;
+        if (!int.TryParse(raw, out var seconds) || seconds <= 0)
+            throw new InvalidDataException(
+                $"{Step3HeartbeatEnvironmentVariable} must be a positive integer number of seconds.");
+        return seconds;
     }
 
     private static void ValidatePersistenceProfile(JsonElement profile)
