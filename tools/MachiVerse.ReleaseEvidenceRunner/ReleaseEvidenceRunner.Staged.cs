@@ -108,6 +108,17 @@ internal static partial class ReleaseEvidenceRunner
         Directory.CreateDirectory(outputDirectory);
         var reportsDirectory = Path.Combine(outputDirectory, "reports");
         Directory.CreateDirectory(reportsDirectory);
+        Program.WriteJson(
+            Path.Combine(outputDirectory, "gate4-step4-stage-start.json"),
+            new
+            {
+                schemaVersion = SchemaVersion,
+                executionClass,
+                sourceCommit,
+                qa04ManifestSha256 = Program.CanonicalQa04ManifestSha256,
+                step3EvidenceSha256 = Program.Sha256File(step3EvidencePath),
+                started = true,
+            });
 
         var step3Directory = Path.GetDirectoryName(step3EvidencePath) ?? Directory.GetCurrentDirectory();
         var step3AggregateSource = ResolveArtifactPath(
