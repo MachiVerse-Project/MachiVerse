@@ -126,10 +126,12 @@ public static class Qa04GatewayTargetV1
             MasterGeneration = secondGeneration,
             CurrentMasterGatewayId = remoteId,
         });
+        var currentMaster = authority.Current
+            ?? throw new InvalidDataException("qa04.soak.gateway-master-authority-missing");
         if (authority.IsLocalMaster ||
-            authority.Current?.MasterGeneration != secondGeneration ||
-            authority.Current.CurrentMasterGatewayId is null ||
-            !authority.Current.CurrentMasterGatewayId.AsSpan().SequenceEqual(remoteId.Span))
+            currentMaster.MasterGeneration != secondGeneration ||
+            currentMaster.CurrentMasterGatewayId is null ||
+            !currentMaster.CurrentMasterGatewayId.AsSpan().SequenceEqual(remoteId.Span))
             throw new InvalidDataException("qa04.soak.gateway-failover-did-not-converge");
 
         var cache = new ConfirmedProjectionCache();
