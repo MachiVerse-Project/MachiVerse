@@ -626,7 +626,13 @@ internal static partial class ReleaseEvidenceRunner
             ? Math.Min(reportedDuration, measuredDuration)
             : reportedDuration;
         var reportFailures = ReadStringArray(report, "failure_codes");
-        var passed = response.Passed && response.FailureCodes.Length == 0 && reportFailures.Length == 0;
+        var explicitReleaseReady =
+            !string.Equals(executionClass, "release", StringComparison.Ordinal) ||
+            response.ReleaseEvidenceCapable == true;
+        var passed = response.Passed &&
+            response.FailureCodes.Length == 0 &&
+            reportFailures.Length == 0 &&
+            explicitReleaseReady;
         return new SoakEvidence
         {
             TestCaseId = SoakProfile,
