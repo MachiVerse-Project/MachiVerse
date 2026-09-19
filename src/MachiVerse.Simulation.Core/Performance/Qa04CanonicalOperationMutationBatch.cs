@@ -6,6 +6,7 @@ using MachiVerse.Simulation.Core.Domains.Participation;
 using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Domains.Resident;
 using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
+using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
@@ -38,7 +39,10 @@ public sealed record Qa04CanonicalOperationMutationBatchResultV1(
     Qa04CanonicalOperationMutationStateV1 State,
     IReadOnlyList<OpaqueId128> AppliedOperationIds,
     IReadOnlyDictionary<string, ulong> AppliedCountByFamily,
-    IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Changes);
+    IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Changes)
+{
+    public DeterministicCpuBatchObservationV1? CpuParallelism { get; init; }
+}
 
 /// <summary>
 /// Gate-2 integration stage that applies already-authoritative perf.reference.v1 Operations to the
@@ -288,6 +292,330 @@ public static class Qa04CanonicalOperationMutationBatchV1
             Array.AsReadOnly(appliedIds.ToArray()),
             new System.Collections.ObjectModel.ReadOnlyDictionary<string, ulong>(counts),
             Array.AsReadOnly(changes.ToArray()));
+    }
+
+
+    public static async Task<Qa04CanonicalOperationMutationBatchResultV1> ApplyParallelAsync(
+        OpaqueId128 worldId,
+        ulong effectiveStep,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+        Qa04CanonicalOperationMutationStateV1 initialState,
+        IDomainRecordSchemaResolverV1 references,
+        int workerCount,
+        CancellationToken cancellationToken = default)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
+        if (worldId != Qa04ReferenceLoadV1.WorldId)
+            throw new InvalidDataException("qa04.full-step.mutation-world-id-drift");
+        if (effectiveStep == 0) throw new ArgumentOutOfRangeException(nameof(effectiveStep));
+        ArgumentNullException.ThrowIfNull(orderedBindings);
+        ArgumentNullException.ThrowIfNull(initialState);
+        ArgumentNullException.ThrowIfNull(references);
+        if (workerCount < 1) throw new ArgumentOutOfRangeException(nameof(workerCount));
+        if (orderedBindings.Count == 0)
+            throw new InvalidDataException("qa04.full-step.mutation-batch-empty");
+
+        ValidateStateIdentities(initialState);
+
+        var appliedIds = new OpaqueId128[orderedBindings.Count];
+        var seen = new HashSet<OpaqueId128>();
+        var counts = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        SameStepOrderKey? previousOrderKey = null;
+        for (var index = 0; index < orderedBindings.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var binding = orderedBindings[index]
+                ?? throw new InvalidDataException("qa04.full-step.mutation-binding-null");
+            if (binding.SourceDescriptor is null || binding.ScheduledOperation is null || binding.OrderKey is null)
+                throw new InvalidDataException("qa04.full-step.mutation-binding-null");
+            if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
+                throw new InvalidDataException("qa04.full-step.mutation-effective-step-drift");
+            if (!binding.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(
+                    binding.ScheduledOperation.OrderKey.ToDatabaseBytes()))
+                throw new InvalidDataException("qa04.full-step.mutation-order-key-drift");
+            if (previousOrderKey is not null && previousOrderKey.CompareTo(binding.OrderKey) >= 0)
+                throw new InvalidDataException("qa04.full-step.mutation-order-not-canonical");
+            previousOrderKey = binding.OrderKey;
+
+            var operationId = binding.SourceDescriptor.OperationId;
+            if (operationId.IsZero || !seen.Add(operationId))
+                throw new InvalidDataException("qa04.full-step.mutation-operation-id-duplicate");
+            appliedIds[index] = operationId;
+
+            var family = binding.SourceDescriptor.FamilyToken.Value;
+            if (family is not (InfrastructureFamily or ResidentFamily or PhysicalFamily or MarketFamily or GovernanceFamily or EnvironmentFamily))
+                throw new InvalidDataException($"qa04.full-step.mutation-family-unregistered:{family}");
+            counts[family] = checked(counts.GetValueOrDefault(family) + 1UL);
+        }
+
+        var familyOrder = new[]
+        {
+            InfrastructureFamily,
+            ResidentFamily,
+            PhysicalFamily,
+            MarketFamily,
+            GovernanceFamily,
+            EnvironmentFamily,
+        };
+        var work = familyOrder
+            .Select(family => new FamilyMutationWorkV1(
+                family,
+                (IReadOnlyList<Qa04CanonicalOperationBindingResultV1>)Array.AsReadOnly(
+                    orderedBindings.Where(binding =>
+                        string.Equals(binding.SourceDescriptor.FamilyToken.Value, family, StringComparison.Ordinal))
+                        .ToArray())))
+            .ToArray();
+        if (work.Any(static item => item.Bindings.Count == 0))
+            throw new InvalidDataException("qa04.full-step.mutation-family-coverage-drift");
+
+        var batch = await DeterministicBatchExecutor.RunCpuBoundAsync(
+            work,
+            workerCount,
+            (item, token) => ApplyFamily(
+                worldId,
+                initialState,
+                references,
+                item,
+                token),
+            cancellationToken).ConfigureAwait(false);
+
+        var byFamily = batch.Outputs.ToDictionary(static result => result.Family, StringComparer.Ordinal);
+        if (byFamily.Count != familyOrder.Length || familyOrder.Any(family => !byFamily.ContainsKey(family)))
+            throw new InvalidDataException("qa04.full-step.mutation-family-result-drift");
+
+        var state = new Qa04CanonicalOperationMutationStateV1(
+            byFamily[InfrastructureFamily].InfrastructureServiceQueue
+                ?? throw new InvalidDataException("qa04.full-step.mutation-infrastructure-result-missing"),
+            initialState.ParticipationControlMode,
+            byFamily[ResidentFamily].ResidentBehaviorState
+                ?? throw new InvalidDataException("qa04.full-step.mutation-resident-result-missing"),
+            byFamily[PhysicalFamily].PhysicalPresence
+                ?? throw new InvalidDataException("qa04.full-step.mutation-physical-result-missing"),
+            byFamily[MarketFamily].MarketTransaction
+                ?? throw new InvalidDataException("qa04.full-step.mutation-market-result-missing"),
+            byFamily[GovernanceFamily].GovernanceSecurityIncident
+                ?? throw new InvalidDataException("qa04.full-step.mutation-governance-result-missing"),
+            byFamily[EnvironmentFamily].EnvironmentHazard
+                ?? throw new InvalidDataException("qa04.full-step.mutation-environment-result-missing"));
+        ValidateStateIdentities(state);
+
+        var changesByOperation = batch.Outputs
+            .SelectMany(static result => result.Changes)
+            .ToDictionary(static change => change.OperationId);
+        if (changesByOperation.Count != orderedBindings.Count)
+            throw new InvalidDataException("qa04.full-step.mutation-change-coverage-drift");
+        var changes = appliedIds.Select(id => changesByOperation[id]).ToArray();
+
+        return new Qa04CanonicalOperationMutationBatchResultV1(
+            effectiveStep,
+            state,
+            Array.AsReadOnly(appliedIds),
+            new System.Collections.ObjectModel.ReadOnlyDictionary<string, ulong>(counts),
+            Array.AsReadOnly(changes))
+        {
+            CpuParallelism = batch.Observation,
+        };
+    }
+
+    private static FamilyMutationResultV1 ApplyFamily(
+        OpaqueId128 worldId,
+        Qa04CanonicalOperationMutationStateV1 initialState,
+        IDomainRecordSchemaResolverV1 references,
+        FamilyMutationWorkV1 work,
+        CancellationToken cancellationToken)
+    {
+        var changes = new List<Qa04CanonicalOperationMutationChangeV1>(work.Bindings.Count);
+
+        switch (work.Family)
+        {
+            case InfrastructureFamily:
+            {
+                var overlay = new AdditionOverlayV1<InfrastructureServiceQueuePayloadV1>(
+                    initialState.InfrastructureServiceQueue);
+                var empty = EmptyLike(initialState.InfrastructureServiceQueue);
+                foreach (var binding in work.Bindings)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var result = Qa04InfrastructureServiceReserveApplicationV1.Apply(
+                        worldId, binding, empty, references);
+                    overlay.Add(result.CreatedRecord, "qa04.infrastructure.service-reserve-duplicate");
+                    changes.Add(Change(
+                        binding,
+                        InfrastructureServiceQueuePayloadV1.PartitionId,
+                        result.CreatedRecord.RecordId,
+                        result.CreatedRecord.RecordSchema,
+                        result.CreatedRecord.Revision,
+                        result.CreatedRecord.CreatedStep,
+                        result.CreatedRecord.DetailLevel,
+                        Create));
+                }
+                return new FamilyMutationResultV1(
+                    work.Family,
+                    InfrastructureServiceQueue: overlay.Build(),
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
+            }
+            case ResidentFamily:
+            {
+                var state = initialState.ResidentBehaviorState;
+                foreach (var binding in work.Bindings)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var controlModeId = Qa04ParticipationControlModeCanonicalAuthorityV1.RecordId(
+                        binding.SourceDescriptor.FamilyOrdinal);
+                    if (!initialState.ParticipationControlMode.TryGet(controlModeId, out var controlMode) ||
+                        controlMode is null)
+                        throw new InvalidDataException("qa04.full-step.mutation-control-mode-missing");
+                    var result = Qa04ResidentActionApplicationV1.Apply(
+                        worldId, binding, state, controlMode, references);
+                    state = result.BehaviorState;
+                    changes.Add(Change(
+                        binding,
+                        ResidentBehaviorStatePayloadV1.PartitionId,
+                        result.AppliedRecord.RecordId,
+                        result.AppliedRecord.RecordSchema,
+                        result.AppliedRecord.Revision,
+                        result.AppliedRecord.CreatedStep,
+                        result.AppliedRecord.DetailLevel,
+                        result.Created ? Create : Revise));
+                }
+                return new FamilyMutationResultV1(
+                    work.Family,
+                    ResidentBehaviorState: state,
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
+            }
+            case PhysicalFamily:
+            {
+                var overlay = new RevisionOverlayV1<PhysicalPresencePayloadV1>(initialState.PhysicalPresence);
+                var empty = EmptyLike(initialState.PhysicalPresence);
+                foreach (var binding in work.Bindings)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!overlay.TryGet(binding.PrimaryTarget.RecordId, out var target) || target is null)
+                    {
+                        _ = Qa04PhysicalMoveApplicationV1.Apply(binding, empty, references);
+                        throw new InvalidDataException("qa04.physical.move-target-missing");
+                    }
+                    var singleTarget = new DomainPartitionStateV1<PhysicalPresencePayloadV1>(
+                        initialState.PhysicalPresence.Identity,
+                        new[] { target });
+                    var result = Qa04PhysicalMoveApplicationV1.Apply(binding, singleTarget, references);
+                    overlay.Replace(result.AppliedRecord, "qa04.physical.move-target-missing");
+                    changes.Add(Change(
+                        binding,
+                        PhysicalPresencePayloadV1.PartitionId,
+                        result.AppliedRecord.RecordId,
+                        result.AppliedRecord.RecordSchema,
+                        result.AppliedRecord.Revision,
+                        result.AppliedRecord.CreatedStep,
+                        result.AppliedRecord.DetailLevel,
+                        Revise));
+                }
+                return new FamilyMutationResultV1(
+                    work.Family,
+                    PhysicalPresence: overlay.Build(),
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
+            }
+            case MarketFamily:
+            {
+                var overlay = new MarketAdditionOverlayV1(initialState.MarketTransaction);
+                var empty = new SocietyMarketTransactionPartitionStateV2(
+                    Array.Empty<SocietyMarketTransactionRecordMaterialV2>());
+                foreach (var binding in work.Bindings)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!overlay.TryGet(binding.PrimaryTarget.RecordId, out var target) || target is null)
+                    {
+                        _ = Qa04MarketOrderApplicationV1.Apply(binding, empty, references);
+                        throw new InvalidDataException("qa04.market.order-target-missing");
+                    }
+                    var singleTarget = new SocietyMarketTransactionPartitionStateV2(new[] { target });
+                    var result = Qa04MarketOrderApplicationV1.Apply(binding, singleTarget, references);
+                    overlay.Add(result.CreatedOrder, "qa04.market.order-record-id-collision");
+                    changes.Add(Change(
+                        binding,
+                        SocietyMarketTransactionRecordSchemaV2.PartitionId,
+                        result.CreatedOrder.RecordId,
+                        result.CreatedOrder.RecordSchema,
+                        result.CreatedOrder.Revision,
+                        result.CreatedOrder.CreatedStep,
+                        result.CreatedOrder.DetailLevel,
+                        Create));
+                }
+                return new FamilyMutationResultV1(
+                    work.Family,
+                    MarketTransaction: overlay.Build(),
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
+            }
+            case GovernanceFamily:
+            {
+                var overlay = new AdditionOverlayV1<GovernanceSecurityIncidentPayloadV1>(
+                    initialState.GovernanceSecurityIncident);
+                var empty = EmptyLike(initialState.GovernanceSecurityIncident);
+                foreach (var binding in work.Bindings)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var result = Qa04GovernanceIncidentApplicationV1.Apply(binding, empty, references);
+                    overlay.Add(result.CreatedIncident, "qa04.governance.incident-record-id-collision");
+                    changes.Add(Change(
+                        binding,
+                        GovernanceSecurityIncidentPayloadV1.PartitionId,
+                        result.CreatedIncident.RecordId,
+                        result.CreatedIncident.RecordSchema,
+                        result.CreatedIncident.Revision,
+                        result.CreatedIncident.CreatedStep,
+                        result.CreatedIncident.DetailLevel,
+                        Create));
+                }
+                return new FamilyMutationResultV1(
+                    work.Family,
+                    GovernanceSecurityIncident: overlay.Build(),
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
+            }
+            case EnvironmentFamily:
+            {
+                var overlay = new AdditionOverlayV1<EnvironmentHazardPayloadV1>(initialState.EnvironmentHazard);
+                var empty = EmptyLike(initialState.EnvironmentHazard);
+                foreach (var binding in work.Bindings)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var result = Qa04EnvironmentHazardApplicationV1.Apply(binding, empty, references);
+                    overlay.Add(result.CreatedHazard, "qa04.environment.hazard-record-id-collision");
+                    changes.Add(Change(
+                        binding,
+                        EnvironmentHazardPayloadV1.PartitionId,
+                        result.CreatedHazard.RecordId,
+                        result.CreatedHazard.RecordSchema,
+                        result.CreatedHazard.Revision,
+                        result.CreatedHazard.CreatedStep,
+                        result.CreatedHazard.DetailLevel,
+                        Create));
+                }
+                return new FamilyMutationResultV1(
+                    work.Family,
+                    EnvironmentHazard: overlay.Build(),
+                    FamilyChanges: Array.AsReadOnly(changes.ToArray()));
+            }
+            default:
+                throw new InvalidDataException($"qa04.full-step.mutation-family-unregistered:{work.Family}");
+        }
+    }
+
+    private sealed record FamilyMutationWorkV1(
+        string Family,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> Bindings);
+
+    private sealed record FamilyMutationResultV1(
+        string Family,
+        DomainPartitionStateV1<InfrastructureServiceQueuePayloadV1>? InfrastructureServiceQueue = null,
+        DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>? ResidentBehaviorState = null,
+        DomainPartitionStateV1<PhysicalPresencePayloadV1>? PhysicalPresence = null,
+        SocietyMarketTransactionPartitionStateV2? MarketTransaction = null,
+        DomainPartitionStateV1<GovernanceSecurityIncidentPayloadV1>? GovernanceSecurityIncident = null,
+        DomainPartitionStateV1<EnvironmentHazardPayloadV1>? EnvironmentHazard = null,
+        IReadOnlyList<Qa04CanonicalOperationMutationChangeV1>? FamilyChanges = null)
+    {
+        public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Changes { get; } =
+            FamilyChanges ?? Array.Empty<Qa04CanonicalOperationMutationChangeV1>();
     }
 
     private static DomainPartitionStateV1<TPayload> EmptyLike<TPayload>(

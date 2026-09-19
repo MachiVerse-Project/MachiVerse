@@ -19,7 +19,10 @@ public sealed record Qa04CanonicalOperationPartitionMutationV1(
 public sealed record Qa04CanonicalOperationPartitionCandidateBatchV1(
     ulong BasisStep,
     ulong TargetStep,
-    IReadOnlyList<Qa04CanonicalOperationPartitionMutationV1> Partitions);
+    IReadOnlyList<Qa04CanonicalOperationPartitionMutationV1> Partitions)
+{
+    public DeterministicCpuBatchObservationV1? CpuParallelism { get; init; }
+}
 
 /// <summary>
 /// Gate-2 Step 2 boundary. Binds the six typed mutation results from the canonical QA-04 operation

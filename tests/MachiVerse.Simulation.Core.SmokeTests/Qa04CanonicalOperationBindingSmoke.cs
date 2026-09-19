@@ -73,6 +73,42 @@ internal static class Qa04CanonicalOperationBindingSmoke
         Require(scheduler.ForEffectiveStep(2).Count == supported.Length,
             "QA-04 authority-complete Operation bindings must enter the ordinary scheduler without identity loss.");
 
+        var canonicalBindings = descriptors
+            .Select(static descriptor => Qa04CanonicalOperationBindingV1.Bind(descriptor, schedulingPolicyGeneration: 1))
+            .OrderBy(static binding => binding.OrderKey)
+            .ThenBy(static binding => binding.SourceDescriptor.OperationId)
+            .ToArray();
+        foreach (var workerCount in new[] { 1, 4, 8, 16 })
+        {
+            var parallel = DeterministicBatchExecutor.RunCpuBoundAsync(
+                descriptors,
+                workerCount,
+                static (descriptor, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    return Qa04CanonicalOperationBindingV1.Bind(descriptor, schedulingPolicyGeneration: 1);
+                }).GetAwaiter().GetResult();
+            var actual = parallel.Outputs
+                .OrderBy(static binding => binding.OrderKey)
+                .ThenBy(static binding => binding.SourceDescriptor.OperationId)
+                .ToArray();
+
+            Require(parallel.Observation.RequestedWorkerCount == workerCount &&
+                    parallel.Observation.EffectiveWorkerCount == workerCount &&
+                    parallel.Observation.MaxObservedConcurrency is >= 1 &&
+                    parallel.Observation.MaxObservedConcurrency <= workerCount,
+                $"QA-04 parallel binding worker observation drifted for workers={workerCount}.");
+            Require(actual.Length == canonicalBindings.Length,
+                $"QA-04 parallel binding cardinality drifted for workers={workerCount}.");
+            for (var index = 0; index < actual.Length; index++)
+            {
+                Require(actual[index].SourceDescriptor.OperationId == canonicalBindings[index].SourceDescriptor.OperationId &&
+                        actual[index].OrderKey.ToDatabaseBytes().SequenceEqual(canonicalBindings[index].OrderKey.ToDatabaseBytes()) &&
+                        actual[index].BoundDescriptor.PayloadDigest.SequenceEqual(canonicalBindings[index].BoundDescriptor.PayloadDigest),
+                    $"QA-04 parallel binding semantic output drifted for workers={workerCount} index={index}.");
+            }
+        }
+
         var infrastructureDescriptor = descriptors.First(item => item.FamilyToken.Value == "infrastructure-service-delivery");
         var infrastructure = Qa04CanonicalOperationBindingV1.Bind(infrastructureDescriptor, schedulingPolicyGeneration: 1);
         Require(infrastructure.Operation.OperationKind == "infrastructure.service.reserve" &&

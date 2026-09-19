@@ -33,6 +33,9 @@ public sealed record Qa04ProductionStep2AuthoritativeStepExecutionV1(
     ulong ResultingStep,
     OpaqueId128 CandidateId,
     int OperationCount,
+    DeterministicCpuBatchObservationV1 OperationBindingParallelism,
+    DeterministicCpuBatchObservationV1 TypedMutationParallelism,
+    DeterministicCpuBatchObservationV1 PreparationParallelism,
     Qa04CanonicalOperationMutationStateV1 MutationState,
     IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> DomainAuthorities,
     Qa04OperationClosedPrefixV1 ClosedPrefix,
@@ -237,14 +240,36 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             throw new InvalidDataException("qa04.step2.production-loop.candidate-target-step-drift");
 
         var phaseStarted = Stopwatch.GetTimestamp();
-        var bindings = Qa04ReferenceLoadV1.OperationsForStep(injectionStep)
-            .Select(descriptor => Qa04CanonicalOperationBindingV1.Bind(
-                descriptor,
-                partitionAuthorityState.Header.ConfigGeneration))
+        var descriptors = Qa04ReferenceLoadV1.OperationsForStep(injectionStep).ToArray();
+        var expectedOperationCount = checked((int)Qa04ReferenceLoadV1.OperationCountForStep(injectionStep));
+        if (descriptors.Length != expectedOperationCount)
+            throw new InvalidDataException("qa04.step2.production-loop.operation-count-drift");
+
+        var bindingBatch = await DeterministicBatchExecutor.RunCpuBoundAsync(
+            descriptors,
+            workerCount,
+            (descriptor, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                return Qa04CanonicalOperationBindingV1.Bind(
+                    descriptor,
+                    partitionAuthorityState.Header.ConfigGeneration);
+            },
+            cancellationToken).ConfigureAwait(false);
+        var bindingParallelism = bindingBatch.Observation;
+        var expectedEffectiveWorkers = Math.Min(workerCount, descriptors.Length);
+        if (bindingParallelism.RequestedWorkerCount != workerCount ||
+            bindingParallelism.EffectiveWorkerCount != expectedEffectiveWorkers ||
+            bindingParallelism.MaxObservedConcurrency < 1 ||
+            bindingParallelism.MaxObservedConcurrency > expectedEffectiveWorkers)
+        {
+            throw new InvalidDataException("qa04.step2.production-loop.operation-binding-worker-budget-drift");
+        }
+
+        var bindings = bindingBatch.Outputs
             .OrderBy(static binding => binding.OrderKey)
             .ThenBy(static binding => binding.SourceDescriptor.OperationId)
             .ToArray();
-        var expectedOperationCount = checked((int)Qa04ReferenceLoadV1.OperationCountForStep(injectionStep));
         if (bindings.Length != expectedOperationCount)
             throw new InvalidDataException("qa04.step2.production-loop.operation-count-drift");
         EmitPhase(injectionStep, workerCount, "bind-operations", phaseStarted);
@@ -309,18 +334,28 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         EmitPhase(injectionStep, workerCount, "domain-execution", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
-        var mutation = Qa04CanonicalOperationMutationBatchV1.Apply(
+        var mutation = await Qa04CanonicalOperationMutationBatchV1.ApplyParallelAsync(
             Qa04ReferenceLoadV1.WorldId,
             basisStep,
             bindings,
             mutationState,
-            references);
+            references,
+            workerCount,
+            cancellationToken).ConfigureAwait(false);
         if (mutation.AppliedOperationIds.Count != bindings.Length || mutation.Changes.Count != bindings.Length)
             throw new InvalidDataException("qa04.step2.production-loop.typed-mutation-coverage-drift");
+        var mutationParallelism = mutation.CpuParallelism
+            ?? throw new InvalidDataException("qa04.step2.production-loop.typed-mutation-parallelism-missing");
+        var expectedMutationWorkers = Math.Min(workerCount, 6);
+        if (mutationParallelism.RequestedWorkerCount != workerCount ||
+            mutationParallelism.EffectiveWorkerCount != expectedMutationWorkers ||
+            mutationParallelism.MaxObservedConcurrency < 1 ||
+            mutationParallelism.MaxObservedConcurrency > expectedMutationWorkers)
+            throw new InvalidDataException("qa04.step2.production-loop.typed-mutation-worker-budget-drift");
         EmitPhase(injectionStep, workerCount, "typed-mutation", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
-        var preparation = Qa04ProductionAuthoritativeStepPreparationV1.Prepare(
+        var preparation = await Qa04ProductionAuthoritativeStepPreparationV1.PrepareParallelAsync(
             candidateIdentity.CandidateId,
             basisState,
             frozen,
@@ -328,7 +363,17 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             mutation,
             references,
             runtimeOutputs,
-            digestCache);
+            workerCount,
+            digestCache,
+            cancellationToken).ConfigureAwait(false);
+        var preparationParallelism = preparation.PartitionBatch?.CpuParallelism
+            ?? throw new InvalidDataException("qa04.step2.production-loop.preparation-parallelism-missing");
+        var expectedPreparationWorkers = Math.Min(workerCount, 6);
+        if (preparationParallelism.RequestedWorkerCount != workerCount ||
+            preparationParallelism.EffectiveWorkerCount != expectedPreparationWorkers ||
+            preparationParallelism.MaxObservedConcurrency < 1 ||
+            preparationParallelism.MaxObservedConcurrency > expectedPreparationWorkers)
+            throw new InvalidDataException("qa04.step2.production-loop.preparation-worker-budget-drift");
         var terminals = bindings.Select(static binding => new TerminalOperationCommit(
             binding.SourceDescriptor.OperationId,
             (int)CoreOperationResultStatusV1.Success,
@@ -378,6 +423,9 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             resultingStep,
             candidateIdentity.CandidateId,
             bindings.Length,
+            bindingParallelism,
+            mutationParallelism,
+            preparationParallelism,
             mutation.State,
             Array.AsReadOnly(resultingAuthorities.CanonicalAuthorities.ToArray()),
             nextPrefix,

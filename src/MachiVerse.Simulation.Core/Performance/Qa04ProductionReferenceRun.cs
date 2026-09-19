@@ -6,10 +6,25 @@ using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
 
+public sealed record Qa04ProductionCpuParallelismStageEvidenceV1(
+    int EffectiveWorkerCount,
+    int MaxObservedConcurrency);
+
+public sealed record Qa04ProductionCpuParallelismEvidenceV1(
+    int ConfiguredWorkerCount,
+    int EffectiveWorkerCount,
+    int MaxObservedConcurrency,
+    Qa04ProductionCpuParallelismStageEvidenceV1 OperationBinding,
+    Qa04ProductionCpuParallelismStageEvidenceV1 TypedMutation,
+    Qa04ProductionCpuParallelismStageEvidenceV1 Preparation,
+    bool WorkerBudgetApplied,
+    bool ParallelExecutionObserved);
+
 public sealed record Qa04ProductionReferenceRunResultV1(
     string SchemaVersion,
     string ProfileId,
     int WorkerCount,
+    Qa04ProductionCpuParallelismEvidenceV1 CpuParallelism,
     int TransitionCount,
     ulong TerminalOperationCount,
     ulong FinalizedStep,
@@ -132,6 +147,12 @@ public static class Qa04ProductionReferenceRunV1
         var snapshotCommitted = false;
         var turnoverCount = 0;
         var detailDecisionCount = 0;
+        var effectiveCpuWorkerCount = 0;
+        var maxObservedCpuParallelism = 0;
+        var mutationEffectiveWorkerCount = 0;
+        var mutationMaxObservedCpuParallelism = 0;
+        var preparationEffectiveWorkerCount = 0;
+        var preparationMaxObservedCpuParallelism = 0;
 
         try
         {
@@ -209,6 +230,42 @@ public static class Qa04ProductionReferenceRunV1
 
                 var completed = executed
                     ?? throw new InvalidDataException("qa04.production-run.step-result-missing");
+                var cpuObservation = completed.OperationBindingParallelism;
+                var mutationObservation = completed.TypedMutationParallelism;
+                var preparationObservation = completed.PreparationParallelism;
+                if (cpuObservation.RequestedWorkerCount != workerCount ||
+                    cpuObservation.EffectiveWorkerCount != workerCount)
+                    throw new InvalidDataException("qa04.production-run.worker-budget-not-applied");
+                var expectedStageWorkers = Math.Min(workerCount, 6);
+                if (mutationObservation.RequestedWorkerCount != workerCount ||
+                    mutationObservation.EffectiveWorkerCount != expectedStageWorkers ||
+                    preparationObservation.RequestedWorkerCount != workerCount ||
+                    preparationObservation.EffectiveWorkerCount != expectedStageWorkers)
+                    throw new InvalidDataException("qa04.production-run.stage-worker-budget-drift");
+
+                if (effectiveCpuWorkerCount == 0)
+                    effectiveCpuWorkerCount = cpuObservation.EffectiveWorkerCount;
+                else if (effectiveCpuWorkerCount != cpuObservation.EffectiveWorkerCount)
+                    throw new InvalidDataException("qa04.production-run.effective-worker-count-drift");
+                if (mutationEffectiveWorkerCount == 0)
+                    mutationEffectiveWorkerCount = mutationObservation.EffectiveWorkerCount;
+                else if (mutationEffectiveWorkerCount != mutationObservation.EffectiveWorkerCount)
+                    throw new InvalidDataException("qa04.production-run.mutation-effective-worker-count-drift");
+                if (preparationEffectiveWorkerCount == 0)
+                    preparationEffectiveWorkerCount = preparationObservation.EffectiveWorkerCount;
+                else if (preparationEffectiveWorkerCount != preparationObservation.EffectiveWorkerCount)
+                    throw new InvalidDataException("qa04.production-run.preparation-effective-worker-count-drift");
+
+                maxObservedCpuParallelism = Math.Max(
+                    maxObservedCpuParallelism,
+                    cpuObservation.MaxObservedConcurrency);
+                mutationMaxObservedCpuParallelism = Math.Max(
+                    mutationMaxObservedCpuParallelism,
+                    mutationObservation.MaxObservedConcurrency);
+                preparationMaxObservedCpuParallelism = Math.Max(
+                    preparationMaxObservedCpuParallelism,
+                    preparationObservation.MaxObservedConcurrency);
+
                 var resultingDetailDirectory = completed.Finalization.DetailDirectory
                     ?? throw new InvalidDataException("qa04.production-run.detail-directory-missing");
                 var detailDecisionAuthority = completed.Finalization.DetailDecisionAuthority
@@ -311,6 +368,51 @@ public static class Qa04ProductionReferenceRunV1
                 acceptedOperationLossCount: 0,
                 hiddenSolverIterationReductionCount: 0,
                 persistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount);
+            var expectedFamilyWorkers = Math.Min(workerCount, 6);
+            var workerBudgetApplied =
+                effectiveCpuWorkerCount == workerCount &&
+                mutationEffectiveWorkerCount == expectedFamilyWorkers &&
+                preparationEffectiveWorkerCount == expectedFamilyWorkers;
+            var bindingParallelObserved = workerCount == 1
+                ? maxObservedCpuParallelism == 1
+                : maxObservedCpuParallelism > 1;
+            var mutationParallelObserved = workerCount == 1
+                ? mutationMaxObservedCpuParallelism == 1
+                : mutationMaxObservedCpuParallelism > 1;
+            var preparationParallelObserved = workerCount == 1
+                ? preparationMaxObservedCpuParallelism == 1
+                : preparationMaxObservedCpuParallelism > 1;
+            var parallelExecutionObserved =
+                bindingParallelObserved &&
+                mutationParallelObserved &&
+                preparationParallelObserved;
+            var cpuParallelism = new Qa04ProductionCpuParallelismEvidenceV1(
+                workerCount,
+                effectiveCpuWorkerCount,
+                Math.Max(
+                    maxObservedCpuParallelism,
+                    Math.Max(mutationMaxObservedCpuParallelism, preparationMaxObservedCpuParallelism)),
+                new Qa04ProductionCpuParallelismStageEvidenceV1(
+                    effectiveCpuWorkerCount,
+                    maxObservedCpuParallelism),
+                new Qa04ProductionCpuParallelismStageEvidenceV1(
+                    mutationEffectiveWorkerCount,
+                    mutationMaxObservedCpuParallelism),
+                new Qa04ProductionCpuParallelismStageEvidenceV1(
+                    preparationEffectiveWorkerCount,
+                    preparationMaxObservedCpuParallelism),
+                workerBudgetApplied,
+                parallelExecutionObserved);
+            var failureCodes = performance.FailureCodes
+                .Concat(workerBudgetApplied
+                    ? Array.Empty<string>()
+                    : new[] { "qa04.production-run.worker-budget-not-applied" })
+                .Concat(parallelExecutionObserved
+                    ? Array.Empty<string>()
+                    : new[] { "qa04.production-run.cpu-parallelism-not-observed" })
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static code => code, StringComparer.Ordinal)
+                .ToArray();
 
             var finalHistory = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
             var finalRecovery = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
@@ -383,6 +485,7 @@ public static class Qa04ProductionReferenceRunV1
                 SchemaVersion: "1.0",
                 ProfileId: Qa04ReferenceLoadV1.BenchmarkProfileId,
                 WorkerCount: workerCount,
+                CpuParallelism: cpuParallelism,
                 TransitionCount: CanonicalTransitionCount,
                 TerminalOperationCount: determinismEvidence.TerminalOperationCount,
                 FinalizedStep: currentState.Header.Step,
@@ -405,8 +508,8 @@ public static class Qa04ProductionReferenceRunV1
                 AcceptedOperationLoss: 0,
                 HiddenSolverIterationReduction: false,
                 PersistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount,
-                Passed: performance.Passed,
-                FailureCodes: performance.FailureCodes);
+                Passed: performance.Passed && workerBudgetApplied && parallelExecutionObserved,
+                FailureCodes: failureCodes);
         }
         finally
         {
