@@ -44,6 +44,29 @@ internal static class Program
                 return 0;
             }
 
+            if (string.Equals(args[0], "run-step3", StringComparison.Ordinal) && args.Length == 6)
+            {
+                return await ReleaseEvidenceRunner.RunGate4Step3Async(
+                    root,
+                    args[1],
+                    args[2],
+                    Path.GetFullPath(args[3]),
+                    Path.GetFullPath(args[4]),
+                    Path.GetFullPath(args[5]));
+            }
+
+            if (string.Equals(args[0], "run-step4", StringComparison.Ordinal) && args.Length == 7)
+            {
+                return await ReleaseEvidenceRunner.RunGate4Step4Async(
+                    root,
+                    args[1],
+                    args[2],
+                    Path.GetFullPath(args[3]),
+                    Path.GetFullPath(args[4]),
+                    Path.GetFullPath(args[5]),
+                    Path.GetFullPath(args[6]));
+            }
+
             if (string.Equals(args[0], "run", StringComparison.Ordinal) && args.Length == 6)
             {
                 var planDirectory = Path.GetFullPath(args[4]);
@@ -72,7 +95,7 @@ internal static class Program
             }
 
             throw new ArgumentException(
-                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run-step2 <source-commit> <core-executable> <worker-count> <run-ordinal> <output.json>|verify-step2 <matrix.json>|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]");
+                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run-step2 <source-commit> <core-executable> <worker-count> <run-ordinal> <output.json>|verify-step2 <matrix.json>|run-step3 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|run-step4 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <step3-evidence.json> <output-directory>|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]");
         }
         catch (Exception ex)
         {
