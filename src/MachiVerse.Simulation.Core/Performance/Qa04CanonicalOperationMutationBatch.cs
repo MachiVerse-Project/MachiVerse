@@ -95,12 +95,11 @@ public static class Qa04CanonicalOperationMutationBatchV1
         var environment = new AdditionOverlayV1<EnvironmentHazardPayloadV1>(initialState.EnvironmentHazard);
         var residentBehaviorState = initialState.ResidentBehaviorState;
 
-        var emptyInfrastructure = EmptyLike(initialState.InfrastructureServiceQueue);
-        var emptyPhysical = EmptyLike(initialState.PhysicalPresence);
+        var emptyPhysical = new DomainPartitionStateV1<PhysicalPresencePayloadV1>(
+            initialState.PhysicalPresence.Identity,
+            Array.Empty<DomainRecordEnvelopeV1<PhysicalPresencePayloadV1>>());
         var emptyMarket = new SocietyMarketTransactionPartitionStateV2(
             Array.Empty<SocietyMarketTransactionRecordMaterialV2>());
-        var emptyGovernance = EmptyLike(initialState.GovernanceSecurityIncident);
-        var emptyEnvironment = EmptyLike(initialState.EnvironmentHazard);
 
         var appliedIds = new List<OpaqueId128>(orderedBindings.Count);
         var appliedIdSet = new HashSet<OpaqueId128>();
@@ -130,22 +129,22 @@ public static class Qa04CanonicalOperationMutationBatchV1
             {
                 case InfrastructureFamily:
                 {
-                    var result = Qa04InfrastructureServiceReserveApplicationV1.Apply(
+                    var created = Qa04InfrastructureServiceReserveApplicationV1.CreateRecord(
                         worldId,
                         binding,
-                        emptyInfrastructure,
+                        initialState.InfrastructureServiceQueue,
                         references);
                     infrastructure.Add(
-                        result.CreatedRecord,
+                        created,
                         "qa04.infrastructure.service-reserve-duplicate");
                     change = Change(
                         binding,
                         InfrastructureServiceQueuePayloadV1.PartitionId,
-                        result.CreatedRecord.RecordId,
-                        result.CreatedRecord.RecordSchema,
-                        result.CreatedRecord.Revision,
-                        result.CreatedRecord.CreatedStep,
-                        result.CreatedRecord.DetailLevel,
+                        created.RecordId,
+                        created.RecordSchema,
+                        created.Revision,
+                        created.CreatedStep,
+                        created.DetailLevel,
                         Create);
                     break;
                 }
@@ -227,41 +226,41 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 }
                 case GovernanceFamily:
                 {
-                    var result = Qa04GovernanceIncidentApplicationV1.Apply(
+                    var created = Qa04GovernanceIncidentApplicationV1.CreateIncident(
                         binding,
-                        emptyGovernance,
+                        initialState.GovernanceSecurityIncident,
                         references);
                     governance.Add(
-                        result.CreatedIncident,
+                        created,
                         "qa04.governance.incident-record-id-collision");
                     change = Change(
                         binding,
                         GovernanceSecurityIncidentPayloadV1.PartitionId,
-                        result.CreatedIncident.RecordId,
-                        result.CreatedIncident.RecordSchema,
-                        result.CreatedIncident.Revision,
-                        result.CreatedIncident.CreatedStep,
-                        result.CreatedIncident.DetailLevel,
+                        created.RecordId,
+                        created.RecordSchema,
+                        created.Revision,
+                        created.CreatedStep,
+                        created.DetailLevel,
                         Create);
                     break;
                 }
                 case EnvironmentFamily:
                 {
-                    var result = Qa04EnvironmentHazardApplicationV1.Apply(
+                    var created = Qa04EnvironmentHazardApplicationV1.CreateHazard(
                         binding,
-                        emptyEnvironment,
+                        initialState.EnvironmentHazard,
                         references);
                     environment.Add(
-                        result.CreatedHazard,
+                        created,
                         "qa04.environment.hazard-record-id-collision");
                     change = Change(
                         binding,
                         EnvironmentHazardPayloadV1.PartitionId,
-                        result.CreatedHazard.RecordId,
-                        result.CreatedHazard.RecordSchema,
-                        result.CreatedHazard.Revision,
-                        result.CreatedHazard.CreatedStep,
-                        result.CreatedHazard.DetailLevel,
+                        created.RecordId,
+                        created.RecordSchema,
+                        created.Revision,
+                        created.CreatedStep,
+                        created.DetailLevel,
                         Create);
                     break;
                 }
