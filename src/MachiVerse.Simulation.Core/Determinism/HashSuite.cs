@@ -75,6 +75,15 @@ public static class HashSuite
 
         public MvDcborWriter Writer { get; }
 
+        internal void AppendCanonicalBytes(ReadOnlySpan<byte> canonicalBytes)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_completed) throw new InvalidOperationException("Domain hash streaming session is already complete.");
+            if (canonicalBytes.IsEmpty)
+                throw new ArgumentException("Canonical byte sequence cannot be empty.", nameof(canonicalBytes));
+            _hash.AppendData(canonicalBytes);
+        }
+
         public byte[] Complete()
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
