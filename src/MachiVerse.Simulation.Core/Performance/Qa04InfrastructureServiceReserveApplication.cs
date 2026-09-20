@@ -24,6 +24,7 @@ public static class Qa04InfrastructureServiceReserveApplicationV1
     private static readonly StableToken ResidentClass = new("resident.persistent-identity");
     private static readonly StableToken RuntimeQueueRequestKind = new("perf.service-queue-request");
     private static readonly StableToken Queued = new("queued");
+    private static readonly StandardDomainPayloadCodecValidatorV1 PayloadValidator = new();
 
     public static Qa04InfrastructureServiceReserveApplicationResultV1 Apply(
         OpaqueId128 worldId,
@@ -67,7 +68,7 @@ public static class Qa04InfrastructureServiceReserveApplicationV1
             RequestedUnits: requestedUnits,
             AllocatedUnits: 0,
             Status: Queued);
-        new StandardDomainPayloadCodecValidatorV1().Validate(
+        PayloadValidator.Validate(
             InfrastructureServiceQueuePayloadV1.PartitionId,
             payload.ToStandardPayload(),
             references);

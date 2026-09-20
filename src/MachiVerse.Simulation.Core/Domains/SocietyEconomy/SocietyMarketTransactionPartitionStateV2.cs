@@ -6,8 +6,16 @@ namespace MachiVerse.Simulation.Core.Domains.SocietyEconomy;
 public static class SocietyMarketTransactionPartitionIdentityV2
 {
     public static DomainPartitionIdentityV1 Identity { get; } = Create();
+    private static readonly Lazy<bool> CanonicalContractValidated = new(static () =>
+    {
+        ValidateCanonicalContractCore();
+        return true;
+    });
 
     public static void ValidateCanonicalContract()
+        => _ = CanonicalContractValidated.Value;
+
+    private static void ValidateCanonicalContractCore()
     {
         SocietyMarketTransactionRecordSchemaV2.ValidateCanonicalContract();
         var current = StandardDomainPartitionRegistry.Get(SocietyMarketTransactionRecordSchemaV2.PartitionId);

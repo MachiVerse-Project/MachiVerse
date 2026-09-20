@@ -113,6 +113,9 @@ public sealed record DomainExecutionPlanEntryV1(
 
 public sealed class StandardDomainExecutionPlanV1
 {
+    private static readonly Lazy<StandardDomainExecutionPlanV1> DefaultPlan =
+        new(static () => CreateCore(Array.Empty<DomainSameStepDependencyV1>()));
+
     private StandardDomainExecutionPlanV1(
         IReadOnlyList<DomainExecutionPlanEntryV1> entries,
         IReadOnlyList<IReadOnlyList<DomainExecutionPlanEntryV1>> executionWaves)
@@ -126,6 +129,12 @@ public sealed class StandardDomainExecutionPlanV1
 
     public static StandardDomainExecutionPlanV1 Create(
         IEnumerable<DomainSameStepDependencyV1>? sameStepDependencies = null)
+        => sameStepDependencies is null
+            ? DefaultPlan.Value
+            : CreateCore(sameStepDependencies);
+
+    private static StandardDomainExecutionPlanV1 CreateCore(
+        IEnumerable<DomainSameStepDependencyV1> sameStepDependencies)
     {
         var baseEntries = StandardDomainPartitionRegistry.Entries
             .GroupBy(static partition => partition.OwnerDomain)
@@ -157,7 +166,7 @@ public sealed class StandardDomainExecutionPlanV1
             static _ => new SortedSet<string>(StringComparer.Ordinal));
         var seen = new HashSet<(StableToken Producer, StableToken Consumer)>();
 
-        foreach (var dependency in (sameStepDependencies ?? Array.Empty<DomainSameStepDependencyV1>())
+        foreach (var dependency in sameStepDependencies
                      .OrderBy(static item => item.ConsumerDomain.Value, StringComparer.Ordinal)
                      .ThenBy(static item => item.ProducerDomain.Value, StringComparer.Ordinal))
         {

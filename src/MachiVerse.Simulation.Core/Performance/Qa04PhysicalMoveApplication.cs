@@ -22,6 +22,7 @@ public static class Qa04PhysicalMoveApplicationV1
 
     private static readonly StableToken PhysicalDomain = new("physical_built");
     private static readonly StableToken PhysicalClass = new("physical.d0-presence");
+    private static readonly StandardDomainPayloadCodecValidatorV1 PayloadValidator = new();
 
     public static Qa04PhysicalMoveApplicationResultV1 Apply(
         Qa04CanonicalOperationBindingResultV1 binding,
@@ -97,7 +98,7 @@ public static class Qa04PhysicalMoveApplicationV1
             0);
         var payload = existing.Payload with { LinearVelocity = velocity };
 
-        new StandardDomainPayloadCodecValidatorV1().Validate(
+        PayloadValidator.Validate(
             PhysicalPresencePayloadV1.PartitionId,
             payload.ToStandardPayload(),
             references);
@@ -148,7 +149,7 @@ public static class Qa04PhysicalMoveApplicationV1
             throw new InvalidDataException("qa04.physical.move-target-drift");
         }
 
-        new StandardDomainPayloadCodecValidatorV1().Validate(
+        PayloadValidator.Validate(
             PhysicalPresencePayloadV1.PartitionId,
             record.Payload.ToStandardPayload(),
             references);

@@ -30,6 +30,7 @@ public static class Qa04ResidentActionApplicationV1
     private static readonly StableToken RuntimeBehaviorKind = new("perf.behavior-state");
     private static readonly StableToken ActiveActionMode = new("perf.action-active");
     private static readonly StableToken Autonomous = new("autonomous");
+    private static readonly StandardDomainPayloadCodecValidatorV1 PayloadValidator = new();
 
     public static Qa04ResidentActionApplicationResultV1 Apply(
         OpaqueId128 worldId,
@@ -154,7 +155,7 @@ public static class Qa04ResidentActionApplicationV1
             ActionTargetRefs: Array.Empty<PartitionRecordRefV1>(),
             ActionStartedStep: effectiveStep,
             ControlSource: Autonomous);
-        new StandardDomainPayloadCodecValidatorV1().Validate(
+        PayloadValidator.Validate(
             ResidentBehaviorStatePayloadV1.PartitionId,
             payload.ToStandardPayload(),
             references);
@@ -226,7 +227,7 @@ public static class Qa04ResidentActionApplicationV1
             throw new InvalidDataException("qa04.resident.action-existing-record-drift");
         }
 
-        new StandardDomainPayloadCodecValidatorV1().Validate(
+        PayloadValidator.Validate(
             ResidentBehaviorStatePayloadV1.PartitionId,
             record.Payload.ToStandardPayload(),
             references);
