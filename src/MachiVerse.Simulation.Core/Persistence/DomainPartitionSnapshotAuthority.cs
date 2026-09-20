@@ -81,24 +81,42 @@ public sealed class DomainPartitionSnapshotAuthorityV1<TPayload> : IDomainPartit
             previous = recordId;
         }
 
-        var recomputed = PartitionStateHeaderV1.CreateCanonical(
-            Partition,
-            Header.Revision,
-            Header.BasisStep,
-            Header.DetailLevel,
-            payload =>
-            {
-                var digest = _canonicalPayloadDigest(payload)
-                    ?? throw new InvalidDataException($"persistence.snapshot.partition-payload-digest-null:{PartitionId.Value}");
-                if (digest.Length != 32)
-                    throw new InvalidDataException($"persistence.snapshot.partition-payload-digest-length:{PartitionId.Value}");
-                return digest;
-            });
+        byte[] PayloadDigest(TPayload payload)
+        {
+            var digest = _canonicalPayloadDigest(payload)
+                ?? throw new InvalidDataException($"persistence.snapshot.partition-payload-digest-null:{PartitionId.Value}");
+            if (digest.Length != 32)
+                throw new InvalidDataException($"persistence.snapshot.partition-payload-digest-length:{PartitionId.Value}");
+            return digest;
+        }
+
+        var recomputed = Header.DigestAlgorithm switch
+        {
+            PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1 =>
+                PartitionStateHeaderV1.CreateCanonical(
+                    Partition,
+                    Header.Revision,
+                    Header.BasisStep,
+                    Header.DetailLevel,
+                    PayloadDigest),
+            PartitionCanonicalDigestAlgorithmV1.RecordIdPrefixV2 =>
+                RecordIdPrefixPartitionDigestV2.CreateHeader(
+                    Partition,
+                    Header.Revision,
+                    Header.BasisStep,
+                    Header.DetailLevel,
+                    record => PartitionStateHeaderV1.EncodeCanonicalRecord(
+                        record,
+                        PayloadDigest(record.Payload))),
+            _ => throw new InvalidDataException(
+                $"persistence.snapshot.partition-digest-algorithm:{PartitionId.Value}"),
+        };
 
         if (recomputed.Revision != Header.Revision ||
             recomputed.BasisStep != Header.BasisStep ||
             recomputed.DetailLevel != Header.DetailLevel ||
             recomputed.ItemCount != Header.ItemCount ||
+            recomputed.DigestAlgorithm != Header.DigestAlgorithm ||
             !CryptographicOperations.FixedTimeEquals(recomputed.CanonicalDigest, Header.CanonicalDigest))
         {
             throw new InvalidDataException($"persistence.snapshot.partition-header-material-mismatch:{PartitionId.Value}");
@@ -203,6 +221,7 @@ public sealed class DomainPartitionSnapshotAuthoritySetV1
             frozen.BasisStep != actual.BasisStep ||
             frozen.DetailLevel != actual.DetailLevel ||
             frozen.ItemCount != actual.ItemCount ||
+            frozen.DigestAlgorithm != actual.DigestAlgorithm ||
             !CryptographicOperations.FixedTimeEquals(frozen.CanonicalDigest, actual.CanonicalDigest))
         {
             throw new InvalidDataException($"persistence.snapshot.partition-frozen-header-mismatch:{partitionId}");
