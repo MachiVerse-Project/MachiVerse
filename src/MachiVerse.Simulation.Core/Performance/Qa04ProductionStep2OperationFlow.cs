@@ -187,7 +187,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         DetailDirectoryV1? basisDetailDirectory = null,
         DetailTransitionPolicyV1? detailPolicy = null,
         int? persistenceInsertBatchSize = null,
-        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null)
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null,
+        int phaseLogIntervalTransitions = 1)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.step2.production-loop.worker-count-not-canonical");
@@ -204,6 +205,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         ArgumentNullException.ThrowIfNull(candidateIdentities);
         if ((basisDetailDirectory is null) != (detailPolicy is null))
             throw new InvalidDataException("qa04.step2.production-loop.detail-input-pair-drift");
+        if (phaseLogIntervalTransitions <= 0)
+            throw new ArgumentOutOfRangeException(nameof(phaseLogIntervalTransitions));
 
         var basisStep = checked(injectionStep + 1UL);
         var resultingStep = checked(basisStep + 1UL);
@@ -272,7 +275,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             .ToArray();
         if (bindings.Length != expectedOperationCount)
             throw new InvalidDataException("qa04.step2.production-loop.operation-count-drift");
-        EmitPhase(injectionStep, workerCount, "bind-operations", phaseStarted);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "bind-operations", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
         var anchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
@@ -296,7 +299,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             throw new InvalidDataException("qa04.step2.production-loop.batch-durability-drift");
         foreach (var binding in bindings)
             scheduler.AddDurable(binding.ScheduledOperation);
-        EmitPhase(injectionStep, workerCount, "persistence-schedule", phaseStarted);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "persistence-schedule", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
         var basisState = Qa04ProductionStep2BasisAuthorityV1.Bind(
@@ -318,7 +321,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
                 basisDetailDirectory,
                 detailPolicy!);
         }
-        EmitPhase(injectionStep, workerCount, "freeze-detail", phaseStarted);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-detail", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
         var runtimeOutputs = await DomainRuntimeExecutorV1.ExecuteAsync(
@@ -331,7 +334,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             .ConfigureAwait(false);
         if (runtimeOutputs.Count != 8 || runtimeOutputs.Any(output => output.BasisStep != basisStep))
             throw new InvalidDataException("qa04.step2.production-loop.domain-runtime-output-drift");
-        EmitPhase(injectionStep, workerCount, "domain-execution", phaseStarted);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "domain-execution", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
         var mutation = await Qa04CanonicalOperationMutationBatchV1.ApplyParallelAsync(
@@ -352,7 +355,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             mutationParallelism.MaxObservedConcurrency < 1 ||
             mutationParallelism.MaxObservedConcurrency > expectedMutationWorkers)
             throw new InvalidDataException("qa04.step2.production-loop.typed-mutation-worker-budget-drift");
-        EmitPhase(injectionStep, workerCount, "typed-mutation", phaseStarted);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "typed-mutation", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
         var preparation = await Qa04ProductionAuthoritativeStepPreparationV1.PrepareParallelAsync(
@@ -378,7 +381,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             binding.SourceDescriptor.OperationId,
             (int)CoreOperationResultStatusV1.Success,
             "operation.succeeded")).ToArray();
-        EmitPhase(injectionStep, workerCount, "step-preparation", phaseStarted);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "step-preparation", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
         var finalized = await Qa04ProductionStep2OperationFinalizationV1.CommitAndPublishAsync(
@@ -404,7 +407,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         if (detailTransition is not null &&
             (finalized.DetailDirectory is null || finalized.DetailDecisionAuthority is null))
             throw new InvalidDataException("qa04.step2.production-loop.detail-result-missing");
-        EmitPhase(injectionStep, workerCount, "commit-finalization", phaseStarted);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "commit-finalization", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
         var resultingAuthorities = Qa04ProductionDomainSnapshotAuthorityBuilderV1.CreateResultingState(
@@ -415,7 +418,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
                 ?? throw new InvalidDataException("qa04.step2.production-loop.prepared-partition-batch-missing"));
         if (resultingAuthorities.CanonicalAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.step2.production-loop.resulting-domain-authority-count-not-97");
-        EmitPhase(injectionStep, workerCount, "snapshot-authority", phaseStarted);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "snapshot-authority", phaseStarted);
 
         return new Qa04ProductionStep2AuthoritativeStepExecutionV1(
             injectionStep,
@@ -435,9 +438,13 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
     private static void EmitPhase(
         ulong injectionStep,
         int workerCount,
+        int phaseLogIntervalTransitions,
         string phase,
         long startedTimestamp)
     {
+        if (injectionStep % checked((ulong)phaseLogIntervalTransitions) != 0)
+            return;
+
         Console.Error.WriteLine(
             $"QA04_PHASE workers={workerCount} injection_step={injectionStep} phase={phase} " +
             $"elapsed_ms={Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds:F1}");
