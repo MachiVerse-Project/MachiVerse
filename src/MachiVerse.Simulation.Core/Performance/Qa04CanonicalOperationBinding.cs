@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Google.Protobuf;
 using MachiVerse.Protocol.V1;
 using MachiVerse.Simulation.Core.Determinism;
@@ -28,6 +29,10 @@ public sealed record Qa04CanonicalOperationBindingResultV1(
 /// </summary>
 public static class Qa04CanonicalOperationBindingV1
 {
+    private static readonly ConditionalWeakTable<
+        Qa04CanonicalOperationBindingResultV1,
+        CanonicalBindingStampV1> CanonicalAuthority = new();
+
     public const uint PayloadSchemaMajor = 1;
     public const uint PayloadSchemaMinor = 0;
 
@@ -390,7 +395,7 @@ public static class Qa04CanonicalOperationBindingV1
         if (!boundDescriptor.PayloadDigest.AsSpan().SequenceEqual(operation.ImmutablePayloadDigest.Span))
             throw new InvalidDataException("qa04.workload.operation-bound-digest-mismatch");
 
-        return new Qa04CanonicalOperationBindingResultV1(
+        var result = new Qa04CanonicalOperationBindingResultV1(
             descriptor,
             boundDescriptor,
             operation,
@@ -398,6 +403,264 @@ public static class Qa04CanonicalOperationBindingV1
             primaryTarget,
             orderKey,
             scheduled);
+        CanonicalAuthority.Add(result, CanonicalBindingStampV1.Capture(result));
+        return result;
+    }
+
+    internal static bool HasCanonicalAuthority(Qa04CanonicalOperationBindingResultV1 binding)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        return CanonicalAuthority.TryGetValue(binding, out var stamp) && stamp.Matches(binding);
+    }
+
+    private sealed class CanonicalBindingStampV1
+    {
+        private CanonicalBindingStampV1(
+            DescriptorStampV1 source,
+            DescriptorStampV1 bound,
+            OperationStampV1 operation,
+            StableToken ownerDomain,
+            PartitionRecordRefV1 primaryTarget,
+            OrderKeyStampV1 orderKey,
+            OpaqueId128 scheduledOperationId,
+            ulong scheduledEffectiveStep,
+            OrderKeyStampV1 scheduledOrderKey)
+        {
+            Source = source;
+            Bound = bound;
+            Operation = operation;
+            OwnerDomain = ownerDomain;
+            PrimaryTarget = primaryTarget;
+            OrderKey = orderKey;
+            ScheduledOperationId = scheduledOperationId;
+            ScheduledEffectiveStep = scheduledEffectiveStep;
+            ScheduledOrderKey = scheduledOrderKey;
+        }
+
+        private DescriptorStampV1 Source { get; }
+        private DescriptorStampV1 Bound { get; }
+        private OperationStampV1 Operation { get; }
+        private StableToken OwnerDomain { get; }
+        private PartitionRecordRefV1 PrimaryTarget { get; }
+        private OrderKeyStampV1 OrderKey { get; }
+        private OpaqueId128 ScheduledOperationId { get; }
+        private ulong ScheduledEffectiveStep { get; }
+        private OrderKeyStampV1 ScheduledOrderKey { get; }
+
+        public static CanonicalBindingStampV1 Capture(Qa04CanonicalOperationBindingResultV1 binding)
+            => new(
+                DescriptorStampV1.Capture(binding.SourceDescriptor),
+                DescriptorStampV1.Capture(binding.BoundDescriptor),
+                OperationStampV1.Capture(binding.Operation),
+                binding.OwnerDomain,
+                binding.PrimaryTarget,
+                OrderKeyStampV1.Capture(binding.OrderKey),
+                binding.ScheduledOperation.OperationId,
+                binding.ScheduledOperation.EffectiveStep,
+                OrderKeyStampV1.Capture(binding.ScheduledOperation.OrderKey));
+
+        public bool Matches(Qa04CanonicalOperationBindingResultV1 binding)
+        {
+            if (binding.SourceDescriptor is null ||
+                binding.BoundDescriptor is null ||
+                binding.Operation is null ||
+                binding.OrderKey is null ||
+                binding.ScheduledOperation is null)
+                return false;
+
+            return Source.Matches(binding.SourceDescriptor) &&
+                   Bound.Matches(binding.BoundDescriptor) &&
+                   Operation.Matches(binding.Operation) &&
+                   binding.OwnerDomain == OwnerDomain &&
+                   binding.PrimaryTarget == PrimaryTarget &&
+                   OrderKey.Matches(binding.OrderKey) &&
+                   binding.ScheduledOperation.OperationId == ScheduledOperationId &&
+                   binding.ScheduledOperation.EffectiveStep == ScheduledEffectiveStep &&
+                   ScheduledOrderKey.Matches(binding.ScheduledOperation.OrderKey);
+        }
+
+        private sealed class DescriptorStampV1
+        {
+            private DescriptorStampV1(
+                ulong injectionStep,
+                StableToken familyToken,
+                ulong familyOrdinal,
+                OpaqueId128 operationId,
+                byte[] payloadDigest)
+            {
+                InjectionStep = injectionStep;
+                FamilyToken = familyToken;
+                FamilyOrdinal = familyOrdinal;
+                OperationId = operationId;
+                PayloadDigest = payloadDigest;
+            }
+
+            private ulong InjectionStep { get; }
+            private StableToken FamilyToken { get; }
+            private ulong FamilyOrdinal { get; }
+            private OpaqueId128 OperationId { get; }
+            private byte[] PayloadDigest { get; }
+
+            public static DescriptorStampV1 Capture(Qa04OperationDescriptorV1 descriptor)
+                => new(
+                    descriptor.InjectionStep,
+                    descriptor.FamilyToken,
+                    descriptor.FamilyOrdinal,
+                    descriptor.OperationId,
+                    descriptor.PayloadDigest.ToArray());
+
+            public bool Matches(Qa04OperationDescriptorV1 descriptor)
+                => descriptor.InjectionStep == InjectionStep &&
+                   descriptor.FamilyToken == FamilyToken &&
+                   descriptor.FamilyOrdinal == FamilyOrdinal &&
+                   descriptor.OperationId == OperationId &&
+                   descriptor.PayloadDigest.AsSpan().SequenceEqual(PayloadDigest);
+        }
+
+        private sealed class OperationStampV1
+        {
+            private OperationStampV1(
+                byte[] operationId,
+                byte[] immutablePayloadDigest,
+                string operationKind,
+                ulong admissionBasisStep,
+                ulong schedulingPolicyGeneration,
+                bool hasRequestedNotBeforeStep,
+                ulong requestedNotBeforeStep,
+                bool hasRequestedDeadlineStep,
+                ulong requestedDeadlineStep,
+                bool hasCandidate,
+                ulong candidateStep,
+                string payloadSchemaId,
+                bool hasPayloadSchemaVersion,
+                uint payloadSchemaMajor,
+                uint payloadSchemaMinor,
+                byte[] payload)
+            {
+                OperationId = operationId;
+                ImmutablePayloadDigest = immutablePayloadDigest;
+                OperationKind = operationKind;
+                AdmissionBasisStep = admissionBasisStep;
+                SchedulingPolicyGeneration = schedulingPolicyGeneration;
+                HasRequestedNotBeforeStep = hasRequestedNotBeforeStep;
+                RequestedNotBeforeStep = requestedNotBeforeStep;
+                HasRequestedDeadlineStep = hasRequestedDeadlineStep;
+                RequestedDeadlineStep = requestedDeadlineStep;
+                HasCandidate = hasCandidate;
+                CandidateStep = candidateStep;
+                PayloadSchemaId = payloadSchemaId;
+                HasPayloadSchemaVersion = hasPayloadSchemaVersion;
+                PayloadSchemaMajor = payloadSchemaMajor;
+                PayloadSchemaMinor = payloadSchemaMinor;
+                Payload = payload;
+            }
+
+            private byte[] OperationId { get; }
+            private byte[] ImmutablePayloadDigest { get; }
+            private string OperationKind { get; }
+            private ulong AdmissionBasisStep { get; }
+            private ulong SchedulingPolicyGeneration { get; }
+            private bool HasRequestedNotBeforeStep { get; }
+            private ulong RequestedNotBeforeStep { get; }
+            private bool HasRequestedDeadlineStep { get; }
+            private ulong RequestedDeadlineStep { get; }
+            private bool HasCandidate { get; }
+            private ulong CandidateStep { get; }
+            private string PayloadSchemaId { get; }
+            private bool HasPayloadSchemaVersion { get; }
+            private uint PayloadSchemaMajor { get; }
+            private uint PayloadSchemaMinor { get; }
+            private byte[] Payload { get; }
+
+            public static OperationStampV1 Capture(StandardOperationV1 operation)
+            {
+                var admission = operation.Admission
+                    ?? throw new InvalidDataException("qa04.workload.operation-admission-missing");
+                var version = operation.OperationPayloadSchemaVersion;
+                var candidate = operation.Candidate;
+                return new OperationStampV1(
+                    operation.OperationId.ToByteArray(),
+                    operation.ImmutablePayloadDigest.ToByteArray(),
+                    operation.OperationKind,
+                    admission.AdmissionBasisStep,
+                    admission.SchedulingPolicyGeneration,
+                    admission.HasRequestedNotBeforeStep,
+                    admission.RequestedNotBeforeStep,
+                    admission.HasRequestedDeadlineStep,
+                    admission.RequestedDeadlineStep,
+                    candidate is not null,
+                    candidate?.CandidateStep ?? 0UL,
+                    operation.OperationPayloadSchemaId,
+                    version is not null,
+                    version?.Major ?? 0U,
+                    version?.Minor ?? 0U,
+                    operation.OperationPayload.ToByteArray());
+            }
+
+            public bool Matches(StandardOperationV1 operation)
+            {
+                var admission = operation.Admission;
+                if (admission is null)
+                    return false;
+
+                var candidate = operation.Candidate;
+                var version = operation.OperationPayloadSchemaVersion;
+                return operation.OperationId.Span.SequenceEqual(OperationId) &&
+                       operation.ImmutablePayloadDigest.Span.SequenceEqual(ImmutablePayloadDigest) &&
+                       string.Equals(operation.OperationKind, OperationKind, StringComparison.Ordinal) &&
+                       admission.AdmissionBasisStep == AdmissionBasisStep &&
+                       admission.SchedulingPolicyGeneration == SchedulingPolicyGeneration &&
+                       admission.HasRequestedNotBeforeStep == HasRequestedNotBeforeStep &&
+                       (!HasRequestedNotBeforeStep || admission.RequestedNotBeforeStep == RequestedNotBeforeStep) &&
+                       admission.HasRequestedDeadlineStep == HasRequestedDeadlineStep &&
+                       (!HasRequestedDeadlineStep || admission.RequestedDeadlineStep == RequestedDeadlineStep) &&
+                       (candidate is not null) == HasCandidate &&
+                       (!HasCandidate || candidate!.CandidateStep == CandidateStep) &&
+                       string.Equals(operation.OperationPayloadSchemaId, PayloadSchemaId, StringComparison.Ordinal) &&
+                       (version is not null) == HasPayloadSchemaVersion &&
+                       (!HasPayloadSchemaVersion ||
+                        (version!.Major == PayloadSchemaMajor && version.Minor == PayloadSchemaMinor)) &&
+                       operation.OperationPayload.Span.SequenceEqual(Payload);
+            }
+        }
+
+        private sealed class OrderKeyStampV1
+        {
+            private OrderKeyStampV1(
+                byte phase,
+                ushort domainRank,
+                byte[] conflictScopeDigest,
+                int semanticPriority,
+                OpaqueId128 intentId)
+            {
+                Phase = phase;
+                DomainRank = domainRank;
+                ConflictScopeDigest = conflictScopeDigest;
+                SemanticPriority = semanticPriority;
+                IntentId = intentId;
+            }
+
+            private byte Phase { get; }
+            private ushort DomainRank { get; }
+            private byte[] ConflictScopeDigest { get; }
+            private int SemanticPriority { get; }
+            private OpaqueId128 IntentId { get; }
+
+            public static OrderKeyStampV1 Capture(SameStepOrderKey key)
+                => new(
+                    key.Phase,
+                    key.DomainRank,
+                    key.ConflictScopeDigest.ToArray(),
+                    key.SemanticPriority,
+                    key.IntentId);
+
+            public bool Matches(SameStepOrderKey key)
+                => key.Phase == Phase &&
+                   key.DomainRank == DomainRank &&
+                   key.ConflictScopeDigest.SequenceEqual(ConflictScopeDigest) &&
+                   key.SemanticPriority == SemanticPriority &&
+                   key.IntentId == IntentId;
+        }
     }
 
     private static void WriteAdmission(MvDcborWriter writer, OperationSchedulingAdmissionWireV1 admission)
