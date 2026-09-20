@@ -64,6 +64,16 @@ public static class Qa04CanonicalOperationBindingV1
     private static readonly ConcurrentDictionary<ulong, StaticBindingMaterialV1> MarketMaterialByOrdinal = new();
     private static readonly ConcurrentDictionary<ulong, StaticBindingMaterialV1> GovernanceMaterialByOrdinal = new();
     private static readonly ConcurrentDictionary<ulong, StaticBindingMaterialV1> EnvironmentMaterialByOrdinal = new();
+    private static readonly IReadOnlyDictionary<string, string> PayloadSchemaIdByOperationKind =
+        new[]
+        {
+            "resident.action.request",
+            "physical.move.request",
+            "society.market.order-place",
+            "infrastructure.service.reserve",
+            "governance.incident.register",
+            "environment.hazard.inject",
+        }.ToDictionary(static kind => kind, static kind => "operation." + kind, StringComparer.Ordinal);
 
     private static readonly IReadOnlyDictionary<StableToken, ushort> DomainRankByToken =
         StandardDomainExecutionPlanV1.Create().Entries.ToDictionary(
@@ -183,7 +193,7 @@ public static class Qa04CanonicalOperationBindingV1
             operationKind: "resident.action.request",
             ResidentDomain,
             residentRef,
-            payloadWriter.ToArray());
+            ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindPhysical(
@@ -210,7 +220,7 @@ public static class Qa04CanonicalOperationBindingV1
             operationKind: "physical.move.request",
             PhysicalDomain,
             subjectRef,
-            payloadWriter.ToArray());
+            ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindMarket(
@@ -251,7 +261,7 @@ public static class Qa04CanonicalOperationBindingV1
         payloadWriter.WriteAsciiText(side.Value);
         payloadWriter.WriteInt64(price);
         payloadWriter.WriteInt64(quantity);
-        return new StaticBindingMaterialV1(marketRef, payloadWriter.ToArray());
+        return new StaticBindingMaterialV1(marketRef, ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindInfrastructure(
@@ -279,7 +289,7 @@ public static class Qa04CanonicalOperationBindingV1
             operationKind: "infrastructure.service.reserve",
             InfrastructureDomain,
             serviceRef,
-            payloadWriter.ToArray());
+            ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindGovernance(
@@ -323,7 +333,7 @@ public static class Qa04CanonicalOperationBindingV1
         WriteRecordRef(payloadWriter, scopeRef);
         payloadWriter.WriteArrayStart(1);
         WriteRecordRef(payloadWriter, claimRef);
-        return new StaticBindingMaterialV1(residentRef, payloadWriter.ToArray());
+        return new StaticBindingMaterialV1(residentRef, ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindEnvironment(
@@ -355,7 +365,7 @@ public static class Qa04CanonicalOperationBindingV1
         WriteRecordRef(payloadWriter, scopeRef);
         payloadWriter.WriteUnsigned(intensityPpm);
         payloadWriter.WriteUnsigned(30);
-        return new StaticBindingMaterialV1(scopeRef, payloadWriter.ToArray());
+        return new StaticBindingMaterialV1(scopeRef, ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindResolved(
@@ -364,8 +374,9 @@ public static class Qa04CanonicalOperationBindingV1
         string operationKind,
         StableToken ownerDomain,
         PartitionRecordRefV1 primaryTarget,
-        byte[] canonicalPayload)
+        ByteString canonicalPayload)
     {
+        ArgumentNullException.ThrowIfNull(canonicalPayload);
         if (canonicalPayload.Length == 0)
             throw new InvalidDataException("qa04.workload.operation-payload-empty");
         if (!DomainRankByToken.TryGetValue(ownerDomain, out var domainRank))
@@ -376,7 +387,8 @@ public static class Qa04CanonicalOperationBindingV1
             AdmissionBasisStep = descriptor.InjectionStep,
             SchedulingPolicyGeneration = schedulingPolicyGeneration,
         };
-        var schemaId = $"operation.{operationKind}";
+        if (!PayloadSchemaIdByOperationKind.TryGetValue(operationKind, out var schemaId))
+            throw new InvalidDataException($"qa04.workload.operation-kind-schema-unregistered:{operationKind}");
         var operation = new StandardOperationV1
         {
             OperationId = ByteString.CopyFrom(descriptor.OperationId.ToBytes()),
@@ -392,7 +404,7 @@ public static class Qa04CanonicalOperationBindingV1
                 Major = PayloadSchemaMajor,
                 Minor = PayloadSchemaMinor,
             },
-            OperationPayload = ByteString.CopyFrom(canonicalPayload),
+            OperationPayload = canonicalPayload,
         };
         var digest = ComputeImmutablePayloadDigestCore(
             operationKind,
@@ -725,7 +737,7 @@ public static class Qa04CanonicalOperationBindingV1
 
     private sealed record StaticBindingMaterialV1(
         PartitionRecordRefV1 PrimaryTarget,
-        byte[] CanonicalPayload);
+        ByteString CanonicalPayload);
 
     private static void WriteAdmission(MvDcborWriter writer, OperationSchedulingAdmissionWireV1 admission)
     {
