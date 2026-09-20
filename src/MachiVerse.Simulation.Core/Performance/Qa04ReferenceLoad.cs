@@ -250,22 +250,23 @@ public static class Qa04ReferenceLoadV1
 
     private static Qa04OperationDescriptorV1 Operation(ulong step, StableToken family, ulong ordinal)
     {
-        var payload = HashSuite.DomainHash("mv.perf-reference-operation-payload.v1", writer =>
-        {
-            writer.WriteMapStart(4);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(BenchmarkProfileId);
-            writer.WriteUnsigned(1); writer.WriteUnsigned(step);
-            writer.WriteUnsigned(2); writer.WriteAsciiText(family.Value);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(ordinal);
-        });
-        var id = NonZeroTrunc128("mv.perf-reference-operation-id.v1", writer =>
-        {
-            writer.WriteMapStart(4);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(BenchmarkProfileId);
-            writer.WriteUnsigned(1); writer.WriteUnsigned(step);
-            writer.WriteUnsigned(2); writer.WriteAsciiText(family.Value);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(ordinal);
-        });
+        var writer = new MvDcborWriter();
+        writer.WriteMapStart(4);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(BenchmarkProfileId);
+        writer.WriteUnsigned(1); writer.WriteUnsigned(step);
+        writer.WriteUnsigned(2); writer.WriteAsciiText(family.Value);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(ordinal);
+        var canonicalValue = writer.ToArray();
+
+        var payload = HashSuite.DomainHashCanonicalValue(
+            "mv.perf-reference-operation-payload.v1",
+            canonicalValue);
+        var id = HashSuite.Trunc128(HashSuite.DomainHashCanonicalValue(
+            "mv.perf-reference-operation-id.v1",
+            canonicalValue));
+        if (id.IsZero)
+            throw new InvalidDataException("qa04.reference.derived-id-zero");
+
         return new Qa04OperationDescriptorV1(step, family, ordinal, id, payload);
     }
 
