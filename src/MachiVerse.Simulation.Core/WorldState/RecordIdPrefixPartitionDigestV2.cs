@@ -193,9 +193,28 @@ public static class RecordIdPrefixPartitionDigestV2
         DetailLevelV1 detailLevel,
         ulong itemCount,
         IReadOnlyList<PartitionDigestSliceV2> slices)
+        => CreateHeaderFromPrevalidatedSlices(
+            identity,
+            revision,
+            basisStep,
+            detailLevel,
+            itemCount,
+            slices,
+            slices?.Count ?? throw new ArgumentNullException(nameof(slices)));
+
+    internal static PartitionStateHeaderV1 CreateHeaderFromPrevalidatedSlices(
+        DomainPartitionIdentityV1 identity,
+        ulong revision,
+        ulong basisStep,
+        DetailLevelV1 detailLevel,
+        ulong itemCount,
+        IEnumerable<PartitionDigestSliceV2> slices,
+        int sliceCount)
     {
         ArgumentNullException.ThrowIfNull(identity);
         ArgumentNullException.ThrowIfNull(slices);
+        if (sliceCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(sliceCount));
         if (revision == 0)
             throw new ArgumentOutOfRangeException(nameof(revision));
         if (!Enum.IsDefined(detailLevel))
@@ -203,8 +222,10 @@ public static class RecordIdPrefixPartitionDigestV2
 
         ushort? previous = null;
         ulong actualCount = 0;
+        var actualSliceCount = 0;
         foreach (var slice in slices)
         {
+            actualSliceCount = checked(actualSliceCount + 1);
             ArgumentNullException.ThrowIfNull(slice);
             if (previous is { } prior && prior >= slice.Prefix)
                 throw new InvalidDataException("domain.record-prefix-slice-order");
@@ -214,9 +235,9 @@ public static class RecordIdPrefixPartitionDigestV2
                 throw new InvalidDataException("domain.record-prefix-slice-count-drift");
         }
 
-        if (actualCount != itemCount)
+        if (actualCount != itemCount || actualSliceCount != sliceCount)
             throw new InvalidDataException("domain.record-prefix-slice-count-drift");
-        if (itemCount == 0 && slices.Count != 0)
+        if (itemCount == 0 && sliceCount != 0)
             throw new InvalidDataException("domain.record-prefix-slice-count-drift");
 
         var digest = HashSuite.DomainHash(PartitionRootLabel, writer =>
@@ -233,7 +254,7 @@ public static class RecordIdPrefixPartitionDigestV2
             writer.WriteUnsigned(8); writer.WriteUnsigned(itemCount);
             writer.WriteUnsigned(9); writer.WriteUnsigned(DiagnosticPartitionVersion);
             writer.WriteUnsigned(10);
-            writer.WriteArrayStart(checked((ulong)slices.Count));
+            writer.WriteArrayStart(checked((ulong)sliceCount));
             foreach (var slice in slices)
             {
                 writer.WriteArrayStart(3);
