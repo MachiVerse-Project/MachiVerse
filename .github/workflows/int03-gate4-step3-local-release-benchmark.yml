@@ -231,15 +231,46 @@ jobs:
             Set-Content -LiteralPath $requestPath -Value $request -Encoding ascii
 
             Write-Host "GATE4_STEP3_PRECHECK_START workers=$workers transitions=$precheckTransitions interval=$progressInterval"
-            $process = Start-Process -FilePath $env:MACHIVERSE_QA04_CORE_EXECUTABLE -ArgumentList "qa04-target" -NoNewWindow -PassThru -RedirectStandardInput $requestPath -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $startInfo.FileName = $env:MACHIVERSE_QA04_CORE_EXECUTABLE
+            $startInfo.Arguments = "qa04-target"
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $startInfo
+            if (-not $process.Start()) {
+              throw "Step3 performance precheck process failed to start for workers=$workers."
+            }
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            $process.StandardInput.WriteLine($request)
+            $process.StandardInput.Close()
+
             if (-not $process.WaitForExit($precheckTimeoutSeconds * 1000)) {
-              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              try { $process.Kill() } catch {}
+              $process.WaitForExit()
+              $stdout = $stdoutTask.GetAwaiter().GetResult()
+              $stderr = $stderrTask.GetAwaiter().GetResult()
+              Set-Content -LiteralPath $stdoutPath -Value $stdout -Encoding utf8
+              Set-Content -LiteralPath $stderrPath -Value $stderr -Encoding utf8
               throw "Step3 performance precheck timed out for workers=$workers after $precheckTimeoutSeconds seconds."
             }
+
             $process.WaitForExit()
-            if ($process.ExitCode -ne 0) {
-              $tail = @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue | Select-Object -Last 40) -join [Environment]::NewLine
-              throw "Step3 performance precheck failed for workers=$workers exit=$($process.ExitCode): $tail"
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            Set-Content -LiteralPath $stdoutPath -Value $stdout -Encoding utf8
+            Set-Content -LiteralPath $stderrPath -Value $stderr -Encoding utf8
+            $exitCode = $process.ExitCode
+            $process.Dispose()
+
+            if ($exitCode -ne 0) {
+              $tail = @($stderr -split [Environment]::NewLine | Select-Object -Last 40) -join [Environment]::NewLine
+              throw "Step3 performance precheck failed for workers=$workers exit=$exitCode: $tail"
             }
 
             $progressLine = Get-Content -LiteralPath $stderrPath | Where-Object { $_ -match '^QA04_PROGRESS phase=actual-run ' } | Select-Object -Last 1
@@ -259,6 +290,26 @@ jobs:
               estimatedWorkerGroupSeconds = [math]::Round($workerEstimateSeconds, 1)
             }
             Write-Host ("GATE4_STEP3_PRECHECK workers={0} interval_ops_per_second={1:F1} estimated_step_ms={2:F1} estimated_worker_group_seconds={3:F1}" -f $workers, $rate, ($steadyStepSeconds * 1000.0), $workerEstimateSeconds)
+
+            $partialReport = [ordered]@{
+              schemaVersion = "1.0"
+              sourceCommit = $env:CANDIDATE_SHA
+              precheckTransitions = $precheckTransitions
+              progressIntervalTransitions = $progressInterval
+              canonicalTransitionsPerRun = $canonicalTransitions
+              runsPerWorker = $runsPerWorker
+              targetSeconds = $targetSeconds
+              maxSeconds = $maxSeconds
+              estimatedMatrixSecondsLowerBound = [math]::Round($estimatedMatrixSeconds, 1)
+              estimatedMatrixHoursLowerBound = [math]::Round($estimatedMatrixSeconds / 3600.0, 3)
+              rows = $rows
+            }
+            $reportPath = Join-Path $env:QA04_STEP3_OUTPUT "step3-performance-precheck.json"
+            $partialReport | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding utf8
+
+            if ($estimatedMatrixSeconds -gt $maxSeconds) {
+              throw "Estimated Step3 matrix runtime lower bound already exceeds the configured hard upper bound after workers=$workers; remaining precheck rows and canonical benchmark will not start."
+            }
           }
 
           $report = [ordered]@{
