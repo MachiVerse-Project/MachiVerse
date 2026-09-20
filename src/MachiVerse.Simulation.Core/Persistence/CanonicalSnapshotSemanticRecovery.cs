@@ -535,5 +535,5 @@ public static class CanonicalSnapshotSemanticRecoveryV1
             configDigest);
 
         return reconstructed.Diagnostic.StateDigest.ToArray();
-    }}
+     }
 }
