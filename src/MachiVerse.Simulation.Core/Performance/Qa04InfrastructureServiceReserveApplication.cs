@@ -31,6 +31,22 @@ public static class Qa04InfrastructureServiceReserveApplicationV1
         DomainPartitionStateV1<InfrastructureServiceQueuePayloadV1> current,
         IDomainRecordSchemaResolverV1 references)
     {
+        var record = CreateRecord(worldId, binding, current, references);
+        var next = current.WithAdditions(
+            new[] { record },
+            "qa04.infrastructure.service-reserve-duplicate");
+        if (next.ItemCount != checked(current.ItemCount + 1UL))
+            throw new InvalidDataException("qa04.infrastructure.service-reserve-count-drift");
+
+        return new Qa04InfrastructureServiceReserveApplicationResultV1(record, next);
+    }
+
+    internal static DomainRecordEnvelopeV1<InfrastructureServiceQueuePayloadV1> CreateRecord(
+        OpaqueId128 worldId,
+        Qa04CanonicalOperationBindingResultV1 binding,
+        DomainPartitionStateV1<InfrastructureServiceQueuePayloadV1> current,
+        IDomainRecordSchemaResolverV1 references)
+    {
         if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
         ArgumentNullException.ThrowIfNull(binding);
         ArgumentNullException.ThrowIfNull(current);
@@ -84,7 +100,7 @@ public static class Qa04InfrastructureServiceReserveApplicationV1
         if (current.TryGet(recordId, out _))
             throw new InvalidDataException("qa04.infrastructure.service-reserve-duplicate");
 
-        var record = new DomainRecordEnvelopeV1<InfrastructureServiceQueuePayloadV1>(
+        return new DomainRecordEnvelopeV1<InfrastructureServiceQueuePayloadV1>(
             recordId,
             identity.RecordSchema,
             revision: 1,
@@ -93,14 +109,6 @@ public static class Qa04InfrastructureServiceReserveApplicationV1
             DetailLevelV1.D2RegionalAggregate,
             lineageRef: null,
             payload);
-        var next = new DomainPartitionStateV1<InfrastructureServiceQueuePayloadV1>(
-            identity,
-            current.RecordsCanonical.Concat(new[] { record }));
-
-        if (next.ItemCount != checked(current.ItemCount + 1UL))
-            throw new InvalidDataException("qa04.infrastructure.service-reserve-count-drift");
-
-        return new Qa04InfrastructureServiceReserveApplicationResultV1(record, next);
     }
 
     private static void RequireCanonicalBinding(Qa04CanonicalOperationBindingResultV1 binding)
