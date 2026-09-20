@@ -118,8 +118,12 @@ public sealed partial class SqlitePersistenceStore
 
             await InsertHistoryRecordAsync(history, transaction, cancellationToken);
 
-            foreach (var terminal in orderedTerminalOperations)
-                await CommitTerminalOperationAsync(terminal, effectiveStep, history.Sequence, transaction, cancellationToken);
+            await CommitTerminalOperationsBatchedAsync(
+                orderedTerminalOperations,
+                effectiveStep,
+                history.Sequence,
+                transaction,
+                cancellationToken).ConfigureAwait(false);
 
             foreach (var item in orderedTransactions)
                 await UpsertCrossDomainTransactionStateInTransitionAsync(item, transaction, cancellationToken);
