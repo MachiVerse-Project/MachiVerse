@@ -34,9 +34,31 @@ public sealed class StepPartitionStateMaterialV1
             basisHeader.Schema != resultingHeader.Schema)
             throw new InvalidDataException("step-state.change-set-partition-identity-mismatch");
 
-        return HashSuite.DomainHash("mv.step-partition-change-set.v1", writer =>
+        if (basisHeader.DigestAlgorithm == PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1 &&
+            resultingHeader.DigestAlgorithm == PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1)
         {
-            writer.WriteMapStart(13);
+            return HashSuite.DomainHash("mv.step-partition-change-set.v1", writer =>
+            {
+                writer.WriteMapStart(13);
+                writer.WriteUnsigned(0); writer.WriteAsciiText(basisHeader.PartitionId.Value);
+                writer.WriteUnsigned(1); writer.WriteAsciiText(basisHeader.OwnerDomain.Value);
+                writer.WriteUnsigned(2); writer.WriteAsciiText(basisHeader.Schema.SchemaId.Value);
+                writer.WriteUnsigned(3); writer.WriteUnsigned(basisHeader.Revision);
+                writer.WriteUnsigned(4); writer.WriteUnsigned(resultingHeader.Revision);
+                writer.WriteUnsigned(5); writer.WriteUnsigned(basisHeader.BasisStep);
+                writer.WriteUnsigned(6); writer.WriteUnsigned(resultingHeader.BasisStep);
+                writer.WriteUnsigned(7); writer.WriteUnsigned(basisWorldStep);
+                writer.WriteUnsigned(8); writer.WriteUnsigned(targetWorldStep);
+                writer.WriteUnsigned(9); writer.WriteBytes(basisHeader.CanonicalDigest);
+                writer.WriteUnsigned(10); writer.WriteBytes(resultingHeader.CanonicalDigest);
+                writer.WriteUnsigned(11); writer.WriteUnsigned((byte)resultingHeader.DetailLevel);
+                writer.WriteUnsigned(12); writer.WriteUnsigned(resultingHeader.ItemCount);
+            });
+        }
+
+        return HashSuite.DomainHash("mv.step-partition-change-set.v2", writer =>
+        {
+            writer.WriteMapStart(15);
             writer.WriteUnsigned(0); writer.WriteAsciiText(basisHeader.PartitionId.Value);
             writer.WriteUnsigned(1); writer.WriteAsciiText(basisHeader.OwnerDomain.Value);
             writer.WriteUnsigned(2); writer.WriteAsciiText(basisHeader.Schema.SchemaId.Value);
@@ -46,10 +68,12 @@ public sealed class StepPartitionStateMaterialV1
             writer.WriteUnsigned(6); writer.WriteUnsigned(resultingHeader.BasisStep);
             writer.WriteUnsigned(7); writer.WriteUnsigned(basisWorldStep);
             writer.WriteUnsigned(8); writer.WriteUnsigned(targetWorldStep);
-            writer.WriteUnsigned(9); writer.WriteBytes(basisHeader.CanonicalDigest);
-            writer.WriteUnsigned(10); writer.WriteBytes(resultingHeader.CanonicalDigest);
-            writer.WriteUnsigned(11); writer.WriteUnsigned((byte)resultingHeader.DetailLevel);
-            writer.WriteUnsigned(12); writer.WriteUnsigned(resultingHeader.ItemCount);
+            writer.WriteUnsigned(9); writer.WriteUnsigned((byte)basisHeader.DigestAlgorithm);
+            writer.WriteUnsigned(10); writer.WriteBytes(basisHeader.CanonicalDigest);
+            writer.WriteUnsigned(11); writer.WriteUnsigned((byte)resultingHeader.DigestAlgorithm);
+            writer.WriteUnsigned(12); writer.WriteBytes(resultingHeader.CanonicalDigest);
+            writer.WriteUnsigned(13); writer.WriteUnsigned((byte)resultingHeader.DetailLevel);
+            writer.WriteUnsigned(14); writer.WriteUnsigned(resultingHeader.ItemCount);
         });
     }
 
