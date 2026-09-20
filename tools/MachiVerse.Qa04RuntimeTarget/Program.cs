@@ -16,6 +16,7 @@ internal static class Program
     private const string BenchmarkMeasurementCode = "qa04.measurement.step-sample-count";
     private const double MissingMetricSentinelMilliseconds = 1_000_000_000.0;
     private const string Step3HeartbeatEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_HEARTBEAT_SECONDS";
+    private const string Step3PersistenceInsertBatchSizeEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_PERSISTENCE_INSERT_BATCH_SIZE";
     private static readonly string[] PersistenceCrashStages =
     [
         "audit-append",
@@ -343,6 +344,7 @@ internal static class Program
                     command = "production-reference-run",
                     workerCount = run.WorkerCount,
                     progressHeartbeatSeconds = Step3HeartbeatSeconds(),
+                    persistenceInsertBatchSize = Step3PersistenceInsertBatchSize(),
                     persistenceRoot,
                 },
                 timeout: null);
@@ -1091,6 +1093,17 @@ internal static class Program
             throw new InvalidDataException(
                 $"{Step3HeartbeatEnvironmentVariable} must be a positive integer number of seconds.");
         return seconds;
+    }
+
+    private static int Step3PersistenceInsertBatchSize()
+    {
+        var raw = Environment.GetEnvironmentVariable(Step3PersistenceInsertBatchSizeEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(raw))
+            return 0;
+        if (!int.TryParse(raw, out var batchSize) || batchSize <= 0)
+            throw new InvalidDataException(
+                $"{Step3PersistenceInsertBatchSizeEnvironmentVariable} must be a positive integer.");
+        return batchSize;
     }
 
     private static void ValidatePersistenceProfile(JsonElement profile)
