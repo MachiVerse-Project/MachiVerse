@@ -259,19 +259,37 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             throw new InvalidDataException($"persistence.snapshot.partition-empty-fragment-count:{SectionId}");
 
         var partition = new DomainPartitionStateV1<TPayload>(_identity, restored);
-        var recomputed = PartitionStateHeaderV1.CreateCanonical(
-            partition,
-            expectedHeader.Revision,
-            expectedHeader.BasisStep,
-            expectedHeader.DetailLevel,
-            payload =>
-            {
-                var digest = _canonicalPayloadDigest(payload)
-                    ?? throw new InvalidDataException($"persistence.snapshot.partition-payload-digest-null:{SectionId}");
-                if (digest.Length != 32)
-                    throw new InvalidDataException($"persistence.snapshot.partition-payload-digest-length:{SectionId}");
-                return digest;
-            });
+
+        byte[] PayloadDigest(TPayload payload)
+        {
+            var digest = _canonicalPayloadDigest(payload)
+                ?? throw new InvalidDataException($"persistence.snapshot.partition-payload-digest-null:{SectionId}");
+            if (digest.Length != 32)
+                throw new InvalidDataException($"persistence.snapshot.partition-payload-digest-length:{SectionId}");
+            return digest;
+        }
+
+        var recomputed = expectedHeader.DigestAlgorithm switch
+        {
+            PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1 =>
+                PartitionStateHeaderV1.CreateCanonical(
+                    partition,
+                    expectedHeader.Revision,
+                    expectedHeader.BasisStep,
+                    expectedHeader.DetailLevel,
+                    PayloadDigest),
+            PartitionCanonicalDigestAlgorithmV1.RecordIdPrefixV2 =>
+                RecordIdPrefixPartitionDigestV2.CreateHeader(
+                    partition,
+                    expectedHeader.Revision,
+                    expectedHeader.BasisStep,
+                    expectedHeader.DetailLevel,
+                    record => PartitionStateHeaderV1.EncodeCanonicalRecord(
+                        record,
+                        PayloadDigest(record.Payload))),
+            _ => throw new InvalidDataException(
+                $"persistence.snapshot.partition-digest-algorithm:{SectionId}"),
+        };
         RequireSameHeader(expectedHeader, recomputed);
 
         return new SnapshotSectionSemanticVerificationV1(
@@ -323,7 +341,8 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             header.BasisStep,
             header.DetailLevel,
             header.ItemCount,
-            header.CanonicalDigest.ToArray());
+            header.CanonicalDigest.ToArray(),
+            header.DigestAlgorithm);
     }
 
     private void RequireSameHeader(PartitionStateHeaderV1 expected, PartitionStateHeaderV1 actual)
@@ -335,6 +354,7 @@ public sealed class DomainPartitionSnapshotSectionProviderV1<TPayload> : IDomain
             expected.BasisStep != actual.BasisStep ||
             expected.DetailLevel != actual.DetailLevel ||
             expected.ItemCount != actual.ItemCount ||
+            expected.DigestAlgorithm != actual.DigestAlgorithm ||
             !CryptographicOperations.FixedTimeEquals(expected.CanonicalDigest, actual.CanonicalDigest))
             throw new InvalidDataException($"persistence.snapshot.partition-restored-header-mismatch:{SectionId}");
     }
