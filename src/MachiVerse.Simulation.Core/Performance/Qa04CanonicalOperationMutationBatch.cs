@@ -115,8 +115,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 throw new InvalidDataException("qa04.full-step.mutation-binding-null");
             if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
                 throw new InvalidDataException("qa04.full-step.mutation-effective-step-drift");
-            if (!binding.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(
-                    binding.ScheduledOperation.OrderKey.ToDatabaseBytes()))
+            if (!binding.OrderKey.CanonicallyEquals(binding.ScheduledOperation.OrderKey))
                 throw new InvalidDataException("qa04.full-step.mutation-order-key-drift");
             if (previousOrderKey is not null && previousOrderKey.CompareTo(binding.OrderKey) >= 0)
                 throw new InvalidDataException("qa04.full-step.mutation-order-not-canonical");
@@ -331,8 +330,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 throw new InvalidDataException("qa04.full-step.mutation-binding-null");
             if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
                 throw new InvalidDataException("qa04.full-step.mutation-effective-step-drift");
-            if (!binding.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(
-                    binding.ScheduledOperation.OrderKey.ToDatabaseBytes()))
+            if (!binding.OrderKey.CanonicallyEquals(binding.ScheduledOperation.OrderKey))
                 throw new InvalidDataException("qa04.full-step.mutation-order-key-drift");
             if (previousOrderKey is not null && previousOrderKey.CompareTo(binding.OrderKey) >= 0)
                 throw new InvalidDataException("qa04.full-step.mutation-order-not-canonical");
