@@ -206,14 +206,16 @@ jobs:
             throw "Step3 performance precheck configuration is invalid."
           }
 
+          $precheckOutput = Join-Path $env:QA04_STEP3_OUTPUT "precheck"
+          New-Item -ItemType Directory -Force -Path $precheckOutput | Out-Null
           $rows = @()
           $estimatedMatrixSeconds = 0.0
           foreach ($workersRaw in $workerCounts) {
             $workers = [int]$workersRaw
             $root = Join-Path $env:RUNNER_TEMP ("qa04-step3-precheck-w" + $workers)
-            $requestPath = Join-Path $env:RUNNER_TEMP ("qa04-step3-precheck-w" + $workers + ".jsonl")
-            $stdoutPath = Join-Path $env:RUNNER_TEMP ("qa04-step3-precheck-w" + $workers + ".stdout")
-            $stderrPath = Join-Path $env:RUNNER_TEMP ("qa04-step3-precheck-w" + $workers + ".stderr")
+            $requestPath = Join-Path $precheckOutput ("workers-" + $workers + ".request.jsonl")
+            $stdoutPath = Join-Path $precheckOutput ("workers-" + $workers + ".stdout.log")
+            $stderrPath = Join-Path $precheckOutput ("workers-" + $workers + ".stderr.log")
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $requestPath,$stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
 
