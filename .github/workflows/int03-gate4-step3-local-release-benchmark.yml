@@ -270,7 +270,7 @@ jobs:
 
             if ($exitCode -ne 0) {
               $tail = @($stderr -split [Environment]::NewLine | Select-Object -Last 40) -join [Environment]::NewLine
-              throw "Step3 performance precheck failed for workers=$workers exit=$exitCode: $tail"
+              throw "Step3 performance precheck failed for workers=$workers exit=${exitCode}: $tail"
             }
 
             $progressLine = Get-Content -LiteralPath $stderrPath | Where-Object { $_ -match '^QA04_PROGRESS phase=actual-run ' } | Select-Object -Last 1
