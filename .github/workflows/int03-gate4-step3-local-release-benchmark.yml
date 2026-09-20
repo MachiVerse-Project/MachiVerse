@@ -19,13 +19,20 @@ jobs:
   gate4-step3:
     name: Gate4 Step3 canonical benchmark
     runs-on: [self-hosted, Windows, X64, machiverse-release-evidence]
-    timeout-minutes: 4320
+    timeout-minutes: 420
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       DISPATCH_REF_NAME: ${{ github.ref_name }}
       DEFAULT_BRANCH_NAME: ${{ github.event.repository.default_branch }}
+      MACHIVERSE_GATE4_STEP3_PERSISTENCE_INSERT_BATCH_SIZE: "400"
+      MACHIVERSE_GATE4_STEP3_PHASE_LOG_INTERVAL_TRANSITIONS: "50"
+      QA04_STEP3_TARGET_SECONDS: "21600"
+      QA04_STEP3_MAX_SECONDS: "25200"
+      QA04_STEP3_PRECHECK_TRANSITIONS: "30"
+      QA04_STEP3_PRECHECK_INTERVAL_TRANSITIONS: "10"
+      QA04_STEP3_PRECHECK_TIMEOUT_SECONDS: "900"
     steps:
       - name: Require default-branch workflow authority
         shell: powershell
@@ -169,6 +176,114 @@ jobs:
           "MACHIVERSE_QA04_CORE_EXECUTABLE=$core" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "QA04_RUNTIME_ADAPTER=$adapter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "QA04_PLAN=$plan" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run Step3 performance precheck
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-Location -LiteralPath $env:QA04_SOURCE_ROOT
+
+          $manifestPath = Join-Path $env:QA04_SOURCE_ROOT "tests/performance-fixtures/v1/harness-manifest.json"
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          $workerCounts = @($manifest.workerCounts)
+          $runsPerWorker = [int]$manifest.processRunsPerWorker
+          $canonicalTransitions = [int]$manifest.warmupSteps + [int]$manifest.measurementSteps
+          $steadyOperations = [double]$manifest.referenceLoad.operationLoad.steadyPerStep
+
+          $precheckTransitions = [int]$env:QA04_STEP3_PRECHECK_TRANSITIONS
+          $progressInterval = [int]$env:QA04_STEP3_PRECHECK_INTERVAL_TRANSITIONS
+          $precheckTimeoutSeconds = [int]$env:QA04_STEP3_PRECHECK_TIMEOUT_SECONDS
+          $targetSeconds = [double]$env:QA04_STEP3_TARGET_SECONDS
+          $maxSeconds = [double]$env:QA04_STEP3_MAX_SECONDS
+          $batchSize = [int]$env:MACHIVERSE_GATE4_STEP3_PERSISTENCE_INSERT_BATCH_SIZE
+
+          if ($workerCounts.Count -eq 0 -or $runsPerWorker -le 0 -or $canonicalTransitions -le 0 -or $steadyOperations -le 0) {
+            throw "Canonical Step3 manifest shape is invalid for performance precheck."
+          }
+          if ($precheckTransitions -le 0 -or $progressInterval -le 0 -or $precheckTransitions -lt $progressInterval -or
+              $precheckTransitions % $progressInterval -ne 0 -or $precheckTimeoutSeconds -le 0 -or
+              $targetSeconds -le 0 -or $maxSeconds -lt $targetSeconds -or $batchSize -le 0) {
+            throw "Step3 performance precheck configuration is invalid."
+          }
+
+          $precheckOutput = Join-Path $env:QA04_STEP3_OUTPUT "precheck"
+          New-Item -ItemType Directory -Force -Path $precheckOutput | Out-Null
+          $rows = @()
+          $estimatedMatrixSeconds = 0.0
+          foreach ($workersRaw in $workerCounts) {
+            $workers = [int]$workersRaw
+            $root = Join-Path $env:RUNNER_TEMP ("qa04-step3-precheck-w" + $workers)
+            $requestPath = Join-Path $precheckOutput ("workers-" + $workers + ".request.jsonl")
+            $stdoutPath = Join-Path $precheckOutput ("workers-" + $workers + ".stdout.log")
+            $stderrPath = Join-Path $precheckOutput ("workers-" + $workers + ".stderr.log")
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $requestPath,$stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
+
+            $request = [ordered]@{
+              schemaVersion = "1.0"
+              command = "production-step2-determinism-run"
+              workerCount = $workers
+              transitionCount = $precheckTransitions
+              persistenceInsertBatchSize = $batchSize
+              progressIntervalTransitions = $progressInterval
+              persistenceRoot = $root
+            } | ConvertTo-Json -Compress
+            Set-Content -LiteralPath $requestPath -Value $request -Encoding ascii
+
+            Write-Host "GATE4_STEP3_PRECHECK_START workers=$workers transitions=$precheckTransitions interval=$progressInterval"
+            $process = Start-Process -FilePath $env:MACHIVERSE_QA04_CORE_EXECUTABLE -ArgumentList "qa04-target" -NoNewWindow -PassThru -RedirectStandardInput $requestPath -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+            if (-not $process.WaitForExit($precheckTimeoutSeconds * 1000)) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              throw "Step3 performance precheck timed out for workers=$workers after $precheckTimeoutSeconds seconds."
+            }
+            $process.WaitForExit()
+            if ($process.ExitCode -ne 0) {
+              $tail = @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue | Select-Object -Last 40) -join [Environment]::NewLine
+              throw "Step3 performance precheck failed for workers=$workers exit=$($process.ExitCode): $tail"
+            }
+
+            $progressLine = Get-Content -LiteralPath $stderrPath | Where-Object { $_ -match '^QA04_PROGRESS phase=actual-run ' } | Select-Object -Last 1
+            if ([string]::IsNullOrWhiteSpace($progressLine) -or $progressLine -notmatch 'interval_ops_per_second=([0-9]+(?:\.[0-9]+)?)') {
+              throw "Step3 performance precheck did not emit interval throughput for workers=$workers."
+            }
+
+            $rate = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
+            if ($rate -le 0) { throw "Step3 performance precheck throughput must be positive for workers=$workers." }
+            $steadyStepSeconds = $steadyOperations / $rate
+            $workerEstimateSeconds = $steadyStepSeconds * $canonicalTransitions * $runsPerWorker
+            $estimatedMatrixSeconds += $workerEstimateSeconds
+            $rows += [pscustomobject]@{
+              workers = $workers
+              intervalOpsPerSecond = [math]::Round($rate, 3)
+              estimatedSteadyStepMs = [math]::Round($steadyStepSeconds * 1000.0, 3)
+              estimatedWorkerGroupSeconds = [math]::Round($workerEstimateSeconds, 1)
+            }
+            Write-Host ("GATE4_STEP3_PRECHECK workers={0} interval_ops_per_second={1:F1} estimated_step_ms={2:F1} estimated_worker_group_seconds={3:F1}" -f $workers, $rate, ($steadyStepSeconds * 1000.0), $workerEstimateSeconds)
+          }
+
+          $report = [ordered]@{
+            schemaVersion = "1.0"
+            sourceCommit = $env:CANDIDATE_SHA
+            precheckTransitions = $precheckTransitions
+            progressIntervalTransitions = $progressInterval
+            canonicalTransitionsPerRun = $canonicalTransitions
+            runsPerWorker = $runsPerWorker
+            targetSeconds = $targetSeconds
+            maxSeconds = $maxSeconds
+            estimatedMatrixSeconds = [math]::Round($estimatedMatrixSeconds, 1)
+            estimatedMatrixHours = [math]::Round($estimatedMatrixSeconds / 3600.0, 3)
+            rows = $rows
+          }
+          $reportPath = Join-Path $env:QA04_STEP3_OUTPUT "step3-performance-precheck.json"
+          $report | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding utf8
+
+          Write-Host ("GATE4_STEP3_PRECHECK_SUMMARY estimated_matrix_hours={0:F2} target_hours={1:F2} max_hours={2:F2}" -f ($estimatedMatrixSeconds / 3600.0), ($targetSeconds / 3600.0), ($maxSeconds / 3600.0))
+          if ($estimatedMatrixSeconds -gt $maxSeconds) {
+            throw "Estimated Step3 matrix runtime exceeds the configured hard upper bound; canonical benchmark will not start."
+          }
+          if ($estimatedMatrixSeconds -gt $targetSeconds) {
+            Write-Warning "Estimated Step3 matrix runtime exceeds the 6-hour target but remains within the configured hard upper bound."
+          }
 
       - name: Run canonical Step3 release benchmark
         shell: powershell
