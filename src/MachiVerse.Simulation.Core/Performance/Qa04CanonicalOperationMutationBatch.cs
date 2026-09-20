@@ -457,7 +457,6 @@ public static class Qa04CanonicalOperationMutationBatchV1
             case ResidentFamily:
             {
                 var overlay = new ResidentBehaviorOverlayV1(initialState.ResidentBehaviorState);
-                var empty = EmptyLike(initialState.ResidentBehaviorState);
                 foreach (var binding in work.Bindings)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -467,20 +466,14 @@ public static class Qa04CanonicalOperationMutationBatchV1
                         controlMode is null)
                         throw new InvalidDataException("qa04.full-step.mutation-control-mode-missing");
 
-                    DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> targetState;
-                    if (overlay.TryGet(binding.PrimaryTarget, out var existing) && existing is not null)
-                    {
-                        targetState = DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>.FromCanonicalRecords(
-                            initialState.ResidentBehaviorState.Identity,
-                            Array.AsReadOnly(new[] { existing }));
-                    }
-                    else
-                    {
-                        targetState = empty;
-                    }
-
-                    var result = Qa04ResidentActionApplicationV1.Apply(
-                        worldId, binding, targetState, controlMode, references);
+                    _ = overlay.TryGet(binding.PrimaryTarget, out var existing);
+                    var result = Qa04ResidentActionApplicationV1.ApplyRecord(
+                        worldId,
+                        binding,
+                        existing,
+                        initialState.ResidentBehaviorState,
+                        controlMode,
+                        references);
                     overlay.Apply(binding.PrimaryTarget, result);
                     changes.Add(Change(
                         binding,
@@ -500,28 +493,21 @@ public static class Qa04CanonicalOperationMutationBatchV1
             case PhysicalFamily:
             {
                 var overlay = new RevisionOverlayV1<PhysicalPresencePayloadV1>(initialState.PhysicalPresence);
-                var empty = EmptyLike(initialState.PhysicalPresence);
                 foreach (var binding in work.Bindings)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!overlay.TryGet(binding.PrimaryTarget.RecordId, out var target) || target is null)
-                    {
-                        _ = Qa04PhysicalMoveApplicationV1.Apply(binding, empty, references);
                         throw new InvalidDataException("qa04.physical.move-target-missing");
-                    }
-                    var singleTarget = new DomainPartitionStateV1<PhysicalPresencePayloadV1>(
-                        initialState.PhysicalPresence.Identity,
-                        new[] { target });
-                    var result = Qa04PhysicalMoveApplicationV1.Apply(binding, singleTarget, references);
-                    overlay.Replace(result.AppliedRecord, "qa04.physical.move-target-missing");
+                    var applied = Qa04PhysicalMoveApplicationV1.ApplyRecord(binding, target, references);
+                    overlay.Replace(applied, "qa04.physical.move-target-missing");
                     changes.Add(Change(
                         binding,
                         PhysicalPresencePayloadV1.PartitionId,
-                        result.AppliedRecord.RecordId,
-                        result.AppliedRecord.RecordSchema,
-                        result.AppliedRecord.Revision,
-                        result.AppliedRecord.CreatedStep,
-                        result.AppliedRecord.DetailLevel,
+                        applied.RecordId,
+                        applied.RecordSchema,
+                        applied.Revision,
+                        applied.CreatedStep,
+                        applied.DetailLevel,
                         Revise));
                 }
                 return new FamilyMutationResultV1(
@@ -532,27 +518,21 @@ public static class Qa04CanonicalOperationMutationBatchV1
             case MarketFamily:
             {
                 var overlay = new MarketAdditionOverlayV1(initialState.MarketTransaction);
-                var empty = new SocietyMarketTransactionPartitionStateV2(
-                    Array.Empty<SocietyMarketTransactionRecordMaterialV2>());
                 foreach (var binding in work.Bindings)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!overlay.TryGet(binding.PrimaryTarget.RecordId, out var target) || target is null)
-                    {
-                        _ = Qa04MarketOrderApplicationV1.Apply(binding, empty, references);
                         throw new InvalidDataException("qa04.market.order-target-missing");
-                    }
-                    var singleTarget = new SocietyMarketTransactionPartitionStateV2(new[] { target });
-                    var result = Qa04MarketOrderApplicationV1.Apply(binding, singleTarget, references);
-                    overlay.Add(result.CreatedOrder, "qa04.market.order-record-id-collision");
+                    var created = Qa04MarketOrderApplicationV1.CreateOrderRecord(binding, target, references);
+                    overlay.Add(created, "qa04.market.order-record-id-collision");
                     changes.Add(Change(
                         binding,
                         SocietyMarketTransactionRecordSchemaV2.PartitionId,
-                        result.CreatedOrder.RecordId,
-                        result.CreatedOrder.RecordSchema,
-                        result.CreatedOrder.Revision,
-                        result.CreatedOrder.CreatedStep,
-                        result.CreatedOrder.DetailLevel,
+                        created.RecordId,
+                        created.RecordSchema,
+                        created.Revision,
+                        created.CreatedStep,
+                        created.DetailLevel,
                         Create));
                 }
                 return new FamilyMutationResultV1(
@@ -804,7 +784,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
 
         public void Apply(
             PartitionRecordRefV1 residentRef,
-            Qa04ResidentActionApplicationResultV1 result)
+            Qa04ResidentActionRecordResultV1 result)
         {
             ArgumentNullException.ThrowIfNull(result);
             var record = result.AppliedRecord
