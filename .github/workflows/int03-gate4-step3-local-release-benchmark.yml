@@ -228,9 +228,14 @@ jobs:
               progressIntervalTransitions = $progressInterval
               persistenceRoot = $root
             } | ConvertTo-Json -Compress
-            Set-Content -LiteralPath $requestPath -Value $request -Encoding ascii
+            $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+            $requestBytes = $utf8NoBom.GetBytes($request + "`n")
+            if ($requestBytes.Length -eq 0 -or $requestBytes[0] -ne 0x7B) {
+              throw "Step3 performance precheck request must start with JSON object byte 0x7B for workers=$workers."
+            }
+            [System.IO.File]::WriteAllBytes($requestPath, $requestBytes)
 
-            Write-Host "GATE4_STEP3_PRECHECK_START workers=$workers transitions=$precheckTransitions interval=$progressInterval"
+            Write-Host "GATE4_STEP3_PRECHECK_START workers=$workers transitions=$precheckTransitions interval=$progressInterval request_bytes=$($requestBytes.Length)"
             $startInfo = New-Object System.Diagnostics.ProcessStartInfo
             $startInfo.FileName = $env:MACHIVERSE_QA04_CORE_EXECUTABLE
             $startInfo.Arguments = "qa04-target"
@@ -247,7 +252,8 @@ jobs:
             }
             $stdoutTask = $process.StandardOutput.ReadToEndAsync()
             $stderrTask = $process.StandardError.ReadToEndAsync()
-            $process.StandardInput.WriteLine($request)
+            $process.StandardInput.BaseStream.Write($requestBytes, 0, $requestBytes.Length)
+            $process.StandardInput.BaseStream.Flush()
             $process.StandardInput.Close()
 
             if (-not $process.WaitForExit($precheckTimeoutSeconds * 1000)) {
