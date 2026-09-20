@@ -769,19 +769,9 @@ public static class Qa04CanonicalOperationMutationBatchV1
         }
 
         public DomainPartitionStateV1<TPayload> Build()
-        {
-            var additions = _additions.Values
-                .OrderBy(static record => record.RecordId)
-                .ToArray();
-            var merged = MergeCanonical(
-                _initial.RecordsCanonical,
-                checked((int)_initial.ItemCount),
-                additions,
-                static record => record.RecordId);
-            return DomainPartitionStateV1<TPayload>.FromCanonicalRecords(
-                _initial.Identity,
-                merged);
-        }
+            => _initial.WithAdditions(
+                _additions.Values.OrderBy(static record => record.RecordId),
+                "qa04.mutation.addition-record-id-collision");
     }
 
     private sealed class ResidentBehaviorOverlayV1
@@ -850,37 +840,12 @@ public static class Qa04CanonicalOperationMutationBatchV1
 
         public DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> Build()
         {
-            var rebuilt = new DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>[
-                checked((int)_initial.ItemCount)];
-            var index = 0;
-            var replaced = 0;
-            foreach (var record in _initial.RecordsCanonical)
-            {
-                if (_replacements.TryGetValue(record.RecordId, out var replacement))
-                {
-                    rebuilt[index++] = replacement;
-                    replaced++;
-                }
-                else
-                {
-                    rebuilt[index++] = record;
-                }
-            }
-
-            if (index != rebuilt.Length || replaced != _replacements.Count)
-                throw new InvalidDataException("qa04.mutation.resident-overlay-count-drift");
-
-            var additions = _additions.Values
-                .OrderBy(static record => record.RecordId)
-                .ToArray();
-            var merged = MergeCanonical(
-                rebuilt,
-                rebuilt.Length,
-                additions,
-                static record => record.RecordId);
-            return DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>.FromCanonicalRecords(
-                _initial.Identity,
-                merged);
+            var replaced = _initial.WithReplacements(
+                _replacements.Values.OrderBy(static record => record.RecordId),
+                "qa04.mutation.resident-overlay-replacement-missing");
+            return replaced.WithAdditions(
+                _additions.Values.OrderBy(static record => record.RecordId),
+                "qa04.resident.action-record-id-collision");
         }
     }
 
@@ -915,21 +880,9 @@ public static class Qa04CanonicalOperationMutationBatchV1
         }
 
         public DomainPartitionStateV1<TPayload> Build()
-        {
-            var rebuilt = new DomainRecordEnvelopeV1<TPayload>[checked((int)_initial.ItemCount)];
-            var index = 0;
-            foreach (var record in _initial.RecordsCanonical)
-            {
-                rebuilt[index++] = _replacements.TryGetValue(record.RecordId, out var replacement)
-                    ? replacement
-                    : record;
-            }
-            if (index != rebuilt.Length)
-                throw new InvalidDataException("qa04.mutation.revision-overlay-count-drift");
-            return DomainPartitionStateV1<TPayload>.FromCanonicalRecords(
-                _initial.Identity,
-                rebuilt);
-        }
+            => _initial.WithReplacements(
+                _replacements.Values.OrderBy(static record => record.RecordId),
+                "qa04.mutation.revision-overlay-target-missing");
     }
 
     private sealed class MarketAdditionOverlayV1
@@ -962,37 +915,8 @@ public static class Qa04CanonicalOperationMutationBatchV1
         }
 
         public SocietyMarketTransactionPartitionStateV2 Build()
-        {
-            var additions = _additions.Values
-                .OrderBy(static record => record.RecordId)
-                .ToArray();
-            var initialRecords = _initial.RecordSet.RecordsCanonical;
-            var mergedRecords = MergeCanonical(
-                initialRecords,
-                initialRecords.Count,
-                additions,
-                static record => record.RecordId);
-
-            var additionEnvelopes = additions
-                .Select(static record => new DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>(
-                    record.RecordId,
-                    SocietyMarketTransactionRecordSchemaV2.RecordSchema,
-                    record.Revision,
-                    record.CreatedStep,
-                    record.RetiredStep,
-                    record.DetailLevel,
-                    record.LineageRef,
-                    record.Payload))
-                .ToArray();
-            var mergedEnvelopes = MergeCanonical(
-                _initial.State.RecordsCanonical,
-                checked((int)_initial.State.ItemCount),
-                additionEnvelopes,
-                static record => record.RecordId);
-
-            return SocietyMarketTransactionPartitionStateV2.FromCanonicalMaterial(
-                mergedRecords,
-                mergedEnvelopes);
-        }
+            => _initial.WithAdditions(
+                _additions.Values.OrderBy(static record => record.RecordId).ToArray(),
+                "qa04.market.order-record-id-collision");
     }
 }

@@ -34,77 +34,39 @@ public static class SocietyMarketTransactionPartitionIdentityV2
 
 public sealed class SocietyMarketTransactionRecordSetV2
 {
-    private readonly SortedDictionary<OpaqueId128, SocietyMarketTransactionRecordMaterialV2>? _records;
-    private IReadOnlyList<SocietyMarketTransactionRecordMaterialV2>? _canonicalRecords;
+    private readonly PersistentCanonicalRecordMapV1<SocietyMarketTransactionRecordMaterialV2> _records;
 
     public SocietyMarketTransactionRecordSetV2(IEnumerable<SocietyMarketTransactionRecordMaterialV2> records)
     {
         ArgumentNullException.ThrowIfNull(records);
-        _records = new SortedDictionary<OpaqueId128, SocietyMarketTransactionRecordMaterialV2>();
-        foreach (var record in records)
-        {
-            ArgumentNullException.ThrowIfNull(record);
-            if (!_records.TryAdd(record.RecordId, record))
-                throw new InvalidDataException("society.market-transaction-v2.record-id-duplicate");
-        }
+        _records = PersistentCanonicalRecordMapV1<SocietyMarketTransactionRecordMaterialV2>.FromUnordered(
+            records,
+            static record => record.RecordId,
+            "society.market-transaction-v2.record-id-duplicate",
+            "society.market-transaction-v2.record-id-zero");
     }
 
     private SocietyMarketTransactionRecordSetV2(
-        IReadOnlyList<SocietyMarketTransactionRecordMaterialV2> canonicalRecords,
-        bool canonicalValidated)
-    {
-        ArgumentNullException.ThrowIfNull(canonicalRecords);
-        if (!canonicalValidated)
-            throw new ArgumentException("Canonical-record fast path requires validated ordering.", nameof(canonicalValidated));
-
-        OpaqueId128? previous = null;
-        for (var index = 0; index < canonicalRecords.Count; index++)
-        {
-            var record = canonicalRecords[index]
-                ?? throw new InvalidDataException("society.market-transaction-v2.record-null");
-            if (record.RecordId.IsZero)
-                throw new InvalidDataException("society.market-transaction-v2.record-id-zero");
-            if (previous is { } prior && prior.CompareTo(record.RecordId) >= 0)
-                throw new InvalidDataException("society.market-transaction-v2.record-order");
-            previous = record.RecordId;
-        }
-
-        _canonicalRecords = canonicalRecords;
-    }
+        PersistentCanonicalRecordMapV1<SocietyMarketTransactionRecordMaterialV2> records)
+        => _records = records ?? throw new ArgumentNullException(nameof(records));
 
     internal static SocietyMarketTransactionRecordSetV2 FromCanonicalRecords(
         IReadOnlyList<SocietyMarketTransactionRecordMaterialV2> canonicalRecords)
-        => new(canonicalRecords, canonicalValidated: true);
+        => new(PersistentCanonicalRecordMapV1<SocietyMarketTransactionRecordMaterialV2>.FromCanonical(
+            canonicalRecords,
+            static record => record.RecordId,
+            "society.market-transaction-v2.record-order",
+            "society.market-transaction-v2.record-id-zero"));
 
-    public IReadOnlyList<SocietyMarketTransactionRecordMaterialV2> RecordsCanonical
-        => _canonicalRecords ??= Array.AsReadOnly(_records!.Values.ToArray());
+    internal SocietyMarketTransactionRecordSetV2 WithAdditions(
+        IEnumerable<SocietyMarketTransactionRecordMaterialV2> additions,
+        string collisionCode)
+        => new(_records.AddRange(additions, collisionCode));
+
+    public IReadOnlyList<SocietyMarketTransactionRecordMaterialV2> RecordsCanonical => _records;
 
     public bool TryGet(OpaqueId128 recordId, out SocietyMarketTransactionRecordMaterialV2? record)
-    {
-        if (_records is not null)
-            return _records.TryGetValue(recordId, out record);
-
-        var records = _canonicalRecords!;
-        var low = 0;
-        var high = records.Count - 1;
-        while (low <= high)
-        {
-            var middle = low + ((high - low) >> 1);
-            var candidate = records[middle];
-            var comparison = candidate.RecordId.CompareTo(recordId);
-            if (comparison == 0)
-            {
-                record = candidate;
-                return true;
-            }
-
-            if (comparison < 0) low = middle + 1;
-            else high = middle - 1;
-        }
-
-        record = null;
-        return false;
-    }
+        => _records.TryGet(recordId, out record);
 }
 
 public sealed class SocietyMarketTransactionPartitionStateV2
@@ -149,6 +111,30 @@ public sealed class SocietyMarketTransactionPartitionStateV2
             DomainPartitionStateV1<SocietyMarketTransactionRecordPayloadV2>.FromCanonicalRecords(
                 SocietyMarketTransactionPartitionIdentityV2.Identity,
                 canonicalEnvelopes));
+
+    internal SocietyMarketTransactionPartitionStateV2 WithAdditions(
+        IReadOnlyList<SocietyMarketTransactionRecordMaterialV2> additions,
+        string collisionCode)
+    {
+        ArgumentNullException.ThrowIfNull(additions);
+        ArgumentException.ThrowIfNullOrWhiteSpace(collisionCode);
+
+        var envelopes = additions
+            .Select(static record => new DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>(
+                record.RecordId,
+                SocietyMarketTransactionRecordSchemaV2.RecordSchema,
+                record.Revision,
+                record.CreatedStep,
+                record.RetiredStep,
+                record.DetailLevel,
+                record.LineageRef,
+                record.Payload))
+            .ToArray();
+
+        return new SocietyMarketTransactionPartitionStateV2(
+            RecordSet.WithAdditions(additions, collisionCode),
+            State.WithAdditions(envelopes, collisionCode));
+    }
 
     public SocietyMarketTransactionRecordSetV2 RecordSet { get; }
     public DomainPartitionStateV1<SocietyMarketTransactionRecordPayloadV2> State { get; }
