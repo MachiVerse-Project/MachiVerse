@@ -284,7 +284,14 @@ internal static class Sim04DiagnosticSmoke
     private static void RunRecordIdPrefixSliceSmoke()
     {
         static byte[] EncodeRecord(DomainRecordEnvelopeV1<byte[]> record)
-            => PartitionStateHeaderV1.EncodeCanonicalRecord(record, SHA256.HashData(record.Payload));
+        {
+            var writer = new MvDcborWriter();
+            writer.WriteMapStart(3);
+            writer.WriteUnsigned(0); writer.WriteBytes(record.RecordId.ToBytes());
+            writer.WriteUnsigned(1); writer.WriteUnsigned(record.Revision);
+            writer.WriteUnsigned(2); writer.WriteBytes(SHA256.HashData(record.Payload));
+            return writer.ToArray();
+        }
 
         var identity = StandardDomainPartitionRegistry.Get("resident.behavior_state");
         var worldId = OpaqueId128.Parse("00000000000000000000000000000060");
