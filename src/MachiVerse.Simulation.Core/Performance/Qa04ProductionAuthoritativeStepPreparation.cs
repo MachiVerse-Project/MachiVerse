@@ -181,7 +181,7 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         };
     }
 
-    public static async Task<Qa04CanonicalOperationStepPreparationResultV1> PrepareParallelAsync(
+    public static Task<Qa04CanonicalOperationStepPreparationResultV1> PrepareParallelAsync(
         OpaqueId128 candidateId,
         WorldStateV1 basisState,
         FrozenStepInputV1 frozenInput,
@@ -194,11 +194,70 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(basisState);
+        if (basisState.Header.Step == 0)
+            throw new InvalidDataException("qa04.production-step.basis-step-zero");
+
+        var injectionStep = checked(basisState.Header.Step - 1UL);
+        var expectedDescriptors = Qa04ReferenceLoadV1.OperationsForStep(injectionStep).ToArray();
+        return PrepareParallelCoreAsync(
+            candidateId,
+            basisState,
+            frozenInput,
+            orderedBindings,
+            mutationResult,
+            references,
+            runtimeOutputs,
+            expectedDescriptors,
+            workerCount,
+            digestCache,
+            cancellationToken);
+    }
+
+    internal static Task<Qa04CanonicalOperationStepPreparationResultV1> PrepareParallelWithExpectedDescriptorsAsync(
+        OpaqueId128 candidateId,
+        WorldStateV1 basisState,
+        FrozenStepInputV1 frozenInput,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+        IDomainRecordSchemaResolverV1 references,
+        IReadOnlyList<DomainCandidateOutputV1> runtimeOutputs,
+        IReadOnlyList<Qa04OperationDescriptorV1> expectedDescriptors,
+        int workerCount,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null,
+        CancellationToken cancellationToken = default)
+        => PrepareParallelCoreAsync(
+            candidateId,
+            basisState,
+            frozenInput,
+            orderedBindings,
+            mutationResult,
+            references,
+            runtimeOutputs,
+            expectedDescriptors,
+            workerCount,
+            digestCache,
+            cancellationToken);
+
+    private static async Task<Qa04CanonicalOperationStepPreparationResultV1> PrepareParallelCoreAsync(
+        OpaqueId128 candidateId,
+        WorldStateV1 basisState,
+        FrozenStepInputV1 frozenInput,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+        IDomainRecordSchemaResolverV1 references,
+        IReadOnlyList<DomainCandidateOutputV1> runtimeOutputs,
+        IReadOnlyList<Qa04OperationDescriptorV1> expectedDescriptors,
+        int workerCount,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(basisState);
         ArgumentNullException.ThrowIfNull(frozenInput);
         ArgumentNullException.ThrowIfNull(orderedBindings);
         ArgumentNullException.ThrowIfNull(mutationResult);
         ArgumentNullException.ThrowIfNull(references);
         ArgumentNullException.ThrowIfNull(runtimeOutputs);
+        ArgumentNullException.ThrowIfNull(expectedDescriptors);
 
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceWorldMaterialContractV1.RequireAllProductionMaterializersAvailable();
@@ -207,8 +266,12 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         if (basisState.Header.Step == 0)
             throw new InvalidDataException("qa04.production-step.basis-step-zero");
         var injectionStep = checked(basisState.Header.Step - 1UL);
-        var expectedDescriptors = Qa04ReferenceLoadV1.OperationsForStep(injectionStep).ToArray();
-        var expectedOperationCount = expectedDescriptors.Length;
+        var expectedOperationCount = expectedDescriptors.Count;
+        if (expectedOperationCount != checked((int)Qa04ReferenceLoadV1.OperationCountForStep(injectionStep)) ||
+            expectedDescriptors.Any(descriptor => descriptor.InjectionStep != injectionStep))
+        {
+            throw new InvalidDataException("qa04.production-step.expected-descriptor-drift");
+        }
         if (orderedBindings.Count != expectedOperationCount ||
             frozenInput.ScheduledOperations.Count != expectedOperationCount ||
             mutationResult.AppliedOperationIds.Count != expectedOperationCount)
