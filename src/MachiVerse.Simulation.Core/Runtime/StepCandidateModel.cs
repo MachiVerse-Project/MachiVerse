@@ -57,6 +57,9 @@ public sealed class StepCandidateV1
 {
     private static readonly StableToken TransactionAtomicityInvariant = new("transaction.atomicity");
     private static readonly StableToken TransactionAtomicityFailure = new("transaction.invariant-failed");
+    private static readonly StandardDomainExecutionPlanV1 StandardPlan = StandardDomainExecutionPlanV1.Create();
+    private static readonly IReadOnlyDictionary<StableToken, ushort> StandardRankByDomain =
+        StandardPlan.Entries.ToDictionary(static entry => entry.DomainToken, static entry => entry.DomainRank);
 
     private StepCandidateV1(
         OpaqueId128 candidateId,
@@ -138,10 +141,9 @@ public sealed class StepCandidateV1
             !CryptographicOperations.FixedTimeEquals(frozenInput.ConfigDigest, state.Diagnostic.ConfigDigest))
             throw new InvalidDataException("step-candidate.config-digest-mismatch-at-generation");
 
-        var plan = StandardDomainExecutionPlanV1.Create();
-        var rankByDomain = plan.Entries.ToDictionary(static entry => entry.DomainToken, static entry => entry.DomainRank);
+        var plan = StandardPlan;
         var outputs = domainOutputs
-            .OrderBy(output => rankByDomain.TryGetValue(output.DomainToken, out var rank) ? rank : ushort.MaxValue)
+            .OrderBy(output => StandardRankByDomain.TryGetValue(output.DomainToken, out var rank) ? rank : ushort.MaxValue)
             .ThenBy(static output => output.DomainToken.Value, StringComparer.Ordinal)
             .ToArray();
         if (outputs.Length != plan.Entries.Count ||
