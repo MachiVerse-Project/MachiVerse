@@ -38,6 +38,38 @@ public static class Qa04PhysicalMoveApplicationV1
         if (current.Identity != identity)
             throw new InvalidDataException("qa04.physical.move-partition-identity");
 
+        var target = RequireCanonicalTargetBinding(binding);
+        if (!current.TryGet(target.RecordId, out var existing) || existing is null)
+            throw new InvalidDataException("qa04.physical.move-target-missing");
+
+        var revised = ApplyRecordCore(binding, existing, identity, target, references);
+        var next = current.WithReplacements(
+            new[] { revised },
+            "qa04.physical.move-target-missing");
+        if (next.ItemCount != current.ItemCount)
+            throw new InvalidDataException("qa04.physical.move-count-drift");
+
+        return new Qa04PhysicalMoveApplicationResultV1(revised, next);
+    }
+
+    internal static DomainRecordEnvelopeV1<PhysicalPresencePayloadV1> ApplyRecord(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        DomainRecordEnvelopeV1<PhysicalPresencePayloadV1> existing,
+        IDomainRecordSchemaResolverV1 references)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        ArgumentNullException.ThrowIfNull(existing);
+        ArgumentNullException.ThrowIfNull(references);
+
+        RequireCanonicalBinding(binding);
+        var identity = StandardDomainPartitionRegistry.Get(PhysicalPresencePayloadV1.PartitionId);
+        var target = RequireCanonicalTargetBinding(binding);
+        return ApplyRecordCore(binding, existing, identity, target, references);
+    }
+
+    private static PartitionRecordRefV1 RequireCanonicalTargetBinding(
+        Qa04CanonicalOperationBindingResultV1 binding)
+    {
         var descriptor = binding.SourceDescriptor;
         var canonicalPresence = Qa04ReferenceLoadV1.Record(PhysicalClass, descriptor.FamilyOrdinal);
         var presenceRef = new PartitionRecordRefV1(
@@ -46,12 +78,19 @@ public static class Qa04PhysicalMoveApplicationV1
         var effectiveStep = checked(descriptor.InjectionStep + 1UL);
         if (binding.PrimaryTarget != presenceRef || binding.ScheduledOperation.EffectiveStep != effectiveStep)
             throw new InvalidDataException("qa04.physical.move-target-step-drift");
+        return presenceRef;
+    }
 
-        if (!current.TryGet(presenceRef.RecordId, out var existing) || existing is null)
-            throw new InvalidDataException("qa04.physical.move-target-missing");
-
+    private static DomainRecordEnvelopeV1<PhysicalPresencePayloadV1> ApplyRecordCore(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        DomainRecordEnvelopeV1<PhysicalPresencePayloadV1> existing,
+        DomainPartitionIdentityV1 identity,
+        PartitionRecordRefV1 presenceRef,
+        IDomainRecordSchemaResolverV1 references)
+    {
         RequireCanonicalTarget(existing, identity, presenceRef, references);
 
+        var descriptor = binding.SourceDescriptor;
         var velocity = new Vec3Int64V1(
             Qa04ReferenceGenesisValueSourceV1.SmallSignedValue(descriptor.OperationId, "vx"),
             Qa04ReferenceGenesisValueSourceV1.SmallSignedValue(descriptor.OperationId, "vy"),
@@ -89,23 +128,7 @@ public static class Qa04PhysicalMoveApplicationV1
             throw new InvalidDataException("qa04.physical.move-payload-drift");
         }
 
-        var next = new DomainPartitionStateV1<PhysicalPresencePayloadV1>(
-            identity,
-            current.RecordsCanonical.Select(record =>
-                record.RecordId == existing.RecordId ? revised : record));
-        if (next.ItemCount != current.ItemCount)
-            throw new InvalidDataException("qa04.physical.move-count-drift");
-
-        var beforeById = current.RecordsCanonical.ToDictionary(static record => record.RecordId);
-        foreach (var record in next.RecordsCanonical)
-        {
-            if (record.RecordId == existing.RecordId)
-                continue;
-            if (!beforeById.TryGetValue(record.RecordId, out var before) || record != before)
-                throw new InvalidDataException("qa04.physical.move-non-target-drift");
-        }
-
-        return new Qa04PhysicalMoveApplicationResultV1(revised, next);
+        return revised;
     }
 
     private static void RequireCanonicalTarget(
