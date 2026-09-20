@@ -384,6 +384,8 @@ public sealed class StateDiagnosticV1
 
 public sealed class WorldStateV1
 {
+    private static readonly byte[] CachedSchemaRegistryDigest = ComputeSchemaRegistryDigestCore();
+
     public WorldStateV1(
         WorldStateHeaderV1 header,
         OrderedPartitionDirectoryV1 partitions,
@@ -489,6 +491,9 @@ public sealed class WorldStateV1
     }
 
     private static byte[] ComputeSchemaRegistryDigest()
+        => CachedSchemaRegistryDigest;
+
+    private static byte[] ComputeSchemaRegistryDigestCore()
         => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {
             writer.WriteArrayStart((ulong)StandardDomainPartitionRegistry.Entries.Count);
