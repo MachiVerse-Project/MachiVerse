@@ -70,7 +70,7 @@ public static class HashSuite
             static value =>
             {
                 if (value.Any(static c => c > 0x7f))
-                    throw new ArgumentException("Domain label must be ASCII.", nameof(label));
+                    throw new ArgumentException("Domain label must be ASCII.", "label");
                 return Encoding.ASCII.GetBytes(value);
             });
     }
