@@ -270,6 +270,9 @@ public static class Qa04ResidentActionApplicationV1
         if (binding.Operation.Admission is null || binding.Operation.Admission.SchedulingPolicyGeneration == 0)
             throw new InvalidDataException("qa04.resident.action-admission");
 
+        if (Qa04CanonicalOperationBindingV1.HasCanonicalAuthority(binding))
+            return;
+
         var expected = Qa04CanonicalOperationBindingV1.Bind(
             binding.SourceDescriptor,
             binding.Operation.Admission.SchedulingPolicyGeneration);

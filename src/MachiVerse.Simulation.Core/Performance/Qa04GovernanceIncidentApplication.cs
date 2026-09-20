@@ -140,6 +140,9 @@ public static class Qa04GovernanceIncidentApplicationV1
         if (binding.Operation.Admission is null || binding.Operation.Admission.SchedulingPolicyGeneration == 0)
             throw new InvalidDataException("qa04.governance.incident-admission");
 
+        if (Qa04CanonicalOperationBindingV1.HasCanonicalAuthority(binding))
+            return;
+
         var expected = Qa04CanonicalOperationBindingV1.Bind(
             binding.SourceDescriptor,
             binding.Operation.Admission.SchedulingPolicyGeneration);
