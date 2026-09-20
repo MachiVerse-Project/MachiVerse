@@ -69,7 +69,10 @@ public static class Qa04ProcessTargetV1
                         : 60,
                     persistenceInsertBatchSize: request.PersistenceInsertBatchSize > 0
                         ? request.PersistenceInsertBatchSize
-                        : null).ConfigureAwait(false),
+                        : null,
+                    phaseLogIntervalTransitions: request.ProgressIntervalTransitions > 0
+                        ? request.ProgressIntervalTransitions
+                        : 1).ConfigureAwait(false),
                 "persistence-volume-stress-run" => await Qa04PersistenceVolumeStressV1.RunAsync(
                     request.PersistenceRoot,
                     request.TargetStoredGiB,
