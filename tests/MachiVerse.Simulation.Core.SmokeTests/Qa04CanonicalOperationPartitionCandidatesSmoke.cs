@@ -177,6 +177,62 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             bindings,
             mutation,
             references);
+
+        var canonicalChunkCache = new Qa04ProductionStep2CanonicalDigestCacheV1(references);
+        var authoritativeChunked = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.Bind(
+            authoritativeBasisState,
+            bindings,
+            mutation,
+            references,
+            canonicalChunkCache);
+        RequireSamePartitionDigests(
+            authoritativeSequential,
+            authoritativeChunked,
+            "Gate2 canonical chunk first-step digest drift");
+
+        var authoritativeChunkedReplay = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.Bind(
+            authoritativeBasisState,
+            bindings,
+            mutation,
+            references,
+            canonicalChunkCache);
+        RequireSamePartitionDigests(
+            authoritativeSequential,
+            authoritativeChunkedReplay,
+            "Gate2 canonical chunk repeated-material digest drift");
+
+        var nextBasisState = AdvanceBasisState(authoritativeBasisState, authoritativeChunked);
+        var nextBindings = Qa04ReferenceLoadV1.OperationsForStep(2)
+            .GroupBy(static descriptor => descriptor.FamilyToken.Value, StringComparer.Ordinal)
+            .Select(static group => group.First())
+            .Select(static descriptor => Qa04CanonicalOperationBindingV1.Bind(descriptor, schedulingPolicyGeneration: 1))
+            .ToArray();
+        Array.Sort(nextBindings, static (left, right) => left.OrderKey.CompareTo(right.OrderKey));
+        Require(nextBindings.Length == 6 &&
+                nextBindings.All(binding => binding.ScheduledOperation.EffectiveStep == nextBasisState.Header.Step),
+            "Gate2 canonical chunk second-step binding drift");
+        var nextMutation = Qa04CanonicalOperationMutationBatchV1.Apply(
+            Qa04ReferenceLoadV1.WorldId,
+            nextBasisState.Header.Step,
+            nextBindings,
+            mutation.State,
+            references);
+        var nextUncached = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.Bind(
+            nextBasisState,
+            nextBindings,
+            nextMutation,
+            references);
+        var nextChunked = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.Bind(
+            nextBasisState,
+            nextBindings,
+            nextMutation,
+            references,
+            canonicalChunkCache);
+        RequireSamePartitionDigests(
+            nextUncached,
+            nextChunked,
+            "Gate2 canonical chunk incremental digest drift");
+
         foreach (var workerCount in new[] { 1, 4, 8, 16 })
         {
             var parallel = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.BindParallelAsync(
@@ -383,6 +439,53 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             EnvironmentHazardPayloadV1.PartitionId => EnvironmentFamily,
             _ => throw new InvalidDataException($"Unknown Gate2 partition in smoke: {partitionId}"),
         };
+
+    private static WorldStateV1 AdvanceBasisState(
+        WorldStateV1 basisState,
+        Qa04CanonicalOperationPartitionCandidateBatchV1 bound)
+    {
+        var replacements = bound.Partitions.ToDictionary(
+            static item => item.Candidate.PartitionId.Value,
+            static item => item.Material.ResultingHeader,
+            StringComparer.Ordinal);
+        var partitions = basisState.Partitions.CanonicalEntries
+            .Select(entry => replacements.TryGetValue(entry.Header.PartitionId.Value, out var replacement)
+                ? new PartitionStateRefV1(replacement)
+                : entry)
+            .ToArray();
+        var header = new WorldStateHeaderV1(
+            basisState.Header.WorldId,
+            bound.TargetStep,
+            basisState.Header.WorldSeedDigest,
+            basisState.Header.ConfigGeneration,
+            basisState.Header.MasterGeneration,
+            basisState.Header.RateGeneration,
+            basisState.Diagnostic.StateDigest);
+        return new WorldStateV1(
+            header,
+            new OrderedPartitionDirectoryV1(partitions),
+            basisState.SchedulerState,
+            basisState.OperationState,
+            basisState.DetailState,
+            basisState.DomainRegistryState,
+            basisState.Diagnostic.ConfigDigest);
+    }
+
+    private static void RequireSamePartitionDigests(
+        Qa04CanonicalOperationPartitionCandidateBatchV1 expected,
+        Qa04CanonicalOperationPartitionCandidateBatchV1 actual,
+        string message)
+    {
+        Require(expected.Partitions.Count == actual.Partitions.Count, message + " count");
+        for (var index = 0; index < expected.Partitions.Count; index++)
+        {
+            Require(
+                expected.Partitions[index].Candidate.PartitionId == actual.Partitions[index].Candidate.PartitionId &&
+                expected.Partitions[index].Material.ResultingHeader.CanonicalDigest.AsSpan().SequenceEqual(
+                    actual.Partitions[index].Material.ResultingHeader.CanonicalDigest),
+                message + $" index={index}");
+        }
+    }
 
     private static Qa04PhysicalD0RecordMaterialV1 PhysicalMaterial(ulong ordinal)
         => Qa04PhysicalD0MaterializerV1.Create(ordinal, PhysicalPresenceBinding(ordinal), TerrainBinding);
