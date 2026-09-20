@@ -103,8 +103,7 @@ public sealed class DomainRecordEnvelopeV1<TPayload>
 
 public sealed class DomainPartitionStateV1<TPayload>
 {
-    private readonly SortedDictionary<OpaqueId128, DomainRecordEnvelopeV1<TPayload>>? _records;
-    private readonly IReadOnlyList<DomainRecordEnvelopeV1<TPayload>>? _canonicalRecords;
+    private readonly PersistentCanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>> _records;
 
     public DomainPartitionStateV1(
         DomainPartitionIdentityV1 identity,
@@ -114,79 +113,83 @@ public sealed class DomainPartitionStateV1<TPayload>
         ArgumentNullException.ThrowIfNull(records);
 
         Identity = identity;
-        _records = new SortedDictionary<OpaqueId128, DomainRecordEnvelopeV1<TPayload>>();
-        foreach (var record in records)
-        {
-            ArgumentNullException.ThrowIfNull(record);
-            if (record.RecordSchema != identity.RecordSchema)
-                throw new InvalidDataException("domain.record-schema-mismatch");
-            if (!_records.TryAdd(record.RecordId, record))
-                throw new InvalidDataException("domain.duplicate-record-id");
-        }
+        _records = PersistentCanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>>.FromUnordered(
+            ValidateRecords(records, identity),
+            static record => record.RecordId,
+            "domain.duplicate-record-id",
+            "domain.record-id-zero");
     }
 
     private DomainPartitionStateV1(
         DomainPartitionIdentityV1 identity,
-        IReadOnlyList<DomainRecordEnvelopeV1<TPayload>> canonicalRecords,
-        bool canonicalValidated)
+        PersistentCanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>> records)
+    {
+        Identity = identity ?? throw new ArgumentNullException(nameof(identity));
+        _records = records ?? throw new ArgumentNullException(nameof(records));
+    }
+
+    internal static DomainPartitionStateV1<TPayload> FromCanonicalRecords(
+        DomainPartitionIdentityV1 identity,
+        IReadOnlyList<DomainRecordEnvelopeV1<TPayload>> canonicalRecords)
     {
         ArgumentNullException.ThrowIfNull(identity);
         ArgumentNullException.ThrowIfNull(canonicalRecords);
-        if (!canonicalValidated)
-            throw new ArgumentException("Canonical-record fast path requires validated ordering.", nameof(canonicalValidated));
 
-        Identity = identity;
-        OpaqueId128? previous = null;
         for (var index = 0; index < canonicalRecords.Count; index++)
         {
             var record = canonicalRecords[index]
                 ?? throw new InvalidDataException("domain.record-null");
             if (record.RecordSchema != identity.RecordSchema)
                 throw new InvalidDataException("domain.record-schema-mismatch");
-            if (record.RecordId.IsZero)
-                throw new InvalidDataException("domain.record-id-zero");
-            if (previous is { } prior && prior.CompareTo(record.RecordId) >= 0)
-                throw new InvalidDataException("domain.record-order-not-canonical");
-            previous = record.RecordId;
         }
 
-        _canonicalRecords = canonicalRecords;
+        return new DomainPartitionStateV1<TPayload>(
+            identity,
+            PersistentCanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>>.FromCanonical(
+                canonicalRecords,
+                static record => record.RecordId,
+                "domain.record-order-not-canonical",
+                "domain.record-id-zero"));
     }
 
-    internal static DomainPartitionStateV1<TPayload> FromCanonicalRecords(
-        DomainPartitionIdentityV1 identity,
-        IReadOnlyList<DomainRecordEnvelopeV1<TPayload>> canonicalRecords)
-        => new(identity, canonicalRecords, canonicalValidated: true);
+    internal DomainPartitionStateV1<TPayload> WithAdditions(
+        IEnumerable<DomainRecordEnvelopeV1<TPayload>> additions,
+        string collisionCode = "domain.duplicate-record-id")
+    {
+        ArgumentNullException.ThrowIfNull(additions);
+        return new DomainPartitionStateV1<TPayload>(
+            Identity,
+            _records.AddRange(ValidateRecords(additions, Identity), collisionCode));
+    }
+
+    internal DomainPartitionStateV1<TPayload> WithReplacements(
+        IEnumerable<DomainRecordEnvelopeV1<TPayload>> replacements,
+        string missingCode)
+    {
+        ArgumentNullException.ThrowIfNull(replacements);
+        ArgumentException.ThrowIfNullOrWhiteSpace(missingCode);
+        return new DomainPartitionStateV1<TPayload>(
+            Identity,
+            _records.ReplaceRange(ValidateRecords(replacements, Identity), missingCode));
+    }
 
     public DomainPartitionIdentityV1 Identity { get; }
-    public ulong ItemCount => checked((ulong)(_records?.Count ?? _canonicalRecords!.Count));
-    public IEnumerable<DomainRecordEnvelopeV1<TPayload>> RecordsCanonical
-        => _records is not null ? _records.Values : _canonicalRecords!;
+    public ulong ItemCount => checked((ulong)_records.Count);
+    public IEnumerable<DomainRecordEnvelopeV1<TPayload>> RecordsCanonical => _records;
 
     public bool TryGet(OpaqueId128 recordId, out DomainRecordEnvelopeV1<TPayload>? record)
+        => _records.TryGet(recordId, out record);
+
+    private static IEnumerable<DomainRecordEnvelopeV1<TPayload>> ValidateRecords(
+        IEnumerable<DomainRecordEnvelopeV1<TPayload>> records,
+        DomainPartitionIdentityV1 identity)
     {
-        if (_records is not null)
-            return _records.TryGetValue(recordId, out record);
-
-        var records = _canonicalRecords!;
-        var low = 0;
-        var high = records.Count - 1;
-        while (low <= high)
+        foreach (var record in records)
         {
-            var middle = low + ((high - low) >> 1);
-            var candidate = records[middle];
-            var comparison = candidate.RecordId.CompareTo(recordId);
-            if (comparison == 0)
-            {
-                record = candidate;
-                return true;
-            }
-
-            if (comparison < 0) low = middle + 1;
-            else high = middle - 1;
+            ArgumentNullException.ThrowIfNull(record);
+            if (record.RecordSchema != identity.RecordSchema)
+                throw new InvalidDataException("domain.record-schema-mismatch");
+            yield return record;
         }
-
-        record = null;
-        return false;
     }
 }
