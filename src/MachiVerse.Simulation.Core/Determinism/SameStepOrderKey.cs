@@ -10,18 +10,54 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
     private readonly byte[] _conflictScopeDigest;
 
     public SameStepOrderKey(byte phase, ushort domainRank, ReadOnlySpan<byte> conflictScopeDigest, int semanticPriority, OpaqueId128 intentId)
+        : this(
+            phase,
+            domainRank,
+            conflictScopeDigest.Length == ConflictScopeDigestLength
+                ? conflictScopeDigest.ToArray()
+                : throw new ArgumentException("ConflictScopeDigest requires exactly 32 bytes.", nameof(conflictScopeDigest)),
+            semanticPriority,
+            intentId,
+            trustedImmutableDigest: true)
+    {
+    }
+
+    private SameStepOrderKey(
+        byte phase,
+        ushort domainRank,
+        byte[] conflictScopeDigest,
+        int semanticPriority,
+        OpaqueId128 intentId,
+        bool trustedImmutableDigest)
     {
         if (phase > 5) throw new ArgumentOutOfRangeException(nameof(phase), "Standard OrderPhase is 0..5.");
+        ArgumentNullException.ThrowIfNull(conflictScopeDigest);
         if (conflictScopeDigest.Length != ConflictScopeDigestLength)
             throw new ArgumentException("ConflictScopeDigest requires exactly 32 bytes.", nameof(conflictScopeDigest));
         if (intentId.IsZero) throw new ArgumentException("IntentId must be non-zero.", nameof(intentId));
+        if (!trustedImmutableDigest)
+            throw new ArgumentException("Trusted immutable digest marker is required.", nameof(trustedImmutableDigest));
 
         Phase = phase;
         DomainRank = domainRank;
-        _conflictScopeDigest = conflictScopeDigest.ToArray();
+        _conflictScopeDigest = conflictScopeDigest;
         SemanticPriority = semanticPriority;
         IntentId = intentId;
     }
+
+    internal static SameStepOrderKey FromTrustedImmutableConflictScopeDigest(
+        byte phase,
+        ushort domainRank,
+        byte[] conflictScopeDigest,
+        int semanticPriority,
+        OpaqueId128 intentId)
+        => new(
+            phase,
+            domainRank,
+            conflictScopeDigest,
+            semanticPriority,
+            intentId,
+            trustedImmutableDigest: true);
 
     public byte Phase { get; }
     public ushort DomainRank { get; }
