@@ -66,7 +66,10 @@ public static class Qa04ProcessTargetV1
                     cancellationToken,
                     progressHeartbeatSeconds: request.ProgressHeartbeatSeconds > 0
                         ? request.ProgressHeartbeatSeconds
-                        : 60).ConfigureAwait(false),
+                        : 60,
+                    persistenceInsertBatchSize: request.PersistenceInsertBatchSize > 0
+                        ? request.PersistenceInsertBatchSize
+                        : null).ConfigureAwait(false),
                 "persistence-volume-stress-run" => await Qa04PersistenceVolumeStressV1.RunAsync(
                     request.PersistenceRoot,
                     request.TargetStoredGiB,
