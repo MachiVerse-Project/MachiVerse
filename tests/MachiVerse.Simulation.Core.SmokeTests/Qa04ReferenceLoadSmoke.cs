@@ -83,6 +83,31 @@ internal static class Qa04ReferenceLoadSmoke
         Require(steady.All(static operation => operation.PayloadDigest.Length == 32),
             "QA-04 Operation payload digest length mismatch.");
 
+        var probe = steady[0];
+        var expectedProbePayload = HashSuite.DomainHash(
+            "mv.perf-reference-operation-payload.v1",
+            writer =>
+            {
+                writer.WriteMapStart(4);
+                writer.WriteUnsigned(0); writer.WriteAsciiText(Qa04ReferenceLoadV1.BenchmarkProfileId);
+                writer.WriteUnsigned(1); writer.WriteUnsigned(probe.InjectionStep);
+                writer.WriteUnsigned(2); writer.WriteAsciiText(probe.FamilyToken.Value);
+                writer.WriteUnsigned(3); writer.WriteUnsigned(probe.FamilyOrdinal);
+            });
+        var expectedProbeId = HashSuite.Trunc128(HashSuite.DomainHash(
+            "mv.perf-reference-operation-id.v1",
+            writer =>
+            {
+                writer.WriteMapStart(4);
+                writer.WriteUnsigned(0); writer.WriteAsciiText(Qa04ReferenceLoadV1.BenchmarkProfileId);
+                writer.WriteUnsigned(1); writer.WriteUnsigned(probe.InjectionStep);
+                writer.WriteUnsigned(2); writer.WriteAsciiText(probe.FamilyToken.Value);
+                writer.WriteUnsigned(3); writer.WriteUnsigned(probe.FamilyOrdinal);
+            }));
+        Require(probe.OperationId == expectedProbeId &&
+                probe.PayloadDigest.AsSpan().SequenceEqual(expectedProbePayload),
+            "QA-04 shared canonical Operation preimage changed descriptor identity.");
+
         var steadyRepeat = Qa04ReferenceLoadV1.OperationsForStep(1).ToArray();
         Require(steady.Select(static operation => operation.OperationId)
                 .SequenceEqual(steadyRepeat.Select(static operation => operation.OperationId)),
