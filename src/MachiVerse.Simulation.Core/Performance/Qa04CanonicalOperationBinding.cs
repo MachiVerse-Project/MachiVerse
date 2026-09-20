@@ -149,7 +149,7 @@ public static class Qa04CanonicalOperationBindingV1
 
         _ = new StableToken(operation.OperationKind);
         _ = new StableToken(operation.OperationPayloadSchemaId);
-        if (operation.OperationPayload.IsEmpty)
+        if (operation.OperationPayload.Length == 0)
             throw new InvalidDataException("qa04.workload.operation-payload-empty");
 
         return ComputeImmutablePayloadDigestCore(
@@ -702,7 +702,7 @@ public static class Qa04CanonicalOperationBindingV1
         ArgumentNullException.ThrowIfNull(admission);
         ArgumentNullException.ThrowIfNull(payloadSchemaVersion);
         ArgumentNullException.ThrowIfNull(canonicalPayload);
-        if (canonicalPayload.IsEmpty)
+        if (canonicalPayload.Length == 0)
             throw new InvalidDataException("qa04.workload.operation-payload-empty");
 
         return HashSuite.DomainHash(OperationDigestDomain, writer =>
