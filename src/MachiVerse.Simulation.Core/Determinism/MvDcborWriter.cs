@@ -56,6 +56,15 @@ public sealed class MvDcborWriter
         WriteRaw(canonicalValue);
     }
 
+    // Appends a concatenated sequence of already-canonical MV-DCBOR values. This is intentionally
+    // internal: callers must already know the item count written by the surrounding container.
+    internal void WriteCanonicalSequence(ReadOnlySpan<byte> canonicalValues)
+    {
+        if (canonicalValues.IsEmpty)
+            throw new ArgumentException("Canonical MV-DCBOR sequence cannot be empty.", nameof(canonicalValues));
+        WriteRaw(canonicalValues);
+    }
+
     public byte[] ToArray()
         => _ownedBuffer?.WrittenSpan.ToArray()
            ?? throw new InvalidOperationException("This MV-DCBOR writer is backed by a streaming sink and cannot materialize its full value.");

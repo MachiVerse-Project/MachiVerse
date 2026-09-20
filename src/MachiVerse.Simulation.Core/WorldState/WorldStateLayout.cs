@@ -45,6 +45,23 @@ public sealed class WorldStateHeaderV1
     }
 }
 
+internal sealed class CanonicalRecordChunkV1
+{
+    public CanonicalRecordChunkV1(ulong recordCount, byte[] encodedRecords)
+    {
+        if (recordCount == 0) throw new ArgumentOutOfRangeException(nameof(recordCount));
+        ArgumentNullException.ThrowIfNull(encodedRecords);
+        if (encodedRecords.Length == 0)
+            throw new ArgumentException("Canonical record chunk bytes cannot be empty.", nameof(encodedRecords));
+
+        RecordCount = recordCount;
+        EncodedRecords = encodedRecords;
+    }
+
+    public ulong RecordCount { get; }
+    public byte[] EncodedRecords { get; }
+}
+
 public sealed class PartitionStateHeaderV1
 {
     public PartitionStateHeaderV1(
@@ -110,6 +127,59 @@ public sealed class PartitionStateHeaderV1
             detailLevel,
             canonicalPayloadDigest,
             canonicalRecordEncoding);
+    }
+
+    internal static PartitionStateHeaderV1 CreateCanonicalPrevalidatedChunks(
+        DomainPartitionIdentityV1 identity,
+        ulong revision,
+        ulong basisStep,
+        DetailLevelV1 detailLevel,
+        ulong itemCount,
+        IReadOnlyList<CanonicalRecordChunkV1> canonicalRecordChunks)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        ArgumentNullException.ThrowIfNull(canonicalRecordChunks);
+        if (revision == 0) throw new ArgumentOutOfRangeException(nameof(revision));
+        if (!Enum.IsDefined(detailLevel)) throw new ArgumentOutOfRangeException(nameof(detailLevel));
+        if (itemCount == 0 && canonicalRecordChunks.Count != 0)
+            throw new InvalidDataException("domain.record-chunk-count-mismatch");
+        if (itemCount != 0 && canonicalRecordChunks.Count == 0)
+            throw new InvalidDataException("domain.record-chunk-count-mismatch");
+
+        ulong actualCount = 0;
+        var digest = HashSuite.DomainHashStreaming("mv.state-diagnostic.v1", writer =>
+        {
+            writer.WriteMapStart(8);
+            writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
+            writer.WriteUnsigned(1); writer.WriteAsciiText(identity.OwnerDomain.Value);
+            writer.WriteUnsigned(2); writer.WriteAsciiText(identity.PartitionSchema.SchemaId.Value);
+            writer.WriteUnsigned(3); writer.WriteUnsigned(revision);
+            writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
+            writer.WriteUnsigned(5); writer.WriteUnsigned((byte)detailLevel);
+            writer.WriteUnsigned(6); writer.WriteUnsigned(itemCount);
+            writer.WriteUnsigned(7);
+            writer.WriteArrayStart(itemCount);
+
+            foreach (var chunk in canonicalRecordChunks)
+            {
+                ArgumentNullException.ThrowIfNull(chunk);
+                actualCount = checked(actualCount + chunk.RecordCount);
+                if (actualCount > itemCount)
+                    throw new InvalidDataException("domain.record-chunk-count-mismatch");
+                writer.WriteCanonicalSequence(chunk.EncodedRecords);
+            }
+
+            if (actualCount != itemCount)
+                throw new InvalidDataException("domain.record-chunk-count-mismatch");
+        });
+
+        return new PartitionStateHeaderV1(
+            identity,
+            revision,
+            basisStep,
+            detailLevel,
+            itemCount,
+            digest);
     }
 
     private static PartitionStateHeaderV1 CreateCanonicalCore<TPayload>(
