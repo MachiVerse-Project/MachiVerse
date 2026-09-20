@@ -17,6 +17,7 @@ internal static class Program
     private const double MissingMetricSentinelMilliseconds = 1_000_000_000.0;
     private const string Step3HeartbeatEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_HEARTBEAT_SECONDS";
     private const string Step3PersistenceInsertBatchSizeEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_PERSISTENCE_INSERT_BATCH_SIZE";
+    private const string Step3PhaseLogIntervalEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_PHASE_LOG_INTERVAL_TRANSITIONS";
     private static readonly string[] PersistenceCrashStages =
     [
         "audit-append",
@@ -344,6 +345,7 @@ internal static class Program
                     command = "production-reference-run",
                     workerCount = run.WorkerCount,
                     progressHeartbeatSeconds = Step3HeartbeatSeconds(),
+                    progressIntervalTransitions = Step3PhaseLogIntervalTransitions(),
                     persistenceInsertBatchSize = Step3PersistenceInsertBatchSize(),
                     persistenceRoot,
                 },
@@ -1104,6 +1106,17 @@ internal static class Program
             throw new InvalidDataException(
                 $"{Step3PersistenceInsertBatchSizeEnvironmentVariable} must be a positive integer.");
         return batchSize;
+    }
+
+    private static int Step3PhaseLogIntervalTransitions()
+    {
+        var raw = Environment.GetEnvironmentVariable(Step3PhaseLogIntervalEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(raw))
+            return 1;
+        if (!int.TryParse(raw, out var interval) || interval <= 0)
+            throw new InvalidDataException(
+                $"{Step3PhaseLogIntervalEnvironmentVariable} must be a positive integer.");
+        return interval;
     }
 
     private static void ValidatePersistenceProfile(JsonElement profile)
