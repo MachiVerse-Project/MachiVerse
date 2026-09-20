@@ -422,7 +422,7 @@ public static class Qa04CanonicalOperationBindingV1
                 writer.WriteAsciiText(key.OperationKind);
                 writer.WriteBytes(key.TargetRecordId.ToBytes());
             }));
-        var orderKey = new SameStepOrderKey(
+        var orderKey = SameStepOrderKey.FromTrustedImmutableConflictScopeDigest(
             phase: 1,
             domainRank,
             conflictScope,
