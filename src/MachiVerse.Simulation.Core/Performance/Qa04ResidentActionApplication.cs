@@ -11,6 +11,10 @@ public sealed record Qa04ResidentActionApplicationResultV1(
     DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> BehaviorState,
     bool Created);
 
+internal sealed record Qa04ResidentActionRecordResultV1(
+    DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1> AppliedRecord,
+    bool Created);
+
 /// <summary>
 /// Applies the already-bound perf.reference.v1 participation-control-resident-action Operation to
 /// authoritative resident.behavior_state. This benchmark-only handler establishes the Resident's
@@ -46,26 +50,101 @@ public static class Qa04ResidentActionApplicationV1
         if (current.Identity != identity)
             throw new InvalidDataException("qa04.resident.action-partition-identity");
 
-        var descriptor = binding.SourceDescriptor;
-        var resident = Qa04ReferenceLoadV1.Record(ResidentClass, descriptor.FamilyOrdinal);
-        var residentRef = new PartitionRecordRefV1(
-            ResidentIdentityLifecyclePayloadV1.PartitionId,
-            resident.RecordId);
-        var action = Qa04ReferenceLoadV1.ResidentActivity(resident.RecordId, descriptor.InjectionStep);
-        var effectiveStep = checked(descriptor.InjectionStep + 1UL);
-        var detailLevel = Qa04ReferenceLoadV1.ResidentDetailLevel(descriptor.FamilyOrdinal);
-
-        if (binding.PrimaryTarget != residentRef || binding.ScheduledOperation.EffectiveStep != effectiveStep)
-            throw new InvalidDataException("qa04.resident.action-target-step-drift");
-
-        RequireCanonicalControlMode(descriptor.FamilyOrdinal, residentRef, detailLevel, controlMode);
-
+        var residentRef = RequireResidentTarget(binding);
         var matches = current.RecordsCanonical
             .Where(record => record.Payload.ResidentRef == residentRef)
             .Take(2)
             .ToArray();
         if (matches.Length > 1)
             throw new InvalidDataException("qa04.resident.action-duplicate-resident-behavior");
+
+        var applied = ApplyRecordCore(
+            worldId,
+            binding,
+            matches.Length == 0 ? null : matches[0],
+            current,
+            controlMode,
+            references,
+            identity,
+            residentRef);
+
+        var next = applied.Created
+            ? current.WithAdditions(new[] { applied.AppliedRecord }, "qa04.resident.action-record-id-collision")
+            : current.WithReplacements(new[] { applied.AppliedRecord }, "qa04.full-step.mutation-resident-result-drift");
+
+        var expectedCount = applied.Created ? checked(current.ItemCount + 1UL) : current.ItemCount;
+        if (next.ItemCount != expectedCount)
+            throw new InvalidDataException(applied.Created
+                ? "qa04.resident.action-create-count-drift"
+                : "qa04.resident.action-update-count-drift");
+
+        return new Qa04ResidentActionApplicationResultV1(
+            applied.AppliedRecord,
+            next,
+            applied.Created);
+    }
+
+    internal static Qa04ResidentActionRecordResultV1 ApplyRecord(
+        OpaqueId128 worldId,
+        Qa04CanonicalOperationBindingResultV1 binding,
+        DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>? existing,
+        DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> collisionState,
+        DomainRecordEnvelopeV1<ParticipationControlModePayloadV1> controlMode,
+        IDomainRecordSchemaResolverV1 references)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
+        ArgumentNullException.ThrowIfNull(binding);
+        ArgumentNullException.ThrowIfNull(collisionState);
+        ArgumentNullException.ThrowIfNull(controlMode);
+        ArgumentNullException.ThrowIfNull(references);
+
+        RequireCanonicalBinding(binding);
+        var identity = StandardDomainPartitionRegistry.Get(ResidentBehaviorStatePayloadV1.PartitionId);
+        if (collisionState.Identity != identity)
+            throw new InvalidDataException("qa04.resident.action-partition-identity");
+        var residentRef = RequireResidentTarget(binding);
+        return ApplyRecordCore(
+            worldId,
+            binding,
+            existing,
+            collisionState,
+            controlMode,
+            references,
+            identity,
+            residentRef);
+    }
+
+    private static PartitionRecordRefV1 RequireResidentTarget(
+        Qa04CanonicalOperationBindingResultV1 binding)
+    {
+        var descriptor = binding.SourceDescriptor;
+        var resident = Qa04ReferenceLoadV1.Record(ResidentClass, descriptor.FamilyOrdinal);
+        var residentRef = new PartitionRecordRefV1(
+            ResidentIdentityLifecyclePayloadV1.PartitionId,
+            resident.RecordId);
+        var effectiveStep = checked(descriptor.InjectionStep + 1UL);
+        if (binding.PrimaryTarget != residentRef || binding.ScheduledOperation.EffectiveStep != effectiveStep)
+            throw new InvalidDataException("qa04.resident.action-target-step-drift");
+        return residentRef;
+    }
+
+    private static Qa04ResidentActionRecordResultV1 ApplyRecordCore(
+        OpaqueId128 worldId,
+        Qa04CanonicalOperationBindingResultV1 binding,
+        DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>? existing,
+        DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> collisionState,
+        DomainRecordEnvelopeV1<ParticipationControlModePayloadV1> controlMode,
+        IDomainRecordSchemaResolverV1 references,
+        DomainPartitionIdentityV1 identity,
+        PartitionRecordRefV1 residentRef)
+    {
+        var descriptor = binding.SourceDescriptor;
+        var resident = Qa04ReferenceLoadV1.Record(ResidentClass, descriptor.FamilyOrdinal);
+        var action = Qa04ReferenceLoadV1.ResidentActivity(resident.RecordId, descriptor.InjectionStep);
+        var effectiveStep = checked(descriptor.InjectionStep + 1UL);
+        var detailLevel = Qa04ReferenceLoadV1.ResidentDetailLevel(descriptor.FamilyOrdinal);
+
+        RequireCanonicalControlMode(descriptor.FamilyOrdinal, residentRef, detailLevel, controlMode);
 
         var payload = new ResidentBehaviorStatePayloadV1(
             residentRef,
@@ -75,13 +154,12 @@ public static class Qa04ResidentActionApplicationV1
             ActionTargetRefs: Array.Empty<PartitionRecordRefV1>(),
             ActionStartedStep: effectiveStep,
             ControlSource: Autonomous);
-        var validator = new StandardDomainPayloadCodecValidatorV1();
-        validator.Validate(
+        new StandardDomainPayloadCodecValidatorV1().Validate(
             ResidentBehaviorStatePayloadV1.PartitionId,
             payload.ToStandardPayload(),
             references);
 
-        if (matches.Length == 0)
+        if (existing is null)
         {
             var recordId = DerivedIdentity.DeriveEntityId(
                 worldId,
@@ -92,7 +170,7 @@ public static class Qa04ResidentActionApplicationV1
                 localOrdinal: 0);
             if (recordId.IsZero)
                 throw new InvalidDataException("qa04.resident.action-record-id-zero");
-            if (current.TryGet(recordId, out _))
+            if (collisionState.TryGet(recordId, out _))
                 throw new InvalidDataException("qa04.resident.action-record-id-collision");
 
             var created = new DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>(
@@ -104,16 +182,9 @@ public static class Qa04ResidentActionApplicationV1
                 detailLevel,
                 lineageRef: null,
                 payload);
-            var next = new DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>(
-                identity,
-                current.RecordsCanonical.Concat(new[] { created }));
-            if (next.ItemCount != checked(current.ItemCount + 1UL))
-                throw new InvalidDataException("qa04.resident.action-create-count-drift");
-
-            return new Qa04ResidentActionApplicationResultV1(created, next, Created: true);
+            return new Qa04ResidentActionRecordResultV1(created, Created: true);
         }
 
-        var existing = matches[0];
         RequireQa04ExistingRecord(existing, identity, residentRef, detailLevel, references);
         if (existing.Payload.ActionStartedStep is not { } previousStep || previousStep >= effectiveStep)
             throw new InvalidDataException("qa04.resident.action-non-monotonic-step");
@@ -129,14 +200,7 @@ public static class Qa04ResidentActionApplicationV1
             throw new InvalidDataException("qa04.resident.action-revision-envelope-drift");
         }
 
-        var updatedState = new DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>(
-            identity,
-            current.RecordsCanonical.Select(record =>
-                record.RecordId == existing.RecordId ? revised : record));
-        if (updatedState.ItemCount != current.ItemCount)
-            throw new InvalidDataException("qa04.resident.action-update-count-drift");
-
-        return new Qa04ResidentActionApplicationResultV1(revised, updatedState, Created: false);
+        return new Qa04ResidentActionRecordResultV1(revised, Created: false);
     }
 
     private static void RequireQa04ExistingRecord(
