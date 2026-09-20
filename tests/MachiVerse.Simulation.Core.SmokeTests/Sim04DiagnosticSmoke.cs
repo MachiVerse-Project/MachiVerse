@@ -150,6 +150,7 @@ internal static class Sim04DiagnosticSmoke
             "Partition digest must be independent of runtime record insertion order.");
 
         RunHierarchySmoke();
+        RunRecordIdPrefixSliceSmoke();
     }
 
     private static void RunHierarchySmoke()
@@ -278,6 +279,95 @@ internal static class Sim04DiagnosticSmoke
             duplicateDomainRejected = true;
         }
         Require(duplicateDomainRejected, "Duplicate DomainToken must fail closed.");
+    }
+
+    private static void RunRecordIdPrefixSliceSmoke()
+    {
+        static byte[] EncodeRecord(DomainRecordEnvelopeV1<byte[]> record)
+            => PartitionStateHeaderV1.EncodeCanonicalRecord(record, SHA256.HashData(record.Payload));
+
+        var identity = StandardDomainPartitionRegistry.Get("resident.behavior_state");
+        var worldId = OpaqueId128.Parse("00000000000000000000000000000060");
+        const ulong step = 91;
+        var lowA = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("10000000000000000000000000000001"),
+            identity.RecordSchema,
+            1,
+            step,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [1]);
+        var lowB = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("10000000000000000000000000000002"),
+            identity.RecordSchema,
+            1,
+            step,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [2]);
+        var high = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("f0000000000000000000000000000001"),
+            identity.RecordSchema,
+            1,
+            step,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [3]);
+
+        var state = new DomainPartitionStateV1<byte[]>(identity, [high, lowB, lowA]);
+        var slices = RecordIdPrefixDiagnosticPartitionV1.CreateSliceHashes(
+            worldId,
+            step,
+            state,
+            EncodeRecord);
+
+        Require(RecordIdPrefixDiagnosticPartitionV1.PartitionVersion == 1,
+            "RecordId diagnostic partition version must remain explicit.");
+        Require(slices.Count == 2,
+            "RecordId prefix diagnostic partitioning must create one slice per non-empty prefix.");
+        Require(slices[0].SliceKey.Value == "resident.behavior_state/rid-10" &&
+                slices[1].SliceKey.Value == "resident.behavior_state/rid-f0",
+            "RecordId prefix slice keys must be stable and canonical.");
+        Require(slices.All(slice =>
+                slice.DomainToken == identity.OwnerDomain &&
+                slice.PartitionVersion == RecordIdPrefixDiagnosticPartitionV1.PartitionVersion),
+            "RecordId prefix slices must bind the owner domain and partition version.");
+
+        var permutedState = new DomainPartitionStateV1<byte[]>(identity, [lowB, high, lowA]);
+        var permutedSlices = RecordIdPrefixDiagnosticPartitionV1.CreateSliceHashes(
+            worldId,
+            step,
+            permutedState,
+            EncodeRecord);
+        Require(slices.Count == permutedSlices.Count &&
+                slices.Zip(permutedSlices).All(pair =>
+                    pair.First.SliceKey == pair.Second.SliceKey &&
+                    pair.First.Hash.AsSpan().SequenceEqual(pair.Second.Hash)),
+            "RecordId prefix slice hashes must be independent of insertion order.");
+
+        var changedLowB = new DomainRecordEnvelopeV1<byte[]>(
+            lowB.RecordId,
+            identity.RecordSchema,
+            2,
+            step,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [9]);
+        var changedState = new DomainPartitionStateV1<byte[]>(identity, [lowA, changedLowB, high]);
+        var changedSlices = RecordIdPrefixDiagnosticPartitionV1.CreateSliceHashes(
+            worldId,
+            step,
+            changedState,
+            EncodeRecord);
+
+        Require(!slices[0].Hash.AsSpan().SequenceEqual(changedSlices[0].Hash),
+            "Changing a record must change its logical slice hash.");
+        Require(slices[1].Hash.AsSpan().SequenceEqual(changedSlices[1].Hash),
+            "Changing one RecordId prefix must not change another slice at the same Step.");
     }
 
     private static void Require(bool condition, string message)
