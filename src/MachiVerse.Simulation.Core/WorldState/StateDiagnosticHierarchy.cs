@@ -18,7 +18,6 @@ public sealed class StateDiagnosticSliceHashV1
     {
         if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
         RequireToken(domainToken, nameof(domainToken));
-        if (partitionVersion == 0) throw new ArgumentOutOfRangeException(nameof(partitionVersion));
         RequireToken(sliceKey, nameof(sliceKey));
         RequireHash(hash, nameof(hash));
 
@@ -67,7 +66,6 @@ public sealed class DomainDiagnosticHashV1
         if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
         if (string.IsNullOrEmpty(domainToken.Value))
             throw new ArgumentException("StableToken cannot be default.", nameof(domainToken));
-        if (partitionVersion == 0) throw new ArgumentOutOfRangeException(nameof(partitionVersion));
         ArgumentNullException.ThrowIfNull(slices);
         ArgumentNullException.ThrowIfNull(hash);
         if (hash.Length != 32)
@@ -269,6 +267,5 @@ public static class StateDiagnosticHierarchyV1
         if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
         if (string.IsNullOrEmpty(domainToken.Value))
             throw new ArgumentException("StableToken cannot be default.", nameof(domainToken));
-        if (partitionVersion == 0) throw new ArgumentOutOfRangeException(nameof(partitionVersion));
     }
 }
