@@ -42,8 +42,40 @@ public static class Qa04MarketOrderApplicationV1
         if (current.State.Identity != SocietyMarketTransactionPartitionIdentityV2.Identity)
             throw new InvalidDataException("qa04.market.order-partition-identity");
 
+        var target = RequireMarketTarget(binding, current.RecordSet);
+        var created = CreateOrderRecordCore(binding, target, references);
+        if (current.RecordSet.TryGet(created.RecordId, out _))
+            throw new InvalidDataException("qa04.market.order-record-id-collision");
+
+        var next = current.WithAdditions(
+            new[] { created },
+            "qa04.market.order-record-id-collision");
+        if (next.State.ItemCount != checked(current.State.ItemCount + 1UL))
+            throw new InvalidDataException("qa04.market.order-create-count-drift");
+
+        return new Qa04MarketOrderApplicationResultV1(created, next);
+    }
+
+    internal static SocietyMarketTransactionRecordMaterialV2 CreateOrderRecord(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        SocietyMarketTransactionRecordMaterialV2 target,
+        IDomainRecordSchemaResolverV1 references)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(references);
+
+        RequireCanonicalBinding(binding);
+        SocietyMarketTransactionPartitionIdentityV2.ValidateCanonicalContract();
+        RequireExpectedMarketTarget(binding, target);
+        return CreateOrderRecordCore(binding, target, references);
+    }
+
+    private static SocietyMarketTransactionRecordMaterialV2 RequireMarketTarget(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        SocietyMarketTransactionRecordSetV2 records)
+    {
         var descriptor = binding.SourceDescriptor;
-        var effectiveStep = checked(descriptor.InjectionStep + 1UL);
         var scopeOrdinal = checked((uint)(descriptor.FamilyOrdinal % (ulong)Qa04ReferenceScenariosV1.MarketScopeCount));
         var expectedMarket = Qa04MarketMaterializerV1.CreateMarketState(
             scopeOrdinal,
@@ -52,12 +84,42 @@ public static class Qa04MarketOrderApplicationV1
         var marketRef = new PartitionRecordRefV1(
             SocietyMarketTransactionRecordSchemaV2.PartitionId,
             expectedMarket.RecordId);
+        var effectiveStep = checked(descriptor.InjectionStep + 1UL);
         if (binding.PrimaryTarget != marketRef || binding.ScheduledOperation.EffectiveStep != effectiveStep)
             throw new InvalidDataException("qa04.market.order-target-step-drift");
-
-        if (!current.RecordSet.TryGet(marketRef.RecordId, out var target) || target is null)
+        if (!records.TryGet(marketRef.RecordId, out var target) || target is null)
             throw new InvalidDataException("qa04.market.order-target-missing");
         RequireCanonicalMarketState(target, expectedMarket);
+        return target;
+    }
+
+    private static void RequireExpectedMarketTarget(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        SocietyMarketTransactionRecordMaterialV2 target)
+    {
+        var descriptor = binding.SourceDescriptor;
+        var scopeOrdinal = checked((uint)(descriptor.FamilyOrdinal % (ulong)Qa04ReferenceScenariosV1.MarketScopeCount));
+        var expectedMarket = Qa04MarketMaterializerV1.CreateMarketState(
+            scopeOrdinal,
+            Qa04SpatialTileScopeAuthorityV1.ScopeRef,
+            out _);
+        var marketRef = new PartitionRecordRefV1(
+            SocietyMarketTransactionRecordSchemaV2.PartitionId,
+            expectedMarket.RecordId);
+        var effectiveStep = checked(descriptor.InjectionStep + 1UL);
+        if (binding.PrimaryTarget != marketRef || binding.ScheduledOperation.EffectiveStep != effectiveStep)
+            throw new InvalidDataException("qa04.market.order-target-step-drift");
+        RequireCanonicalMarketState(target, expectedMarket);
+    }
+
+    private static SocietyMarketTransactionRecordMaterialV2 CreateOrderRecordCore(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        SocietyMarketTransactionRecordMaterialV2 target,
+        IDomainRecordSchemaResolverV1 references)
+    {
+        var descriptor = binding.SourceDescriptor;
+        var effectiveStep = checked(descriptor.InjectionStep + 1UL);
+        var marketRef = binding.PrimaryTarget;
         var marketPayload = (SocietyMarketStatePayloadV2)target.Payload;
 
         var resident = Qa04ReferenceLoadV1.Record(ResidentClass, descriptor.FamilyOrdinal);
@@ -83,8 +145,6 @@ public static class Qa04MarketOrderApplicationV1
             localOrdinal: 0);
         if (recordId.IsZero)
             throw new InvalidDataException("qa04.market.order-record-id-zero");
-        if (current.RecordSet.TryGet(recordId, out _))
-            throw new InvalidDataException("qa04.market.order-record-id-collision");
 
         var payload = new SocietyMarketOrderPayloadV2(
             marketRef,
@@ -125,19 +185,7 @@ public static class Qa04MarketOrderApplicationV1
             throw new InvalidDataException("qa04.market.order-created-record-drift");
         }
 
-        var next = new SocietyMarketTransactionPartitionStateV2(
-            current.RecordSet.RecordsCanonical.Concat(new[] { created }));
-        if (next.State.ItemCount != checked(current.State.ItemCount + 1UL))
-            throw new InvalidDataException("qa04.market.order-create-count-drift");
-
-        foreach (var existing in current.RecordSet.RecordsCanonical)
-        {
-            if (!next.RecordSet.TryGet(existing.RecordId, out var after) || after is null ||
-                !ReferenceEquals(existing, after))
-                throw new InvalidDataException("qa04.market.order-existing-record-drift");
-        }
-
-        return new Qa04MarketOrderApplicationResultV1(created, next);
+        return created;
     }
 
     private static void RequireCanonicalMarketState(
