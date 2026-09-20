@@ -78,7 +78,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         InfrastructureServiceQueuePayloadV1.PartitionId,
                         payload.ToStandardPayload(),
-                        references: references)),
+                        references: references),
+                digestCache?.InfrastructureRecord),
             BindStandard(
                 basisState,
                 targetStep,
@@ -88,7 +89,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         ResidentBehaviorStatePayloadV1.PartitionId,
                         payload.ToStandardPayload(),
-                        references: references)),
+                        references: references),
+                digestCache?.ResidentRecord),
             BindStandard(
                 basisState,
                 targetStep,
@@ -98,7 +100,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         PhysicalPresencePayloadV1.PartitionId,
                         payload.ToStandardPayload(),
-                        references: references)),
+                        references: references),
+                digestCache?.PhysicalRecord),
             BindMarket(
                 basisState,
                 targetStep,
@@ -115,7 +118,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         GovernanceSecurityIncidentPayloadV1.PartitionId,
                         payload.ToStandardPayload(),
-                        references: references)),
+                        references: references),
+                digestCache?.GovernanceRecord),
             BindStandard(
                 basisState,
                 targetStep,
@@ -125,7 +129,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         EnvironmentHazardPayloadV1.PartitionId,
                         payload.ToStandardPayload(),
-                        references: references)),
+                        references: references),
+                digestCache?.EnvironmentRecord),
         }
         .OrderBy(static item => item.Candidate.PartitionId.Value, StringComparer.Ordinal)
         .ToArray();
@@ -202,7 +207,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 InfrastructureServiceQueuePayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
-                                references: references)),
+                                references: references),
+                        digestCache?.InfrastructureRecord),
                     ResidentFamily => BindStandard(
                         basisState,
                         targetStep,
@@ -212,7 +218,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 ResidentBehaviorStatePayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
-                                references: references)),
+                                references: references),
+                        digestCache?.ResidentRecord),
                     PhysicalFamily => BindStandard(
                         basisState,
                         targetStep,
@@ -222,7 +229,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 PhysicalPresencePayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
-                                references: references)),
+                                references: references),
+                        digestCache?.PhysicalRecord),
                     MarketFamily => BindMarket(
                         basisState,
                         targetStep,
@@ -239,7 +247,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 GovernanceSecurityIncidentPayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
-                                references: references)),
+                                references: references),
+                        digestCache?.GovernanceRecord),
                     EnvironmentFamily => BindStandard(
                         basisState,
                         targetStep,
@@ -249,7 +258,8 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 EnvironmentHazardPayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
-                                references: references)),
+                                references: references),
+                        digestCache?.EnvironmentRecord),
                     _ => throw new InvalidDataException(
                         $"qa04.full-step.authoritative-partition-family-unregistered:{family}"),
                 };
@@ -327,18 +337,27 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         ulong targetStep,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
         DomainPartitionStateV1<TPayload> resultingState,
-        Func<TPayload, byte[]> canonicalPayloadDigest)
+        Func<TPayload, byte[]> canonicalPayloadDigest,
+        Func<DomainRecordEnvelopeV1<TPayload>, byte[]>? canonicalRecordEncoding = null)
     {
         var partitionId = resultingState.Identity.PartitionId.Value;
         RequireFamilyTarget(bindings, partitionId);
         var basisHeader = basisState.Partitions.Get(partitionId).Header;
         RequireBasisIdentity(basisHeader, resultingState.Identity);
-        var resultingHeader = PartitionStateHeaderV1.CreateCanonical(
-            resultingState,
-            NextRevision(basisHeader),
-            targetStep,
-            basisHeader.DetailLevel,
-            canonicalPayloadDigest);
+        var resultingHeader = canonicalRecordEncoding is null
+            ? PartitionStateHeaderV1.CreateCanonical(
+                resultingState,
+                NextRevision(basisHeader),
+                targetStep,
+                basisHeader.DetailLevel,
+                canonicalPayloadDigest)
+            : PartitionStateHeaderV1.CreateCanonicalCached(
+                resultingState,
+                NextRevision(basisHeader),
+                targetStep,
+                basisHeader.DetailLevel,
+                canonicalPayloadDigest,
+                canonicalRecordEncoding);
         return BindHeader(basisState, basisHeader, resultingHeader, targetStep, bindings);
     }
 
@@ -358,13 +377,20 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         RequireFamilyTarget(bindings, partitionId);
         var basisHeader = basisState.Partitions.Get(partitionId).Header;
         RequireBasisIdentity(basisHeader, SocietyMarketTransactionPartitionIdentityV2.Identity);
-        var resultingHeader = PartitionStateHeaderV1.CreateCanonical(
-            resultingState.State,
-            NextRevision(basisHeader),
-            targetStep,
-            basisHeader.DetailLevel,
-            payload => digestCache?.Market(payload) ??
-                SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload, references));
+        var resultingHeader = digestCache is null
+            ? PartitionStateHeaderV1.CreateCanonical(
+                resultingState.State,
+                NextRevision(basisHeader),
+                targetStep,
+                basisHeader.DetailLevel,
+                payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload, references))
+            : PartitionStateHeaderV1.CreateCanonicalCached(
+                resultingState.State,
+                NextRevision(basisHeader),
+                targetStep,
+                basisHeader.DetailLevel,
+                digestCache.Market,
+                digestCache.MarketRecord);
         return BindHeader(basisState, basisHeader, resultingHeader, targetStep, bindings);
     }
 
