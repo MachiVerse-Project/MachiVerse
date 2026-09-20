@@ -280,16 +280,33 @@ jobs:
 
             $rate = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
             if ($rate -le 0) { throw "Step3 performance precheck throughput must be positive for workers=$workers." }
+
+            if ($progressLine -notmatch 'total_elapsed_seconds=([0-9]+(?:\.[0-9]+)?)') {
+              throw "Step3 performance precheck did not emit total elapsed time for workers=$workers."
+            }
+            $totalElapsedSeconds = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
+            if ($progressLine -notmatch 'actual_elapsed_seconds=([0-9]+(?:\.[0-9]+)?)') {
+              throw "Step3 performance precheck did not emit actual elapsed time for workers=$workers."
+            }
+            $actualElapsedSeconds = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
+            if ($totalElapsedSeconds -lt $actualElapsedSeconds -or $actualElapsedSeconds -le 0) {
+              throw "Step3 performance precheck elapsed-time relationship is invalid for workers=$workers."
+            }
+
+            $startupSecondsPerRun = $totalElapsedSeconds - $actualElapsedSeconds
             $steadyStepSeconds = $steadyOperations / $rate
-            $workerEstimateSeconds = $steadyStepSeconds * $canonicalTransitions * $runsPerWorker
+            $transitionSecondsPerRun = $steadyStepSeconds * $canonicalTransitions
+            $workerEstimateSeconds = ($startupSecondsPerRun + $transitionSecondsPerRun) * $runsPerWorker
             $estimatedMatrixSeconds += $workerEstimateSeconds
             $rows += [pscustomobject]@{
               workers = $workers
               intervalOpsPerSecond = [math]::Round($rate, 3)
               estimatedSteadyStepMs = [math]::Round($steadyStepSeconds * 1000.0, 3)
+              startupSecondsPerRun = [math]::Round($startupSecondsPerRun, 1)
+              estimatedTransitionSecondsPerRun = [math]::Round($transitionSecondsPerRun, 1)
               estimatedWorkerGroupSeconds = [math]::Round($workerEstimateSeconds, 1)
             }
-            Write-Host ("GATE4_STEP3_PRECHECK workers={0} interval_ops_per_second={1:F1} estimated_step_ms={2:F1} estimated_worker_group_seconds={3:F1}" -f $workers, $rate, ($steadyStepSeconds * 1000.0), $workerEstimateSeconds)
+            Write-Host ("GATE4_STEP3_PRECHECK workers={0} interval_ops_per_second={1:F1} estimated_step_ms={2:F1} startup_seconds_per_run={3:F1} estimated_worker_group_seconds={4:F1}" -f $workers, $rate, ($steadyStepSeconds * 1000.0), $startupSecondsPerRun, $workerEstimateSeconds)
 
             $partialReport = [ordered]@{
               schemaVersion = "1.0"
