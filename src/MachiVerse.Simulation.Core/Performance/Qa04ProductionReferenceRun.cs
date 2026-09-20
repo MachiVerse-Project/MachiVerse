@@ -68,7 +68,8 @@ public static class Qa04ProductionReferenceRunV1
         CancellationToken cancellationToken = default,
         IQa04ProductionRunObserverV1? observer = null,
         int progressHeartbeatSeconds = 60,
-        int? persistenceInsertBatchSize = null)
+        int? persistenceInsertBatchSize = null,
+        int phaseLogIntervalTransitions = 1)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.production-run.worker-count-not-canonical");
@@ -78,6 +79,8 @@ public static class Qa04ProductionReferenceRunV1
             throw new ArgumentOutOfRangeException(nameof(progressHeartbeatSeconds));
         if (persistenceInsertBatchSize is <= 0)
             throw new ArgumentOutOfRangeException(nameof(persistenceInsertBatchSize));
+        if (phaseLogIntervalTransitions <= 0)
+            throw new ArgumentOutOfRangeException(nameof(phaseLogIntervalTransitions));
 
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04MeasurementPhaseContractV1.ValidateCanonicalContract();
@@ -273,7 +276,8 @@ public static class Qa04ProductionReferenceRunV1
                             currentDetailDirectory,
                             detailPolicy,
                             persistenceInsertBatchSize,
-                            digestCache).ConfigureAwait(false);
+                            digestCache,
+                            phaseLogIntervalTransitions).ConfigureAwait(false);
                     },
                     cancellationToken).ConfigureAwait(false);
 
@@ -537,7 +541,6 @@ public static class Qa04ProductionReferenceRunV1
             var completedDeterminismEvidence = determinismEvidence.Complete(currentState, currentClosedPrefix);
             if (observer is not null)
                 await observer.CompleteAsync(cancellationToken).ConfigureAwait(false);
-
             Console.Error.WriteLine(
                 $"QA04_PROGRESS phase=run-complete workers={workerCount} " +
                 $"transitions={CanonicalTransitionCount}/{CanonicalTransitionCount} " +
