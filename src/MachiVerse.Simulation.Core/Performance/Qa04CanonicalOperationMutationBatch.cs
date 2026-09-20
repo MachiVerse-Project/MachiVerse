@@ -317,8 +317,21 @@ public static class Qa04CanonicalOperationMutationBatchV1
 
         ValidateStateIdentities(initialState);
 
+        var familyOrder = new[]
+        {
+            InfrastructureFamily,
+            ResidentFamily,
+            PhysicalFamily,
+            MarketFamily,
+            GovernanceFamily,
+            EnvironmentFamily,
+        };
+        var familyBindings = familyOrder.ToDictionary(
+            static family => family,
+            static _ => new List<Qa04CanonicalOperationBindingResultV1>(),
+            StringComparer.Ordinal);
         var appliedIds = new OpaqueId128[orderedBindings.Count];
-        var seen = new HashSet<OpaqueId128>();
+        var operationIndex = new Dictionary<OpaqueId128, int>(orderedBindings.Count);
         var counts = new Dictionary<string, ulong>(StringComparer.Ordinal);
         SameStepOrderKey? previousOrderKey = null;
         for (var index = 0; index < orderedBindings.Count; index++)
@@ -337,32 +350,22 @@ public static class Qa04CanonicalOperationMutationBatchV1
             previousOrderKey = binding.OrderKey;
 
             var operationId = binding.SourceDescriptor.OperationId;
-            if (operationId.IsZero || !seen.Add(operationId))
+            if (operationId.IsZero || !operationIndex.TryAdd(operationId, index))
                 throw new InvalidDataException("qa04.full-step.mutation-operation-id-duplicate");
             appliedIds[index] = operationId;
 
             var family = binding.SourceDescriptor.FamilyToken.Value;
-            if (family is not (InfrastructureFamily or ResidentFamily or PhysicalFamily or MarketFamily or GovernanceFamily or EnvironmentFamily))
+            if (!familyBindings.TryGetValue(family, out var bucket))
                 throw new InvalidDataException($"qa04.full-step.mutation-family-unregistered:{family}");
+            bucket.Add(binding);
             counts[family] = checked(counts.GetValueOrDefault(family) + 1UL);
         }
 
-        var familyOrder = new[]
-        {
-            InfrastructureFamily,
-            ResidentFamily,
-            PhysicalFamily,
-            MarketFamily,
-            GovernanceFamily,
-            EnvironmentFamily,
-        };
         var work = familyOrder
             .Select(family => new FamilyMutationWorkV1(
                 family,
                 (IReadOnlyList<Qa04CanonicalOperationBindingResultV1>)Array.AsReadOnly(
-                    orderedBindings.Where(binding =>
-                        string.Equals(binding.SourceDescriptor.FamilyToken.Value, family, StringComparison.Ordinal))
-                        .ToArray())))
+                    familyBindings[family].ToArray())))
             .ToArray();
         if (work.Any(static item => item.Bindings.Count == 0))
             throw new InvalidDataException("qa04.full-step.mutation-family-coverage-drift");
@@ -398,12 +401,24 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 ?? throw new InvalidDataException("qa04.full-step.mutation-environment-result-missing"));
         ValidateStateIdentities(state);
 
-        var changesByOperation = batch.Outputs
-            .SelectMany(static result => result.Changes)
-            .ToDictionary(static change => change.OperationId);
-        if (changesByOperation.Count != orderedBindings.Count)
+        var changes = new Qa04CanonicalOperationMutationChangeV1[orderedBindings.Count];
+        var assignedChanges = 0;
+        foreach (var result in batch.Outputs)
+        {
+            foreach (var change in result.Changes)
+            {
+                if (!operationIndex.TryGetValue(change.OperationId, out var index) ||
+                    changes[index] is not null)
+                {
+                    throw new InvalidDataException("qa04.full-step.mutation-change-coverage-drift");
+                }
+
+                changes[index] = change;
+                assignedChanges++;
+            }
+        }
+        if (assignedChanges != orderedBindings.Count || changes.Any(static change => change is null))
             throw new InvalidDataException("qa04.full-step.mutation-change-coverage-drift");
-        var changes = appliedIds.Select(id => changesByOperation[id]).ToArray();
 
         return new Qa04CanonicalOperationMutationBatchResultV1(
             effectiveStep,
