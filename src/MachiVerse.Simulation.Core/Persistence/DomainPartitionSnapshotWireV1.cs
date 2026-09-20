@@ -48,6 +48,8 @@ public static class DomainPartitionSnapshotWireCodecV1
             if ((byte)header.DetailLevel != 0) Proto.WriteUInt32(stream, 7, (byte)header.DetailLevel);
             if (header.ItemCount != 0) Proto.WriteUInt64(stream, 8, header.ItemCount);
             Proto.WriteBytes(stream, 9, header.CanonicalDigest);
+            if (header.DigestAlgorithm != PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1)
+                Proto.WriteUInt32(stream, 10, (byte)header.DigestAlgorithm);
         });
     }
 
@@ -63,6 +65,7 @@ public static class DomainPartitionSnapshotWireCodecV1
         uint detail = 0;
         ulong itemCount = 0;
         byte[]? digest = null;
+        uint digestAlgorithm = 0;
         var seen = new HashSet<int>();
 
         while (!reader.End)
@@ -80,6 +83,7 @@ public static class DomainPartitionSnapshotWireCodecV1
                 case 7: reader.RequireWire(wire, 0); detail = reader.ReadUInt32(); break;
                 case 8: reader.RequireWire(wire, 0); itemCount = reader.ReadVarUInt64(); break;
                 case 9: reader.RequireWire(wire, 2); digest = reader.ReadBytes(); break;
+                case 10: reader.RequireWire(wire, 0); digestAlgorithm = reader.ReadUInt32(); break;
                 default: throw WireError("partition-header-unknown-field");
             }
         }
@@ -88,6 +92,9 @@ public static class DomainPartitionSnapshotWireCodecV1
             throw WireError("partition-header-required-field");
         if (detail > 3) throw WireError("partition-header-detail-level");
         if (digest.Length != 32) throw WireError("partition-header-digest-length");
+        if (digestAlgorithm > byte.MaxValue ||
+            !Enum.IsDefined((PartitionCanonicalDigestAlgorithmV1)(byte)digestAlgorithm))
+            throw WireError("partition-header-digest-algorithm");
 
         var identity = StandardDomainPartitionRegistry.Get(new StableToken(partitionId).Value);
         if (new StableToken(owner) != identity.OwnerDomain ||
@@ -101,7 +108,8 @@ public static class DomainPartitionSnapshotWireCodecV1
             basisStep,
             (DetailLevelV1)detail,
             itemCount,
-            digest);
+            digest,
+            (PartitionCanonicalDigestAlgorithmV1)(byte)digestAlgorithm);
     }
 
     public static byte[] EncodePayload(
