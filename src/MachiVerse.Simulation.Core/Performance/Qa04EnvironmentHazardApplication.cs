@@ -18,6 +18,7 @@ public static class Qa04EnvironmentHazardApplicationV1
     private static readonly StableToken OwnerDomain = new("environment");
     private static readonly StableToken HazardKind = new("perf.synthetic-hazard");
     private static readonly StableToken CreationKind = new("perf.environment-hazard-operation");
+    private static readonly StandardDomainPayloadCodecValidatorV1 PayloadValidator = new();
 
     public static Qa04EnvironmentHazardApplicationResultV1 Apply(
         Qa04CanonicalOperationBindingResultV1 binding,
@@ -67,7 +68,7 @@ public static class Qa04EnvironmentHazardApplicationV1
             expectedEndStep,
             Array.Empty<PartitionRecordRefV1>(),
             Array.AsReadOnly(new[] { scopeRef }));
-        new StandardDomainPayloadCodecValidatorV1().Validate(
+        PayloadValidator.Validate(
             EnvironmentHazardPayloadV1.PartitionId,
             payload.ToStandardPayload(),
             references);
