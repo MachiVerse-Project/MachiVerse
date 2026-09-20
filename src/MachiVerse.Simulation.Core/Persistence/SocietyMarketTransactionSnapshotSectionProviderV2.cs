@@ -212,7 +212,14 @@ public sealed class SocietyMarketTransactionSnapshotSectionProviderV2 : IDomainP
     }
 
     private static PartitionStateHeaderV1 CloneHeader(PartitionStateHeaderV1 header)
-        => new(StandardIdentity, header.Revision, header.BasisStep, header.DetailLevel, header.ItemCount, header.CanonicalDigest.ToArray());
+        => new(
+            StandardIdentity,
+            header.Revision,
+            header.BasisStep,
+            header.DetailLevel,
+            header.ItemCount,
+            header.CanonicalDigest.ToArray(),
+            header.DigestAlgorithm);
 
     private static void RequireSameHeader(PartitionStateHeaderV1 expected, PartitionStateHeaderV1 actual)
     {
@@ -223,6 +230,7 @@ public sealed class SocietyMarketTransactionSnapshotSectionProviderV2 : IDomainP
             expected.BasisStep != actual.BasisStep ||
             expected.DetailLevel != actual.DetailLevel ||
             expected.ItemCount != actual.ItemCount ||
+            expected.DigestAlgorithm != actual.DigestAlgorithm ||
             !CryptographicOperations.FixedTimeEquals(expected.CanonicalDigest, actual.CanonicalDigest))
             throw new InvalidDataException("persistence.snapshot.society-market-v2-restored-header");
     }
