@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -76,6 +77,21 @@ public static class Qa04ReferenceLoadV1
         new Qa04ReferenceClassV1(new StableToken("transaction.active-cross-domain"), 10_000),
     });
 
+    private static readonly StableToken ResidentClass = new("resident.persistent-identity");
+    private static readonly StableToken PhysicalClass = new("physical.d0-presence");
+    private static readonly IReadOnlyDictionary<string, Qa04ReferenceClassV1> RecordClassByToken =
+        RecordClasses.ToDictionary(static item => item.ClassToken.Value, StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, StableToken> PerformanceCreationKindByClass =
+        RecordClasses
+            .Where(static item => item.ClassToken != ParticipationControlModeClass)
+            .ToDictionary(
+                static item => item.ClassToken.Value,
+                static item => new StableToken($"perf/{item.ClassToken.Value}"),
+                StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<ulong, Qa04ReferenceRecordV1> HotResidentRecords = new();
+    private static readonly ConcurrentDictionary<ulong, Qa04ReferenceRecordV1> HotPhysicalRecords = new();
+    private const ulong HotOperationReferenceOrdinalLimit = SteadyOperationsPerStep + BurstOperations;
+
     public static readonly IReadOnlyList<Qa04ActivityClassV1> ResidentActivityMix = Array.AsReadOnly(new[]
     {
         new Qa04ActivityClassV1(new StableToken("idle-routine"), 35),
@@ -147,9 +163,26 @@ public static class Qa04ReferenceLoadV1
 
     public static Qa04ReferenceRecordV1 Record(StableToken classToken, ulong ordinal)
     {
-        var definition = RecordClasses.SingleOrDefault(x => x.ClassToken == classToken)
-            ?? throw new KeyNotFoundException($"Unknown QA-04 reference record class: {classToken.Value}");
+        if (!RecordClassByToken.TryGetValue(classToken.Value, out var definition) ||
+            definition.ClassToken != classToken)
+        {
+            throw new KeyNotFoundException($"Unknown QA-04 reference record class: {classToken.Value}");
+        }
         RequireOrdinal(ordinal, definition.Count, classToken.Value);
+
+        if (ordinal < HotOperationReferenceOrdinalLimit)
+        {
+            if (classToken == ResidentClass)
+                return HotResidentRecords.GetOrAdd(ordinal, static value => CreateRecord(ResidentClass, value));
+            if (classToken == PhysicalClass)
+                return HotPhysicalRecords.GetOrAdd(ordinal, static value => CreateRecord(PhysicalClass, value));
+        }
+
+        return CreateRecord(classToken, ordinal);
+    }
+
+    private static Qa04ReferenceRecordV1 CreateRecord(StableToken classToken, ulong ordinal)
+    {
         var id = classToken == ParticipationControlModeClass
             ? DerivedIdentity.DeriveEntityId(
                 WorldId,
@@ -163,7 +196,7 @@ public static class Qa04ReferenceLoadV1
                 creationStep: 0,
                 PerformanceDomain,
                 OpaqueId128.Zero,
-                new StableToken($"perf/{classToken.Value}"),
+                PerformanceCreationKindByClass[classToken.Value],
                 ordinal);
 
         var detail = classToken.Value switch
