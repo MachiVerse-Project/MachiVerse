@@ -148,6 +148,136 @@ internal static class Sim04DiagnosticSmoke
             PayloadDigest).CanonicalDigest;
         Require(orderedDigest.AsSpan().SequenceEqual(permutedDigest),
             "Partition digest must be independent of runtime record insertion order.");
+
+        RunHierarchySmoke();
+    }
+
+    private static void RunHierarchySmoke()
+    {
+        static byte[] CanonicalSliceValue(ulong value)
+        {
+            var writer = new MvDcborWriter();
+            writer.WriteMapStart(1);
+            writer.WriteUnsigned(0);
+            writer.WriteUnsigned(value);
+            return writer.ToArray();
+        }
+
+        var worldId = OpaqueId128.Parse("00000000000000000000000000000050");
+        const ulong step = 77;
+        var residentDomain = new StableToken("resident");
+        var physicalDomain = new StableToken("physical-built");
+        var residentSliceA = StateDiagnosticHierarchyV1.CreateSliceHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            new StableToken("resident.slice-a"),
+            CanonicalSliceValue(10));
+        var residentSliceB = StateDiagnosticHierarchyV1.CreateSliceHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            new StableToken("resident.slice-b"),
+            CanonicalSliceValue(20));
+
+        var residentCanonical = StateDiagnosticHierarchyV1.CreateDomainHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            [residentSliceA, residentSliceB]);
+        var residentReversed = StateDiagnosticHierarchyV1.CreateDomainHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            [residentSliceB, residentSliceA]);
+        Require(residentCanonical.Hash.AsSpan().SequenceEqual(residentReversed.Hash),
+            "Domain diagnostic hash must use canonical DiagnosticSliceKey order.");
+
+        var changedResidentSlice = StateDiagnosticHierarchyV1.CreateSliceHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            new StableToken("resident.slice-b"),
+            CanonicalSliceValue(21));
+        var changedResident = StateDiagnosticHierarchyV1.CreateDomainHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            [residentSliceA, changedResidentSlice]);
+        Require(!residentCanonical.Hash.AsSpan().SequenceEqual(changedResident.Hash),
+            "Authoritative slice content must participate in the domain diagnostic hash.");
+
+        var physicalSlice = StateDiagnosticHierarchyV1.CreateSliceHash(
+            worldId,
+            step,
+            physicalDomain,
+            partitionVersion: 1,
+            new StableToken("physical.slice-a"),
+            CanonicalSliceValue(30));
+        var physical = StateDiagnosticHierarchyV1.CreateDomainHash(
+            worldId,
+            step,
+            physicalDomain,
+            partitionVersion: 1,
+            [physicalSlice]);
+
+        var canonicalRoot = StateDiagnosticHierarchyV1.CreateRootHash(
+            worldId,
+            step,
+            [residentCanonical, physical]);
+        var reversedRoot = StateDiagnosticHierarchyV1.CreateRootHash(
+            worldId,
+            step,
+            [physical, residentCanonical]);
+        Require(canonicalRoot.Hash.AsSpan().SequenceEqual(reversedRoot.Hash),
+            "State diagnostic root must use canonical DomainToken order.");
+        Require(canonicalRoot.Domains.Count == 2 &&
+                canonicalRoot.Domains[0].DomainToken.Value == "physical-built" &&
+                canonicalRoot.Domains[1].DomainToken.Value == "resident",
+            "State diagnostic root must expose canonical DomainToken order.");
+
+        var changedRoot = StateDiagnosticHierarchyV1.CreateRootHash(
+            worldId,
+            step,
+            [changedResident, physical]);
+        Require(!canonicalRoot.Hash.AsSpan().SequenceEqual(changedRoot.Hash),
+            "Domain diagnostic changes must propagate to the state diagnostic root.");
+
+        var duplicateSliceRejected = false;
+        try
+        {
+            StateDiagnosticHierarchyV1.CreateDomainHash(
+                worldId,
+                step,
+                residentDomain,
+                partitionVersion: 1,
+                [residentSliceA, residentSliceA]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "world-state.duplicate-diagnostic-slice-key")
+        {
+            duplicateSliceRejected = true;
+        }
+        Require(duplicateSliceRejected, "Duplicate DiagnosticSliceKey must fail closed.");
+
+        var duplicateDomainRejected = false;
+        try
+        {
+            StateDiagnosticHierarchyV1.CreateRootHash(
+                worldId,
+                step,
+                [residentCanonical, residentCanonical]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "world-state.duplicate-diagnostic-domain")
+        {
+            duplicateDomainRejected = true;
+        }
+        Require(duplicateDomainRejected, "Duplicate DomainToken must fail closed.");
     }
 
     private static void Require(bool condition, string message)
