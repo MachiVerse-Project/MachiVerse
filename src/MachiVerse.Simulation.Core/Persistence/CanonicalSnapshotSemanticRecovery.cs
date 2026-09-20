@@ -166,6 +166,7 @@ public static class CanonicalSnapshotSemanticRecoveryV1
 
         var stateDigest = ComputeWorldStateDigest(
             header,
+            sourceByPartition,
             domainSemantic,
             configDigest,
             GetCoreDigest(coreSemantic, CoreSnapshotOwnerSectionRegistryV1.SchedulerState),
@@ -490,6 +491,7 @@ public static class CanonicalSnapshotSemanticRecoveryV1
 
     private static byte[] ComputeWorldStateDigest(
         WorldStateHeaderV1 header,
+        IReadOnlyDictionary<string, RecoveredDomainSourceV1> recoveredSources,
         IReadOnlyDictionary<string, SnapshotSectionSemanticVerificationV1> domainSemantic,
         byte[] configDigest,
         byte[] schedulerDigest,
@@ -497,53 +499,41 @@ public static class CanonicalSnapshotSemanticRecoveryV1
         byte[] detailDigest,
         byte[] domainRegistryDigest)
     {
-        var partitionDigests = domainSemantic
-            .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
-            .Select(static pair => new KeyValuePair<string, byte[]>(pair.Key, pair.Value.LogicalContentDigest))
-            .ToArray();
-        if (partitionDigests.Length != StandardDomainPartitionRegistry.StandardPartitionCount)
+        ArgumentNullException.ThrowIfNull(header);
+        ArgumentNullException.ThrowIfNull(recoveredSources);
+        ArgumentNullException.ThrowIfNull(domainSemantic);
+
+        if (recoveredSources.Count != StandardDomainPartitionRegistry.StandardPartitionCount ||
+            domainSemantic.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("persistence.snapshot.semantic-recovery-domain-count");
 
-        var schemaRegistryDigest = HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
-        {
-            writer.WriteArrayStart((ulong)StandardDomainPartitionRegistry.Entries.Count);
-            foreach (var entry in StandardDomainPartitionRegistry.Entries)
+        var partitionRefs = recoveredSources
+            .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair =>
             {
-                writer.WriteMapStart(8);
-                writer.WriteUnsigned(0); writer.WriteAsciiText(entry.PartitionId.Value);
-                writer.WriteUnsigned(1); writer.WriteAsciiText(entry.OwnerDomain.Value);
-                writer.WriteUnsigned(2); writer.WriteUnsigned(entry.OwnerDomainRank);
-                writer.WriteUnsigned(3); writer.WriteAsciiText(entry.PartitionSchema.SchemaId.Value);
-                writer.WriteUnsigned(4); writer.WriteAsciiText(entry.RecordSchema.SchemaId.Value);
-                writer.WriteUnsigned(5); writer.WriteUnsigned((uint)entry.PrimaryKeyKind);
-                writer.WriteUnsigned(6); writer.WriteUnsigned((uint)entry.PersistenceClass);
-                writer.WriteUnsigned(7); writer.WriteUnsigned((uint)entry.CanonicalOrder);
-            }
-        });
+                if (!domainSemantic.TryGetValue(pair.Key, out var semantic))
+                    throw new InvalidDataException($"persistence.snapshot.semantic-recovery-domain-semantic-missing:{pair.Key}");
+                if (semantic.LogicalItemCount != pair.Value.Header.ItemCount ||
+                    !CryptographicOperations.FixedTimeEquals(
+                        semantic.LogicalContentDigest,
+                        pair.Value.Header.CanonicalDigest))
+                    throw new InvalidDataException($"persistence.snapshot.semantic-recovery-domain-header-drift:{pair.Key}");
+                return new PartitionStateRefV1(pair.Value.Header);
+            })
+            .ToArray();
 
-        return HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
-        {
-            writer.WriteMapStart(13);
-            writer.WriteUnsigned(0); writer.WriteBytes(header.WorldId.ToBytes());
-            writer.WriteUnsigned(1); writer.WriteUnsigned(header.Step);
-            writer.WriteUnsigned(2); writer.WriteBytes(header.WorldSeedDigest);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(header.ConfigGeneration);
-            writer.WriteUnsigned(4); writer.WriteUnsigned(header.MasterGeneration);
-            writer.WriteUnsigned(5); writer.WriteUnsigned(header.RateGeneration);
-            writer.WriteUnsigned(6); writer.WriteBytes(configDigest);
-            writer.WriteUnsigned(7); writer.WriteBytes(schemaRegistryDigest);
-            writer.WriteUnsigned(8); writer.WriteBytes(schedulerDigest);
-            writer.WriteUnsigned(9); writer.WriteBytes(operationDigest);
-            writer.WriteUnsigned(10); writer.WriteBytes(detailDigest);
-            writer.WriteUnsigned(11); writer.WriteBytes(domainRegistryDigest);
-            writer.WriteUnsigned(12);
-            writer.WriteArrayStart((ulong)partitionDigests.Length);
-            foreach (var partition in partitionDigests)
-            {
-                writer.WriteArrayStart(2);
-                writer.WriteAsciiText(partition.Key);
-                writer.WriteBytes(partition.Value);
-            }
-        });
-    }
+        // Reconstruct only the digest-bearing WorldState surface and delegate the final state
+        // diagnostic calculation to WorldStateV1 itself. This preserves the exact runtime
+        // legacy-vs-hierarchy algorithm selection and the per-partition digest algorithm identity.
+        var reconstructed = new WorldStateV1(
+            header,
+            new OrderedPartitionDirectoryV1(partitionRefs),
+            new WorldSubstateRefV1(new SchemaRefV1("core.scheduler-state"), schedulerDigest),
+            new WorldSubstateRefV1(new SchemaRefV1("core.operation-state"), operationDigest),
+            new WorldSubstateRefV1(new SchemaRefV1("core.detail-directory"), detailDigest),
+            new WorldSubstateRefV1(new SchemaRefV1("core.domain-registry-state"), domainRegistryDigest),
+            configDigest);
+
+        return reconstructed.Diagnostic.StateDigest.ToArray();
+    }}
 }
