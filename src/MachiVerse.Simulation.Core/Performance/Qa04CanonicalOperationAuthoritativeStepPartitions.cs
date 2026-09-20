@@ -400,20 +400,15 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                 targetStep,
                 basisHeader.DetailLevel,
                 changes)
-            : canonicalRecordEncoding is null
-                ? PartitionStateHeaderV1.CreateCanonical(
-                    resultingState,
-                    NextRevision(basisHeader),
-                    targetStep,
-                    basisHeader.DetailLevel,
-                    canonicalPayloadDigest)
-                : PartitionStateHeaderV1.CreateCanonicalCached(
-                    resultingState,
-                    NextRevision(basisHeader),
-                    targetStep,
-                    basisHeader.DetailLevel,
-                    canonicalPayloadDigest,
-                    canonicalRecordEncoding);
+            : RecordIdPrefixPartitionDigestV2.CreateHeader(
+                resultingState,
+                NextRevision(basisHeader),
+                targetStep,
+                basisHeader.DetailLevel,
+                canonicalRecordEncoding ??
+                    (record => PartitionStateHeaderV1.EncodeCanonicalRecord(
+                        record,
+                        canonicalPayloadDigest(record.Payload))));
         return BindHeader(basisState, basisHeader, resultingHeader, targetStep, bindings);
     }
 
@@ -435,12 +430,16 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         var basisHeader = basisState.Partitions.Get(partitionId).Header;
         RequireBasisIdentity(basisHeader, SocietyMarketTransactionPartitionIdentityV2.Identity);
         var resultingHeader = digestCache is null
-            ? PartitionStateHeaderV1.CreateCanonical(
+            ? RecordIdPrefixPartitionDigestV2.CreateHeader(
                 resultingState.State,
                 NextRevision(basisHeader),
                 targetStep,
                 basisHeader.DetailLevel,
-                payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload, references))
+                record => PartitionStateHeaderV1.EncodeCanonicalRecord(
+                    record,
+                    SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(
+                        record.Payload,
+                        references)))
             : digestCache.MarketChunks.CreateHeader(
                 resultingState.State,
                 NextRevision(basisHeader),
