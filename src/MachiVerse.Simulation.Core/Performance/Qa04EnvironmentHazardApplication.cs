@@ -25,6 +25,26 @@ public static class Qa04EnvironmentHazardApplicationV1
         DomainPartitionStateV1<EnvironmentHazardPayloadV1> current,
         IDomainRecordSchemaResolverV1 references)
     {
+        var created = CreateHazard(binding, current, references);
+        var next = current.WithAdditions(
+            new[] { created },
+            "qa04.environment.hazard-record-id-collision");
+        if (next.ItemCount != checked(current.ItemCount + 1UL))
+            throw new InvalidDataException("qa04.environment.hazard-create-count-drift");
+        foreach (var existing in current.RecordsCanonical)
+        {
+            if (!next.TryGet(existing.RecordId, out var after) || !ReferenceEquals(existing, after))
+                throw new InvalidDataException("qa04.environment.hazard-existing-record-drift");
+        }
+
+        return new Qa04EnvironmentHazardApplicationResultV1(created, next);
+    }
+
+    internal static DomainRecordEnvelopeV1<EnvironmentHazardPayloadV1> CreateHazard(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        DomainPartitionStateV1<EnvironmentHazardPayloadV1> current,
+        IDomainRecordSchemaResolverV1 references)
+    {
         ArgumentNullException.ThrowIfNull(binding);
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(references);
@@ -92,18 +112,7 @@ public static class Qa04EnvironmentHazardApplicationV1
             created.Payload.AffectedScopeRefs.Count != 1 || created.Payload.AffectedScopeRefs[0] != scopeRef)
             throw new InvalidDataException("qa04.environment.hazard-created-record-drift");
 
-        var next = new DomainPartitionStateV1<EnvironmentHazardPayloadV1>(
-            expectedIdentity,
-            current.RecordsCanonical.Concat(new[] { created }));
-        if (next.ItemCount != checked(current.ItemCount + 1UL))
-            throw new InvalidDataException("qa04.environment.hazard-create-count-drift");
-        foreach (var existing in current.RecordsCanonical)
-        {
-            if (!next.TryGet(existing.RecordId, out var after) || !ReferenceEquals(existing, after))
-                throw new InvalidDataException("qa04.environment.hazard-existing-record-drift");
-        }
-
-        return new Qa04EnvironmentHazardApplicationResultV1(created, next);
+        return created;
     }
 
     private static void RequireSchema(

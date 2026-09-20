@@ -27,6 +27,26 @@ public static class Qa04GovernanceIncidentApplicationV1
         DomainPartitionStateV1<GovernanceSecurityIncidentPayloadV1> current,
         IDomainRecordSchemaResolverV1 references)
     {
+        var created = CreateIncident(binding, current, references);
+        var next = current.WithAdditions(
+            new[] { created },
+            "qa04.governance.incident-record-id-collision");
+        if (next.ItemCount != checked(current.ItemCount + 1UL))
+            throw new InvalidDataException("qa04.governance.incident-create-count-drift");
+        foreach (var existing in current.RecordsCanonical)
+        {
+            if (!next.TryGet(existing.RecordId, out var after) || !ReferenceEquals(existing, after))
+                throw new InvalidDataException("qa04.governance.incident-existing-record-drift");
+        }
+
+        return new Qa04GovernanceIncidentApplicationResultV1(created, next);
+    }
+
+    internal static DomainRecordEnvelopeV1<GovernanceSecurityIncidentPayloadV1> CreateIncident(
+        Qa04CanonicalOperationBindingResultV1 binding,
+        DomainPartitionStateV1<GovernanceSecurityIncidentPayloadV1> current,
+        IDomainRecordSchemaResolverV1 references)
+    {
         ArgumentNullException.ThrowIfNull(binding);
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(references);
@@ -102,18 +122,7 @@ public static class Qa04GovernanceIncidentApplicationV1
             created.Payload.Status != Status || created.Payload.SeverityPpm != severity)
             throw new InvalidDataException("qa04.governance.incident-created-record-drift");
 
-        var next = new DomainPartitionStateV1<GovernanceSecurityIncidentPayloadV1>(
-            expectedIdentity,
-            current.RecordsCanonical.Concat(new[] { created }));
-        if (next.ItemCount != checked(current.ItemCount + 1UL))
-            throw new InvalidDataException("qa04.governance.incident-create-count-drift");
-        foreach (var existing in current.RecordsCanonical)
-        {
-            if (!next.TryGet(existing.RecordId, out var after) || !ReferenceEquals(existing, after))
-                throw new InvalidDataException("qa04.governance.incident-existing-record-drift");
-        }
-
-        return new Qa04GovernanceIncidentApplicationResultV1(created, next);
+        return created;
     }
 
     private static void RequireSchema(
