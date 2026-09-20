@@ -45,8 +45,7 @@ public static class Qa04GovernanceIncidentApplicationV1
         if (binding.PrimaryTarget != residentRef || binding.ScheduledOperation.EffectiveStep != effectiveStep)
             throw new InvalidDataException("qa04.governance.incident-target-step-drift");
 
-        var scopeRef = Qa04SpatialTileScopeAuthorityV1.ScopeRef(
-            Qa04ReferenceLoadV1.RegionalTileIndex(resident.RecordId));
+        var scopeRef = Qa04SpatialTileScopeAuthorityV1.ScopeRef(resident.RegionalTileIndex);
         var claimSlice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(SocietyInformationClaimPayloadV1.PartitionId);
         var claimLocalOrdinal = descriptor.FamilyOrdinal % claimSlice.Count;
         var claimBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(
