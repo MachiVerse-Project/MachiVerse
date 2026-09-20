@@ -31,9 +31,14 @@ public static class HashSuite
         if (canonicalValue.IsEmpty)
             throw new ArgumentException("Canonical MV-DCBOR value cannot be empty.", nameof(canonicalValue));
 
-        using var session = BeginDomainHashStreaming(label);
-        session.AppendCanonicalBytes(canonicalValue);
-        return session.Complete();
+        var labelBytes = EncodeDomainLabel(label);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(labelBytes);
+        Span<byte> separator = stackalloc byte[1];
+        separator[0] = 0;
+        hash.AppendData(separator);
+        hash.AppendData(canonicalValue);
+        return hash.GetHashAndReset();
     }
 
     /// <summary>
