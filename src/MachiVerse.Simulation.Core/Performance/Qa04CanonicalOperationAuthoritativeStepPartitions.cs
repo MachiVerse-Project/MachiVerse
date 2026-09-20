@@ -387,7 +387,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> changes,
         Func<TPayload, byte[]> canonicalPayloadDigest,
         Func<DomainRecordEnvelopeV1<TPayload>, byte[]>? canonicalRecordEncoding = null,
-        Qa04CanonicalRecordChunkCacheV1<TPayload>? chunkCache = null)
+        Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>? chunkCache = null)
     {
         var partitionId = resultingState.Identity.PartitionId.Value;
         RequireFamilyTarget(bindings, partitionId);
@@ -517,22 +517,47 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         ulong basisStep,
         ulong targetStep,
         IReadOnlyList<OpaqueId128> operationIds)
-        => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
+    {
+        if (basisHeader.DigestAlgorithm == PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1 &&
+            resultingHeader.DigestAlgorithm == PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1)
         {
-            writer.WriteMapStart(9);
+            return HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
+            {
+                writer.WriteMapStart(9);
+                writer.WriteUnsigned(0); writer.WriteAsciiText(basisHeader.PartitionId.Value);
+                writer.WriteUnsigned(1); writer.WriteAsciiText(basisHeader.OwnerDomain.Value);
+                writer.WriteUnsigned(2); writer.WriteUnsigned(basisHeader.Revision);
+                writer.WriteUnsigned(3); writer.WriteUnsigned(resultingHeader.Revision);
+                writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
+                writer.WriteUnsigned(5); writer.WriteUnsigned(targetStep);
+                writer.WriteUnsigned(6); writer.WriteBytes(basisHeader.CanonicalDigest);
+                writer.WriteUnsigned(7); writer.WriteBytes(resultingHeader.CanonicalDigest);
+                writer.WriteUnsigned(8);
+                writer.WriteArrayStart(checked((ulong)operationIds.Count));
+                foreach (var operationId in operationIds)
+                    writer.WriteBytes(operationId.ToBytes());
+            });
+        }
+
+        return HashSuite.DomainHash("mv.qa04.partition-receipt.v2", writer =>
+        {
+            writer.WriteMapStart(11);
             writer.WriteUnsigned(0); writer.WriteAsciiText(basisHeader.PartitionId.Value);
             writer.WriteUnsigned(1); writer.WriteAsciiText(basisHeader.OwnerDomain.Value);
             writer.WriteUnsigned(2); writer.WriteUnsigned(basisHeader.Revision);
             writer.WriteUnsigned(3); writer.WriteUnsigned(resultingHeader.Revision);
             writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
             writer.WriteUnsigned(5); writer.WriteUnsigned(targetStep);
-            writer.WriteUnsigned(6); writer.WriteBytes(basisHeader.CanonicalDigest);
-            writer.WriteUnsigned(7); writer.WriteBytes(resultingHeader.CanonicalDigest);
-            writer.WriteUnsigned(8);
+            writer.WriteUnsigned(6); writer.WriteUnsigned((byte)basisHeader.DigestAlgorithm);
+            writer.WriteUnsigned(7); writer.WriteBytes(basisHeader.CanonicalDigest);
+            writer.WriteUnsigned(8); writer.WriteUnsigned((byte)resultingHeader.DigestAlgorithm);
+            writer.WriteUnsigned(9); writer.WriteBytes(resultingHeader.CanonicalDigest);
+            writer.WriteUnsigned(10);
             writer.WriteArrayStart(checked((ulong)operationIds.Count));
             foreach (var operationId in operationIds)
                 writer.WriteBytes(operationId.ToBytes());
         });
+    }
 
     private static void RequireFamilyTarget(
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
