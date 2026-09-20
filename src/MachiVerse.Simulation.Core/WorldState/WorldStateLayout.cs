@@ -86,6 +86,39 @@ public sealed class PartitionStateHeaderV1
         ulong basisStep,
         DetailLevelV1 detailLevel,
         Func<TPayload, byte[]> canonicalPayloadDigest)
+        => CreateCanonicalCore(
+            partition,
+            revision,
+            basisStep,
+            detailLevel,
+            canonicalPayloadDigest,
+            canonicalRecordEncoding: null);
+
+    internal static PartitionStateHeaderV1 CreateCanonicalCached<TPayload>(
+        DomainPartitionStateV1<TPayload> partition,
+        ulong revision,
+        ulong basisStep,
+        DetailLevelV1 detailLevel,
+        Func<TPayload, byte[]> canonicalPayloadDigest,
+        Func<DomainRecordEnvelopeV1<TPayload>, byte[]> canonicalRecordEncoding)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalRecordEncoding);
+        return CreateCanonicalCore(
+            partition,
+            revision,
+            basisStep,
+            detailLevel,
+            canonicalPayloadDigest,
+            canonicalRecordEncoding);
+    }
+
+    private static PartitionStateHeaderV1 CreateCanonicalCore<TPayload>(
+        DomainPartitionStateV1<TPayload> partition,
+        ulong revision,
+        ulong basisStep,
+        DetailLevelV1 detailLevel,
+        Func<TPayload, byte[]> canonicalPayloadDigest,
+        Func<DomainRecordEnvelopeV1<TPayload>, byte[]>? canonicalRecordEncoding)
     {
         ArgumentNullException.ThrowIfNull(partition);
         ArgumentNullException.ThrowIfNull(canonicalPayloadDigest);
@@ -111,34 +144,21 @@ public sealed class PartitionStateHeaderV1
                 if (record.RetiredStep is { } retiredAfterBasis && retiredAfterBasis > basisStep)
                     throw new InvalidDataException("domain.record-retired-after-partition-basis");
 
+                if (canonicalRecordEncoding is not null)
+                {
+                    var encoded = canonicalRecordEncoding(record)
+                        ?? throw new InvalidDataException("domain.record-canonical-encoding-null");
+                    if (encoded.Length == 0)
+                        throw new InvalidDataException("domain.record-canonical-encoding-empty");
+                    writer.WriteCanonicalValue(encoded);
+                    continue;
+                }
+
                 var payloadDigest = canonicalPayloadDigest(record.Payload)
                     ?? throw new InvalidDataException("domain.payload-digest-null");
                 if (payloadDigest.Length != 32)
                     throw new InvalidDataException("domain.payload-digest-invalid-length");
-
-                writer.WriteMapStart(10);
-                writer.WriteUnsigned(0); writer.WriteBytes(record.RecordId.ToBytes());
-                writer.WriteUnsigned(1); writer.WriteAsciiText(record.RecordSchema.SchemaId.Value);
-                writer.WriteUnsigned(2); writer.WriteUnsigned(record.RecordSchema.Version.Major);
-                writer.WriteUnsigned(3); writer.WriteUnsigned(record.RecordSchema.Version.Minor);
-                writer.WriteUnsigned(4); writer.WriteUnsigned(record.Revision);
-                writer.WriteUnsigned(5); writer.WriteUnsigned(record.CreatedStep);
-                writer.WriteUnsigned(6);
-                if (record.RetiredStep is { } retired)
-                {
-                    writer.WriteArrayStart(1);
-                    writer.WriteUnsigned(retired);
-                }
-                else writer.WriteArrayStart(0);
-                writer.WriteUnsigned(7); writer.WriteUnsigned((byte)record.DetailLevel);
-                writer.WriteUnsigned(8);
-                if (record.LineageRef is { } lineage)
-                {
-                    writer.WriteArrayStart(1);
-                    writer.WriteBytes(lineage.ToBytes());
-                }
-                else writer.WriteArrayStart(0);
-                writer.WriteUnsigned(9); writer.WriteBytes(payloadDigest);
+                WriteCanonicalRecord(writer, record, payloadDigest);
             }
         });
 
@@ -149,6 +169,55 @@ public sealed class PartitionStateHeaderV1
             detailLevel,
             partition.ItemCount,
             digest);
+    }
+
+    internal static byte[] EncodeCanonicalRecord<TPayload>(
+        DomainRecordEnvelopeV1<TPayload> record,
+        byte[] payloadDigest)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(payloadDigest);
+        if (payloadDigest.Length != 32)
+            throw new InvalidDataException("domain.payload-digest-invalid-length");
+
+        var writer = new MvDcborWriter();
+        WriteCanonicalRecord(writer, record, payloadDigest);
+        return writer.ToArray();
+    }
+
+    private static void WriteCanonicalRecord<TPayload>(
+        MvDcborWriter writer,
+        DomainRecordEnvelopeV1<TPayload> record,
+        ReadOnlySpan<byte> payloadDigest)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(record);
+        if (payloadDigest.Length != 32)
+            throw new InvalidDataException("domain.payload-digest-invalid-length");
+
+        writer.WriteMapStart(10);
+        writer.WriteUnsigned(0); writer.WriteBytes(record.RecordId.ToBytes());
+        writer.WriteUnsigned(1); writer.WriteAsciiText(record.RecordSchema.SchemaId.Value);
+        writer.WriteUnsigned(2); writer.WriteUnsigned(record.RecordSchema.Version.Major);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(record.RecordSchema.Version.Minor);
+        writer.WriteUnsigned(4); writer.WriteUnsigned(record.Revision);
+        writer.WriteUnsigned(5); writer.WriteUnsigned(record.CreatedStep);
+        writer.WriteUnsigned(6);
+        if (record.RetiredStep is { } retired)
+        {
+            writer.WriteArrayStart(1);
+            writer.WriteUnsigned(retired);
+        }
+        else writer.WriteArrayStart(0);
+        writer.WriteUnsigned(7); writer.WriteUnsigned((byte)record.DetailLevel);
+        writer.WriteUnsigned(8);
+        if (record.LineageRef is { } lineage)
+        {
+            writer.WriteArrayStart(1);
+            writer.WriteBytes(lineage.ToBytes());
+        }
+        else writer.WriteArrayStart(0);
+        writer.WriteUnsigned(9); writer.WriteBytes(payloadDigest);
     }
 }
 
