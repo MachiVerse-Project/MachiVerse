@@ -433,21 +433,23 @@ public static class Qa04CanonicalOperationMutationBatchV1
             {
                 var overlay = new AdditionOverlayV1<InfrastructureServiceQueuePayloadV1>(
                     initialState.InfrastructureServiceQueue);
-                var empty = EmptyLike(initialState.InfrastructureServiceQueue);
                 foreach (var binding in work.Bindings)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = Qa04InfrastructureServiceReserveApplicationV1.Apply(
-                        worldId, binding, empty, references);
-                    overlay.Add(result.CreatedRecord, "qa04.infrastructure.service-reserve-duplicate");
+                    var created = Qa04InfrastructureServiceReserveApplicationV1.CreateRecord(
+                        worldId,
+                        binding,
+                        initialState.InfrastructureServiceQueue,
+                        references);
+                    overlay.Add(created, "qa04.infrastructure.service-reserve-duplicate");
                     changes.Add(Change(
                         binding,
                         InfrastructureServiceQueuePayloadV1.PartitionId,
-                        result.CreatedRecord.RecordId,
-                        result.CreatedRecord.RecordSchema,
-                        result.CreatedRecord.Revision,
-                        result.CreatedRecord.CreatedStep,
-                        result.CreatedRecord.DetailLevel,
+                        created.RecordId,
+                        created.RecordSchema,
+                        created.Revision,
+                        created.CreatedStep,
+                        created.DetailLevel,
                         Create));
                 }
                 return new FamilyMutationResultV1(
@@ -545,20 +547,22 @@ public static class Qa04CanonicalOperationMutationBatchV1
             {
                 var overlay = new AdditionOverlayV1<GovernanceSecurityIncidentPayloadV1>(
                     initialState.GovernanceSecurityIncident);
-                var empty = EmptyLike(initialState.GovernanceSecurityIncident);
                 foreach (var binding in work.Bindings)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = Qa04GovernanceIncidentApplicationV1.Apply(binding, empty, references);
-                    overlay.Add(result.CreatedIncident, "qa04.governance.incident-record-id-collision");
+                    var created = Qa04GovernanceIncidentApplicationV1.CreateIncident(
+                        binding,
+                        initialState.GovernanceSecurityIncident,
+                        references);
+                    overlay.Add(created, "qa04.governance.incident-record-id-collision");
                     changes.Add(Change(
                         binding,
                         GovernanceSecurityIncidentPayloadV1.PartitionId,
-                        result.CreatedIncident.RecordId,
-                        result.CreatedIncident.RecordSchema,
-                        result.CreatedIncident.Revision,
-                        result.CreatedIncident.CreatedStep,
-                        result.CreatedIncident.DetailLevel,
+                        created.RecordId,
+                        created.RecordSchema,
+                        created.Revision,
+                        created.CreatedStep,
+                        created.DetailLevel,
                         Create));
                 }
                 return new FamilyMutationResultV1(
@@ -569,20 +573,22 @@ public static class Qa04CanonicalOperationMutationBatchV1
             case EnvironmentFamily:
             {
                 var overlay = new AdditionOverlayV1<EnvironmentHazardPayloadV1>(initialState.EnvironmentHazard);
-                var empty = EmptyLike(initialState.EnvironmentHazard);
                 foreach (var binding in work.Bindings)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var result = Qa04EnvironmentHazardApplicationV1.Apply(binding, empty, references);
-                    overlay.Add(result.CreatedHazard, "qa04.environment.hazard-record-id-collision");
+                    var created = Qa04EnvironmentHazardApplicationV1.CreateHazard(
+                        binding,
+                        initialState.EnvironmentHazard,
+                        references);
+                    overlay.Add(created, "qa04.environment.hazard-record-id-collision");
                     changes.Add(Change(
                         binding,
                         EnvironmentHazardPayloadV1.PartitionId,
-                        result.CreatedHazard.RecordId,
-                        result.CreatedHazard.RecordSchema,
-                        result.CreatedHazard.Revision,
-                        result.CreatedHazard.CreatedStep,
-                        result.CreatedHazard.DetailLevel,
+                        created.RecordId,
+                        created.RecordSchema,
+                        created.Revision,
+                        created.CreatedStep,
+                        created.DetailLevel,
                         Create));
                 }
                 return new FamilyMutationResultV1(
@@ -612,12 +618,6 @@ public static class Qa04CanonicalOperationMutationBatchV1
         public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Changes { get; } =
             FamilyChanges ?? Array.Empty<Qa04CanonicalOperationMutationChangeV1>();
     }
-
-    private static DomainPartitionStateV1<TPayload> EmptyLike<TPayload>(
-        DomainPartitionStateV1<TPayload> source)
-        => new(
-            source.Identity,
-            Array.Empty<DomainRecordEnvelopeV1<TPayload>>());
 
     private static Qa04CanonicalOperationMutationChangeV1 Change(
         Qa04CanonicalOperationBindingResultV1 binding,
