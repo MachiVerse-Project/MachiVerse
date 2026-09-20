@@ -24,6 +24,12 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
     private readonly ConditionalWeakTable<SocietyMarketTransactionRecordPayloadV2, byte[]> _market = new();
     private readonly ConditionalWeakTable<GovernanceSecurityIncidentPayloadV1, byte[]> _governance = new();
     private readonly ConditionalWeakTable<EnvironmentHazardPayloadV1, byte[]> _environment = new();
+    private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<InfrastructureServiceQueuePayloadV1>, byte[]> _infrastructureRecords = new();
+    private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>, byte[]> _residentRecords = new();
+    private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<PhysicalPresencePayloadV1>, byte[]> _physicalRecords = new();
+    private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>, byte[]> _marketRecords = new();
+    private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<GovernanceSecurityIncidentPayloadV1>, byte[]> _governanceRecords = new();
+    private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<EnvironmentHazardPayloadV1>, byte[]> _environmentRecords = new();
 
     public Qa04ProductionStep2CanonicalDigestCacheV1(IDomainRecordSchemaResolverV1 references)
         => _references = references ?? throw new ArgumentNullException(nameof(references));
@@ -61,4 +67,40 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
             EnvironmentHazardPayloadV1.PartitionId,
             value.ToStandardPayload(),
             references: _references));
+
+    public byte[] InfrastructureRecord(
+        DomainRecordEnvelopeV1<InfrastructureServiceQueuePayloadV1> record)
+        => _infrastructureRecords.GetValue(
+            record,
+            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Infrastructure(value.Payload)));
+
+    public byte[] ResidentRecord(
+        DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1> record)
+        => _residentRecords.GetValue(
+            record,
+            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Resident(value.Payload)));
+
+    public byte[] PhysicalRecord(
+        DomainRecordEnvelopeV1<PhysicalPresencePayloadV1> record)
+        => _physicalRecords.GetValue(
+            record,
+            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Physical(value.Payload)));
+
+    public byte[] MarketRecord(
+        DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2> record)
+        => _marketRecords.GetValue(
+            record,
+            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Market(value.Payload)));
+
+    public byte[] GovernanceRecord(
+        DomainRecordEnvelopeV1<GovernanceSecurityIncidentPayloadV1> record)
+        => _governanceRecords.GetValue(
+            record,
+            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Governance(value.Payload)));
+
+    public byte[] EnvironmentRecord(
+        DomainRecordEnvelopeV1<EnvironmentHazardPayloadV1> record)
+        => _environmentRecords.GetValue(
+            record,
+            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Environment(value.Payload)));
 }
