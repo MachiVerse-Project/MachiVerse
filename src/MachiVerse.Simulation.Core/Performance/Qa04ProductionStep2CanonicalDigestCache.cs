@@ -70,9 +70,11 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
 
     public byte[] InfrastructureRecord(
         DomainRecordEnvelopeV1<InfrastructureServiceQueuePayloadV1> record)
-        => _infrastructureRecords.GetValue(
-            record,
-            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Infrastructure(value.Payload)));
+        => record.CreatedStep == 0
+            ? _infrastructureRecords.GetValue(
+                record,
+                value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Infrastructure(value.Payload)))
+            : PartitionStateHeaderV1.EncodeCanonicalRecord(record, Infrastructure(record.Payload));
 
     public byte[] ResidentRecord(
         DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1> record)
@@ -88,19 +90,25 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
 
     public byte[] MarketRecord(
         DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2> record)
-        => _marketRecords.GetValue(
-            record,
-            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Market(value.Payload)));
+        => record.CreatedStep == 0
+            ? _marketRecords.GetValue(
+                record,
+                value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Market(value.Payload)))
+            : PartitionStateHeaderV1.EncodeCanonicalRecord(record, Market(record.Payload));
 
     public byte[] GovernanceRecord(
         DomainRecordEnvelopeV1<GovernanceSecurityIncidentPayloadV1> record)
-        => _governanceRecords.GetValue(
-            record,
-            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Governance(value.Payload)));
+        => record.CreatedStep == 0
+            ? _governanceRecords.GetValue(
+                record,
+                value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Governance(value.Payload)))
+            : PartitionStateHeaderV1.EncodeCanonicalRecord(record, Governance(record.Payload));
 
     public byte[] EnvironmentRecord(
         DomainRecordEnvelopeV1<EnvironmentHazardPayloadV1> record)
-        => _environmentRecords.GetValue(
-            record,
-            value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Environment(value.Payload)));
+        => record.CreatedStep == 0
+            ? _environmentRecords.GetValue(
+                record,
+                value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Environment(value.Payload)))
+            : PartitionStateHeaderV1.EncodeCanonicalRecord(record, Environment(record.Payload));
 }
