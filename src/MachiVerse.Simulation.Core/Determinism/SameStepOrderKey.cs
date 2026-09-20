@@ -29,6 +29,14 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
     public int SemanticPriority { get; }
     public OpaqueId128 IntentId { get; }
 
+    internal bool CanonicallyEquals(SameStepOrderKey? other)
+        => other is not null &&
+           Phase == other.Phase &&
+           DomainRank == other.DomainRank &&
+           _conflictScopeDigest.AsSpan().SequenceEqual(other._conflictScopeDigest) &&
+           SemanticPriority == other.SemanticPriority &&
+           IntentId == other.IntentId;
+
     public int CompareTo(SameStepOrderKey? other)
     {
         if (other is null) return 1;
