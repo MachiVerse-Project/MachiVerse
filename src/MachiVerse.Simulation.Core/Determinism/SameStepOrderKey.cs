@@ -17,8 +17,7 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
                 ? conflictScopeDigest.ToArray()
                 : throw new ArgumentException("ConflictScopeDigest requires exactly 32 bytes.", nameof(conflictScopeDigest)),
             semanticPriority,
-            intentId,
-            trustedImmutableDigest: true)
+            intentId)
     {
     }
 
@@ -27,17 +26,13 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
         ushort domainRank,
         byte[] conflictScopeDigest,
         int semanticPriority,
-        OpaqueId128 intentId,
-        bool trustedImmutableDigest)
+        OpaqueId128 intentId)
     {
         if (phase > 5) throw new ArgumentOutOfRangeException(nameof(phase), "Standard OrderPhase is 0..5.");
         ArgumentNullException.ThrowIfNull(conflictScopeDigest);
         if (conflictScopeDigest.Length != ConflictScopeDigestLength)
             throw new ArgumentException("ConflictScopeDigest requires exactly 32 bytes.", nameof(conflictScopeDigest));
         if (intentId.IsZero) throw new ArgumentException("IntentId must be non-zero.", nameof(intentId));
-        if (!trustedImmutableDigest)
-            throw new ArgumentException("Trusted immutable digest marker is required.", nameof(trustedImmutableDigest));
-
         Phase = phase;
         DomainRank = domainRank;
         _conflictScopeDigest = conflictScopeDigest;
@@ -56,8 +51,7 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
             domainRank,
             conflictScopeDigest,
             semanticPriority,
-            intentId,
-            trustedImmutableDigest: true);
+            intentId);
 
     public byte Phase { get; }
     public ushort DomainRank { get; }
