@@ -168,6 +168,9 @@ public static class Qa04PhysicalMoveApplicationV1
         if (binding.Operation.Admission is null || binding.Operation.Admission.SchedulingPolicyGeneration == 0)
             throw new InvalidDataException("qa04.physical.move-admission");
 
+        if (Qa04CanonicalOperationBindingV1.HasCanonicalAuthority(binding))
+            return;
+
         var expected = Qa04CanonicalOperationBindingV1.Bind(
             binding.SourceDescriptor,
             binding.Operation.Admission.SchedulingPolicyGeneration);
