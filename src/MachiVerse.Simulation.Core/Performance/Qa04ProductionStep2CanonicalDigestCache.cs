@@ -30,12 +30,12 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
     private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>, byte[]> _marketRecords = new();
     private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<GovernanceSecurityIncidentPayloadV1>, byte[]> _governanceRecords = new();
     private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<EnvironmentHazardPayloadV1>, byte[]> _environmentRecords = new();
-    private readonly Qa04CanonicalRecordChunkCacheV1<InfrastructureServiceQueuePayloadV1> _infrastructureChunks;
-    private readonly Qa04CanonicalRecordChunkCacheV1<ResidentBehaviorStatePayloadV1> _residentChunks;
-    private readonly Qa04CanonicalRecordChunkCacheV1<PhysicalPresencePayloadV1> _physicalChunks;
-    private readonly Qa04CanonicalRecordChunkCacheV1<SocietyMarketTransactionRecordPayloadV2> _marketChunks;
-    private readonly Qa04CanonicalRecordChunkCacheV1<GovernanceSecurityIncidentPayloadV1> _governanceChunks;
-    private readonly Qa04CanonicalRecordChunkCacheV1<EnvironmentHazardPayloadV1> _environmentChunks;
+    private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<InfrastructureServiceQueuePayloadV1> _infrastructureChunks;
+    private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<ResidentBehaviorStatePayloadV1> _residentChunks;
+    private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<PhysicalPresencePayloadV1> _physicalChunks;
+    private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<SocietyMarketTransactionRecordPayloadV2> _marketChunks;
+    private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<GovernanceSecurityIncidentPayloadV1> _governanceChunks;
+    private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<EnvironmentHazardPayloadV1> _environmentChunks;
 
     public Qa04ProductionStep2CanonicalDigestCacheV1(IDomainRecordSchemaResolverV1 references)
     {
@@ -54,17 +54,17 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
             PartitionStateHeaderV1.EncodeCanonicalRecord(record, Environment(record.Payload)));
     }
 
-    internal Qa04CanonicalRecordChunkCacheV1<InfrastructureServiceQueuePayloadV1> InfrastructureChunks
+    internal Qa04RecordIdPrefixPartitionDigestCacheV2<InfrastructureServiceQueuePayloadV1> InfrastructureChunks
         => _infrastructureChunks;
-    internal Qa04CanonicalRecordChunkCacheV1<ResidentBehaviorStatePayloadV1> ResidentChunks
+    internal Qa04RecordIdPrefixPartitionDigestCacheV2<ResidentBehaviorStatePayloadV1> ResidentChunks
         => _residentChunks;
-    internal Qa04CanonicalRecordChunkCacheV1<PhysicalPresencePayloadV1> PhysicalChunks
+    internal Qa04RecordIdPrefixPartitionDigestCacheV2<PhysicalPresencePayloadV1> PhysicalChunks
         => _physicalChunks;
-    internal Qa04CanonicalRecordChunkCacheV1<SocietyMarketTransactionRecordPayloadV2> MarketChunks
+    internal Qa04RecordIdPrefixPartitionDigestCacheV2<SocietyMarketTransactionRecordPayloadV2> MarketChunks
         => _marketChunks;
-    internal Qa04CanonicalRecordChunkCacheV1<GovernanceSecurityIncidentPayloadV1> GovernanceChunks
+    internal Qa04RecordIdPrefixPartitionDigestCacheV2<GovernanceSecurityIncidentPayloadV1> GovernanceChunks
         => _governanceChunks;
-    internal Qa04CanonicalRecordChunkCacheV1<EnvironmentHazardPayloadV1> EnvironmentChunks
+    internal Qa04RecordIdPrefixPartitionDigestCacheV2<EnvironmentHazardPayloadV1> EnvironmentChunks
         => _environmentChunks;
 
     public byte[] Infrastructure(InfrastructureServiceQueuePayloadV1 payload)
