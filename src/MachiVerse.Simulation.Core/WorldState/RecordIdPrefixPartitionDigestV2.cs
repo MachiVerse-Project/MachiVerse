@@ -164,12 +164,14 @@ public static class RecordIdPrefixPartitionDigestV2
 
         using var session = HashSuite.BeginDomainHashStreaming(SliceContentLabel);
         var writer = session.Writer;
-        writer.WriteMapStart(5);
+        writer.WriteMapStart(7);
         writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
         writer.WriteUnsigned(1); writer.WriteAsciiText(identity.RecordSchema.SchemaId.Value);
-        writer.WriteUnsigned(2); writer.WriteUnsigned(DiagnosticPartitionVersion);
-        writer.WriteUnsigned(3); writer.WriteUnsigned(prefix);
-        writer.WriteUnsigned(4);
+        writer.WriteUnsigned(2); writer.WriteUnsigned(identity.RecordSchema.Version.Major);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(identity.RecordSchema.Version.Minor);
+        writer.WriteUnsigned(4); writer.WriteUnsigned(DiagnosticPartitionVersion);
+        writer.WriteUnsigned(5); writer.WriteUnsigned(prefix);
+        writer.WriteUnsigned(6);
         writer.WriteArrayStart(checked((ulong)canonicalRecords.Count));
         foreach (var encoded in canonicalRecords)
         {
@@ -219,16 +221,18 @@ public static class RecordIdPrefixPartitionDigestV2
 
         var digest = HashSuite.DomainHash(PartitionRootLabel, writer =>
         {
-            writer.WriteMapStart(9);
+            writer.WriteMapStart(11);
             writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
             writer.WriteUnsigned(1); writer.WriteAsciiText(identity.OwnerDomain.Value);
             writer.WriteUnsigned(2); writer.WriteAsciiText(identity.PartitionSchema.SchemaId.Value);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(revision);
-            writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
-            writer.WriteUnsigned(5); writer.WriteUnsigned((byte)detailLevel);
-            writer.WriteUnsigned(6); writer.WriteUnsigned(itemCount);
-            writer.WriteUnsigned(7); writer.WriteUnsigned(DiagnosticPartitionVersion);
-            writer.WriteUnsigned(8);
+            writer.WriteUnsigned(3); writer.WriteUnsigned(identity.PartitionSchema.Version.Major);
+            writer.WriteUnsigned(4); writer.WriteUnsigned(identity.PartitionSchema.Version.Minor);
+            writer.WriteUnsigned(5); writer.WriteUnsigned(revision);
+            writer.WriteUnsigned(6); writer.WriteUnsigned(basisStep);
+            writer.WriteUnsigned(7); writer.WriteUnsigned((byte)detailLevel);
+            writer.WriteUnsigned(8); writer.WriteUnsigned(itemCount);
+            writer.WriteUnsigned(9); writer.WriteUnsigned(DiagnosticPartitionVersion);
+            writer.WriteUnsigned(10);
             writer.WriteArrayStart(checked((ulong)slices.Count));
             foreach (var slice in slices)
             {
