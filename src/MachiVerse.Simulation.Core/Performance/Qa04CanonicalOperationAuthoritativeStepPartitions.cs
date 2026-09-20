@@ -79,7 +79,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                         InfrastructureServiceQueuePayloadV1.PartitionId,
                         payload.ToStandardPayload(),
                         references: references),
-                digestCache?.InfrastructureRecord),
+                digestCache is null ? null : digestCache.InfrastructureRecord),
             BindStandard(
                 basisState,
                 targetStep,
@@ -90,7 +90,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                         ResidentBehaviorStatePayloadV1.PartitionId,
                         payload.ToStandardPayload(),
                         references: references),
-                digestCache?.ResidentRecord),
+                digestCache is null ? null : digestCache.ResidentRecord),
             BindStandard(
                 basisState,
                 targetStep,
@@ -101,7 +101,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                         PhysicalPresencePayloadV1.PartitionId,
                         payload.ToStandardPayload(),
                         references: references),
-                digestCache?.PhysicalRecord),
+                digestCache is null ? null : digestCache.PhysicalRecord),
             BindMarket(
                 basisState,
                 targetStep,
@@ -119,7 +119,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                         GovernanceSecurityIncidentPayloadV1.PartitionId,
                         payload.ToStandardPayload(),
                         references: references),
-                digestCache?.GovernanceRecord),
+                digestCache is null ? null : digestCache.GovernanceRecord),
             BindStandard(
                 basisState,
                 targetStep,
@@ -130,7 +130,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                         EnvironmentHazardPayloadV1.PartitionId,
                         payload.ToStandardPayload(),
                         references: references),
-                digestCache?.EnvironmentRecord),
+                digestCache is null ? null : digestCache.EnvironmentRecord),
         }
         .OrderBy(static item => item.Candidate.PartitionId.Value, StringComparer.Ordinal)
         .ToArray();
@@ -208,7 +208,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                                 InfrastructureServiceQueuePayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
                                 references: references),
-                        digestCache?.InfrastructureRecord),
+                        digestCache is null ? null : digestCache.InfrastructureRecord),
                     ResidentFamily => BindStandard(
                         basisState,
                         targetStep,
@@ -219,7 +219,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                                 ResidentBehaviorStatePayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
                                 references: references),
-                        digestCache?.ResidentRecord),
+                        digestCache is null ? null : digestCache.ResidentRecord),
                     PhysicalFamily => BindStandard(
                         basisState,
                         targetStep,
@@ -230,7 +230,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                                 PhysicalPresencePayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
                                 references: references),
-                        digestCache?.PhysicalRecord),
+                        digestCache is null ? null : digestCache.PhysicalRecord),
                     MarketFamily => BindMarket(
                         basisState,
                         targetStep,
@@ -248,7 +248,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                                 GovernanceSecurityIncidentPayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
                                 references: references),
-                        digestCache?.GovernanceRecord),
+                        digestCache is null ? null : digestCache.GovernanceRecord),
                     EnvironmentFamily => BindStandard(
                         basisState,
                         targetStep,
@@ -259,7 +259,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                                 EnvironmentHazardPayloadV1.PartitionId,
                                 payload.ToStandardPayload(),
                                 references: references),
-                        digestCache?.EnvironmentRecord),
+                        digestCache is null ? null : digestCache.EnvironmentRecord),
                     _ => throw new InvalidDataException(
                         $"qa04.full-step.authoritative-partition-family-unregistered:{family}"),
                 };
