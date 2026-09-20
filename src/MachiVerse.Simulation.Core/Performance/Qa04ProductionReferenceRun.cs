@@ -67,7 +67,8 @@ public static class Qa04ProductionReferenceRunV1
         string persistenceRoot,
         CancellationToken cancellationToken = default,
         IQa04ProductionRunObserverV1? observer = null,
-        int progressHeartbeatSeconds = 60)
+        int progressHeartbeatSeconds = 60,
+        int? persistenceInsertBatchSize = null)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.production-run.worker-count-not-canonical");
@@ -75,6 +76,8 @@ public static class Qa04ProductionReferenceRunV1
             throw new ArgumentException("persistenceRoot is required.", nameof(persistenceRoot));
         if (progressHeartbeatSeconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(progressHeartbeatSeconds));
+        if (persistenceInsertBatchSize is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(persistenceInsertBatchSize));
 
         Qa04ReferenceLoadV1.ValidateCanonicalContract();
         Qa04MeasurementPhaseContractV1.ValidateCanonicalContract();
@@ -269,7 +272,8 @@ public static class Qa04ProductionReferenceRunV1
                             token,
                             currentDetailDirectory,
                             detailPolicy,
-                            digestCache: digestCache).ConfigureAwait(false);
+                            persistenceInsertBatchSize,
+                            digestCache).ConfigureAwait(false);
                     },
                     cancellationToken).ConfigureAwait(false);
 
