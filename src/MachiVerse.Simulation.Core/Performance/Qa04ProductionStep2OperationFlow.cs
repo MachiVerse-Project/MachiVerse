@@ -358,7 +358,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "typed-mutation", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
-        var preparation = await Qa04ProductionAuthoritativeStepPreparationV1.PrepareParallelAsync(
+        var preparation = await Qa04ProductionAuthoritativeStepPreparationV1.PrepareParallelWithExpectedDescriptorsAsync(
             candidateIdentity.CandidateId,
             basisState,
             frozen,
@@ -366,6 +366,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             mutation,
             references,
             runtimeOutputs,
+            descriptors,
             workerCount,
             digestCache,
             cancellationToken).ConfigureAwait(false);
