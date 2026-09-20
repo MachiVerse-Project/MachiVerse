@@ -84,12 +84,27 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
             previous = recordId;
         }
 
-        var recomputed = PartitionStateHeaderV1.CreateCanonical(
-            Partition.State,
-            Header.Revision,
-            Header.BasisStep,
-            Header.DetailLevel,
-            static payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload));
+        var recomputed = Header.DigestAlgorithm switch
+        {
+            PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1 =>
+                PartitionStateHeaderV1.CreateCanonical(
+                    Partition.State,
+                    Header.Revision,
+                    Header.BasisStep,
+                    Header.DetailLevel,
+                    static payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload)),
+            PartitionCanonicalDigestAlgorithmV1.RecordIdPrefixV2 =>
+                RecordIdPrefixPartitionDigestV2.CreateHeader(
+                    Partition.State,
+                    Header.Revision,
+                    Header.BasisStep,
+                    Header.DetailLevel,
+                    static record => PartitionStateHeaderV1.EncodeCanonicalRecord(
+                        record,
+                        SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(record.Payload))),
+            _ => throw new InvalidDataException(
+                "persistence.snapshot.society-market-v2-digest-algorithm"),
+        };
         if (recomputed.PartitionId != Header.PartitionId ||
             recomputed.OwnerDomain != Header.OwnerDomain ||
             recomputed.Schema != Header.Schema ||
@@ -97,6 +112,7 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
             recomputed.BasisStep != Header.BasisStep ||
             recomputed.DetailLevel != Header.DetailLevel ||
             recomputed.ItemCount != Header.ItemCount ||
+            recomputed.DigestAlgorithm != Header.DigestAlgorithm ||
             !CryptographicOperations.FixedTimeEquals(recomputed.CanonicalDigest, Header.CanonicalDigest))
             throw new InvalidDataException("persistence.snapshot.society-market-v2-header-material");
     }
