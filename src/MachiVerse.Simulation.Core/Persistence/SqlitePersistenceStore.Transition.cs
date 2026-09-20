@@ -281,4 +281,17 @@ WHERE operation_id IN (SELECT operation_id FROM qa04_terminal_commit_batch);
         }
     }
 
+    private Task CommitTerminalOperationAsync(
+        TerminalOperationCommit terminal,
+        ulong effectiveStep,
+        ulong terminalSequence,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+        => CommitTerminalOperationsBatchedAsync(
+            new[] { terminal },
+            effectiveStep,
+            terminalSequence,
+            transaction,
+            cancellationToken);
+
 }
