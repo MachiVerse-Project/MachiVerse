@@ -158,6 +158,7 @@ public static class Qa04ProductionReferenceRunV1
         var mutationMaxObservedCpuParallelism = 0;
         var preparationEffectiveWorkerCount = 0;
         var preparationMaxObservedCpuParallelism = 0;
+
         var progressElapsed = Stopwatch.StartNew();
         long completedTransitionsForProgress = 0;
         long terminalOperationsForProgress = 0;
