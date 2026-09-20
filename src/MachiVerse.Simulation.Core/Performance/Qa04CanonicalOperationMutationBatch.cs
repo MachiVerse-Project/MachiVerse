@@ -456,7 +456,8 @@ public static class Qa04CanonicalOperationMutationBatchV1
             }
             case ResidentFamily:
             {
-                var state = initialState.ResidentBehaviorState;
+                var overlay = new ResidentBehaviorOverlayV1(initialState.ResidentBehaviorState);
+                var empty = EmptyLike(initialState.ResidentBehaviorState);
                 foreach (var binding in work.Bindings)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -465,9 +466,22 @@ public static class Qa04CanonicalOperationMutationBatchV1
                     if (!initialState.ParticipationControlMode.TryGet(controlModeId, out var controlMode) ||
                         controlMode is null)
                         throw new InvalidDataException("qa04.full-step.mutation-control-mode-missing");
+
+                    DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> targetState;
+                    if (overlay.TryGet(binding.PrimaryTarget, out var existing) && existing is not null)
+                    {
+                        targetState = DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>.FromCanonicalRecords(
+                            initialState.ResidentBehaviorState.Identity,
+                            Array.AsReadOnly(new[] { existing }));
+                    }
+                    else
+                    {
+                        targetState = empty;
+                    }
+
                     var result = Qa04ResidentActionApplicationV1.Apply(
-                        worldId, binding, state, controlMode, references);
-                    state = result.BehaviorState;
+                        worldId, binding, targetState, controlMode, references);
+                    overlay.Apply(binding.PrimaryTarget, result);
                     changes.Add(Change(
                         binding,
                         ResidentBehaviorStatePayloadV1.PartitionId,
@@ -480,7 +494,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 }
                 return new FamilyMutationResultV1(
                     work.Family,
-                    ResidentBehaviorState: state,
+                    ResidentBehaviorState: overlay.Build(),
                     FamilyChanges: Array.AsReadOnly(changes.ToArray()));
             }
             case PhysicalFamily:
@@ -765,6 +779,106 @@ public static class Qa04CanonicalOperationMutationBatchV1
                 additions,
                 static record => record.RecordId);
             return DomainPartitionStateV1<TPayload>.FromCanonicalRecords(
+                _initial.Identity,
+                merged);
+        }
+    }
+
+    private sealed class ResidentBehaviorOverlayV1
+    {
+        private readonly DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> _initial;
+        private readonly Dictionary<PartitionRecordRefV1, DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>> _byResident = new();
+        private readonly HashSet<PartitionRecordRefV1> _duplicateResidents = new();
+        private readonly Dictionary<OpaqueId128, DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>> _replacements = new();
+        private readonly Dictionary<OpaqueId128, DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>> _additions = new();
+
+        public ResidentBehaviorOverlayV1(
+            DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> initial)
+        {
+            _initial = initial ?? throw new ArgumentNullException(nameof(initial));
+            foreach (var record in _initial.RecordsCanonical)
+            {
+                if (!_byResident.TryAdd(record.Payload.ResidentRef, record))
+                    _duplicateResidents.Add(record.Payload.ResidentRef);
+            }
+        }
+
+        public bool TryGet(
+            PartitionRecordRefV1 residentRef,
+            out DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>? record)
+        {
+            if (_duplicateResidents.Contains(residentRef))
+                throw new InvalidDataException("qa04.resident.action-duplicate-resident-behavior");
+            return _byResident.TryGetValue(residentRef, out record);
+        }
+
+        public void Apply(
+            PartitionRecordRefV1 residentRef,
+            Qa04ResidentActionApplicationResultV1 result)
+        {
+            ArgumentNullException.ThrowIfNull(result);
+            var record = result.AppliedRecord
+                ?? throw new InvalidDataException("qa04.full-step.mutation-resident-result-missing");
+            if (record.Payload.ResidentRef != residentRef)
+                throw new InvalidDataException("qa04.full-step.mutation-resident-result-drift");
+
+            if (result.Created)
+            {
+                if (_duplicateResidents.Contains(residentRef) ||
+                    _byResident.ContainsKey(residentRef) ||
+                    _initial.TryGet(record.RecordId, out _) ||
+                    _replacements.ContainsKey(record.RecordId) ||
+                    !_additions.TryAdd(record.RecordId, record))
+                {
+                    throw new InvalidDataException("qa04.resident.action-record-id-collision");
+                }
+
+                _byResident.Add(residentRef, record);
+                return;
+            }
+
+            if (!_byResident.TryGetValue(residentRef, out var previous) ||
+                previous.RecordId != record.RecordId ||
+                _additions.ContainsKey(record.RecordId))
+            {
+                throw new InvalidDataException("qa04.full-step.mutation-resident-result-drift");
+            }
+
+            _replacements[record.RecordId] = record;
+            _byResident[residentRef] = record;
+        }
+
+        public DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> Build()
+        {
+            var rebuilt = new DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>[
+                checked((int)_initial.ItemCount)];
+            var index = 0;
+            var replaced = 0;
+            foreach (var record in _initial.RecordsCanonical)
+            {
+                if (_replacements.TryGetValue(record.RecordId, out var replacement))
+                {
+                    rebuilt[index++] = replacement;
+                    replaced++;
+                }
+                else
+                {
+                    rebuilt[index++] = record;
+                }
+            }
+
+            if (index != rebuilt.Length || replaced != _replacements.Count)
+                throw new InvalidDataException("qa04.mutation.resident-overlay-count-drift");
+
+            var additions = _additions.Values
+                .OrderBy(static record => record.RecordId)
+                .ToArray();
+            var merged = MergeCanonical(
+                rebuilt,
+                rebuilt.Length,
+                additions,
+                static record => record.RecordId);
+            return DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>.FromCanonicalRecords(
                 _initial.Identity,
                 merged);
         }
