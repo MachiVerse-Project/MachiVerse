@@ -87,6 +87,7 @@ public static class Qa04ProductionReferenceRunV1
         _ = Qa04AlgorithmIterationBudgetGuardV1.ValidateCanonicalContract();
 
         var assembly = Qa04ProductionReferenceWorldAssemblerV1.AssembleCanonical();
+        var digestCache = new Qa04ProductionStep2CanonicalDigestCacheV1(assembly.References);
         if (assembly.Validation.CanonicalInitialRecordCount != Qa04ReferenceLoadV1.CanonicalInitialRecordCount ||
             assembly.BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-run.reference-world-incomplete");
@@ -157,7 +158,6 @@ public static class Qa04ProductionReferenceRunV1
         var mutationMaxObservedCpuParallelism = 0;
         var preparationEffectiveWorkerCount = 0;
         var preparationMaxObservedCpuParallelism = 0;
-
         var progressElapsed = Stopwatch.StartNew();
         long completedTransitionsForProgress = 0;
         long terminalOperationsForProgress = 0;
@@ -267,7 +267,8 @@ public static class Qa04ProductionReferenceRunV1
                             candidateIdentities,
                             token,
                             currentDetailDirectory,
-                            detailPolicy).ConfigureAwait(false);
+                            detailPolicy,
+                            digestCache: digestCache).ConfigureAwait(false);
                     },
                     cancellationToken).ConfigureAwait(false);
 
