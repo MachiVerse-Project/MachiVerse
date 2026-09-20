@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Domains.Environment;
 using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
@@ -756,9 +757,12 @@ public static class Qa04CanonicalOperationMutationBatchV1
 
     private sealed class ResidentBehaviorOverlayV1
     {
+        private static readonly ConditionalWeakTable<
+            DomainPartitionStateV1<ResidentBehaviorStatePayloadV1>,
+            ResidentBehaviorIndexV1> IndexByState = new();
+
         private readonly DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> _initial;
-        private readonly Dictionary<PartitionRecordRefV1, DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>> _byResident = new();
-        private readonly HashSet<PartitionRecordRefV1> _duplicateResidents = new();
+        private ResidentBehaviorIndexV1 _residentIndex;
         private readonly Dictionary<OpaqueId128, DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>> _replacements = new();
         private readonly Dictionary<OpaqueId128, DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>> _additions = new();
 
@@ -766,20 +770,25 @@ public static class Qa04CanonicalOperationMutationBatchV1
             DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> initial)
         {
             _initial = initial ?? throw new ArgumentNullException(nameof(initial));
-            foreach (var record in _initial.RecordsCanonical)
-            {
-                if (!_byResident.TryAdd(record.Payload.ResidentRef, record))
-                    _duplicateResidents.Add(record.Payload.ResidentRef);
-            }
+            _residentIndex = IndexByState.GetValue(initial, static state => ResidentBehaviorIndexV1.Build(state));
         }
 
         public bool TryGet(
             PartitionRecordRefV1 residentRef,
             out DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>? record)
         {
-            if (_duplicateResidents.Contains(residentRef))
+            if (!_residentIndex.TryGet(residentRef, out var entry))
+            {
+                record = null;
+                return false;
+            }
+
+            if (entry.Duplicate)
                 throw new InvalidDataException("qa04.resident.action-duplicate-resident-behavior");
-            return _byResident.TryGetValue(residentRef, out record);
+
+            record = entry.Record
+                ?? throw new InvalidDataException("qa04.full-step.mutation-resident-index-null");
+            return true;
         }
 
         public void Apply(
@@ -794,28 +803,35 @@ public static class Qa04CanonicalOperationMutationBatchV1
 
             if (result.Created)
             {
-                if (_duplicateResidents.Contains(residentRef) ||
-                    _byResident.ContainsKey(residentRef) ||
-                    _initial.TryGet(record.RecordId, out _) ||
+                if (_residentIndex.TryGet(residentRef, out var existingByResident))
+                {
+                    if (existingByResident.Duplicate)
+                        throw new InvalidDataException("qa04.resident.action-duplicate-resident-behavior");
+                    throw new InvalidDataException("qa04.resident.action-record-id-collision");
+                }
+
+                if (_initial.TryGet(record.RecordId, out _) ||
                     _replacements.ContainsKey(record.RecordId) ||
                     !_additions.TryAdd(record.RecordId, record))
                 {
                     throw new InvalidDataException("qa04.resident.action-record-id-collision");
                 }
 
-                _byResident.Add(residentRef, record);
+                _residentIndex = _residentIndex.Upsert(residentRef, record);
                 return;
             }
 
-            if (!_byResident.TryGetValue(residentRef, out var previous) ||
-                previous.RecordId != record.RecordId ||
+            if (!_residentIndex.TryGet(residentRef, out var previousEntry) ||
+                previousEntry.Duplicate ||
+                previousEntry.Record is null ||
+                previousEntry.Record.RecordId != record.RecordId ||
                 _additions.ContainsKey(record.RecordId))
             {
                 throw new InvalidDataException("qa04.full-step.mutation-resident-result-drift");
             }
 
             _replacements[record.RecordId] = record;
-            _byResident[residentRef] = record;
+            _residentIndex = _residentIndex.Upsert(residentRef, record);
         }
 
         public DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> Build()
@@ -823,9 +839,210 @@ public static class Qa04CanonicalOperationMutationBatchV1
             var replaced = _initial.WithReplacements(
                 _replacements.Values.OrderBy(static record => record.RecordId),
                 "qa04.mutation.resident-overlay-replacement-missing");
-            return replaced.WithAdditions(
+            var next = replaced.WithAdditions(
                 _additions.Values.OrderBy(static record => record.RecordId),
                 "qa04.resident.action-record-id-collision");
+
+            IndexByState.Add(next, _residentIndex);
+            return next;
+        }
+
+        private sealed record ResidentBehaviorIndexEntryV1(
+            PartitionRecordRefV1 ResidentRef,
+            DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1>? Record,
+            bool Duplicate);
+
+        private sealed class ResidentBehaviorIndexV1
+        {
+            private readonly Node? _root;
+
+            private ResidentBehaviorIndexV1(Node? root)
+                => _root = root;
+
+            public static ResidentBehaviorIndexV1 Build(
+                DomainPartitionStateV1<ResidentBehaviorStatePayloadV1> state)
+            {
+                ArgumentNullException.ThrowIfNull(state);
+                var byResident = new SortedDictionary<PartitionRecordRefV1, ResidentBehaviorIndexEntryV1>(
+                    ResidentRefComparer.Instance);
+
+                foreach (var record in state.RecordsCanonical)
+                {
+                    var residentRef = record.Payload.ResidentRef;
+                    if (byResident.TryGetValue(residentRef, out var previous))
+                    {
+                        byResident[residentRef] = previous with
+                        {
+                            Record = null,
+                            Duplicate = true,
+                        };
+                    }
+                    else
+                    {
+                        byResident.Add(
+                            residentRef,
+                            new ResidentBehaviorIndexEntryV1(residentRef, record, Duplicate: false));
+                    }
+                }
+
+                var canonical = byResident.Values.ToArray();
+                return new ResidentBehaviorIndexV1(
+                    BuildBalanced(canonical, 0, canonical.Length));
+            }
+
+            public bool TryGet(
+                PartitionRecordRefV1 residentRef,
+                out ResidentBehaviorIndexEntryV1 entry)
+            {
+                var node = _root;
+                while (node is not null)
+                {
+                    var comparison = ResidentRefComparer.Instance.Compare(residentRef, node.Entry.ResidentRef);
+                    if (comparison == 0)
+                    {
+                        entry = node.Entry;
+                        return true;
+                    }
+
+                    node = comparison < 0 ? node.Left : node.Right;
+                }
+
+                entry = default!;
+                return false;
+            }
+
+            public ResidentBehaviorIndexV1 Upsert(
+                PartitionRecordRefV1 residentRef,
+                DomainRecordEnvelopeV1<ResidentBehaviorStatePayloadV1> record)
+            {
+                ArgumentNullException.ThrowIfNull(record);
+                if (record.Payload.ResidentRef != residentRef)
+                    throw new InvalidDataException("qa04.full-step.mutation-resident-index-drift");
+
+                return new ResidentBehaviorIndexV1(
+                    Set(
+                        _root,
+                        new ResidentBehaviorIndexEntryV1(residentRef, record, Duplicate: false)));
+            }
+
+            private static Node? BuildBalanced(
+                IReadOnlyList<ResidentBehaviorIndexEntryV1> entries,
+                int start,
+                int length)
+            {
+                if (length == 0)
+                    return null;
+
+                var leftLength = length >> 1;
+                var middle = start + leftLength;
+                return new Node(
+                    entries[middle],
+                    BuildBalanced(entries, start, leftLength),
+                    BuildBalanced(entries, middle + 1, length - leftLength - 1));
+            }
+
+            private static Node Set(
+                Node? node,
+                ResidentBehaviorIndexEntryV1 entry)
+            {
+                if (node is null)
+                    return new Node(entry, null, null);
+
+                var comparison = ResidentRefComparer.Instance.Compare(
+                    entry.ResidentRef,
+                    node.Entry.ResidentRef);
+                if (comparison == 0)
+                {
+                    if (node.Entry == entry)
+                        return node;
+                    return new Node(entry, node.Left, node.Right);
+                }
+
+                if (comparison < 0)
+                {
+                    var left = Set(node.Left, entry);
+                    if (ReferenceEquals(left, node.Left))
+                        return node;
+                    return Balance(new Node(node.Entry, left, node.Right));
+                }
+
+                var right = Set(node.Right, entry);
+                if (ReferenceEquals(right, node.Right))
+                    return node;
+                return Balance(new Node(node.Entry, node.Left, right));
+            }
+
+            private static Node Balance(Node node)
+            {
+                var balance = Height(node.Left) - Height(node.Right);
+                if (balance > 1)
+                {
+                    if (Height(node.Left!.Left) < Height(node.Left.Right))
+                        return RotateRight(new Node(node.Entry, RotateLeft(node.Left), node.Right));
+                    return RotateRight(node);
+                }
+
+                if (balance < -1)
+                {
+                    if (Height(node.Right!.Right) < Height(node.Right.Left))
+                        return RotateLeft(new Node(node.Entry, node.Left, RotateRight(node.Right)));
+                    return RotateLeft(node);
+                }
+
+                return node;
+            }
+
+            private static Node RotateLeft(Node node)
+            {
+                var pivot = node.Right
+                    ?? throw new InvalidOperationException("qa04.resident-index.rotate-left");
+                var moved = new Node(node.Entry, node.Left, pivot.Left);
+                return new Node(pivot.Entry, moved, pivot.Right);
+            }
+
+            private static Node RotateRight(Node node)
+            {
+                var pivot = node.Left
+                    ?? throw new InvalidOperationException("qa04.resident-index.rotate-right");
+                var moved = new Node(node.Entry, pivot.Right, node.Right);
+                return new Node(pivot.Entry, pivot.Left, moved);
+            }
+
+            private static int Height(Node? node) => node?.Height ?? 0;
+
+            private sealed class Node
+            {
+                public Node(
+                    ResidentBehaviorIndexEntryV1 entry,
+                    Node? left,
+                    Node? right)
+                {
+                    Entry = entry;
+                    Left = left;
+                    Right = right;
+                    Height = checked(1 + Math.Max(ResidentBehaviorIndexV1.Height(left), ResidentBehaviorIndexV1.Height(right)));
+                }
+
+                public ResidentBehaviorIndexEntryV1 Entry { get; }
+                public Node? Left { get; }
+                public Node? Right { get; }
+                public int Height { get; }
+            }
+
+            private sealed class ResidentRefComparer : IComparer<PartitionRecordRefV1>
+            {
+                public static ResidentRefComparer Instance { get; } = new();
+
+                public int Compare(PartitionRecordRefV1 left, PartitionRecordRefV1 right)
+                {
+                    var partition = string.CompareOrdinal(
+                        left.PartitionId.Value,
+                        right.PartitionId.Value);
+                    return partition != 0
+                        ? partition
+                        : left.RecordId.CompareTo(right.RecordId);
+                }
+            }
         }
     }
 
