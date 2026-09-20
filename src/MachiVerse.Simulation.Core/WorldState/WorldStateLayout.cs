@@ -147,31 +147,31 @@ public sealed class PartitionStateHeaderV1
             throw new InvalidDataException("domain.record-chunk-count-mismatch");
 
         ulong actualCount = 0;
-        var digest = HashSuite.DomainHashStreaming("mv.state-diagnostic.v1", writer =>
+        using var session = HashSuite.BeginDomainHashStreaming("mv.state-diagnostic.v1");
+        var writer = session.Writer;
+        writer.WriteMapStart(8);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
+        writer.WriteUnsigned(1); writer.WriteAsciiText(identity.OwnerDomain.Value);
+        writer.WriteUnsigned(2); writer.WriteAsciiText(identity.PartitionSchema.SchemaId.Value);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(revision);
+        writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
+        writer.WriteUnsigned(5); writer.WriteUnsigned((byte)detailLevel);
+        writer.WriteUnsigned(6); writer.WriteUnsigned(itemCount);
+        writer.WriteUnsigned(7);
+        writer.WriteArrayStart(itemCount);
+
+        foreach (var chunk in canonicalRecordChunks)
         {
-            writer.WriteMapStart(8);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
-            writer.WriteUnsigned(1); writer.WriteAsciiText(identity.OwnerDomain.Value);
-            writer.WriteUnsigned(2); writer.WriteAsciiText(identity.PartitionSchema.SchemaId.Value);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(revision);
-            writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
-            writer.WriteUnsigned(5); writer.WriteUnsigned((byte)detailLevel);
-            writer.WriteUnsigned(6); writer.WriteUnsigned(itemCount);
-            writer.WriteUnsigned(7);
-            writer.WriteArrayStart(itemCount);
-
-            foreach (var chunk in canonicalRecordChunks)
-            {
-                ArgumentNullException.ThrowIfNull(chunk);
-                actualCount = checked(actualCount + chunk.RecordCount);
-                if (actualCount > itemCount)
-                    throw new InvalidDataException("domain.record-chunk-count-mismatch");
-                writer.WriteCanonicalSequence(chunk.EncodedRecords);
-            }
-
-            if (actualCount != itemCount)
+            ArgumentNullException.ThrowIfNull(chunk);
+            actualCount = checked(actualCount + chunk.RecordCount);
+            if (actualCount > itemCount)
                 throw new InvalidDataException("domain.record-chunk-count-mismatch");
-        });
+            session.AppendCanonicalBytes(chunk.EncodedRecords);
+        }
+
+        if (actualCount != itemCount)
+            throw new InvalidDataException("domain.record-chunk-count-mismatch");
+        var digest = session.Complete();
 
         return new PartitionStateHeaderV1(
             identity,
