@@ -130,6 +130,21 @@ internal static class Qa04ResidentActionApplicationSmoke
                 references),
             "qa04.resident.action-binding-drift");
 
+        var inPlaceTamperedBinding = Qa04CanonicalOperationBindingV1.Bind(
+            descriptor1,
+            schedulingPolicyGeneration: 1);
+        var inPlaceTamperedPayload = inPlaceTamperedBinding.Operation.OperationPayload.ToByteArray();
+        inPlaceTamperedPayload[^1] ^= 0x01;
+        inPlaceTamperedBinding.Operation.OperationPayload = ByteString.CopyFrom(inPlaceTamperedPayload);
+        ExpectInvalid(
+            () => Qa04ResidentActionApplicationV1.Apply(
+                Qa04ReferenceLoadV1.WorldId,
+                inPlaceTamperedBinding,
+                empty,
+                controlMode,
+                references),
+            "qa04.resident.action-binding-drift");
+
         var nonAutonomousPayload = controlMode.Payload with { Mode = new StableToken("diver-control-available") };
         var nonAutonomous = new DomainRecordEnvelopeV1<ParticipationControlModePayloadV1>(
             controlMode.RecordId,
