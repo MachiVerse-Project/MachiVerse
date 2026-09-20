@@ -144,8 +144,11 @@ internal sealed class Qa04CanonicalRecordChunkCacheV1<TPayload>
             var entries = normalized.Values
                 .Select(static update => new Entry(update.RecordId, update.Encoded))
                 .ToArray();
-            if (entries.Any((entry, index) => index != 0 && entries[index - 1].RecordId.CompareTo(entry.RecordId) >= 0))
-                throw new InvalidDataException("qa04.canonical-chunk-cache.delta-order-drift");
+            for (var index = 1; index < entries.Length; index++)
+            {
+                if (entries[index - 1].RecordId.CompareTo(entries[index].RecordId) >= 0)
+                    throw new InvalidDataException("qa04.canonical-chunk-cache.delta-order-drift");
+            }
             _chunks = SplitEntries(entries);
         }
         else
@@ -196,12 +199,11 @@ internal sealed class Qa04CanonicalRecordChunkCacheV1<TPayload>
             if (change.PartitionId != state.Identity.PartitionId)
                 throw new InvalidDataException("qa04.canonical-chunk-cache.change-partition-drift");
 
-            ref var mode = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(
-                modes,
-                change.ChangedRecordId,
-                out var exists);
-            if (!exists)
+            if (!modes.TryGetValue(change.ChangedRecordId, out var mode))
+            {
                 mode = new ChangeMode();
+                modes.Add(change.ChangedRecordId, mode);
+            }
 
             switch (change.MutationMode.Value)
             {
