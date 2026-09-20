@@ -123,6 +123,7 @@ internal static class Qa04CanonicalOperationMutationBatchSmoke
         Require(ReferenceEquals(result.State.ParticipationControlMode, controlModes),
             "Gate2 mutation stage must not mutate participation control authority");
 
+        Qa04CanonicalOperationMutationBatchResultV1? persistentIndexBasis = null;
         foreach (var workerCount in new[] { 1, 4, 8, 16 })
         {
             var parallel = Qa04CanonicalOperationMutationBatchV1.ApplyParallelAsync(
@@ -163,7 +164,34 @@ internal static class Qa04CanonicalOperationMutationBatchSmoke
                     parallel.State.GovernanceSecurityIncident.ItemCount == result.State.GovernanceSecurityIncident.ItemCount &&
                     parallel.State.EnvironmentHazard.ItemCount == result.State.EnvironmentHazard.ItemCount,
                 $"Gate2 parallel mutation state cardinality drifted for workers={workerCount}.");
+            if (workerCount == 4)
+                persistentIndexBasis = parallel;
         }
+
+        var indexedBasis = persistentIndexBasis
+            ?? throw new InvalidOperationException("Gate2 resident persistent index basis missing.");
+        var nextBindings = Qa04ReferenceLoadV1.OperationsForStep(2)
+            .GroupBy(static descriptor => descriptor.FamilyToken.Value, StringComparer.Ordinal)
+            .Select(static group => group.First())
+            .Select(static descriptor => Qa04CanonicalOperationBindingV1.Bind(descriptor, schedulingPolicyGeneration: 1))
+            .ToArray();
+        Array.Sort(nextBindings, static (left, right) => left.OrderKey.CompareTo(right.OrderKey));
+        var nextEffectiveStep = nextBindings[0].ScheduledOperation.EffectiveStep;
+        Require(nextEffectiveStep == checked(effectiveStep + 1UL) &&
+                nextBindings.All(binding => binding.ScheduledOperation.EffectiveStep == nextEffectiveStep),
+            "Gate2 resident persistent index next-step schedule drift");
+        var nextParallel = Qa04CanonicalOperationMutationBatchV1.ApplyParallelAsync(
+            Qa04ReferenceLoadV1.WorldId,
+            nextEffectiveStep,
+            nextBindings,
+            indexedBasis.State,
+            references,
+            workerCount: 4).GetAwaiter().GetResult();
+        var firstBehavior = indexedBasis.State.ResidentBehaviorState.RecordsCanonical.Single();
+        Require(nextParallel.State.ResidentBehaviorState.TryGet(firstBehavior.RecordId, out var nextBehavior) &&
+                nextBehavior is not null &&
+                nextBehavior.Revision == checked(firstBehavior.Revision + 1UL),
+            "Gate2 resident persistent index must preserve consecutive revision semantics");
 
         var replay = Qa04CanonicalOperationMutationBatchV1.Apply(
             Qa04ReferenceLoadV1.WorldId,
