@@ -237,11 +237,11 @@ jobs:
 
             Write-Host "GATE4_STEP3_PRECHECK_START workers=$workers transitions=$precheckTransitions interval=$progressInterval request_bytes=$($requestBytes.Length)"
             $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $startInfo.FileName = $env:MACHIVERSE_QA04_CORE_EXECUTABLE
-            $startInfo.Arguments = "qa04-target"
+            $startInfo.FileName = $env:ComSpec
+            $startInfo.Arguments = '/d /s /c ""{0}" qa04-target < "{1}""' -f $env:MACHIVERSE_QA04_CORE_EXECUTABLE, $requestPath
             $startInfo.UseShellExecute = $false
             $startInfo.CreateNoWindow = $true
-            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardInput = $false
             $startInfo.RedirectStandardOutput = $true
             $startInfo.RedirectStandardError = $true
 
@@ -252,9 +252,6 @@ jobs:
             }
             $stdoutTask = $process.StandardOutput.ReadToEndAsync()
             $stderrTask = $process.StandardError.ReadToEndAsync()
-            $process.StandardInput.BaseStream.Write($requestBytes, 0, $requestBytes.Length)
-            $process.StandardInput.BaseStream.Flush()
-            $process.StandardInput.Close()
 
             if (-not $process.WaitForExit($precheckTimeoutSeconds * 1000)) {
               try { $process.Kill() } catch {}
