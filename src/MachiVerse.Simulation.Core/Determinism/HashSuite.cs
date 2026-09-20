@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -6,6 +7,9 @@ namespace MachiVerse.Simulation.Core.Determinism;
 
 public static class HashSuite
 {
+    private static readonly ConcurrentDictionary<string, byte[]> DomainLabelBytes =
+        new(StringComparer.Ordinal);
+
     public static byte[] Hash256(ReadOnlySpan<byte> data) => SHA256.HashData(data);
 
     public static byte[] DomainHash(string label, Action<MvDcborWriter> writeValue)
@@ -20,6 +24,16 @@ public static class HashSuite
         preimage[labelBytes.Length] = 0;
         valueBytes.CopyTo(preimage, labelBytes.Length + 1);
         return SHA256.HashData(preimage);
+    }
+
+    internal static byte[] DomainHashCanonicalValue(string label, ReadOnlySpan<byte> canonicalValue)
+    {
+        if (canonicalValue.IsEmpty)
+            throw new ArgumentException("Canonical MV-DCBOR value cannot be empty.", nameof(canonicalValue));
+
+        using var session = BeginDomainHashStreaming(label);
+        session.AppendCanonicalBytes(canonicalValue);
+        return session.Complete();
     }
 
     /// <summary>
@@ -51,9 +65,14 @@ public static class HashSuite
     private static byte[] EncodeDomainLabel(string label)
     {
         ArgumentNullException.ThrowIfNull(label);
-        if (label.Any(static c => c > 0x7f))
-            throw new ArgumentException("Domain label must be ASCII.", nameof(label));
-        return Encoding.ASCII.GetBytes(label);
+        return DomainLabelBytes.GetOrAdd(
+            label,
+            static value =>
+            {
+                if (value.Any(static c => c > 0x7f))
+                    throw new ArgumentException("Domain label must be ASCII.", nameof(label));
+                return Encoding.ASCII.GetBytes(value);
+            });
     }
 
     public sealed class StreamingDomainHashSession : IDisposable
