@@ -27,6 +27,21 @@ public static class Qa04MarketOrderApplicationV1
     private static readonly StableToken Buy = new("buy");
     private static readonly StableToken Sell = new("sell");
     private static readonly StableToken Open = new("open");
+    private static readonly SchemaRefV1 ResidentRecordSchema =
+        StandardDomainPartitionRegistry.Get(ResidentIdentityLifecyclePayloadV1.PartitionId).RecordSchema;
+    private static readonly Lazy<IReadOnlyList<SocietyMarketTransactionRecordMaterialV2>> CanonicalMarketStates =
+        new(static () =>
+        {
+            var states = new SocietyMarketTransactionRecordMaterialV2[Qa04ReferenceScenariosV1.MarketScopeCount];
+            for (var scope = 0; scope < states.Length; scope++)
+            {
+                states[scope] = Qa04MarketMaterializerV1.CreateMarketState(
+                    checked((uint)scope),
+                    Qa04SpatialTileScopeAuthorityV1.ScopeRef,
+                    out _);
+            }
+            return Array.AsReadOnly(states);
+        });
 
     public static Qa04MarketOrderApplicationResultV1 Apply(
         Qa04CanonicalOperationBindingResultV1 binding,
@@ -77,10 +92,7 @@ public static class Qa04MarketOrderApplicationV1
     {
         var descriptor = binding.SourceDescriptor;
         var scopeOrdinal = checked((uint)(descriptor.FamilyOrdinal % (ulong)Qa04ReferenceScenariosV1.MarketScopeCount));
-        var expectedMarket = Qa04MarketMaterializerV1.CreateMarketState(
-            scopeOrdinal,
-            Qa04SpatialTileScopeAuthorityV1.ScopeRef,
-            out _);
+        var expectedMarket = CanonicalMarketState(scopeOrdinal);
         var marketRef = new PartitionRecordRefV1(
             SocietyMarketTransactionRecordSchemaV2.PartitionId,
             expectedMarket.RecordId);
@@ -99,10 +111,7 @@ public static class Qa04MarketOrderApplicationV1
     {
         var descriptor = binding.SourceDescriptor;
         var scopeOrdinal = checked((uint)(descriptor.FamilyOrdinal % (ulong)Qa04ReferenceScenariosV1.MarketScopeCount));
-        var expectedMarket = Qa04MarketMaterializerV1.CreateMarketState(
-            scopeOrdinal,
-            Qa04SpatialTileScopeAuthorityV1.ScopeRef,
-            out _);
+        var expectedMarket = CanonicalMarketState(scopeOrdinal);
         var marketRef = new PartitionRecordRefV1(
             SocietyMarketTransactionRecordSchemaV2.PartitionId,
             expectedMarket.RecordId);
@@ -126,8 +135,7 @@ public static class Qa04MarketOrderApplicationV1
         var ownerRef = new PartitionRecordRefV1(
             ResidentIdentityLifecyclePayloadV1.PartitionId,
             resident.RecordId);
-        var residentSchema = StandardDomainPartitionRegistry.Get(ResidentIdentityLifecyclePayloadV1.PartitionId).RecordSchema;
-        if (!references.TryGetRecordSchema(ownerRef, out var resolvedOwnerSchema) || resolvedOwnerSchema != residentSchema)
+        if (!references.TryGetRecordSchema(ownerRef, out var resolvedOwnerSchema) || resolvedOwnerSchema != ResidentRecordSchema)
             throw new InvalidDataException("qa04.market.order-owner-ref");
 
         var side = (descriptor.FamilyOrdinal & 1UL) == 0UL ? Buy : Sell;
@@ -186,6 +194,13 @@ public static class Qa04MarketOrderApplicationV1
         }
 
         return created;
+    }
+
+    private static SocietyMarketTransactionRecordMaterialV2 CanonicalMarketState(uint scopeOrdinal)
+    {
+        if (scopeOrdinal >= CanonicalMarketStates.Value.Count)
+            throw new ArgumentOutOfRangeException(nameof(scopeOrdinal));
+        return CanonicalMarketStates.Value[checked((int)scopeOrdinal)];
     }
 
     private static void RequireCanonicalMarketState(
