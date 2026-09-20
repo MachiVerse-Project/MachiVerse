@@ -64,20 +64,14 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         if (_itemCount != state.ItemCount)
             throw new InvalidDataException("qa04.prefix-digest-cache.item-count-drift");
 
-        var sliceDigests = _slices.Values
-            .Select(static slice => new PartitionDigestSliceV2(
-                slice.Prefix,
-                checked((ulong)slice.Count),
-                slice.ContentDigest))
-            .ToArray();
-
         return RecordIdPrefixPartitionDigestV2.CreateHeaderFromPrevalidatedSlices(
             state.Identity,
             revision,
             basisStep,
             detailLevel,
             state.ItemCount,
-            sliceDigests);
+            _slices.Values.Select(static slice => slice.Commitment),
+            _slices.Count);
     }
 
     private void Rebuild(
@@ -444,14 +438,17 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             Prefix = RecordIdPrefixPartitionDigestV2.PrefixOf(_keys[0]);
             if (_keys.Any(key => RecordIdPrefixPartitionDigestV2.PrefixOf(key) != Prefix))
                 throw new InvalidDataException("qa04.prefix-digest-cache.slice-prefix-drift");
-            ContentDigest = contentDigest.ToArray();
+            Commitment = new PartitionDigestSliceV2(
+                Prefix,
+                checked((ulong)_keys.Length),
+                contentDigest);
         }
 
         public ushort Prefix { get; }
         public int Count => _keys.Length;
         public OpaqueId128 FirstRecordId => _keys[0];
         public OpaqueId128 LastRecordId => _keys[^1];
-        public byte[] ContentDigest { get; }
+        public PartitionDigestSliceV2 Commitment { get; }
 
         public Entry GetEntry(int index)
         {
