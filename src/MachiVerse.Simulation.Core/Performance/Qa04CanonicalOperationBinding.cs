@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Google.Protobuf;
 using MachiVerse.Protocol.V1;
@@ -58,6 +59,21 @@ public static class Qa04CanonicalOperationBindingV1
     private static readonly StableToken Sell = new("sell");
     private static readonly StableToken GovernanceIncident = new("perf.incident");
     private static readonly StableToken SyntheticHazard = new("perf.synthetic-hazard");
+
+    private static readonly ConcurrentDictionary<ConflictScopeCacheKeyV1, byte[]> ConflictScopeByTarget = new();
+    private static readonly ConcurrentDictionary<ulong, StaticBindingMaterialV1> MarketMaterialByOrdinal = new();
+    private static readonly ConcurrentDictionary<ulong, StaticBindingMaterialV1> GovernanceMaterialByOrdinal = new();
+    private static readonly ConcurrentDictionary<ulong, StaticBindingMaterialV1> EnvironmentMaterialByOrdinal = new();
+    private static readonly IReadOnlyDictionary<string, string> PayloadSchemaIdByOperationKind =
+        new[]
+        {
+            "resident.action.request",
+            "physical.move.request",
+            "society.market.order-place",
+            "infrastructure.service.reserve",
+            "governance.incident.register",
+            "environment.hazard.inject",
+        }.ToDictionary(static kind => kind, static kind => "operation." + kind, StringComparer.Ordinal);
 
     private static readonly IReadOnlyDictionary<StableToken, ushort> DomainRankByToken =
         StandardDomainExecutionPlanV1.Create().Entries.ToDictionary(
@@ -143,22 +159,15 @@ public static class Qa04CanonicalOperationBindingV1
 
         _ = new StableToken(operation.OperationKind);
         _ = new StableToken(operation.OperationPayloadSchemaId);
-        var payload = operation.OperationPayload.ToByteArray();
-        if (payload.Length == 0)
+        if (operation.OperationPayload.Length == 0)
             throw new InvalidDataException("qa04.workload.operation-payload-empty");
 
-        return HashSuite.DomainHash(OperationDigestDomain, writer =>
-        {
-            writer.WriteMapStart(5);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(operation.OperationKind);
-            writer.WriteUnsigned(1); WriteAdmission(writer, operation.Admission);
-            writer.WriteUnsigned(2); writer.WriteAsciiText(operation.OperationPayloadSchemaId);
-            writer.WriteUnsigned(3);
-            writer.WriteArrayStart(2);
-            writer.WriteUnsigned(operation.OperationPayloadSchemaVersion.Major);
-            writer.WriteUnsigned(operation.OperationPayloadSchemaVersion.Minor);
-            writer.WriteUnsigned(4); writer.WriteCanonicalValue(payload);
-        });
+        return ComputeImmutablePayloadDigestCore(
+            operation.OperationKind,
+            operation.Admission,
+            operation.OperationPayloadSchemaId,
+            operation.OperationPayloadSchemaVersion,
+            operation.OperationPayload);
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindResident(
@@ -184,7 +193,7 @@ public static class Qa04CanonicalOperationBindingV1
             operationKind: "resident.action.request",
             ResidentDomain,
             residentRef,
-            payloadWriter.ToArray());
+            ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindPhysical(
@@ -211,24 +220,39 @@ public static class Qa04CanonicalOperationBindingV1
             operationKind: "physical.move.request",
             PhysicalDomain,
             subjectRef,
-            payloadWriter.ToArray());
+            ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindMarket(
         Qa04OperationDescriptorV1 descriptor,
         ulong schedulingPolicyGeneration)
     {
-        var scopeOrdinal = checked((int)(descriptor.FamilyOrdinal % Qa04ReferenceScenariosV1.MarketScopeCount));
+        var material = MarketMaterialByOrdinal.GetOrAdd(
+            descriptor.FamilyOrdinal,
+            static ordinal => CreateMarketMaterial(ordinal));
+
+        return BindResolved(
+            descriptor,
+            schedulingPolicyGeneration,
+            operationKind: "society.market.order-place",
+            SocietyDomain,
+            material.PrimaryTarget,
+            material.CanonicalPayload);
+    }
+
+    private static StaticBindingMaterialV1 CreateMarketMaterial(ulong familyOrdinal)
+    {
+        var scopeOrdinal = checked((int)(familyOrdinal % Qa04ReferenceScenariosV1.MarketScopeCount));
         var marketRef = new PartitionRecordRefV1(
             SocietyMarketTransactionRecordSchemaV2.PartitionId,
             Qa04ReferenceScenariosV1.MarketScopeId(scopeOrdinal));
-        var owner = Qa04ReferenceLoadV1.Record(ResidentClass, descriptor.FamilyOrdinal);
+        var owner = Qa04ReferenceLoadV1.Record(ResidentClass, familyOrdinal);
         var ownerRef = new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, owner.RecordId);
-        var side = (descriptor.FamilyOrdinal & 1UL) == 0 ? Buy : Sell;
+        var side = (familyOrdinal & 1UL) == 0 ? Buy : Sell;
         var price = side == Buy
-            ? checked(100_000L + (long)(descriptor.FamilyOrdinal % 1_000UL))
-            : checked(99_500L + (long)(descriptor.FamilyOrdinal % 1_000UL));
-        var quantity = checked(1L + (long)(descriptor.FamilyOrdinal % 20UL));
+            ? checked(100_000L + (long)(familyOrdinal % 1_000UL))
+            : checked(99_500L + (long)(familyOrdinal % 1_000UL));
+        var quantity = checked(1L + (long)(familyOrdinal % 20UL));
 
         var payloadWriter = new MvDcborWriter();
         payloadWriter.WriteArrayStart(5);
@@ -237,14 +261,7 @@ public static class Qa04CanonicalOperationBindingV1
         payloadWriter.WriteAsciiText(side.Value);
         payloadWriter.WriteInt64(price);
         payloadWriter.WriteInt64(quantity);
-
-        return BindResolved(
-            descriptor,
-            schedulingPolicyGeneration,
-            operationKind: "society.market.order-place",
-            SocietyDomain,
-            marketRef,
-            payloadWriter.ToArray());
+        return new StaticBindingMaterialV1(marketRef, ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindInfrastructure(
@@ -272,20 +289,35 @@ public static class Qa04CanonicalOperationBindingV1
             operationKind: "infrastructure.service.reserve",
             InfrastructureDomain,
             serviceRef,
-            payloadWriter.ToArray());
+            ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindGovernance(
         Qa04OperationDescriptorV1 descriptor,
         ulong schedulingPolicyGeneration)
     {
-        var resident = Qa04ReferenceLoadV1.Record(ResidentClass, descriptor.FamilyOrdinal);
+        var material = GovernanceMaterialByOrdinal.GetOrAdd(
+            descriptor.FamilyOrdinal,
+            static ordinal => CreateGovernanceMaterial(ordinal));
+
+        return BindResolved(
+            descriptor,
+            schedulingPolicyGeneration,
+            operationKind: "governance.incident.register",
+            GovernanceDomain,
+            material.PrimaryTarget,
+            material.CanonicalPayload);
+    }
+
+    private static StaticBindingMaterialV1 CreateGovernanceMaterial(ulong familyOrdinal)
+    {
+        var resident = Qa04ReferenceLoadV1.Record(ResidentClass, familyOrdinal);
         var residentRef = new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, resident.RecordId);
         var scopeRef = Qa04SpatialTileScopeAuthorityV1.ScopeRef(
             Qa04ReferenceLoadV1.RegionalTileIndex(resident.RecordId));
 
         var claimSlice = Qa04SocietyGovernanceReferenceDecompositionV1.Get(SocietyInformationClaimPayloadV1.PartitionId);
-        var claimLocalOrdinal = descriptor.FamilyOrdinal % claimSlice.Count;
+        var claimLocalOrdinal = familyOrdinal % claimSlice.Count;
         var claimBinding = Qa04SocietyGovernanceReferenceDecompositionV1.Bind(
             checked(claimSlice.StartOrdinal + claimLocalOrdinal));
         if (claimBinding.PartitionId.Value != SocietyInformationClaimPayloadV1.PartitionId ||
@@ -302,23 +334,31 @@ public static class Qa04CanonicalOperationBindingV1
         WriteRecordRef(payloadWriter, scopeRef);
         payloadWriter.WriteArrayStart(1);
         WriteRecordRef(payloadWriter, claimRef);
-
-        return BindResolved(
-            descriptor,
-            schedulingPolicyGeneration,
-            operationKind: "governance.incident.register",
-            GovernanceDomain,
-            residentRef,
-            payloadWriter.ToArray());
+        return new StaticBindingMaterialV1(residentRef, ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindEnvironment(
         Qa04OperationDescriptorV1 descriptor,
         ulong schedulingPolicyGeneration)
     {
-        var tile = checked((ushort)(descriptor.FamilyOrdinal % Qa04ReferenceLoadV1.RegionalTileCount));
+        var material = EnvironmentMaterialByOrdinal.GetOrAdd(
+            descriptor.FamilyOrdinal,
+            static ordinal => CreateEnvironmentMaterial(ordinal));
+
+        return BindResolved(
+            descriptor,
+            schedulingPolicyGeneration,
+            operationKind: "environment.hazard.inject",
+            EnvironmentDomain,
+            material.PrimaryTarget,
+            material.CanonicalPayload);
+    }
+
+    private static StaticBindingMaterialV1 CreateEnvironmentMaterial(ulong familyOrdinal)
+    {
+        var tile = checked((ushort)(familyOrdinal % Qa04ReferenceLoadV1.RegionalTileCount));
         var scopeRef = Qa04SpatialTileScopeAuthorityV1.ScopeRef(tile);
-        var intensityPpm = checked(100_000UL + descriptor.FamilyOrdinal % 800_001UL);
+        var intensityPpm = checked(100_000UL + familyOrdinal % 800_001UL);
 
         var payloadWriter = new MvDcborWriter();
         payloadWriter.WriteArrayStart(4);
@@ -326,14 +366,7 @@ public static class Qa04CanonicalOperationBindingV1
         WriteRecordRef(payloadWriter, scopeRef);
         payloadWriter.WriteUnsigned(intensityPpm);
         payloadWriter.WriteUnsigned(30);
-
-        return BindResolved(
-            descriptor,
-            schedulingPolicyGeneration,
-            operationKind: "environment.hazard.inject",
-            EnvironmentDomain,
-            scopeRef,
-            payloadWriter.ToArray());
+        return new StaticBindingMaterialV1(scopeRef, ByteString.CopyFrom(payloadWriter.ToArray()));
     }
 
     private static Qa04CanonicalOperationBindingResultV1 BindResolved(
@@ -342,8 +375,9 @@ public static class Qa04CanonicalOperationBindingV1
         string operationKind,
         StableToken ownerDomain,
         PartitionRecordRefV1 primaryTarget,
-        byte[] canonicalPayload)
+        ByteString canonicalPayload)
     {
+        ArgumentNullException.ThrowIfNull(canonicalPayload);
         if (canonicalPayload.Length == 0)
             throw new InvalidDataException("qa04.workload.operation-payload-empty");
         if (!DomainRankByToken.TryGetValue(ownerDomain, out var domainRank))
@@ -354,7 +388,8 @@ public static class Qa04CanonicalOperationBindingV1
             AdmissionBasisStep = descriptor.InjectionStep,
             SchedulingPolicyGeneration = schedulingPolicyGeneration,
         };
-        var schemaId = $"operation.{operationKind}";
+        if (!PayloadSchemaIdByOperationKind.TryGetValue(operationKind, out var schemaId))
+            throw new InvalidDataException($"qa04.workload.operation-kind-schema-unregistered:{operationKind}");
         var operation = new StandardOperationV1
         {
             OperationId = ByteString.CopyFrom(descriptor.OperationId.ToBytes()),
@@ -370,18 +405,25 @@ public static class Qa04CanonicalOperationBindingV1
                 Major = PayloadSchemaMajor,
                 Minor = PayloadSchemaMinor,
             },
-            OperationPayload = ByteString.CopyFrom(canonicalPayload),
+            OperationPayload = canonicalPayload,
         };
-        var digest = ComputeImmutablePayloadDigest(operation);
+        var digest = ComputeImmutablePayloadDigestCore(
+            operationKind,
+            admission,
+            schemaId,
+            operation.OperationPayloadSchemaVersion,
+            operation.OperationPayload);
         operation.ImmutablePayloadDigest = ByteString.CopyFrom(digest);
 
-        var conflictScope = HashSuite.DomainHash(ConflictScopeDomain, writer =>
-        {
-            writer.WriteArrayStart(2);
-            writer.WriteAsciiText(operationKind);
-            writer.WriteBytes(primaryTarget.RecordId.ToBytes());
-        });
-        var orderKey = new SameStepOrderKey(
+        var conflictScope = ConflictScopeByTarget.GetOrAdd(
+            new ConflictScopeCacheKeyV1(operationKind, primaryTarget.RecordId),
+            static key => HashSuite.DomainHash(ConflictScopeDomain, writer =>
+            {
+                writer.WriteArrayStart(2);
+                writer.WriteAsciiText(key.OperationKind);
+                writer.WriteBytes(key.TargetRecordId.ToBytes());
+            }));
+        var orderKey = SameStepOrderKey.FromTrustedImmutableConflictScopeDigest(
             phase: 1,
             domainRank,
             conflictScope,
@@ -520,8 +562,8 @@ public static class Qa04CanonicalOperationBindingV1
         private sealed class OperationStampV1
         {
             private OperationStampV1(
-                byte[] operationId,
-                byte[] immutablePayloadDigest,
+                ByteString operationId,
+                ByteString immutablePayloadDigest,
                 string operationKind,
                 ulong admissionBasisStep,
                 ulong schedulingPolicyGeneration,
@@ -535,7 +577,7 @@ public static class Qa04CanonicalOperationBindingV1
                 bool hasPayloadSchemaVersion,
                 uint payloadSchemaMajor,
                 uint payloadSchemaMinor,
-                byte[] payload)
+                ByteString payload)
             {
                 OperationId = operationId;
                 ImmutablePayloadDigest = immutablePayloadDigest;
@@ -555,8 +597,8 @@ public static class Qa04CanonicalOperationBindingV1
                 Payload = payload;
             }
 
-            private byte[] OperationId { get; }
-            private byte[] ImmutablePayloadDigest { get; }
+            private ByteString OperationId { get; }
+            private ByteString ImmutablePayloadDigest { get; }
             private string OperationKind { get; }
             private ulong AdmissionBasisStep { get; }
             private ulong SchedulingPolicyGeneration { get; }
@@ -570,7 +612,7 @@ public static class Qa04CanonicalOperationBindingV1
             private bool HasPayloadSchemaVersion { get; }
             private uint PayloadSchemaMajor { get; }
             private uint PayloadSchemaMinor { get; }
-            private byte[] Payload { get; }
+            private ByteString Payload { get; }
 
             public static OperationStampV1 Capture(StandardOperationV1 operation)
             {
@@ -579,8 +621,8 @@ public static class Qa04CanonicalOperationBindingV1
                 var version = operation.OperationPayloadSchemaVersion;
                 var candidate = operation.Candidate;
                 return new OperationStampV1(
-                    operation.OperationId.ToByteArray(),
-                    operation.ImmutablePayloadDigest.ToByteArray(),
+                    operation.OperationId,
+                    operation.ImmutablePayloadDigest,
                     operation.OperationKind,
                     admission.AdmissionBasisStep,
                     admission.SchedulingPolicyGeneration,
@@ -594,7 +636,7 @@ public static class Qa04CanonicalOperationBindingV1
                     version is not null,
                     version?.Major ?? 0U,
                     version?.Minor ?? 0U,
-                    operation.OperationPayload.ToByteArray());
+                    operation.OperationPayload);
             }
 
             public bool Matches(StandardOperationV1 operation)
@@ -605,8 +647,8 @@ public static class Qa04CanonicalOperationBindingV1
 
                 var candidate = operation.Candidate;
                 var version = operation.OperationPayloadSchemaVersion;
-                return operation.OperationId.Span.SequenceEqual(OperationId) &&
-                       operation.ImmutablePayloadDigest.Span.SequenceEqual(ImmutablePayloadDigest) &&
+                return operation.OperationId.Span.SequenceEqual(OperationId.Span) &&
+                       operation.ImmutablePayloadDigest.Span.SequenceEqual(ImmutablePayloadDigest.Span) &&
                        string.Equals(operation.OperationKind, OperationKind, StringComparison.Ordinal) &&
                        admission.AdmissionBasisStep == AdmissionBasisStep &&
                        admission.SchedulingPolicyGeneration == SchedulingPolicyGeneration &&
@@ -620,7 +662,7 @@ public static class Qa04CanonicalOperationBindingV1
                        (version is not null) == HasPayloadSchemaVersion &&
                        (!HasPayloadSchemaVersion ||
                         (version!.Major == PayloadSchemaMajor && version.Minor == PayloadSchemaMinor)) &&
-                       operation.OperationPayload.Span.SequenceEqual(Payload);
+                       operation.OperationPayload.Span.SequenceEqual(Payload.Span);
             }
         }
 
@@ -662,6 +704,41 @@ public static class Qa04CanonicalOperationBindingV1
                    key.IntentId == IntentId;
         }
     }
+
+    private static byte[] ComputeImmutablePayloadDigestCore(
+        string operationKind,
+        OperationSchedulingAdmissionWireV1 admission,
+        string payloadSchemaId,
+        SchemaVersionWireV1 payloadSchemaVersion,
+        ByteString canonicalPayload)
+    {
+        ArgumentNullException.ThrowIfNull(admission);
+        ArgumentNullException.ThrowIfNull(payloadSchemaVersion);
+        ArgumentNullException.ThrowIfNull(canonicalPayload);
+        if (canonicalPayload.Length == 0)
+            throw new InvalidDataException("qa04.workload.operation-payload-empty");
+
+        return HashSuite.DomainHash(OperationDigestDomain, writer =>
+        {
+            writer.WriteMapStart(5);
+            writer.WriteUnsigned(0); writer.WriteAsciiText(operationKind);
+            writer.WriteUnsigned(1); WriteAdmission(writer, admission);
+            writer.WriteUnsigned(2); writer.WriteAsciiText(payloadSchemaId);
+            writer.WriteUnsigned(3);
+            writer.WriteArrayStart(2);
+            writer.WriteUnsigned(payloadSchemaVersion.Major);
+            writer.WriteUnsigned(payloadSchemaVersion.Minor);
+            writer.WriteUnsigned(4); writer.WriteCanonicalValue(canonicalPayload.Span);
+        });
+    }
+
+    private readonly record struct ConflictScopeCacheKeyV1(
+        string OperationKind,
+        OpaqueId128 TargetRecordId);
+
+    private sealed record StaticBindingMaterialV1(
+        PartitionRecordRefV1 PrimaryTarget,
+        ByteString CanonicalPayload);
 
     private static void WriteAdmission(MvDcborWriter writer, OperationSchedulingAdmissionWireV1 admission)
     {
