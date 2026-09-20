@@ -80,6 +80,7 @@ public static class Qa04CanonicalOperationPostCommitVerifierV1
                 published.Revision != typedResult.Revision ||
                 published.BasisStep != typedResult.BasisStep ||
                 published.ItemCount != typedResult.ItemCount ||
+                published.DigestAlgorithm != typedResult.DigestAlgorithm ||
                 !CryptographicOperations.FixedTimeEquals(published.CanonicalDigest, typedResult.CanonicalDigest))
             {
                 throw new InvalidDataException($"qa04.full-step.post-commit-typed-partition-drift:{candidate.PartitionId.Value}");
