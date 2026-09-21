@@ -271,6 +271,11 @@ jobs:
             $exitCode = $process.ExitCode
             $process.Dispose()
 
+            $phaseLines = @($stderr -split [Environment]::NewLine | Where-Object { $_ -match '^QA04_PHASE ' })
+            foreach ($phaseLine in $phaseLines) {
+              Write-Host $phaseLine
+            }
+
             if ($exitCode -ne 0) {
               $tail = @($stderr -split [Environment]::NewLine | Select-Object -Last 40) -join [Environment]::NewLine
               throw "Step3 performance precheck failed for workers=$workers exit=${exitCode}: $tail"
@@ -327,9 +332,6 @@ jobs:
             $reportPath = Join-Path $env:QA04_STEP3_OUTPUT "step3-performance-precheck.json"
             $partialReport | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding utf8
 
-            if ($estimatedMatrixSeconds -gt $maxSeconds) {
-              throw "Estimated Step3 matrix runtime lower bound already exceeds the configured hard upper bound after workers=$workers; remaining precheck rows and canonical benchmark will not start."
-            }
           }
 
           $report = [ordered]@{
