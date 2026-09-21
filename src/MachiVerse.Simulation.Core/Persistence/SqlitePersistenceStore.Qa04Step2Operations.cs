@@ -434,7 +434,7 @@ WHERE singleton=1;
                         payloadDigest.Length != 32 ||
                         orderKey.Length != SameStepOrderKey.DatabaseKeyLength)
                         throw new InvalidDataException("persistence.qa04-operation-batch-item-invalid");
-                    if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
+                    if (binding.ScheduledOperation.EffectiveStep != authority.EffectiveStep)
                         throw new InvalidDataException("persistence.qa04-operation-batch-item-effective-step-drift");
 
                     if (localIndex > 0) sql.Append(',');
@@ -493,7 +493,7 @@ WHERE singleton=1;
         var orderKey = binding.OrderKey.ToDatabaseBytes();
         if (operationId.IsZero || payloadDigest.Length != 32 || orderKey.Length != SameStepOrderKey.DatabaseKeyLength)
             throw new InvalidDataException("persistence.qa04-operation-batch-item-invalid");
-        if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
+        if (binding.ScheduledOperation.EffectiveStep != authority.EffectiveStep)
             throw new InvalidDataException("persistence.qa04-operation-batch-item-effective-step-drift");
 
         await using (var operation = _connection.CreateCommand())
