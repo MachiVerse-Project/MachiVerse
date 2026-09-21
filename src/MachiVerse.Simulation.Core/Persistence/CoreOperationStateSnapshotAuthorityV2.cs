@@ -46,16 +46,22 @@ public sealed class CoreOperationStateSnapshotAuthorityV2
             .Select(static value => value ?? throw new ArgumentNullException(nameof(operations)))
             .OrderBy(static value => value.OperationId)
             .ToArray();
-        if (orderedOperations.Select(static value => value.OperationId).Distinct().Count() != orderedOperations.Length)
-            throw new InvalidDataException("snapshot-core.operation-v2.duplicate-operation-id");
-        var operationAuthority = DurableOperationSubstateV1.Canonicalize(orderedOperations);
+        for (var index = 1; index < orderedOperations.Length; index++)
+        {
+            if (orderedOperations[index - 1].OperationId == orderedOperations[index].OperationId)
+                throw new InvalidDataException("snapshot-core.operation-v2.duplicate-operation-id");
+        }
+        var operationAuthority = DurableOperationSubstateV1.CanonicalizeOrderedByOperationId(orderedOperations);
 
         var orderedTransactions = transactions
             .Select(static value => value ?? throw new ArgumentNullException(nameof(transactions)))
             .OrderBy(static value => value.TransactionId)
             .ToArray();
-        if (orderedTransactions.Select(static value => value.TransactionId).Distinct().Count() != orderedTransactions.Length)
-            throw new InvalidDataException("snapshot-core.operation-v2.duplicate-transaction-id");
+        for (var index = 1; index < orderedTransactions.Length; index++)
+        {
+            if (orderedTransactions[index - 1].TransactionId == orderedTransactions[index].TransactionId)
+                throw new InvalidDataException("snapshot-core.operation-v2.duplicate-transaction-id");
+        }
         foreach (var state in orderedTransactions)
         {
             if (state.CreatedStep > state.UpdatedStep || state.UpdatedStep > basisStep)
