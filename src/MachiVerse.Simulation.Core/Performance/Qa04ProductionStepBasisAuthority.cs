@@ -24,9 +24,12 @@ public static class Qa04ProductionStepBasisAuthorityV1
         ArgumentNullException.ThrowIfNull(durableOperations);
 
         ValidateSchedulerAndDurableShape(partitionAuthorityState.Header.Step, scheduler, durableOperations);
+        var schedulerState = OperationSchedulerSubstateV1.Canonicalize(
+            scheduler,
+            partitionAuthorityState.Header.Step);
         var operationState = DurableOperationSubstateV1.Canonicalize(durableOperations);
-        var state = BindCoreAuthorityCore(partitionAuthorityState, scheduler, operationState);
-        ValidateBoundCoreAuthority(state, scheduler, durableOperations);
+        var state = BindCoreAuthorityCore(partitionAuthorityState, schedulerState, operationState);
+        ValidateBoundCoreAuthorityCore(state, schedulerState, operationState);
         return state;
     }
 
@@ -42,12 +45,15 @@ public static class Qa04ProductionStepBasisAuthorityV1
         ArgumentNullException.ThrowIfNull(crossDomainTransactions);
 
         ValidateSchedulerAndDurableShape(partitionAuthorityState.Header.Step, scheduler, durableOperations);
+        var schedulerState = OperationSchedulerSubstateV1.Canonicalize(
+            scheduler,
+            partitionAuthorityState.Header.Step);
         var operationState = CoreOperationStateSubstateV2.Canonicalize(
             durableOperations,
             crossDomainTransactions,
             partitionAuthorityState.Header.Step);
-        var state = BindCoreAuthorityCore(partitionAuthorityState, scheduler, operationState);
-        ValidateBoundCoreAuthorityV2(state, scheduler, durableOperations, crossDomainTransactions);
+        var state = BindCoreAuthorityCore(partitionAuthorityState, schedulerState, operationState);
+        ValidateBoundCoreAuthorityCore(state, schedulerState, operationState);
         return state;
     }
 
@@ -88,12 +94,12 @@ public static class Qa04ProductionStepBasisAuthorityV1
 
     private static WorldStateV1 BindCoreAuthorityCore(
         WorldStateV1 partitionAuthorityState,
-        OperationSchedulerStateV1 scheduler,
+        WorldSubstateRefV1 schedulerState,
         WorldSubstateRefV1 operationState)
         => new(
             partitionAuthorityState.Header,
             partitionAuthorityState.Partitions,
-            OperationSchedulerSubstateV1.Canonicalize(scheduler, partitionAuthorityState.Header.Step),
+            schedulerState,
             operationState,
             partitionAuthorityState.DetailState,
             partitionAuthorityState.DomainRegistryState,
