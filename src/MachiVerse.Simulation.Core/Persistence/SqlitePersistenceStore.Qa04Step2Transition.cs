@@ -42,7 +42,8 @@ public sealed partial class SqlitePersistenceStore
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
         CancellationToken cancellationToken = default,
         Qa04DetailDecisionAuthorityV1? detailDecisionAuthority = null,
-        byte[]? expectedScheduledBatchDigest = null)
+        byte[]? expectedScheduledBatchDigest = null,
+        Action<string, double>? diagnosticPhaseObserver = null)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(terminalOperations);
@@ -51,6 +52,8 @@ public sealed partial class SqlitePersistenceStore
         ArgumentNullException.ThrowIfNull(crossDomainTransactionStateChanges);
         if (expectedScheduledBatchDigest is not null)
             RequireHash256(expectedScheduledBatchDigest, nameof(expectedScheduledBatchDigest));
+
+        var diagnosticPhaseStarted = Stopwatch.GetTimestamp();
         var effectiveStep = authority.EffectiveStep;
         var resultingStep = authority.ResultingStep;
         if (effectiveStep != checked(injectionStep + 1UL) || resultingStep != checked(effectiveStep + 1UL))
@@ -96,6 +99,7 @@ public sealed partial class SqlitePersistenceStore
         if (transactionChanges.Select(static state => state.TransactionId).Distinct().Count() != transactionChanges.Length ||
             transactionChanges.Any(state => state.UpdatedStep != resultingStep))
             throw new InvalidDataException("persistence.qa04-canonical-transition.transaction-change-shape-drift");
+        ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-preflight", ref diagnosticPhaseStarted);
 
         using var transaction = _connection.BeginTransaction();
         try
@@ -105,6 +109,7 @@ public sealed partial class SqlitePersistenceStore
                 decoded,
                 authority,
                 "persistence.qa04-canonical-transition.decoded-authority-drift");
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-decode-authority", ref diagnosticPhaseStarted);
 
             var transitionHead = await ReadTransitionHeadAsync(transaction, cancellationToken).ConfigureAwait(false);
             if (transitionHead.FinalizedStep != effectiveStep)
@@ -143,6 +148,7 @@ public sealed partial class SqlitePersistenceStore
                 batch.OperationCount != checked((ulong)decoded.AppliedOperationIds.Count) ||
                 batch.OperationCount != checked((ulong)terminalOperations.Count))
                 throw new InvalidDataException("persistence.qa04-canonical-transition.batch-drift");
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-read-authority-heads", ref diagnosticPhaseStarted);
 
             var scheduledBatchDigest = expectedScheduledBatchDigest;
             if (scheduledBatchDigest is null)
@@ -176,6 +182,7 @@ public sealed partial class SqlitePersistenceStore
                     !Qa04TransitionCommittedAuthorityV1.TerminalEquals(outcome, terminal))
                     throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
             }
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-operation-coverage", ref diagnosticPhaseStarted);
 
             var context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
             if (detailDecisionAuthority is not null)
@@ -208,6 +215,7 @@ public sealed partial class SqlitePersistenceStore
                 throw new InvalidDataException("persistence.qa04-canonical-transition.resulting-continuity-drift");
 
             await InsertHistoryRecordAsync(authority.History, transaction, cancellationToken).ConfigureAwait(false);
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-history", ref diagnosticPhaseStarted);
 
             foreach (var state in transactionChanges)
             {
@@ -217,6 +225,7 @@ public sealed partial class SqlitePersistenceStore
                         cancellationToken)
                     .ConfigureAwait(false);
             }
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-crossdomain", ref diagnosticPhaseStarted);
 
             await using (var closeBatch = _connection.CreateCommand())
             {
@@ -231,6 +240,7 @@ WHERE injection_step=$injection_step AND terminal_history_sequence IS NULL;
                 if (await closeBatch.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
                     throw new InvalidDataException("persistence.qa04-canonical-transition.batch-close-failed");
             }
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-batch-close", ref diagnosticPhaseStarted);
 
             await WriteQa04OperationClosedPrefixAsync(
                     resultingPrefix,
@@ -238,6 +248,7 @@ WHERE injection_step=$injection_step AND terminal_history_sequence IS NULL;
                     transaction,
                     cancellationToken)
                 .ConfigureAwait(false);
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-prefix", ref diagnosticPhaseStarted);
 
             await using (var meta = _connection.CreateCommand())
             {
@@ -261,10 +272,12 @@ WHERE singleton=1;
                 if (await meta.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
                     throw new InvalidDataException("persistence.qa04-canonical-transition.meta-update-failed");
             }
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-meta", ref diagnosticPhaseStarted);
 
             var commitStarted = Stopwatch.GetTimestamp();
             transaction.Commit();
             ObserveSuccessfulCommit(Stopwatch.GetElapsedTime(commitStarted));
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-sqlite-commit", ref diagnosticPhaseStarted);
             return new DurableTransitionResult(resultingStep, authority.History.Sequence);
         }
         catch
@@ -272,6 +285,19 @@ WHERE singleton=1;
             transaction.Rollback();
             throw;
         }
+    }
+
+    private static void ObserveQa04TransitionCommitPhase(
+        Action<string, double>? observer,
+        string phase,
+        ref long startedTimestamp)
+    {
+        if (observer is null)
+            return;
+
+        var now = Stopwatch.GetTimestamp();
+        observer(phase, Stopwatch.GetElapsedTime(startedTimestamp, now).TotalMilliseconds);
+        startedTimestamp = now;
     }
 
     public async IAsyncEnumerable<Qa04TransitionCommittedAuthorityV1> StreamQa04CanonicalTransitionHistoryAfterAsync(
