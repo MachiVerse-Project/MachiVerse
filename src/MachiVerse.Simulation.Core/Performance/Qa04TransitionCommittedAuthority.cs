@@ -74,6 +74,65 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         ReadOnlySpan<byte> stateDiagnosticHash,
         IReadOnlyCollection<Qa04TransitionPartitionDigestV1> partitionDigests)
     {
+        ArgumentNullException.ThrowIfNull(appliedOperationIds);
+        ArgumentNullException.ThrowIfNull(operationOutcomes);
+        var operations = ValidateAndCopyOperations(appliedOperationIds, operationOutcomes);
+        return CreateCore(
+            worldId,
+            historySequence,
+            previousHistoryRecordDigest,
+            effectiveStep,
+            resultingStep,
+            activeConfigGeneration,
+            activeConfigDigest,
+            operations,
+            previousStateContinuityToken,
+            stateDiagnosticHash,
+            partitionDigests);
+    }
+
+    internal static Qa04TransitionCommittedAuthorityV1 CreateFromValidatedCanonicalOutcomes(
+        OpaqueId128 worldId,
+        ulong historySequence,
+        ReadOnlySpan<byte> previousHistoryRecordDigest,
+        ulong effectiveStep,
+        ulong resultingStep,
+        ulong activeConfigGeneration,
+        ReadOnlySpan<byte> activeConfigDigest,
+        IReadOnlyList<TerminalOperationCommit> operationOutcomes,
+        ReadOnlySpan<byte> previousStateContinuityToken,
+        ReadOnlySpan<byte> stateDiagnosticHash,
+        IReadOnlyCollection<Qa04TransitionPartitionDigestV1> partitionDigests)
+    {
+        ArgumentNullException.ThrowIfNull(operationOutcomes);
+        var operations = CopyValidatedCanonicalOperations(operationOutcomes);
+        return CreateCore(
+            worldId,
+            historySequence,
+            previousHistoryRecordDigest,
+            effectiveStep,
+            resultingStep,
+            activeConfigGeneration,
+            activeConfigDigest,
+            operations,
+            previousStateContinuityToken,
+            stateDiagnosticHash,
+            partitionDigests);
+    }
+
+    private static Qa04TransitionCommittedAuthorityV1 CreateCore(
+        OpaqueId128 worldId,
+        ulong historySequence,
+        ReadOnlySpan<byte> previousHistoryRecordDigest,
+        ulong effectiveStep,
+        ulong resultingStep,
+        ulong activeConfigGeneration,
+        ReadOnlySpan<byte> activeConfigDigest,
+        (IReadOnlyList<OpaqueId128> Ids, IReadOnlyList<TerminalOperationCommit> Outcomes) operations,
+        ReadOnlySpan<byte> previousStateContinuityToken,
+        ReadOnlySpan<byte> stateDiagnosticHash,
+        IReadOnlyCollection<Qa04TransitionPartitionDigestV1> partitionDigests)
+    {
         if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
         if (historySequence == 0) throw new ArgumentOutOfRangeException(nameof(historySequence));
         if (previousHistoryRecordDigest.Length != 32)
@@ -85,11 +144,8 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         RequireHash256(activeConfigDigest, "qa04.transition-authority.config-digest-invalid");
         RequireHash256(previousStateContinuityToken, "qa04.transition-authority.previous-continuity-invalid");
         RequireHash256(stateDiagnosticHash, "qa04.transition-authority.state-diagnostic-invalid");
-        ArgumentNullException.ThrowIfNull(appliedOperationIds);
-        ArgumentNullException.ThrowIfNull(operationOutcomes);
         ArgumentNullException.ThrowIfNull(partitionDigests);
 
-        var operations = ValidateAndCopyOperations(appliedOperationIds, operationOutcomes);
         var partitions = ValidateAndCopyPartitions(partitionDigests);
         var configDigest = activeConfigDigest.ToArray();
         var previousContinuity = previousStateContinuityToken.ToArray();
@@ -453,6 +509,33 @@ public sealed class Qa04TransitionCommittedAuthorityV1
            left.TerminalStatus == right.TerminalStatus &&
            string.Equals(left.ResultCode, right.ResultCode, StringComparison.Ordinal) &&
            NullableBytesEqual(left.RichResultPayload, right.RichResultPayload);
+
+    private static (IReadOnlyList<OpaqueId128> Ids, IReadOnlyList<TerminalOperationCommit> Outcomes) CopyValidatedCanonicalOperations(
+        IReadOnlyList<TerminalOperationCommit> operationOutcomes)
+    {
+        var ids = new OpaqueId128[operationOutcomes.Count];
+        var outcomes = new TerminalOperationCommit[operationOutcomes.Count];
+        for (var index = 0; index < operationOutcomes.Count; index++)
+        {
+            var outcome = operationOutcomes[index]
+                ?? throw new InvalidDataException("qa04.transition-authority.outcome-null");
+            if (outcome.OperationId.IsZero)
+                throw new InvalidDataException("qa04.transition-authority.operation-id-order-drift");
+            if (!Enum.IsDefined(typeof(CoreOperationResultStatusV1), outcome.TerminalStatus) ||
+                !OperationLifecycleRulesV1.IsTerminalResult((CoreOperationResultStatusV1)outcome.TerminalStatus))
+                throw new InvalidDataException("qa04.transition-authority.outcome-status-invalid");
+            _ = new StableToken(outcome.ResultCode);
+
+            ids[index] = outcome.OperationId;
+            outcomes[index] = new TerminalOperationCommit(
+                outcome.OperationId,
+                outcome.TerminalStatus,
+                outcome.ResultCode,
+                outcome.RichResultPayload?.ToArray());
+        }
+
+        return (Array.AsReadOnly(ids), Array.AsReadOnly(outcomes));
+    }
 
     private static (IReadOnlyList<OpaqueId128> Ids, IReadOnlyList<TerminalOperationCommit> Outcomes) ValidateAndCopyOperations(
         IReadOnlyList<OpaqueId128> appliedOperationIds,
