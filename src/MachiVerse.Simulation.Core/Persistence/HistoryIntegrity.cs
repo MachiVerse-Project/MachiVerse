@@ -142,6 +142,46 @@ public sealed class HistoryRecordMaterial
             recordDigest);
     }
 
+    internal static HistoryRecordMaterial CreateFromOwnedPrehashedCanonicalPayloads(
+        OpaqueId128 worldId,
+        ulong sequence,
+        ReadOnlySpan<byte> previousRecordDigest,
+        string recordType,
+        string payloadSchemaId,
+        ushort payloadSchemaMajor,
+        ushort payloadSchemaMinor,
+        byte[] payloadBytes,
+        byte[] normalizedPayloadBytes,
+        byte[] normalizedPayloadDigest,
+        byte[] recordDigest)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid for history.", nameof(worldId));
+        if (sequence == 0) throw new ArgumentOutOfRangeException(nameof(sequence), "HistorySequence starts at 1.");
+        if (previousRecordDigest.Length != 32)
+            throw new ArgumentException("Previous history digest must be exactly 32 bytes.", nameof(previousRecordDigest));
+        ArgumentNullException.ThrowIfNull(payloadBytes);
+        ArgumentNullException.ThrowIfNull(normalizedPayloadBytes);
+        ArgumentNullException.ThrowIfNull(normalizedPayloadDigest);
+        ArgumentNullException.ThrowIfNull(recordDigest);
+        if (normalizedPayloadBytes.Length == 0)
+            throw new InvalidDataException("persistence.normalized-history-payload-empty");
+        if (normalizedPayloadDigest.Length != 32 || recordDigest.Length != 32)
+            throw new InvalidDataException("persistence.history-persisted-digest-width");
+
+        return new HistoryRecordMaterial(
+            worldId,
+            sequence,
+            previousRecordDigest.ToArray(),
+            new StableToken(recordType),
+            new StableToken(payloadSchemaId),
+            payloadSchemaMajor,
+            payloadSchemaMinor,
+            payloadBytes,
+            normalizedPayloadBytes,
+            normalizedPayloadDigest,
+            recordDigest);
+    }
+
     /// <summary>
     /// Rehydrates persisted history material only after independently validating its normalized
     /// semantic payload digest and history RecordDigest. Recovery codecs use this when normalized
