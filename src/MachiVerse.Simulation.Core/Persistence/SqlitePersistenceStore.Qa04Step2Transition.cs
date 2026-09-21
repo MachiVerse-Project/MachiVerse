@@ -33,7 +33,7 @@ public sealed partial class SqlitePersistenceStore
     /// SQLite transaction. When supplied, the Detail decision record is appended immediately
     /// before transition.committed.v1 and the transition record must bind it as its predecessor.
     /// </summary>
-    public async Task<DurableTransitionResult> PersistQa04CanonicalTransitionCommitAsync(
+    public Task<DurableTransitionResult> PersistQa04CanonicalTransitionCommitAsync(
         ulong injectionStep,
         Qa04TransitionCommittedAuthorityV1 authority,
         IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
@@ -45,6 +45,65 @@ public sealed partial class SqlitePersistenceStore
         byte[]? expectedScheduledBatchDigest = null,
         Action<string, double>? diagnosticPhaseObserver = null,
         bool terminalOperationsAreCanonical = false)
+        => PersistQa04CanonicalTransitionCommitCoreAsync(
+            injectionStep,
+            authority,
+            terminalOperations,
+            basisPrefix,
+            resultingPrefix,
+            crossDomainTransactionStateChanges,
+            cancellationToken,
+            detailDecisionAuthority,
+            expectedScheduledBatchDigest,
+            diagnosticPhaseObserver,
+            terminalOperationsAreCanonical,
+            authorityIntegrityAlreadyValidated: false);
+
+    internal Task<DurableTransitionResult> PersistQa04ValidatedCanonicalTransitionCommitAsync(
+        ulong injectionStep,
+        Qa04TransitionCommittedAuthorityV1 authority,
+        IReadOnlyList<TerminalOperationCommit> terminalOperations,
+        Qa04OperationClosedPrefixV1 basisPrefix,
+        Qa04OperationClosedPrefixV1 resultingPrefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
+        CancellationToken cancellationToken,
+        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority,
+        byte[] expectedScheduledBatchDigest,
+        Action<string, double>? diagnosticPhaseObserver)
+    {
+        ArgumentNullException.ThrowIfNull(authority);
+        ArgumentNullException.ThrowIfNull(terminalOperations);
+        if (!ReferenceEquals(terminalOperations, authority.OperationOutcomes))
+            throw new InvalidDataException("persistence.qa04-canonical-transition.validated-terminal-reference-drift");
+
+        return PersistQa04CanonicalTransitionCommitCoreAsync(
+            injectionStep,
+            authority,
+            terminalOperations,
+            basisPrefix,
+            resultingPrefix,
+            crossDomainTransactionStateChanges,
+            cancellationToken,
+            detailDecisionAuthority,
+            expectedScheduledBatchDigest,
+            diagnosticPhaseObserver,
+            terminalOperationsAreCanonical: true,
+            authorityIntegrityAlreadyValidated: true);
+    }
+
+    private async Task<DurableTransitionResult> PersistQa04CanonicalTransitionCommitCoreAsync(
+        ulong injectionStep,
+        Qa04TransitionCommittedAuthorityV1 authority,
+        IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        Qa04OperationClosedPrefixV1 basisPrefix,
+        Qa04OperationClosedPrefixV1 resultingPrefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
+        CancellationToken cancellationToken,
+        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority,
+        byte[]? expectedScheduledBatchDigest,
+        Action<string, double>? diagnosticPhaseObserver,
+        bool terminalOperationsAreCanonical,
+        bool authorityIntegrityAlreadyValidated)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(terminalOperations);
@@ -59,7 +118,10 @@ public sealed partial class SqlitePersistenceStore
         var resultingStep = authority.ResultingStep;
         if (effectiveStep != checked(injectionStep + 1UL) || resultingStep != checked(effectiveStep + 1UL))
             throw new InvalidDataException("persistence.qa04-canonical-transition.step-drift");
-        ValidateHistoryMaterial(authority.History, "transition.committed.v1");
+        if (authorityIntegrityAlreadyValidated)
+            ValidateTrustedTransitionHistoryEnvelope(authority.History);
+        else
+            ValidateHistoryMaterial(authority.History, "transition.committed.v1");
         RequireHash256(authority.ActiveConfigDigest, nameof(authority.ActiveConfigDigest));
         RequireHash256(authority.PreviousStateContinuityToken, nameof(authority.PreviousStateContinuityToken));
         RequireHash256(authority.ResultingStateContinuityToken, nameof(authority.ResultingStateContinuityToken));
@@ -127,7 +189,8 @@ public sealed partial class SqlitePersistenceStore
         using var transaction = _connection.BeginTransaction();
         try
         {
-            Qa04TransitionCommittedAuthorityV1.RequireMaterializedAuthorityIntegrity(authority);
+            if (!authorityIntegrityAlreadyValidated)
+                Qa04TransitionCommittedAuthorityV1.RequireMaterializedAuthorityIntegrity(authority);
             var decoded = authority;
             ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-validate-authority", ref diagnosticPhaseStarted);
 
@@ -324,6 +387,22 @@ WHERE singleton=1;
             transaction.Rollback();
             throw;
         }
+    }
+
+    private static void ValidateTrustedTransitionHistoryEnvelope(HistoryRecordMaterial history)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+        if (history.Sequence == 0)
+            throw new ArgumentOutOfRangeException(nameof(history), "HistorySequence starts at 1.");
+        if (!string.Equals(history.RecordType, "transition.committed.v1", StringComparison.Ordinal))
+            throw new InvalidDataException($"persistence.unexpected-history-record-type:{history.RecordType}");
+        _ = new StableToken(history.PayloadSchemaId);
+        RequireHash256(history.PreviousRecordDigest, nameof(history.PreviousRecordDigest));
+        RequireHash256(history.NormalizedPayloadDigest, nameof(history.NormalizedPayloadDigest));
+        RequireHash256(history.RecordDigest, nameof(history.RecordDigest));
+        ArgumentNullException.ThrowIfNull(history.PayloadBytes);
+        if (history.NormalizedPayloadBytes.Length == 0)
+            throw new InvalidDataException("persistence.normalized-history-payload-empty");
     }
 
     private static void ObserveQa04TransitionCommitPhase(
