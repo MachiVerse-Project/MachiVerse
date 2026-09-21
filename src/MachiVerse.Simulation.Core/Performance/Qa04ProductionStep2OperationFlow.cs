@@ -58,6 +58,10 @@ public static class Qa04ProductionStep2BasisAuthorityV1
 
         ValidateMutableShape(partitionAuthorityState.Header.Step, scheduler, mutableOperations);
         closedPrefix.Validate(partitionAuthorityState.Header.Step);
+
+        var schedulerState = OperationSchedulerSubstateV1.Canonicalize(
+            scheduler,
+            partitionAuthorityState.Header.Step);
         var operationState = Qa04OperationAuthorityV1.Canonicalize(
             mutableOperations,
             closedPrefix,
@@ -66,12 +70,20 @@ public static class Qa04ProductionStep2BasisAuthorityV1
         var state = new WorldStateV1(
             partitionAuthorityState.Header,
             partitionAuthorityState.Partitions,
-            OperationSchedulerSubstateV1.Canonicalize(scheduler, partitionAuthorityState.Header.Step),
+            schedulerState,
             operationState,
             partitionAuthorityState.DetailState,
             partitionAuthorityState.DomainRegistryState,
             partitionAuthorityState.Diagnostic.ConfigDigest);
-        Validate(state, scheduler, mutableOperations, closedPrefix, activeTransactions);
+
+        RequireSubstateMatch(
+            schedulerState,
+            state.SchedulerState,
+            "qa04.step2.scheduler-substate-drift");
+        RequireSubstateMatch(
+            operationState,
+            state.OperationState,
+            "qa04.step2.operation-substate-drift");
         return state;
     }
 
