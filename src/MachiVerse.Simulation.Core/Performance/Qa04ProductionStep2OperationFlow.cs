@@ -398,7 +398,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             crossDomainTransactionStateChanges,
             cancellationToken,
             detailTransition,
-            batchAuthority.ScheduledBatchDigest).ConfigureAwait(false);
+            scheduledBatchDigest: batchAuthority.ScheduledBatchDigest,
+            terminalOperationsAreCanonical: true).ConfigureAwait(false);
         var verification = finalized.PostCommitVerification;
         var nextPrefix = finalized.ClosedPrefix;
         if (verification.ResultingStep != resultingStep ||
@@ -524,7 +525,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
         CancellationToken cancellationToken = default,
         Qa04ProductionDetailTransitionStepV1? detailTransition = null,
-        byte[]? scheduledBatchDigest = null)
+        byte[]? scheduledBatchDigest = null,
+        bool terminalOperationsAreCanonical = false)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -562,7 +564,10 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             basisActiveTransactions,
             resultingActiveTransactions,
             crossDomainTransactionStateChanges);
-        var alignedTerminal = AlignTerminalCoverage(bindings, terminalOperations);
+        var alignedTerminal = AlignTerminalCoverage(
+            bindings,
+            terminalOperations,
+            terminalOperationsAreCanonical);
         if (mutableOperations.Count != bindings.Count)
             throw new InvalidDataException("qa04.step2.finalization-mutable-operation-count-drift");
 
@@ -768,26 +773,23 @@ public static class Qa04ProductionStep2OperationFinalizationV1
 
     private static IReadOnlyList<TerminalOperationCommit> AlignTerminalCoverage(
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
-        IReadOnlyCollection<TerminalOperationCommit> terminalOperations)
+        IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        bool terminalOperationsAreCanonical)
     {
         if (terminalOperations.Count != bindings.Count)
             throw new InvalidDataException("qa04.step2.finalization-terminal-coverage-count-drift");
 
-        if (terminalOperations is IReadOnlyList<TerminalOperationCommit> ordered)
+        if (terminalOperationsAreCanonical &&
+            terminalOperations is IReadOnlyList<TerminalOperationCommit> ordered)
         {
-            var alreadyAligned = true;
             for (var index = 0; index < bindings.Count; index++)
             {
                 var terminal = ordered[index];
                 if (terminal.OperationId != bindings[index].SourceDescriptor.OperationId)
-                {
-                    alreadyAligned = false;
-                    break;
-                }
+                    throw new InvalidDataException("qa04.step2.finalization-terminal-coverage-drift");
                 ValidateTerminal(terminal);
             }
-            if (alreadyAligned)
-                return ordered;
+            return ordered;
         }
 
         var byId = terminalOperations.ToDictionary(static value => value.OperationId);
