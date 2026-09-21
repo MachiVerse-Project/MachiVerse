@@ -361,20 +361,17 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         offsets[entries.Count] = byteCount;
 
         var encoded = new byte[byteCount];
-        var canonical = new ReadOnlyMemory<byte>[entries.Count];
         for (var index = 0; index < entries.Count; index++)
         {
             var entry = entries[index];
             entry.Encoded.Span.CopyTo(encoded.AsSpan(offsets[index]));
-            canonical[index] = encoded.AsMemory(
-                offsets[index],
-                offsets[index + 1] - offsets[index]);
         }
 
-        var diagnostic = RecordIdPrefixPartitionDigestV2.CreateSlice(
+        var diagnostic = RecordIdPrefixPartitionDigestV2.CreateSliceFromPrevalidatedCanonicalBytes(
             identity,
             prefix,
-            canonical);
+            checked((ulong)entries.Count),
+            encoded);
         return new Slice(keys, offsets, encoded, diagnostic.ContentDigest);
     }
 
