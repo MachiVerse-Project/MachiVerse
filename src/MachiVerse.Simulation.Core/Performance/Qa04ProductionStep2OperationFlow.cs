@@ -726,7 +726,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                 partition.PartitionId.Value,
                 prepared.ResultingState.Partitions.Get(partition.PartitionId.Value).Header.CanonicalDigest.ToArray()))
             .ToArray();
-        var transitionAuthority = Qa04TransitionCommittedAuthorityV1.Create(
+        var transitionAuthority = Qa04TransitionCommittedAuthorityV1.CreateFromValidatedCanonicalOutcomes(
             candidate.WorldId,
             transitionSequence,
             transitionPreviousDigest,
@@ -734,7 +734,6 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             candidate.TargetStep,
             candidate.ConfigGeneration,
             candidate.ConfigDigest,
-            bindings.Select(static binding => binding.SourceDescriptor.OperationId).ToArray(),
             alignedTerminal,
             before.ContinuityToken,
             prepared.ResultingState.Diagnostic.StateDigest,
