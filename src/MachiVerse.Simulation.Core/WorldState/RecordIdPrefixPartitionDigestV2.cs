@@ -220,6 +220,25 @@ public static class RecordIdPrefixPartitionDigestV2
         if (!Enum.IsDefined(detailLevel))
             throw new ArgumentOutOfRangeException(nameof(detailLevel));
 
+        if (itemCount == 0 && sliceCount != 0)
+            throw new InvalidDataException("domain.record-prefix-slice-count-drift");
+
+        using var session = HashSuite.BeginDomainHashStreaming(PartitionRootLabel);
+        var writer = session.Writer;
+        writer.WriteMapStart(11);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
+        writer.WriteUnsigned(1); writer.WriteAsciiText(identity.OwnerDomain.Value);
+        writer.WriteUnsigned(2); writer.WriteAsciiText(identity.PartitionSchema.SchemaId.Value);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(identity.PartitionSchema.Version.Major);
+        writer.WriteUnsigned(4); writer.WriteUnsigned(identity.PartitionSchema.Version.Minor);
+        writer.WriteUnsigned(5); writer.WriteUnsigned(revision);
+        writer.WriteUnsigned(6); writer.WriteUnsigned(basisStep);
+        writer.WriteUnsigned(7); writer.WriteUnsigned((byte)detailLevel);
+        writer.WriteUnsigned(8); writer.WriteUnsigned(itemCount);
+        writer.WriteUnsigned(9); writer.WriteUnsigned(DiagnosticPartitionVersion);
+        writer.WriteUnsigned(10);
+        writer.WriteArrayStart(checked((ulong)sliceCount));
+
         ushort? previous = null;
         ulong actualCount = 0;
         var actualSliceCount = 0;
@@ -231,38 +250,19 @@ public static class RecordIdPrefixPartitionDigestV2
                 throw new InvalidDataException("domain.record-prefix-slice-order");
             previous = slice.Prefix;
             actualCount = checked(actualCount + slice.RecordCount);
-            if (actualCount > itemCount)
+            if (actualCount > itemCount || actualSliceCount > sliceCount)
                 throw new InvalidDataException("domain.record-prefix-slice-count-drift");
+
+            writer.WriteArrayStart(3);
+            writer.WriteUnsigned(slice.Prefix);
+            writer.WriteUnsigned(slice.RecordCount);
+            writer.WriteBytes(slice.ContentDigest);
         }
 
         if (actualCount != itemCount || actualSliceCount != sliceCount)
             throw new InvalidDataException("domain.record-prefix-slice-count-drift");
-        if (itemCount == 0 && sliceCount != 0)
-            throw new InvalidDataException("domain.record-prefix-slice-count-drift");
 
-        var digest = HashSuite.DomainHash(PartitionRootLabel, writer =>
-        {
-            writer.WriteMapStart(11);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
-            writer.WriteUnsigned(1); writer.WriteAsciiText(identity.OwnerDomain.Value);
-            writer.WriteUnsigned(2); writer.WriteAsciiText(identity.PartitionSchema.SchemaId.Value);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(identity.PartitionSchema.Version.Major);
-            writer.WriteUnsigned(4); writer.WriteUnsigned(identity.PartitionSchema.Version.Minor);
-            writer.WriteUnsigned(5); writer.WriteUnsigned(revision);
-            writer.WriteUnsigned(6); writer.WriteUnsigned(basisStep);
-            writer.WriteUnsigned(7); writer.WriteUnsigned((byte)detailLevel);
-            writer.WriteUnsigned(8); writer.WriteUnsigned(itemCount);
-            writer.WriteUnsigned(9); writer.WriteUnsigned(DiagnosticPartitionVersion);
-            writer.WriteUnsigned(10);
-            writer.WriteArrayStart(checked((ulong)sliceCount));
-            foreach (var slice in slices)
-            {
-                writer.WriteArrayStart(3);
-                writer.WriteUnsigned(slice.Prefix);
-                writer.WriteUnsigned(slice.RecordCount);
-                writer.WriteBytes(slice.ContentDigest);
-            }
-        });
+        var digest = session.Complete();
 
         return new PartitionStateHeaderV1(
             identity,
