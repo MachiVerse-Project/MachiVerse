@@ -203,20 +203,21 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> canonicalBindings)
     {
         ArgumentNullException.ThrowIfNull(canonicalBindings);
-        return HashSuite.DomainHash("mv.qa04-operation-scheduled-batch.v1", writer =>
+        using var session = HashSuite.BeginDomainHashStreaming("mv.qa04-operation-scheduled-batch.v1");
+        var writer = session.Writer;
+        writer.WriteArrayStart((ulong)canonicalBindings.Count);
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        Span<byte> orderKeyBytes = stackalloc byte[SameStepOrderKey.DatabaseKeyLength];
+        foreach (var binding in canonicalBindings)
         {
-            writer.WriteArrayStart((ulong)canonicalBindings.Count);
-            foreach (var binding in canonicalBindings)
-            {
-                var orderKey = binding.OrderKey.ToDatabaseBytes();
-                if (orderKey.Length != SameStepOrderKey.DatabaseKeyLength)
-                    throw new InvalidDataException("qa04.operation-batch.order-key-length");
-                writer.WriteArrayStart(3);
-                writer.WriteBytes(binding.SourceDescriptor.OperationId.ToBytes());
-                writer.WriteBytes(binding.BoundDescriptor.PayloadDigest);
-                writer.WriteBytes(orderKey);
-            }
-        });
+            binding.SourceDescriptor.OperationId.WriteBytes(operationIdBytes);
+            binding.OrderKey.WriteDatabaseBytes(orderKeyBytes);
+            writer.WriteArrayStart(3);
+            writer.WriteBytes(operationIdBytes);
+            writer.WriteBytes(binding.BoundDescriptor.PayloadDigest);
+            writer.WriteBytes(orderKeyBytes);
+        }
+        return session.Complete();
     }
 
     private static void WriteNormalized(
@@ -282,25 +283,27 @@ public static class Qa04TerminalSemanticAuthorityV1
         ArgumentNullException.ThrowIfNull(outcomes);
         if (bindings.Count != outcomes.Count)
             throw new InvalidDataException("qa04.operation-terminal.cardinality-mismatch");
-        return HashSuite.DomainHash("mv.qa04-operation-terminal-batch.v1", writer =>
+        using var session = HashSuite.BeginDomainHashStreaming("mv.qa04-operation-terminal-batch.v1");
+        var writer = session.Writer;
+        writer.WriteArrayStart((ulong)outcomes.Count);
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        for (var i = 0; i < outcomes.Count; i++)
         {
-            writer.WriteArrayStart((ulong)outcomes.Count);
-            for (var i = 0; i < outcomes.Count; i++)
-            {
-                var binding = bindings[i];
-                var outcome = outcomes[i];
-                if (outcome.OperationId != binding.SourceDescriptor.OperationId)
-                    throw new InvalidDataException("qa04.operation-terminal.order-mismatch");
-                if (outcome.TerminalStatus < 0)
-                    throw new InvalidDataException("qa04.operation-terminal.status-negative");
-                _ = new StableToken(outcome.ResultCode);
-                writer.WriteArrayStart(4);
-                writer.WriteBytes(outcome.OperationId.ToBytes());
-                writer.WriteUnsigned(checked((ulong)outcome.TerminalStatus));
-                writer.WriteAsciiText(outcome.ResultCode);
-                writer.WriteArrayStart(0);
-            }
-        });
+            var binding = bindings[i];
+            var outcome = outcomes[i];
+            if (outcome.OperationId != binding.SourceDescriptor.OperationId)
+                throw new InvalidDataException("qa04.operation-terminal.order-mismatch");
+            if (outcome.TerminalStatus < 0)
+                throw new InvalidDataException("qa04.operation-terminal.status-negative");
+            _ = new StableToken(outcome.ResultCode);
+            outcome.OperationId.WriteBytes(operationIdBytes);
+            writer.WriteArrayStart(4);
+            writer.WriteBytes(operationIdBytes);
+            writer.WriteUnsigned(checked((ulong)outcome.TerminalStatus));
+            writer.WriteAsciiText(outcome.ResultCode);
+            writer.WriteArrayStart(0);
+        }
+        return session.Complete();
     }
 
     public static byte[] ComputeStepItemDigest(ulong effectiveStep, ulong operationCount, byte[] terminalBatchDigest)
