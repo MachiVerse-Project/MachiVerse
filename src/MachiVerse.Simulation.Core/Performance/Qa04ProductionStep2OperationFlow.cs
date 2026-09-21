@@ -795,7 +795,9 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         }
         ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-basis-operation-authority", ref diagnosticPhaseStarted);
 
-        var terminalBatchDigest = Qa04TerminalSemanticAuthorityV1.ComputeBatchDigest(bindings, alignedTerminal);
+        var terminalBatchDigest = terminalOperationsAreCanonical
+            ? Qa04TerminalSemanticAuthorityV1.ComputeFinalizationBatchDigest(bindings, alignedTerminal)
+            : Qa04TerminalSemanticAuthorityV1.ComputeBatchDigest(bindings, alignedTerminal);
         var terminalStepDigest = Qa04TerminalSemanticAuthorityV1.ComputeStepItemDigest(
             step5Candidate.BasisStep,
             checked((ulong)alignedTerminal.Count),
@@ -1001,16 +1003,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
 
         if (terminalOperationsAreCanonical &&
             terminalOperations is IReadOnlyList<TerminalOperationCommit> ordered)
-        {
-            for (var index = 0; index < bindings.Count; index++)
-            {
-                var terminal = ordered[index];
-                if (terminal.OperationId != bindings[index].SourceDescriptor.OperationId)
-                    throw new InvalidDataException("qa04.step2.finalization-terminal-coverage-drift");
-                ValidateTerminal(terminal);
-            }
             return ordered;
-        }
 
         var byId = terminalOperations.ToDictionary(static value => value.OperationId);
         if (byId.Count != terminalOperations.Count)
