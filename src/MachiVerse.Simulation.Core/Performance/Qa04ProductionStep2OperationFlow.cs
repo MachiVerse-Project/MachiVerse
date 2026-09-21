@@ -397,7 +397,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             resultingCrossDomainTransactions,
             crossDomainTransactionStateChanges,
             cancellationToken,
-            detailTransition).ConfigureAwait(false);
+            detailTransition,
+            batchAuthority.ScheduledBatchDigest).ConfigureAwait(false);
         var verification = finalized.PostCommitVerification;
         var nextPrefix = finalized.ClosedPrefix;
         if (verification.ResultingStep != resultingStep ||
@@ -522,7 +523,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         IReadOnlyCollection<CrossDomainTransactionStateV1> resultingActiveTransactions,
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
         CancellationToken cancellationToken = default,
-        Qa04ProductionDetailTransitionStepV1? detailTransition = null)
+        Qa04ProductionDetailTransitionStepV1? detailTransition = null,
+        byte[]? scheduledBatchDigest = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -534,6 +536,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         ArgumentNullException.ThrowIfNull(basisActiveTransactions);
         ArgumentNullException.ThrowIfNull(resultingActiveTransactions);
         ArgumentNullException.ThrowIfNull(crossDomainTransactionStateChanges);
+        if (scheduledBatchDigest is not null && scheduledBatchDigest.Length != 32)
+            throw new InvalidDataException("qa04.step2.finalization.scheduled-batch-digest-invalid");
 
         var step5Candidate = preparation.Candidate;
         var step5Prepared = preparation.PreparedState;
@@ -700,6 +704,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             resultingContinuity,
             transition,
             alignedTerminal);
+        var effectiveScheduledBatchDigest = scheduledBatchDigest ??
+            Qa04ScheduledOperationBatchAuthorityBuilderV1.ComputeScheduledBatchDigest(bindings);
         var durability = new Qa04ProductionStep2TransitionDurabilityV1(
             store,
             injectionStep,
@@ -707,7 +713,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             resultingPrefix,
             transitionAuthority,
             crossDomainTransactionStateChanges,
-            detailDecisionAuthority);
+            detailDecisionAuthority,
+            effectiveScheduledBatchDigest);
         var receipt = await new StepFinalizationCoordinatorV1(durability)
             .FinalizeAsync(candidate, scheduler, material, cancellationToken)
             .ConfigureAwait(false);
@@ -911,7 +918,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         Qa04OperationClosedPrefixV1 resultingPrefix,
         Qa04TransitionCommittedAuthorityV1 transitionAuthority,
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
-        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority) : IStepTransitionDurabilityV1
+        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority,
+        byte[] scheduledBatchDigest) : IStepTransitionDurabilityV1
     {
         public Task<DurableTransitionResult> CommitAsync(
             StepCandidateV1 candidate,
@@ -934,7 +942,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                 resultingPrefix,
                 crossDomainTransactionStateChanges,
                 cancellationToken,
-                detailDecisionAuthority);
+                detailDecisionAuthority,
+                scheduledBatchDigest);
         }
     }
 }
