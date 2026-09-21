@@ -74,6 +74,17 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         ReadOnlySpan<byte> stateDiagnosticHash,
         IReadOnlyCollection<Qa04TransitionPartitionDigestV1> partitionDigests)
     {
+        ValidateCreateEnvelope(
+            worldId,
+            historySequence,
+            previousHistoryRecordDigest,
+            effectiveStep,
+            resultingStep,
+            activeConfigGeneration,
+            activeConfigDigest,
+            previousStateContinuityToken,
+            stateDiagnosticHash,
+            partitionDigests);
         ArgumentNullException.ThrowIfNull(appliedOperationIds);
         ArgumentNullException.ThrowIfNull(operationOutcomes);
         var operations = ValidateAndCopyOperations(appliedOperationIds, operationOutcomes);
@@ -104,6 +115,17 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         ReadOnlySpan<byte> stateDiagnosticHash,
         IReadOnlyCollection<Qa04TransitionPartitionDigestV1> partitionDigests)
     {
+        ValidateCreateEnvelope(
+            worldId,
+            historySequence,
+            previousHistoryRecordDigest,
+            effectiveStep,
+            resultingStep,
+            activeConfigGeneration,
+            activeConfigDigest,
+            previousStateContinuityToken,
+            stateDiagnosticHash,
+            partitionDigests);
         ArgumentNullException.ThrowIfNull(operationOutcomes);
         var operations = CopyValidatedCanonicalOperations(operationOutcomes);
         return CreateCore(
@@ -118,6 +140,32 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             previousStateContinuityToken,
             stateDiagnosticHash,
             partitionDigests);
+    }
+
+    private static void ValidateCreateEnvelope(
+        OpaqueId128 worldId,
+        ulong historySequence,
+        ReadOnlySpan<byte> previousHistoryRecordDigest,
+        ulong effectiveStep,
+        ulong resultingStep,
+        ulong activeConfigGeneration,
+        ReadOnlySpan<byte> activeConfigDigest,
+        ReadOnlySpan<byte> previousStateContinuityToken,
+        ReadOnlySpan<byte> stateDiagnosticHash,
+        IReadOnlyCollection<Qa04TransitionPartitionDigestV1> partitionDigests)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
+        if (historySequence == 0) throw new ArgumentOutOfRangeException(nameof(historySequence));
+        if (previousHistoryRecordDigest.Length != 32)
+            throw new ArgumentException("Previous history digest must be 32 bytes.", nameof(previousHistoryRecordDigest));
+        if (effectiveStep == ulong.MaxValue || resultingStep != effectiveStep + 1UL)
+            throw new InvalidDataException("qa04.transition-authority.step-drift");
+        if (activeConfigGeneration == 0)
+            throw new InvalidDataException("qa04.transition-authority.config-generation-invalid");
+        RequireHash256(activeConfigDigest, "qa04.transition-authority.config-digest-invalid");
+        RequireHash256(previousStateContinuityToken, "qa04.transition-authority.previous-continuity-invalid");
+        RequireHash256(stateDiagnosticHash, "qa04.transition-authority.state-diagnostic-invalid");
+        ArgumentNullException.ThrowIfNull(partitionDigests);
     }
 
     private static Qa04TransitionCommittedAuthorityV1 CreateCore(
