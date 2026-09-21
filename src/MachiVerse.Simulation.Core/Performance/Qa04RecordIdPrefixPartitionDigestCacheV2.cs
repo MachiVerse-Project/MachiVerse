@@ -257,56 +257,105 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         Slice? existing,
         IReadOnlyList<Update> updates)
     {
-        var entries = new List<Entry>((existing?.Count ?? 0) + updates.Count);
-        var existingIndex = 0;
-        var updateIndex = 0;
+        ArgumentNullException.ThrowIfNull(identity);
+        ArgumentNullException.ThrowIfNull(updates);
+        if (updates.Count == 0)
+            throw new ArgumentException("Updates cannot be empty.", nameof(updates));
 
-        while ((existing is not null && existingIndex < existing.Count) || updateIndex < updates.Count)
+        static Entry NextMergedEntry(
+            Slice? currentSlice,
+            IReadOnlyList<Update> currentUpdates,
+            ref int existingIndex,
+            ref int updateIndex)
         {
-            if (existing is null || existingIndex == existing.Count)
+            if (currentSlice is null || existingIndex == currentSlice.Count)
             {
-                var update = updates[updateIndex++];
+                if (updateIndex >= currentUpdates.Count)
+                    throw new InvalidDataException("qa04.prefix-digest-cache.merge-exhausted");
+                var update = currentUpdates[updateIndex++];
                 if (!update.IsCreate)
                     throw new InvalidDataException("qa04.prefix-digest-cache.revision-target-missing");
-                entries.Add(new Entry(update.RecordId, update.Encoded));
-                continue;
+                return new Entry(update.RecordId, update.Encoded);
             }
 
-            if (updateIndex == updates.Count)
-            {
-                entries.Add(existing.GetEntry(existingIndex++));
-                continue;
-            }
+            if (updateIndex == currentUpdates.Count)
+                return currentSlice.GetEntry(existingIndex++);
 
-            var current = existing.GetEntry(existingIndex);
-            var updateCurrent = updates[updateIndex];
+            var current = currentSlice.GetEntry(existingIndex);
+            var updateCurrent = currentUpdates[updateIndex];
             var comparison = current.RecordId.CompareTo(updateCurrent.RecordId);
             if (comparison < 0)
             {
-                entries.Add(current);
                 existingIndex++;
-                continue;
+                return current;
             }
 
             if (comparison > 0)
             {
                 if (!updateCurrent.IsCreate)
                     throw new InvalidDataException("qa04.prefix-digest-cache.revision-target-missing");
-                entries.Add(new Entry(updateCurrent.RecordId, updateCurrent.Encoded));
                 updateIndex++;
-                continue;
+                return new Entry(updateCurrent.RecordId, updateCurrent.Encoded);
             }
 
             if (updateCurrent.IsCreate)
                 throw new InvalidDataException("qa04.prefix-digest-cache.create-collision");
-            entries.Add(new Entry(updateCurrent.RecordId, updateCurrent.Encoded));
+
             existingIndex++;
             updateIndex++;
+            return new Entry(updateCurrent.RecordId, updateCurrent.Encoded);
         }
 
-        if (entries.Count == 0)
+        var existingIndex = 0;
+        var updateIndex = 0;
+        var resultCount = 0;
+        var byteCount = 0;
+        OpaqueId128? previous = null;
+
+        while ((existing is not null && existingIndex < existing.Count) || updateIndex < updates.Count)
+        {
+            var entry = NextMergedEntry(existing, updates, ref existingIndex, ref updateIndex);
+            if (RecordIdPrefixPartitionDigestV2.PrefixOf(entry.RecordId) != prefix)
+                throw new InvalidDataException("qa04.prefix-digest-cache.slice-prefix-drift");
+            if (previous is { } prior && prior.CompareTo(entry.RecordId) >= 0)
+                throw new InvalidDataException("qa04.prefix-digest-cache.slice-order-drift");
+            previous = entry.RecordId;
+
+            resultCount = checked(resultCount + 1);
+            byteCount = checked(byteCount + entry.Encoded.Length);
+        }
+
+        if (resultCount == 0 || byteCount == 0)
             throw new InvalidDataException("qa04.prefix-digest-cache.empty-slice");
-        return BuildSlice(identity, prefix, entries);
+
+        var keys = new OpaqueId128[resultCount];
+        var offsets = new int[resultCount + 1];
+        var encoded = new byte[byteCount];
+
+        existingIndex = 0;
+        updateIndex = 0;
+        var resultIndex = 0;
+        var byteOffset = 0;
+        while ((existing is not null && existingIndex < existing.Count) || updateIndex < updates.Count)
+        {
+            var entry = NextMergedEntry(existing, updates, ref existingIndex, ref updateIndex);
+            keys[resultIndex] = entry.RecordId;
+            offsets[resultIndex] = byteOffset;
+            entry.Encoded.Span.CopyTo(encoded.AsSpan(byteOffset));
+            byteOffset = checked(byteOffset + entry.Encoded.Length);
+            resultIndex++;
+        }
+
+        offsets[resultCount] = byteOffset;
+        if (resultIndex != resultCount || byteOffset != byteCount)
+            throw new InvalidDataException("qa04.prefix-digest-cache.merge-materialization-drift");
+
+        var diagnostic = RecordIdPrefixPartitionDigestV2.CreateSliceFromPrevalidatedCanonicalBytes(
+            identity,
+            prefix,
+            checked((ulong)resultCount),
+            encoded);
+        return new Slice(keys, offsets, encoded, diagnostic.ContentDigest);
     }
 
     private bool TryFind(OpaqueId128 recordId, out Entry entry)
