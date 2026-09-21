@@ -92,7 +92,8 @@ public static class Qa04ProductionStep2BasisAuthorityV1
         OperationSchedulerStateV1 scheduler,
         IReadOnlyList<DurableOperationStateV1> mutableOperations,
         Qa04OperationClosedPrefixV1 closedPrefix,
-        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions)
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null)
     {
         ArgumentNullException.ThrowIfNull(partitionAuthorityState);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -109,11 +110,18 @@ public static class Qa04ProductionStep2BasisAuthorityV1
         var schedulerState = OperationSchedulerSubstateV1.Canonicalize(
             scheduler,
             partitionAuthorityState.Header.Step);
-        var operationState = Qa04OperationAuthorityV1.Canonicalize(
-            mutableOperations,
-            closedPrefix,
-            activeTransactions,
-            partitionAuthorityState.Header.Step);
+        var operationState = digestCache is null
+            ? Qa04OperationAuthorityV1.Canonicalize(
+                mutableOperations,
+                closedPrefix,
+                activeTransactions,
+                partitionAuthorityState.Header.Step)
+            : Qa04OperationAuthorityV1.Canonicalize(
+                mutableOperations,
+                closedPrefix,
+                activeTransactions,
+                partitionAuthorityState.Header.Step,
+                digestCache);
         var state = new WorldStateV1(
             partitionAuthorityState.Header,
             partitionAuthorityState.Partitions,
@@ -323,7 +331,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             Array.Empty<DurableOperationStateV1>(),
             closedPrefix,
             basisCrossDomainTransactions,
-            basisStep);
+            basisStep,
+            digestCache);
         Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
             expectedClosedOperation,
             partitionAuthorityState.OperationState,
@@ -396,7 +405,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             scheduler,
             batch.ScheduledOperations,
             closedPrefix,
-            basisCrossDomainTransactions);
+            basisCrossDomainTransactions,
+            digestCache);
         if (detailedPhaseDiagnostics)
             EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-basis-bind", freezeSubphaseStarted);
         freezeSubphaseStarted = Stopwatch.GetTimestamp();
@@ -503,7 +513,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
                     injectionStep,
                     workerCount,
                     phaseLogIntervalTransitions)
-                : null).ConfigureAwait(false);
+                : null,
+            digestCache: digestCache).ConfigureAwait(false);
         var verification = finalized.PostCommitVerification;
         var nextPrefix = finalized.ClosedPrefix;
         if (verification.ResultingStep != resultingStep ||
@@ -661,6 +672,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             scheduledBatchDigest,
             terminalOperationsAreCanonical,
             diagnosticPhaseObserver,
+            digestCache: null,
             basisOperationAuthorityAlreadyValidated: false);
 
     internal static Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishValidatedBasisAsync(
@@ -678,7 +690,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         Qa04ProductionDetailTransitionStepV1? detailTransition = null,
         byte[]? scheduledBatchDigest = null,
         bool terminalOperationsAreCanonical = false,
-        Action<string, double>? diagnosticPhaseObserver = null)
+        Action<string, double>? diagnosticPhaseObserver = null,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null)
         => CommitAndPublishCoreAsync(
             store,
             scheduler,
@@ -695,6 +708,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             scheduledBatchDigest,
             terminalOperationsAreCanonical,
             diagnosticPhaseObserver,
+            digestCache,
             basisOperationAuthorityAlreadyValidated: true);
 
     private static async Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishCoreAsync(
@@ -713,6 +727,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         byte[]? scheduledBatchDigest,
         bool terminalOperationsAreCanonical,
         Action<string, double>? diagnosticPhaseObserver,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache,
         bool basisOperationAuthorityAlreadyValidated)
     {
         ArgumentNullException.ThrowIfNull(store);
@@ -821,11 +836,18 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             basisState,
             scheduler,
             step5Candidate.FrozenInput);
-        var resultingOperation = Qa04OperationAuthorityV1.Canonicalize(
-            Array.Empty<DurableOperationStateV1>(),
-            resultingPrefix,
-            resultingActiveTransactions,
-            step5Candidate.TargetStep);
+        var resultingOperation = digestCache is null
+            ? Qa04OperationAuthorityV1.Canonicalize(
+                Array.Empty<DurableOperationStateV1>(),
+                resultingPrefix,
+                resultingActiveTransactions,
+                step5Candidate.TargetStep)
+            : Qa04OperationAuthorityV1.Canonicalize(
+                Array.Empty<DurableOperationStateV1>(),
+                resultingPrefix,
+                resultingActiveTransactions,
+                step5Candidate.TargetStep,
+                digestCache);
         var operationCore = new StepCoreSubstateCandidateV1(
             StepCoreSubstateKindV1.Operation,
             step5Candidate.BasisStep,
