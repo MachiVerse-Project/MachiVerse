@@ -14,13 +14,16 @@ public sealed class FrozenStepInputV1
         ulong configGeneration,
         ReadOnlySpan<byte> configDigest,
         IEnumerable<ScheduledOperationRefV1> scheduledOperations)
-        : this(
-            worldId,
-            basisStep,
-            configGeneration,
-            configDigest,
-            CanonicalizeScheduledOperations(basisStep, scheduledOperations))
     {
+        ValidateEnvelope(worldId, configGeneration, configDigest);
+        ArgumentNullException.ThrowIfNull(scheduledOperations);
+        var ordered = CanonicalizeScheduledOperations(basisStep, scheduledOperations);
+
+        WorldId = worldId;
+        BasisStep = basisStep;
+        ConfigGeneration = configGeneration;
+        ConfigDigest = configDigest.ToArray();
+        ScheduledOperations = ordered;
     }
 
     internal static FrozenStepInputV1 CreateFromCanonicalSchedulerBucket(
@@ -30,6 +33,7 @@ public sealed class FrozenStepInputV1
         ReadOnlySpan<byte> configDigest,
         IReadOnlyList<ScheduledOperationRefV1> scheduledOperations)
     {
+        ValidateEnvelope(worldId, configGeneration, configDigest);
         ArgumentNullException.ThrowIfNull(scheduledOperations);
         ValidateCanonicalSchedulerBucket(basisStep, scheduledOperations);
         return new FrozenStepInputV1(
@@ -47,9 +51,7 @@ public sealed class FrozenStepInputV1
         ReadOnlySpan<byte> configDigest,
         IReadOnlyList<ScheduledOperationRefV1> scheduledOperations)
     {
-        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
-        if (configGeneration == 0) throw new ArgumentOutOfRangeException(nameof(configGeneration));
-        if (configDigest.Length != 32) throw new ArgumentException("ConfigDigest must be exactly 32 bytes.", nameof(configDigest));
+        ValidateEnvelope(worldId, configGeneration, configDigest);
         ArgumentNullException.ThrowIfNull(scheduledOperations);
 
         WorldId = worldId;
@@ -64,6 +66,16 @@ public sealed class FrozenStepInputV1
     public ulong ConfigGeneration { get; }
     public byte[] ConfigDigest { get; }
     public IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations { get; }
+
+    private static void ValidateEnvelope(
+        OpaqueId128 worldId,
+        ulong configGeneration,
+        ReadOnlySpan<byte> configDigest)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
+        if (configGeneration == 0) throw new ArgumentOutOfRangeException(nameof(configGeneration));
+        if (configDigest.Length != 32) throw new ArgumentException("ConfigDigest must be exactly 32 bytes.", nameof(configDigest));
+    }
 
     private static IReadOnlyList<ScheduledOperationRefV1> CanonicalizeScheduledOperations(
         ulong basisStep,
