@@ -302,15 +302,21 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "persistence-schedule", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
+        var freezeSubphaseStarted = Stopwatch.GetTimestamp();
         var basisState = Qa04ProductionStep2BasisAuthorityV1.Bind(
             partitionAuthorityState,
             scheduler,
             batch.ScheduledOperations,
             closedPrefix,
             basisCrossDomainTransactions);
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-basis-bind", freezeSubphaseStarted);
+        freezeSubphaseStarted = Stopwatch.GetTimestamp();
+
         var frozen = StepInputFreezerV1.Freeze(basisState, scheduler);
         if (frozen.ScheduledOperations.Count != bindings.Length)
             throw new InvalidDataException("qa04.step2.production-loop.frozen-operation-count-drift");
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-input", freezeSubphaseStarted);
+        freezeSubphaseStarted = Stopwatch.GetTimestamp();
 
         Qa04ProductionDetailTransitionStepV1? detailTransition = null;
         if (basisDetailDirectory is not null)
@@ -321,6 +327,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
                 basisDetailDirectory,
                 detailPolicy!);
         }
+        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "detail-prepare", freezeSubphaseStarted);
         EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-detail", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
@@ -399,7 +406,11 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             cancellationToken,
             detailTransition,
             scheduledBatchDigest: batchAuthority.ScheduledBatchDigest,
-            terminalOperationsAreCanonical: true).ConfigureAwait(false);
+            terminalOperationsAreCanonical: true,
+            diagnosticPhaseObserver: CreateDiagnosticPhaseObserver(
+                injectionStep,
+                workerCount,
+                phaseLogIntervalTransitions)).ConfigureAwait(false);
         var verification = finalized.PostCommitVerification;
         var nextPrefix = finalized.ClosedPrefix;
         if (verification.ResultingStep != resultingStep ||
@@ -451,6 +462,19 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         Console.Error.WriteLine(
             $"QA04_PHASE workers={workerCount} injection_step={injectionStep} phase={phase} " +
             $"elapsed_ms={Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds:F1}");
+    }
+
+    private static Action<string, double>? CreateDiagnosticPhaseObserver(
+        ulong injectionStep,
+        int workerCount,
+        int phaseLogIntervalTransitions)
+    {
+        if (injectionStep % checked((ulong)phaseLogIntervalTransitions) != 0)
+            return null;
+
+        return (phase, elapsedMs) =>
+            Console.Error.WriteLine(
+                $"QA04_PHASE workers={workerCount} injection_step={injectionStep} phase={phase} elapsed_ms={elapsedMs:F1}");
     }
 
     private static IReadOnlyCollection<IDomainRuntimeV1> CreateProductionRuntimes(int expectedOperationCount)
@@ -526,7 +550,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         CancellationToken cancellationToken = default,
         Qa04ProductionDetailTransitionStepV1? detailTransition = null,
         byte[]? scheduledBatchDigest = null,
-        bool terminalOperationsAreCanonical = false)
+        bool terminalOperationsAreCanonical = false,
+        Action<string, double>? diagnosticPhaseObserver = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -541,6 +566,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         if (scheduledBatchDigest is not null && scheduledBatchDigest.Length != 32)
             throw new InvalidDataException("qa04.step2.finalization.scheduled-batch-digest-invalid");
 
+        var diagnosticPhaseStarted = Stopwatch.GetTimestamp();
         var step5Candidate = preparation.Candidate;
         var step5Prepared = preparation.PreparedState;
         var basisState = preparation.BasisState
@@ -570,12 +596,14 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             terminalOperationsAreCanonical);
         if (mutableOperations.Count != bindings.Count)
             throw new InvalidDataException("qa04.step2.finalization-mutable-operation-count-drift");
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-preflight", ref diagnosticPhaseStarted);
 
         var before = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
         if (before.FinalizedStep != step5Candidate.BasisStep ||
             before.ConfigGeneration != step5Candidate.ConfigGeneration ||
             !CryptographicOperations.FixedTimeEquals(before.ConfigDigest, step5Candidate.ConfigDigest))
             throw new InvalidDataException("qa04.step2.finalization-persistence-basis-drift");
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-recovery-head", ref diagnosticPhaseStarted);
 
         var expectedBasisOperation = Qa04OperationAuthorityV1.Canonicalize(
             mutableOperations,
@@ -595,6 +623,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                     cancellationToken)
                 .ConfigureAwait(false);
         }
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-basis-operation-authority", ref diagnosticPhaseStarted);
 
         var terminalBatchDigest = Qa04TerminalSemanticAuthorityV1.ComputeBatchDigest(bindings, alignedTerminal);
         var terminalStepDigest = Qa04TerminalSemanticAuthorityV1.ComputeStepItemDigest(
@@ -614,6 +643,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             checked((ulong)alignedTerminal.Count),
             terminalSemanticDigest,
             step5Candidate.TargetStep);
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-terminal-digest", ref diagnosticPhaseStarted);
 
         var schedulerCore = OperationSchedulerSubstateV1.CreatePostFinalizationCandidate(
             basisState,
@@ -648,6 +678,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         var expectedCoreCount = detailTransition is null ? 2 : 3;
         if (!candidate.CommitDecision.CanCommit || candidate.CoreSubstateCandidates.Count != expectedCoreCount)
             throw new InvalidDataException("qa04.step2.finalization-core-candidate-drift");
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-core-candidate", ref diagnosticPhaseStarted);
 
         var partitionMaterials = candidate.PartitionCandidates
             .Select(partition => new StepPartitionStateMaterialV1(
@@ -663,6 +694,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             coreMaterials);
         if (prepared.IsPublishable)
             throw new InvalidDataException("qa04.step2.finalization-premature-publishable-state");
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-state-prepare", ref diagnosticPhaseStarted);
 
         var anchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
         var requiredHistoryRecords = detailTransition is null ? 1UL : 2UL;
@@ -720,9 +752,12 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             crossDomainTransactionStateChanges,
             detailDecisionAuthority,
             effectiveScheduledBatchDigest);
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-transition-authority", ref diagnosticPhaseStarted);
+
         var receipt = await new StepFinalizationCoordinatorV1(durability)
             .FinalizeAsync(candidate, scheduler, material, cancellationToken)
             .ConfigureAwait(false);
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-durable-commit", ref diagnosticPhaseStarted);
 
         var after = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
         if (after.FinalizedStep != candidate.TargetStep ||
@@ -743,6 +778,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                     cancellationToken)
                 .ConfigureAwait(false);
         }
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-postcommit-read", ref diagnosticPhaseStarted);
 
         var authoritative = StepStateApplicationV1.Publish(prepared, receipt);
         if (!authoritative.IsPublishable || authoritative.State.Header.Step != candidate.TargetStep)
@@ -757,6 +793,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             resultingPrefix,
             resultingActiveTransactions,
             resultingDetailDirectory);
+        ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-postcommit-verify", ref diagnosticPhaseStarted);
 
         return new Qa04ProductionStep2FinalizationResultV1(
             preparation,
@@ -769,6 +806,19 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             resultingDetailDirectory,
             detailDecisionAuthority,
             verification);
+    }
+
+    private static void ObserveDiagnosticPhase(
+        Action<string, double>? observer,
+        string phase,
+        ref long startedTimestamp)
+    {
+        if (observer is null)
+            return;
+
+        var now = Stopwatch.GetTimestamp();
+        observer(phase, Stopwatch.GetElapsedTime(startedTimestamp, now).TotalMilliseconds);
+        startedTimestamp = now;
     }
 
     private static IReadOnlyList<TerminalOperationCommit> AlignTerminalCoverage(
