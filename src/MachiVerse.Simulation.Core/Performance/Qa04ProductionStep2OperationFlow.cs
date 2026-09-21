@@ -188,7 +188,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         DetailTransitionPolicyV1? detailPolicy = null,
         int? persistenceInsertBatchSize = null,
         Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null,
-        int phaseLogIntervalTransitions = 1)
+        int phaseLogIntervalTransitions = 1,
+        bool detailedPhaseDiagnostics = false)
     {
         if (!Qa04DomainExecutionTargetV1.CanonicalWorkerCounts.Contains(workerCount))
             throw new InvalidDataException("qa04.step2.production-loop.worker-count-not-canonical");
@@ -309,13 +310,15 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             batch.ScheduledOperations,
             closedPrefix,
             basisCrossDomainTransactions);
-        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-basis-bind", freezeSubphaseStarted);
+        if (detailedPhaseDiagnostics)
+            EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-basis-bind", freezeSubphaseStarted);
         freezeSubphaseStarted = Stopwatch.GetTimestamp();
 
         var frozen = StepInputFreezerV1.Freeze(basisState, scheduler);
         if (frozen.ScheduledOperations.Count != bindings.Length)
             throw new InvalidDataException("qa04.step2.production-loop.frozen-operation-count-drift");
-        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-input", freezeSubphaseStarted);
+        if (detailedPhaseDiagnostics)
+            EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-input", freezeSubphaseStarted);
         freezeSubphaseStarted = Stopwatch.GetTimestamp();
 
         Qa04ProductionDetailTransitionStepV1? detailTransition = null;
@@ -327,7 +330,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
                 basisDetailDirectory,
                 detailPolicy!);
         }
-        EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "detail-prepare", freezeSubphaseStarted);
+        if (detailedPhaseDiagnostics)
+            EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "detail-prepare", freezeSubphaseStarted);
         EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-detail", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
@@ -407,10 +411,12 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             detailTransition,
             scheduledBatchDigest: batchAuthority.ScheduledBatchDigest,
             terminalOperationsAreCanonical: true,
-            diagnosticPhaseObserver: CreateDiagnosticPhaseObserver(
-                injectionStep,
-                workerCount,
-                phaseLogIntervalTransitions)).ConfigureAwait(false);
+            diagnosticPhaseObserver: detailedPhaseDiagnostics
+                ? CreateDiagnosticPhaseObserver(
+                    injectionStep,
+                    workerCount,
+                    phaseLogIntervalTransitions)
+                : null).ConfigureAwait(false);
         var verification = finalized.PostCommitVerification;
         var nextPrefix = finalized.ClosedPrefix;
         if (verification.ResultingStep != resultingStep ||

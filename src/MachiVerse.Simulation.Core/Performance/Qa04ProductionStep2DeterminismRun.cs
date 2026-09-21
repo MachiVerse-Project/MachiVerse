@@ -59,6 +59,7 @@ public static class Qa04ProductionStep2DeterminismRunV1
         if (string.IsNullOrWhiteSpace(persistenceRoot))
             throw new ArgumentException("persistenceRoot is required.", nameof(persistenceRoot));
 
+        var detailedPhaseDiagnostics = IsDetailedPhaseDiagnosticsEnabled();
         var progress = Stopwatch.StartNew();
         Console.Error.WriteLine(
             $"QA04_PROGRESS phase=contract-validation workers={workerCount} transitions=0/{transitionCount} elapsed_seconds=0");
@@ -206,7 +207,8 @@ public static class Qa04ProductionStep2DeterminismRunV1
                 currentDetailDirectory,
                 detailPolicy,
                 persistenceInsertBatchSize,
-                digestCache).ConfigureAwait(false);
+                digestCache,
+                detailedPhaseDiagnostics: detailedPhaseDiagnostics).ConfigureAwait(false);
 
             var resultingDetailDirectory = completed.Finalization.DetailDirectory
                 ?? throw new InvalidDataException("qa04.step2-determinism.detail-directory-missing");
@@ -408,4 +410,12 @@ public static class Qa04ProductionStep2DeterminismRunV1
 
     private static string Hex(ReadOnlySpan<byte> value)
         => Convert.ToHexString(value).ToLowerInvariant();
+    private static bool IsDetailedPhaseDiagnosticsEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable("MACHIVERSE_QA04_DETAILED_PHASE_DIAGNOSTICS");
+        return string.Equals(value, "1", StringComparison.Ordinal) ||
+               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+
 }
