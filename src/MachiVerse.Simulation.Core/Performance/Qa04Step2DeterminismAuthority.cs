@@ -167,20 +167,7 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
         if ((ulong)ordered.Length != Qa04ReferenceLoadV1.OperationCountForStep(injectionStep))
             throw new InvalidDataException("qa04.operation-batch.cardinality-drift");
 
-        var scheduledBatchDigest = HashSuite.DomainHash("mv.qa04-operation-scheduled-batch.v1", writer =>
-        {
-            writer.WriteArrayStart((ulong)ordered.Length);
-            foreach (var binding in ordered)
-            {
-                var orderKey = binding.OrderKey.ToDatabaseBytes();
-                if (orderKey.Length != 55)
-                    throw new InvalidDataException("qa04.operation-batch.order-key-length");
-                writer.WriteArrayStart(3);
-                writer.WriteBytes(binding.SourceDescriptor.OperationId.ToBytes());
-                writer.WriteBytes(binding.BoundDescriptor.PayloadDigest);
-                writer.WriteBytes(orderKey);
-            }
-        });
+        var scheduledBatchDigest = ComputeScheduledBatchDigest(ordered);
 
         var physical = new MvDcborWriter();
         WriteNormalized(physical, injectionStep, effectiveStep, checked((ulong)ordered.Length), scheduledBatchDigest);
@@ -200,6 +187,26 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
             checked((ulong)ordered.Length),
             scheduledBatchDigest,
             history);
+    }
+
+    public static byte[] ComputeScheduledBatchDigest(
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> canonicalBindings)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalBindings);
+        return HashSuite.DomainHash("mv.qa04-operation-scheduled-batch.v1", writer =>
+        {
+            writer.WriteArrayStart((ulong)canonicalBindings.Count);
+            foreach (var binding in canonicalBindings)
+            {
+                var orderKey = binding.OrderKey.ToDatabaseBytes();
+                if (orderKey.Length != SameStepOrderKey.DatabaseKeyLength)
+                    throw new InvalidDataException("qa04.operation-batch.order-key-length");
+                writer.WriteArrayStart(3);
+                writer.WriteBytes(binding.SourceDescriptor.OperationId.ToBytes());
+                writer.WriteBytes(binding.BoundDescriptor.PayloadDigest);
+                writer.WriteBytes(orderKey);
+            }
+        });
     }
 
     private static void WriteNormalized(
