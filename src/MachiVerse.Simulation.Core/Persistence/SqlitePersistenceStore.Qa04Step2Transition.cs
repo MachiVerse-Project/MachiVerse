@@ -202,9 +202,14 @@ public sealed partial class SqlitePersistenceStore
                     if (terminal.OperationId != operationId)
                         throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
                 }
-                else if (terminalById is null || !terminalById.TryGetValue(operationId, out terminal!))
+                else
                 {
-                    throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
+                    if (terminalById is null ||
+                        !terminalById.TryGetValue(operationId, out var mappedTerminal))
+                    {
+                        throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
+                    }
+                    terminal = mappedTerminal;
                 }
 
                 if (!Qa04TransitionCommittedAuthorityV1.TerminalEquals(outcome, terminal))
