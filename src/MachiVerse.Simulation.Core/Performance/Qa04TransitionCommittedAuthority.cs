@@ -181,19 +181,6 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         ReadOnlySpan<byte> stateDiagnosticHash,
         IReadOnlyCollection<Qa04TransitionPartitionDigestV1> partitionDigests)
     {
-        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
-        if (historySequence == 0) throw new ArgumentOutOfRangeException(nameof(historySequence));
-        if (previousHistoryRecordDigest.Length != 32)
-            throw new ArgumentException("Previous history digest must be 32 bytes.", nameof(previousHistoryRecordDigest));
-        if (effectiveStep == ulong.MaxValue || resultingStep != effectiveStep + 1UL)
-            throw new InvalidDataException("qa04.transition-authority.step-drift");
-        if (activeConfigGeneration == 0)
-            throw new InvalidDataException("qa04.transition-authority.config-generation-invalid");
-        RequireHash256(activeConfigDigest, "qa04.transition-authority.config-digest-invalid");
-        RequireHash256(previousStateContinuityToken, "qa04.transition-authority.previous-continuity-invalid");
-        RequireHash256(stateDiagnosticHash, "qa04.transition-authority.state-diagnostic-invalid");
-        ArgumentNullException.ThrowIfNull(partitionDigests);
-
         var partitions = ValidateAndCopyPartitions(partitionDigests);
         var configDigest = activeConfigDigest.ToArray();
         var previousContinuity = previousStateContinuityToken.ToArray();
