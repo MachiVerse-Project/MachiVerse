@@ -562,11 +562,13 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             _ = new StableToken(outcome.ResultCode);
 
             ids[index] = outcome.OperationId;
-            outcomes[index] = new TerminalOperationCommit(
-                outcome.OperationId,
-                outcome.TerminalStatus,
-                outcome.ResultCode,
-                outcome.RichResultPayload?.ToArray());
+            outcomes[index] = outcome.RichResultPayload is null
+                ? outcome
+                : new TerminalOperationCommit(
+                    outcome.OperationId,
+                    outcome.TerminalStatus,
+                    outcome.ResultCode,
+                    outcome.RichResultPayload.ToArray());
         }
 
         return (Array.AsReadOnly(ids), Array.AsReadOnly(outcomes));
