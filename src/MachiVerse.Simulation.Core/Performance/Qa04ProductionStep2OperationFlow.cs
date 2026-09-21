@@ -327,12 +327,18 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         if (domainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.step2.production-loop.domain-authority-count-not-97");
 
-        var expectedClosedOperation = Qa04OperationAuthorityV1.Canonicalize(
-            Array.Empty<DurableOperationStateV1>(),
-            closedPrefix,
-            basisCrossDomainTransactions,
-            basisStep,
-            digestCache);
+        var expectedClosedOperation = digestCache is null
+            ? Qa04OperationAuthorityV1.Canonicalize(
+                Array.Empty<DurableOperationStateV1>(),
+                closedPrefix,
+                basisCrossDomainTransactions,
+                basisStep)
+            : Qa04OperationAuthorityV1.Canonicalize(
+                Array.Empty<DurableOperationStateV1>(),
+                closedPrefix,
+                basisCrossDomainTransactions,
+                basisStep,
+                digestCache);
         Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
             expectedClosedOperation,
             partitionAuthorityState.OperationState,
