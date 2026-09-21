@@ -143,22 +143,40 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             return;
         }
 
-        var byPrefix = normalized.Values
-            .GroupBy(static update => RecordIdPrefixPartitionDigestV2.PrefixOf(update.RecordId))
-            .OrderBy(static group => group.Key)
-            .ToArray();
+        var updates = new List<Update>();
+        ushort? currentPrefix = null;
 
-        foreach (var group in byPrefix)
+        void ApplyCurrentPrefix()
         {
-            var prefix = group.Key;
-            var updates = group
-                .OrderBy(static update => update.RecordId)
-                .ToArray();
+            if (currentPrefix is null || updates.Count == 0)
+                return;
 
-            _slices.TryGetValue(prefix, out var existing);
-            var replacement = MergeSlice(state.Identity, prefix, existing, updates);
-            _slices[prefix] = replacement;
+            _slices.TryGetValue(currentPrefix.Value, out var existing);
+            var replacement = MergeSlice(
+                state.Identity,
+                currentPrefix.Value,
+                existing,
+                updates);
+            _slices[currentPrefix.Value] = replacement;
+            updates.Clear();
         }
+
+        foreach (var update in normalized.Values)
+        {
+            var prefix = RecordIdPrefixPartitionDigestV2.PrefixOf(update.RecordId);
+            if (currentPrefix is { } previousPrefix && prefix < previousPrefix)
+                throw new InvalidDataException("qa04.prefix-digest-cache.normalized-prefix-order-drift");
+
+            if (currentPrefix != prefix)
+            {
+                ApplyCurrentPrefix();
+                currentPrefix = prefix;
+            }
+
+            updates.Add(update);
+        }
+
+        ApplyCurrentPrefix();
 
         _itemCount = expectedCount;
         _lastState = state;
