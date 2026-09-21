@@ -87,6 +87,53 @@ public static class Qa04ProductionStep2BasisAuthorityV1
         return state;
     }
 
+    internal static WorldStateV1 BindValidatedCanonicalCurrentStep(
+        WorldStateV1 partitionAuthorityState,
+        OperationSchedulerStateV1 scheduler,
+        IReadOnlyList<DurableOperationStateV1> mutableOperations,
+        Qa04OperationClosedPrefixV1 closedPrefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions)
+    {
+        ArgumentNullException.ThrowIfNull(partitionAuthorityState);
+        ArgumentNullException.ThrowIfNull(scheduler);
+        ArgumentNullException.ThrowIfNull(mutableOperations);
+        ArgumentNullException.ThrowIfNull(closedPrefix);
+        ArgumentNullException.ThrowIfNull(activeTransactions);
+
+        ValidateCanonicalCurrentStepShape(
+            partitionAuthorityState.Header.Step,
+            scheduler,
+            mutableOperations);
+        closedPrefix.Validate(partitionAuthorityState.Header.Step);
+
+        var schedulerState = OperationSchedulerSubstateV1.Canonicalize(
+            scheduler,
+            partitionAuthorityState.Header.Step);
+        var operationState = Qa04OperationAuthorityV1.Canonicalize(
+            mutableOperations,
+            closedPrefix,
+            activeTransactions,
+            partitionAuthorityState.Header.Step);
+        var state = new WorldStateV1(
+            partitionAuthorityState.Header,
+            partitionAuthorityState.Partitions,
+            schedulerState,
+            operationState,
+            partitionAuthorityState.DetailState,
+            partitionAuthorityState.DomainRegistryState,
+            partitionAuthorityState.Diagnostic.ConfigDigest);
+
+        RequireSubstateMatch(
+            schedulerState,
+            state.SchedulerState,
+            "qa04.step2.scheduler-substate-drift");
+        RequireSubstateMatch(
+            operationState,
+            state.OperationState,
+            "qa04.step2.operation-substate-drift");
+        return state;
+    }
+
     public static void Validate(
         WorldStateV1 state,
         OperationSchedulerStateV1 scheduler,
@@ -103,6 +150,39 @@ public static class Qa04ProductionStep2BasisAuthorityV1
             state.Header.Step);
         RequireSubstateMatch(expectedScheduler, state.SchedulerState, "qa04.step2.scheduler-substate-drift");
         RequireSubstateMatch(expectedOperation, state.OperationState, "qa04.step2.operation-substate-drift");
+    }
+
+    private static void ValidateCanonicalCurrentStepShape(
+        ulong basisStep,
+        OperationSchedulerStateV1 scheduler,
+        IReadOnlyList<DurableOperationStateV1> mutableOperations)
+    {
+        if (scheduler.FreezeStep is not null || scheduler.NextSchedulableStep != basisStep)
+            throw new InvalidDataException("qa04.step2.scheduler-basis-drift");
+
+        var scheduled = scheduler.ForEffectiveStep(basisStep);
+        if (scheduled.Count != mutableOperations.Count)
+            throw new InvalidDataException("qa04.step2.mutable-operation-count-drift");
+
+        foreach (var bucket in scheduler.CanonicalBuckets)
+        {
+            if (bucket.Key != basisStep)
+                throw new InvalidDataException("qa04.step2.scheduler-unexpected-bucket");
+        }
+
+        for (var index = 0; index < mutableOperations.Count; index++)
+        {
+            var durable = mutableOperations[index]
+                ?? throw new InvalidDataException("qa04.step2.mutable-operation-null");
+            var scheduledOperation = scheduled[index];
+            if (durable.OperationId != scheduledOperation.OperationId ||
+                durable.Lifecycle != DurableOperationLifecycleV1.ScheduledDurable ||
+                durable.EffectiveStep != basisStep ||
+                scheduledOperation.EffectiveStep != basisStep)
+            {
+                throw new InvalidDataException("qa04.step2.mutable-operation-not-scheduled");
+            }
+        }
     }
 
     private static void ValidateMutableShape(
@@ -316,7 +396,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         phaseStarted = Stopwatch.GetTimestamp();
 
         var freezeSubphaseStarted = Stopwatch.GetTimestamp();
-        var basisState = Qa04ProductionStep2BasisAuthorityV1.Bind(
+        var basisState = Qa04ProductionStep2BasisAuthorityV1.BindValidatedCanonicalCurrentStep(
             partitionAuthorityState,
             scheduler,
             batch.ScheduledOperations,
