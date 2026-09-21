@@ -198,6 +198,7 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             encodedCollections,
             previousContinuity,
             stateDigest);
+        var normalizedPayloadDigest = HashSuite.Hash256(semanticBytes);
         var expectedRecordDigest = HistoryIntegrity.ComputeHistoryRecordDigest(
             worldId,
             historySequence,
@@ -219,7 +220,7 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             resultingContinuity,
             stateDigest);
 
-        var history = HistoryRecordMaterial.CreateFromOwnedCanonicalPayloads(
+        var history = HistoryRecordMaterial.CreateFromOwnedPrehashedCanonicalPayloads(
             worldId,
             historySequence,
             previousHistoryRecordDigest,
@@ -229,10 +230,12 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             0,
             physicalBytes,
             semanticBytes,
+            normalizedPayloadDigest,
             expectedRecordDigest);
-        if (!CryptographicOperations.FixedTimeEquals(history.RecordDigest, expectedRecordDigest) ||
-            !history.NormalizedPayloadBytes.AsSpan().SequenceEqual(semanticBytes) ||
-            !history.PayloadBytes.AsSpan().SequenceEqual(physicalBytes))
+        if (!ReferenceEquals(history.RecordDigest, expectedRecordDigest) ||
+            !ReferenceEquals(history.NormalizedPayloadDigest, normalizedPayloadDigest) ||
+            !ReferenceEquals(history.NormalizedPayloadBytes, semanticBytes) ||
+            !ReferenceEquals(history.PayloadBytes, physicalBytes))
             throw new InvalidDataException("qa04.transition-authority.history-material-drift");
 
         return new Qa04TransitionCommittedAuthorityV1(
