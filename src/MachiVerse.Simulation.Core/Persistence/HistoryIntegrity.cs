@@ -15,6 +15,7 @@ public sealed class HistoryRecordMaterial
         ushort payloadSchemaMinor,
         byte[] payloadBytes,
         byte[] normalizedPayloadBytes,
+        byte[] normalizedPayloadDigest,
         byte[] recordDigest)
     {
         WorldId = worldId;
@@ -100,7 +101,6 @@ public sealed class HistoryRecordMaterial
         ushort payloadSchemaMinor,
         byte[] payloadBytes,
         byte[] normalizedPayloadBytes,
-        byte[] normalizedPayloadDigest,
         byte[] recordDigest)
     {
         if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid for history.", nameof(worldId));
