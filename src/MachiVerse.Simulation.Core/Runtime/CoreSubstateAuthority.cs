@@ -238,18 +238,39 @@ public static class DurableOperationSubstateV1
             .Select(static state => state ?? throw new ArgumentNullException(nameof(states)))
             .OrderBy(static state => state.OperationId)
             .ToArray();
-        if (ordered.Select(static state => state.OperationId).Distinct().Count() != ordered.Length)
-            throw new InvalidDataException("operation-substate.duplicate-operation-id");
-        if (ordered.Length == 0)
+        return CanonicalizeOrderedByOperationId(ordered);
+    }
+
+    internal static WorldSubstateRefV1 CanonicalizeOrderedByOperationId(
+        IReadOnlyList<DurableOperationStateV1> ordered)
+    {
+        ArgumentNullException.ThrowIfNull(ordered);
+        if (ordered.Count == 0)
             return WorldStateV1.EmptySubstate(Schema.SchemaId.Value);
-        foreach (var state in ordered) Validate(state);
+
+        DurableOperationStateV1? previous = null;
+        foreach (var state in ordered)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+            if (previous is not null)
+            {
+                var comparison = previous.OperationId.CompareTo(state.OperationId);
+                if (comparison == 0)
+                    throw new InvalidDataException("operation-substate.duplicate-operation-id");
+                if (comparison > 0)
+                    throw new InvalidDataException("operation-substate.noncanonical-operation-order");
+            }
+
+            Validate(state);
+            previous = state;
+        }
 
         var digest = HashSuite.DomainHash("mv.core-operation-state.v1", writer =>
         {
             writer.WriteMapStart(2);
             writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
             writer.WriteUnsigned(1);
-            writer.WriteArrayStart((ulong)ordered.Length);
+            writer.WriteArrayStart((ulong)ordered.Count);
             foreach (var state in ordered)
             {
                 writer.WriteMapStart(10);
