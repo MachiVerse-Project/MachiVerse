@@ -156,18 +156,27 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
         ArgumentNullException.ThrowIfNull(bindings);
         if (effectiveStep != checked(injectionStep + 1UL))
             throw new InvalidDataException("qa04.operation-batch.effective-step-drift");
-        var ordered = bindings
-            .OrderBy(static binding => binding.OrderKey)
-            .ThenBy(static binding => binding.SourceDescriptor.OperationId)
-            .ToArray();
-        if (!ordered.SequenceEqual(bindings))
-            throw new InvalidDataException("qa04.operation-batch.noncanonical-order");
-        if (ordered.Select(static binding => binding.SourceDescriptor.OperationId).Distinct().Count() != ordered.Length)
-            throw new InvalidDataException("qa04.operation-batch.operation-id-duplicate");
-        if ((ulong)ordered.Length != Qa04ReferenceLoadV1.OperationCountForStep(injectionStep))
+        if ((ulong)bindings.Count != Qa04ReferenceLoadV1.OperationCountForStep(injectionStep))
             throw new InvalidDataException("qa04.operation-batch.cardinality-drift");
 
-        var scheduledBatchDigest = ComputeScheduledBatchDigest(ordered);
+        var operationIds = new HashSet<OpaqueId128>(bindings.Count);
+        Qa04CanonicalOperationBindingResultV1? previous = null;
+        foreach (var binding in bindings)
+        {
+            if (previous is not null)
+            {
+                var order = previous.OrderKey.CompareTo(binding.OrderKey);
+                if (order > 0 ||
+                    (order == 0 &&
+                     previous.SourceDescriptor.OperationId.CompareTo(binding.SourceDescriptor.OperationId) >= 0))
+                    throw new InvalidDataException("qa04.operation-batch.noncanonical-order");
+            }
+            if (!operationIds.Add(binding.SourceDescriptor.OperationId))
+                throw new InvalidDataException("qa04.operation-batch.operation-id-duplicate");
+            previous = binding;
+        }
+
+        var scheduledBatchDigest = ComputeScheduledBatchDigest(bindings);
 
         var physical = new MvDcborWriter();
         WriteNormalized(physical, injectionStep, effectiveStep, checked((ulong)ordered.Length), scheduledBatchDigest);
