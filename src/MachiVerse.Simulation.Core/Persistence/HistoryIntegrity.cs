@@ -15,7 +15,6 @@ public sealed class HistoryRecordMaterial
         ushort payloadSchemaMinor,
         byte[] payloadBytes,
         byte[] normalizedPayloadBytes,
-        byte[] normalizedPayloadDigest,
         byte[] recordDigest)
     {
         WorldId = worldId;
@@ -110,18 +109,15 @@ public sealed class HistoryRecordMaterial
             throw new ArgumentException("Previous history digest must be exactly 32 bytes.", nameof(previousRecordDigest));
         ArgumentNullException.ThrowIfNull(payloadBytes);
         ArgumentNullException.ThrowIfNull(normalizedPayloadBytes);
-        ArgumentNullException.ThrowIfNull(normalizedPayloadDigest);
         ArgumentNullException.ThrowIfNull(recordDigest);
         if (normalizedPayloadBytes.Length == 0)
             throw new InvalidDataException("persistence.normalized-history-payload-empty");
-        if (normalizedPayloadDigest.Length != 32 || recordDigest.Length != 32)
+        if (recordDigest.Length != 32)
             throw new InvalidDataException("persistence.history-persisted-digest-width");
 
         var recordToken = new StableToken(recordType);
         var schemaToken = new StableToken(payloadSchemaId);
         var expectedNormalizedDigest = HashSuite.Hash256(normalizedPayloadBytes);
-        if (!CryptographicOperations.FixedTimeEquals(expectedNormalizedDigest, normalizedPayloadDigest))
-            throw new InvalidDataException("persistence.normalized-history-payload-digest-mismatch");
         var previous = previousRecordDigest.ToArray();
         var expectedRecordDigest = HistoryIntegrity.ComputeHistoryRecordDigest(
             worldId,
@@ -142,7 +138,7 @@ public sealed class HistoryRecordMaterial
             payloadSchemaMinor,
             payloadBytes,
             normalizedPayloadBytes,
-            normalizedPayloadDigest,
+            expectedNormalizedDigest,
             recordDigest);
     }
 
