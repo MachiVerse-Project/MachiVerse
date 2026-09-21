@@ -258,17 +258,15 @@ public static class HistoryIntegrity
         if (normalizedRecordPayload.IsEmpty)
             throw new ArgumentException("Normalized record payload cannot be empty.", nameof(normalizedRecordPayload));
 
-        var previous = previousRecordDigest.ToArray();
-        var normalized = normalizedRecordPayload.ToArray();
-        return HashSuite.DomainHash("mv.history-record.v1", writer =>
-        {
-            writer.WriteMapStart(5);
-            writer.WriteUnsigned(0); writer.WriteBytes(worldId.ToBytes());
-            writer.WriteUnsigned(1); writer.WriteUnsigned(sequence);
-            writer.WriteUnsigned(2); writer.WriteBytes(previous);
-            writer.WriteUnsigned(3); writer.WriteAsciiText(recordType.Value);
-            writer.WriteUnsigned(4); writer.WriteCanonicalValue(normalized);
-        });
+        using var session = HashSuite.BeginDomainHashStreaming("mv.history-record.v1");
+        var writer = session.Writer;
+        writer.WriteMapStart(5);
+        writer.WriteUnsigned(0); writer.WriteBytes(worldId.ToBytes());
+        writer.WriteUnsigned(1); writer.WriteUnsigned(sequence);
+        writer.WriteUnsigned(2); writer.WriteBytes(previousRecordDigest);
+        writer.WriteUnsigned(3); writer.WriteAsciiText(recordType.Value);
+        writer.WriteUnsigned(4); writer.WriteCanonicalValue(normalizedRecordPayload);
+        return session.Complete();
     }
 
     public static byte[] ComputeGenesisContinuityToken(OpaqueId128 worldId, ReadOnlySpan<byte> genesisRecordDigest)
