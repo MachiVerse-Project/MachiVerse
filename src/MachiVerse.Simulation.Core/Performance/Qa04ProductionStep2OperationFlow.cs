@@ -1184,11 +1184,13 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                 candidate.TargetStep != transitionAuthority.ResultingStep ||
                 material.ActiveConfigGeneration != transitionAuthority.ActiveConfigGeneration ||
                 !CryptographicOperations.FixedTimeEquals(material.ActiveConfigDigest, transitionAuthority.ActiveConfigDigest) ||
-                !CryptographicOperations.FixedTimeEquals(material.TransitionHistory.RecordDigest, transitionAuthority.History.RecordDigest) ||
-                !CryptographicOperations.FixedTimeEquals(material.ResultingStateContinuityToken, transitionAuthority.ResultingStateContinuityToken))
+                !ReferenceEquals(material.TransitionHistory, transitionAuthority.History) ||
+                !ReferenceEquals(material.TerminalOperations, transitionAuthority.OperationOutcomes) ||
+                !CryptographicOperations.FixedTimeEquals(material.ResultingStateContinuityToken, transitionAuthority.ResultingStateContinuityToken) ||
+                !material.TerminalOperationsCanonicalToFrozenInput)
                 throw new InvalidDataException("qa04.step2.finalization.transition-authority-material-drift");
 
-            return store.PersistQa04CanonicalTransitionCommitAsync(
+            return store.PersistQa04ValidatedCanonicalTransitionCommitAsync(
                 injectionStep,
                 transitionAuthority,
                 material.TerminalOperations,
@@ -1198,8 +1200,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                 cancellationToken,
                 detailDecisionAuthority,
                 scheduledBatchDigest,
-                diagnosticPhaseObserver,
-                material.TerminalOperationsCanonicalToFrozenInput);
+                diagnosticPhaseObserver);
         }
     }
 }
