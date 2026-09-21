@@ -252,11 +252,28 @@ public static class Qa04ProductionStep2DeterminismRunV1
                 var intervalOperationRate = intervalElapsedSeconds > 0
                     ? intervalOperations / intervalElapsedSeconds
                     : 0d;
+                var memoryTelemetry = string.Empty;
+                if (detailedPhaseDiagnostics)
+                {
+                    var gcInfo = GC.GetGCMemoryInfo();
+                    using var currentProcess = Process.GetCurrentProcess();
+                    const double bytesPerMiB = 1024d * 1024d;
+                    memoryTelemetry =
+                        $" working_set_mib={currentProcess.WorkingSet64 / bytesPerMiB:F1}" +
+                        $" gc_heap_mib={gcInfo.HeapSizeBytes / bytesPerMiB:F1}" +
+                        $" gc_committed_mib={gcInfo.TotalCommittedBytes / bytesPerMiB:F1}" +
+                        $" gc_fragmented_mib={gcInfo.FragmentedBytes / bytesPerMiB:F1}" +
+                        $" total_allocated_mib={GC.GetTotalAllocatedBytes(precise: false) / bytesPerMiB:F1}" +
+                        $" gen0_collections={GC.CollectionCount(0)}" +
+                        $" gen1_collections={GC.CollectionCount(1)}" +
+                        $" gen2_collections={GC.CollectionCount(2)}";
+                }
+
                 Console.Error.WriteLine(
                     $"QA04_PROGRESS phase=actual-run workers={workerCount} transitions={completedTransitions}/{transitionCount} " +
                     $"terminal_operations={terminalOperations} total_elapsed_seconds={totalElapsedSeconds:F1} " +
                     $"actual_elapsed_seconds={actualElapsedSeconds:F1} ops_per_second={operationRate:F1} " +
-                    $"interval_ops_per_second={intervalOperationRate:F1}");
+                    $"interval_ops_per_second={intervalOperationRate:F1}{memoryTelemetry}");
                 lastProgressElapsedSeconds = actualElapsedSeconds;
                 lastProgressTerminalOperations = terminalOperations;
             }
