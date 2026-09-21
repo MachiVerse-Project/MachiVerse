@@ -118,7 +118,10 @@ public sealed partial class SqlitePersistenceStore
         var resultingStep = authority.ResultingStep;
         if (effectiveStep != checked(injectionStep + 1UL) || resultingStep != checked(effectiveStep + 1UL))
             throw new InvalidDataException("persistence.qa04-canonical-transition.step-drift");
-        ValidateHistoryMaterial(authority.History, "transition.committed.v1");
+        if (authorityIntegrityAlreadyValidated)
+            ValidateTrustedTransitionHistoryEnvelope(authority.History);
+        else
+            ValidateHistoryMaterial(authority.History, "transition.committed.v1");
         RequireHash256(authority.ActiveConfigDigest, nameof(authority.ActiveConfigDigest));
         RequireHash256(authority.PreviousStateContinuityToken, nameof(authority.PreviousStateContinuityToken));
         RequireHash256(authority.ResultingStateContinuityToken, nameof(authority.ResultingStateContinuityToken));
@@ -384,6 +387,22 @@ WHERE singleton=1;
             transaction.Rollback();
             throw;
         }
+    }
+
+    private static void ValidateTrustedTransitionHistoryEnvelope(HistoryRecordMaterial history)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+        if (history.Sequence == 0)
+            throw new ArgumentOutOfRangeException(nameof(history), "HistorySequence starts at 1.");
+        if (!string.Equals(history.RecordType, "transition.committed.v1", StringComparison.Ordinal))
+            throw new InvalidDataException($"persistence.unexpected-history-record-type:{history.RecordType}");
+        _ = new StableToken(history.PayloadSchemaId);
+        RequireHash256(history.PreviousRecordDigest, nameof(history.PreviousRecordDigest));
+        RequireHash256(history.NormalizedPayloadDigest, nameof(history.NormalizedPayloadDigest));
+        RequireHash256(history.RecordDigest, nameof(history.RecordDigest));
+        ArgumentNullException.ThrowIfNull(history.PayloadBytes);
+        if (history.NormalizedPayloadBytes.Length == 0)
+            throw new InvalidDataException("persistence.normalized-history-payload-empty");
     }
 
     private static void ObserveQa04TransitionCommitPhase(
