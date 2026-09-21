@@ -25,8 +25,11 @@ public sealed class StepFinalizeMaterialV1
         var orderedTerminal = terminalOperations
             .OrderBy(static item => item.OperationId)
             .ToArray();
-        if (orderedTerminal.Select(static item => item.OperationId).Distinct().Count() != orderedTerminal.Length)
-            throw new InvalidDataException("step-finalize.duplicate-terminal-operation");
+        for (var index = 1; index < orderedTerminal.Length; index++)
+        {
+            if (orderedTerminal[index - 1].OperationId == orderedTerminal[index].OperationId)
+                throw new InvalidDataException("step-finalize.duplicate-terminal-operation");
+        }
 
         ActiveConfigGeneration = activeConfigGeneration;
         ActiveConfigDigest = activeConfigDigest.ToArray();
@@ -153,7 +156,7 @@ public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 du
         {
             if (live[index].OperationId != frozen[index].OperationId ||
                 live[index].EffectiveStep != frozen[index].EffectiveStep ||
-                !live[index].OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(frozen[index].OrderKey.ToDatabaseBytes()))
+                !live[index].OrderKey.CanonicallyEquals(frozen[index].OrderKey))
                 throw new InvalidDataException("step-finalize.scheduler-frozen-set-mismatch");
         }
     }
@@ -162,17 +165,22 @@ public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 du
         StepCandidateV1 candidate,
         IReadOnlyCollection<TerminalOperationCommit> terminalOperations)
     {
-        var expected = candidate.FrozenInput.ScheduledOperations
-            .Select(static item => item.OperationId)
-            .ToHashSet();
-        var actual = new HashSet<OpaqueId128>();
+        var expected = candidate.FrozenInput.ScheduledOperations;
+        if (terminalOperations.Count != expected.Count)
+            throw new InvalidDataException("step-finalize.terminal-operation-coverage-mismatch");
+
+        var actual = new HashSet<OpaqueId128>(terminalOperations.Count);
         foreach (var terminal in terminalOperations)
         {
             ArgumentNullException.ThrowIfNull(terminal);
             if (!actual.Add(terminal.OperationId))
                 throw new InvalidDataException("step-finalize.duplicate-terminal-operation");
         }
-        if (!expected.SetEquals(actual))
-            throw new InvalidDataException("step-finalize.terminal-operation-coverage-mismatch");
+
+        foreach (var operation in expected)
+        {
+            if (!actual.Contains(operation.OperationId))
+                throw new InvalidDataException("step-finalize.terminal-operation-coverage-mismatch");
+        }
     }
 }
