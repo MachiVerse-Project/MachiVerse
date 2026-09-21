@@ -33,6 +33,7 @@ public sealed class OperationSchedulerStateV1
 
     private readonly SortedDictionary<ulong, SortedSet<ScheduledOperationRefV1>> _byEffectiveStep = new();
     private readonly HashSet<OpaqueId128> _operationIds = [];
+    private readonly Dictionary<ulong, IReadOnlyList<ScheduledOperationRefV1>> _canonicalBucketSnapshots = [];
 
     public OperationSchedulerStateV1(
         ulong nextSchedulableStep,
@@ -54,12 +55,21 @@ public sealed class OperationSchedulerStateV1
 
     public IReadOnlyList<ScheduledOperationRefV1> ForEffectiveStep(ulong effectiveStep)
         => _byEffectiveStep.TryGetValue(effectiveStep, out var bucket)
-            ? bucket.ToArray()
+            ? GetCanonicalBucketSnapshot(effectiveStep, bucket)
             : Array.Empty<ScheduledOperationRefV1>();
 
     public IEnumerable<KeyValuePair<ulong, IReadOnlyList<ScheduledOperationRefV1>>> CanonicalBuckets
-        => _byEffectiveStep.Select(static pair =>
-            new KeyValuePair<ulong, IReadOnlyList<ScheduledOperationRefV1>>(pair.Key, pair.Value.ToArray()));
+    {
+        get
+        {
+            foreach (var pair in _byEffectiveStep)
+            {
+                yield return new KeyValuePair<ulong, IReadOnlyList<ScheduledOperationRefV1>>(
+                    pair.Key,
+                    GetCanonicalBucketSnapshot(pair.Key, pair.Value));
+            }
+        }
+    }
 
     public void AddDurable(ScheduledOperationRefV1 scheduled)
     {
@@ -83,6 +93,19 @@ public sealed class OperationSchedulerStateV1
             _operationIds.Remove(scheduled.OperationId);
             throw new InvalidDataException("operation.scheduler-duplicate-order-key");
         }
+        _canonicalBucketSnapshots.Remove(scheduled.EffectiveStep);
+    }
+
+    private IReadOnlyList<ScheduledOperationRefV1> GetCanonicalBucketSnapshot(
+        ulong effectiveStep,
+        SortedSet<ScheduledOperationRefV1> bucket)
+    {
+        if (_canonicalBucketSnapshots.TryGetValue(effectiveStep, out var snapshot))
+            return snapshot;
+
+        snapshot = Array.AsReadOnly(bucket.ToArray());
+        _canonicalBucketSnapshots.Add(effectiveStep, snapshot);
+        return snapshot;
     }
 
     public void FreezeExternalInput(ulong step)
@@ -114,6 +137,7 @@ public sealed class OperationSchedulerStateV1
             foreach (var operation in finalizedBucket)
                 _operationIds.Remove(operation.OperationId);
         }
+        _canonicalBucketSnapshots.Remove(finalizedStep);
 
         FreezeStep = null;
         var minimumNextSchedulableStep = finalizedStep + 1;
