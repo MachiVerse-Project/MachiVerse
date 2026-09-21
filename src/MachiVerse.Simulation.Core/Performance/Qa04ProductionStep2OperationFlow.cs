@@ -770,22 +770,48 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
         IReadOnlyCollection<TerminalOperationCommit> terminalOperations)
     {
-        var byId = terminalOperations.ToDictionary(static value => value.OperationId);
-        if (byId.Count != terminalOperations.Count || byId.Count != bindings.Count)
+        if (terminalOperations.Count != bindings.Count)
             throw new InvalidDataException("qa04.step2.finalization-terminal-coverage-count-drift");
+
+        if (terminalOperations is IReadOnlyList<TerminalOperationCommit> ordered)
+        {
+            var alreadyAligned = true;
+            for (var index = 0; index < bindings.Count; index++)
+            {
+                var terminal = ordered[index];
+                if (terminal.OperationId != bindings[index].SourceDescriptor.OperationId)
+                {
+                    alreadyAligned = false;
+                    break;
+                }
+                ValidateTerminal(terminal);
+            }
+            if (alreadyAligned)
+                return ordered;
+        }
+
+        var byId = terminalOperations.ToDictionary(static value => value.OperationId);
+        if (byId.Count != terminalOperations.Count)
+            throw new InvalidDataException("qa04.step2.finalization-terminal-coverage-count-drift");
+
         var aligned = new TerminalOperationCommit[bindings.Count];
         for (var index = 0; index < bindings.Count; index++)
         {
             var operationId = bindings[index].SourceDescriptor.OperationId;
             if (!byId.TryGetValue(operationId, out var terminal))
                 throw new InvalidDataException("qa04.step2.finalization-terminal-coverage-drift");
-            if (!Enum.IsDefined(typeof(CoreOperationResultStatusV1), terminal.TerminalStatus) ||
-                !OperationLifecycleRulesV1.IsTerminalResult((CoreOperationResultStatusV1)terminal.TerminalStatus))
-                throw new InvalidDataException("qa04.step2.finalization-terminal-status-invalid");
-            _ = new StableToken(terminal.ResultCode);
+            ValidateTerminal(terminal);
             aligned[index] = terminal;
         }
         return Array.AsReadOnly(aligned);
+    }
+
+    private static void ValidateTerminal(TerminalOperationCommit terminal)
+    {
+        if (!Enum.IsDefined(typeof(CoreOperationResultStatusV1), terminal.TerminalStatus) ||
+            !OperationLifecycleRulesV1.IsTerminalResult((CoreOperationResultStatusV1)terminal.TerminalStatus))
+            throw new InvalidDataException("qa04.step2.finalization-terminal-status-invalid");
+        _ = new StableToken(terminal.ResultCode);
     }
 
     private static Qa04CanonicalOperationPostCommitVerificationV1 VerifyCompactPostCommit(
