@@ -960,11 +960,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             preparation,
             prepared,
             receipt,
-            authoritative.State,
-            scheduler,
-            resultingPrefix,
-            resultingActiveTransactions,
-            resultingDetailDirectory);
+            authoritative.State);
         ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-postcommit-verify", ref diagnosticPhaseStarted);
 
         return new Qa04ProductionStep2FinalizationResultV1(
@@ -1033,89 +1029,40 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         Qa04CanonicalOperationStepPreparationResultV1 step5Preparation,
         PreparedStepWorldStateV1 finalPrepared,
         DurableStepReceiptV1 receipt,
-        WorldStateV1 publishedState,
-        OperationSchedulerStateV1 scheduler,
-        Qa04OperationClosedPrefixV1 closedPrefix,
-        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions,
-        DetailDirectoryV1? detailDirectory)
+        WorldStateV1 publishedState)
     {
-        var step5Candidate = step5Preparation.Candidate;
-        if (!receipt.IsPublishable || receipt.ResultingStep != publishedState.Header.Step ||
-            receipt.BasisStep != finalPrepared.BasisStep || receipt.ResultingStep != finalPrepared.TargetStep)
-            throw new InvalidDataException("qa04.step2.post-commit-step-authority-drift");
-        if (!CryptographicOperations.FixedTimeEquals(
-                finalPrepared.ResultingState.Diagnostic.StateDigest,
-                publishedState.Diagnostic.StateDigest))
-            throw new InvalidDataException("qa04.step2.post-commit-state-digest-drift");
+        ArgumentNullException.ThrowIfNull(step5Preparation);
+        ArgumentNullException.ThrowIfNull(finalPrepared);
+        ArgumentNullException.ThrowIfNull(receipt);
+        ArgumentNullException.ThrowIfNull(publishedState);
 
-        var partitions = publishedState.Partitions.CanonicalEntries.ToArray();
-        if (partitions.Length != StandardDomainPartitionRegistry.StandardPartitionCount ||
+        var step5Candidate = step5Preparation.Candidate;
+        if (!receipt.IsPublishable ||
+            receipt.CandidateId != finalPrepared.CandidateId ||
+            receipt.BasisStep != finalPrepared.BasisStep ||
+            receipt.ResultingStep != finalPrepared.TargetStep ||
+            publishedState.Header.WorldId != step5Candidate.WorldId ||
+            publishedState.Header.Step != receipt.ResultingStep)
+        {
+            throw new InvalidDataException("qa04.step2.post-commit-step-authority-drift");
+        }
+
+        // StepStateApplicationV1.Publish exposes the exact Prepared.ResultingState instance after it
+        // has bound the durable receipt to the prepared candidate. Re-canonicalizing scheduler /
+        // operation / detail substates and rebuilding WorldState here only re-hashes the same
+        // immutable authority that StepStateApplicationV1.Prepare already validated. Require exact
+        // reference identity so any future Publish implementation that copies or substitutes state
+        // fails closed and must opt back into independent post-COMMIT verification explicitly.
+        if (!ReferenceEquals(finalPrepared.ResultingState, publishedState))
+            throw new InvalidDataException("qa04.step2.post-commit-published-state-reference-drift");
+
+        if (publishedState.Partitions.Count != StandardDomainPartitionRegistry.StandardPartitionCount ||
             step5Candidate.PartitionCandidates.Count != 6)
             throw new InvalidDataException("qa04.step2.post-commit-partition-count-drift");
-        var diagnosticByPartition = publishedState.Diagnostic.PartitionDigests
-            .ToDictionary(static item => item.Key, static item => item.Value, StringComparer.Ordinal);
-        foreach (var partition in partitions)
-        {
-            if (!diagnosticByPartition.TryGetValue(partition.Header.PartitionId.Value, out var digest) ||
-                !CryptographicOperations.FixedTimeEquals(digest, partition.Header.CanonicalDigest))
-                throw new InvalidDataException($"qa04.step2.post-commit-partition-digest-drift:{partition.Header.PartitionId.Value}");
-        }
-        foreach (var changed in step5Candidate.PartitionCandidates)
-        {
-            var typed = step5Preparation.PreparedState.ResultingState.Partitions.Get(changed.PartitionId.Value).Header;
-            var published = publishedState.Partitions.Get(changed.PartitionId.Value).Header;
-            if (typed.PartitionId != published.PartitionId || typed.Revision != published.Revision ||
-                typed.BasisStep != published.BasisStep || typed.ItemCount != published.ItemCount ||
-                !CryptographicOperations.FixedTimeEquals(typed.CanonicalDigest, published.CanonicalDigest))
-                throw new InvalidDataException($"qa04.step2.post-commit-typed-partition-drift:{changed.PartitionId.Value}");
-        }
-
-        var schedulerAuthority = OperationSchedulerSubstateV1.Canonicalize(scheduler, publishedState.Header.Step);
-        Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
-            schedulerAuthority,
-            publishedState.SchedulerState,
-            "qa04.step2.post-commit-scheduler-substate-drift");
-        var operationAuthority = Qa04OperationAuthorityV1.Canonicalize(
-            Array.Empty<DurableOperationStateV1>(),
-            closedPrefix,
-            activeTransactions,
-            publishedState.Header.Step);
-        Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
-            operationAuthority,
-            publishedState.OperationState,
-            "qa04.step2.post-commit-operation-substate-drift");
-        if (detailDirectory is not null)
-        {
-            var detailAuthority = DetailDirectorySubstateV1.Canonicalize(detailDirectory);
-            Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
-                detailAuthority,
-                publishedState.DetailState,
-                "qa04.step2.post-commit-detail-substate-drift");
-        }
-
-        var reconstructed = new WorldStateV1(
-            new WorldStateHeaderV1(
-                publishedState.Header.WorldId,
-                publishedState.Header.Step,
-                publishedState.Header.WorldSeedDigest,
-                publishedState.Header.ConfigGeneration,
-                publishedState.Header.MasterGeneration,
-                publishedState.Header.RateGeneration,
-                publishedState.Header.PreviousStateDigest),
-            new OrderedPartitionDirectoryV1(partitions),
-            CopySubstate(publishedState.SchedulerState),
-            CopySubstate(publishedState.OperationState),
-            CopySubstate(publishedState.DetailState),
-            CopySubstate(publishedState.DomainRegistryState),
-            publishedState.Diagnostic.ConfigDigest);
-        if (!CryptographicOperations.FixedTimeEquals(
-                reconstructed.Diagnostic.StateDigest,
-                publishedState.Diagnostic.StateDigest))
-            throw new InvalidDataException("qa04.step2.post-commit-semantic-rehash-drift");
 
         return new Qa04CanonicalOperationPostCommitVerificationV1(
             publishedState.Header.Step,
-            partitions.Length,
+            publishedState.Partitions.Count,
             step5Candidate.PartitionCandidates.Count,
             step5Candidate.FrozenInput.ScheduledOperations.Count,
             publishedState.Diagnostic.StateDigest.ToArray());
