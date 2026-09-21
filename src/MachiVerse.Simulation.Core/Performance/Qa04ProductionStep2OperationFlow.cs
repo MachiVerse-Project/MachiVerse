@@ -378,16 +378,11 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             injectionStep,
             basisStep,
             bindings);
-        var batch = persistenceInsertBatchSize is { } configuredBatchSize
-            ? await store.PersistQa04ScheduledOperationBatchBatchedAsync(
-                batchAuthority,
-                bindings,
-                configuredBatchSize,
-                cancellationToken).ConfigureAwait(false)
-            : await store.PersistQa04ScheduledOperationBatchAsync(
-                batchAuthority,
-                bindings,
-                cancellationToken).ConfigureAwait(false);
+        var batch = await store.PersistQa04ValidatedScheduledOperationBatchAsync(
+            batchAuthority,
+            bindings,
+            persistenceInsertBatchSize,
+            cancellationToken).ConfigureAwait(false);
         if (batch.ScheduledOperations.Count != bindings.Length || batch.EffectiveStep != basisStep)
             throw new InvalidDataException("qa04.step2.production-loop.batch-durability-drift");
         foreach (var binding in bindings)
