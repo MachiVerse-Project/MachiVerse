@@ -196,8 +196,7 @@ public static class OperationSchedulerSubstateV1
         for (var index = 0; index < current.Count; index++)
         {
             if (current[index].OperationId != frozenInput.ScheduledOperations[index].OperationId ||
-                !current[index].OrderKey.ToDatabaseBytes().AsSpan()
-                    .SequenceEqual(frozenInput.ScheduledOperations[index].OrderKey.ToDatabaseBytes()))
+                !current[index].OrderKey.CanonicallyEquals(frozenInput.ScheduledOperations[index].OrderKey))
                 throw new InvalidDataException("scheduler-substate.frozen-set-mismatch");
         }
 
