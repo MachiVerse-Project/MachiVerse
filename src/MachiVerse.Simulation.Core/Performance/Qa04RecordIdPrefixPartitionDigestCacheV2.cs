@@ -355,7 +355,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             prefix,
             checked((ulong)resultCount),
             encoded);
-        return new Slice(keys, offsets, encoded, diagnostic.ContentDigest);
+        return new Slice(prefix, keys, offsets, encoded, diagnostic.ContentDigest);
     }
 
     private bool TryFind(OpaqueId128 recordId, out Entry entry)
@@ -421,7 +421,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             prefix,
             checked((ulong)entries.Count),
             encoded);
-        return new Slice(keys, offsets, encoded, diagnostic.ContentDigest);
+        return new Slice(prefix, keys, offsets, encoded, diagnostic.ContentDigest);
     }
 
     private static void ValidateRecord(
@@ -488,6 +488,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         private readonly byte[] _encoded;
 
         public Slice(
+            ushort prefix,
             OpaqueId128[] keys,
             int[] offsets,
             byte[] encoded,
@@ -497,16 +498,19 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             _offsets = offsets ?? throw new ArgumentNullException(nameof(offsets));
             _encoded = encoded ?? throw new ArgumentNullException(nameof(encoded));
             ArgumentNullException.ThrowIfNull(contentDigest);
+            if (prefix >= RecordIdPrefixPartitionDigestV2.PrefixCount)
+                throw new ArgumentOutOfRangeException(nameof(prefix));
             if (_keys.Length == 0 || _offsets.Length != _keys.Length + 1 || _encoded.Length == 0)
                 throw new InvalidDataException("qa04.prefix-digest-cache.slice-shape");
             if (_offsets[0] != 0 || _offsets[^1] != _encoded.Length)
                 throw new InvalidDataException("qa04.prefix-digest-cache.slice-offset");
             if (contentDigest.Length != 32)
                 throw new InvalidDataException("qa04.prefix-digest-cache.slice-digest-length");
-
-            Prefix = RecordIdPrefixPartitionDigestV2.PrefixOf(_keys[0]);
-            if (_keys.Any(key => RecordIdPrefixPartitionDigestV2.PrefixOf(key) != Prefix))
+            if (RecordIdPrefixPartitionDigestV2.PrefixOf(_keys[0]) != prefix ||
+                RecordIdPrefixPartitionDigestV2.PrefixOf(_keys[^1]) != prefix)
                 throw new InvalidDataException("qa04.prefix-digest-cache.slice-prefix-drift");
+
+            Prefix = prefix;
             Commitment = new PartitionDigestSliceV2(
                 Prefix,
                 checked((ulong)_keys.Length),
