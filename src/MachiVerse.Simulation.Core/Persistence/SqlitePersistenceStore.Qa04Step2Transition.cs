@@ -141,22 +141,14 @@ public sealed partial class SqlitePersistenceStore
                 batch.OperationCount != checked((ulong)terminalOperations.Count))
                 throw new InvalidDataException("persistence.qa04-canonical-transition.batch-drift");
 
-            var scheduled = await ReadQa04ScheduledBatchOperationsAsync(effectiveStep, transaction, cancellationToken)
+            var scheduledCount = await RequireQa04CanonicalScheduledCoverageAsync(
+                    effectiveStep,
+                    decoded.AppliedOperationIds,
+                    decoded.OperationOutcomes,
+                    terminalById,
+                    transaction,
+                    cancellationToken)
                 .ConfigureAwait(false);
-            if (scheduled.Count != decoded.AppliedOperationIds.Count)
-                throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-count-drift");
-            for (var index = 0; index < scheduled.Count; index++)
-            {
-                var row = scheduled[index];
-                var operationId = decoded.AppliedOperationIds[index];
-                var outcome = decoded.OperationOutcomes[index];
-                if (row.State.OperationId != operationId ||
-                    row.State.Lifecycle != DurableOperationLifecycleV1.ScheduledDurable ||
-                    row.State.EffectiveStep != effectiveStep ||
-                    !terminalById.TryGetValue(operationId, out var terminal) ||
-                    !Qa04TransitionCommittedAuthorityV1.TerminalEquals(outcome, terminal))
-                    throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
-            }
 
             var context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
             if (detailDecisionAuthority is not null)
@@ -204,7 +196,7 @@ public sealed partial class SqlitePersistenceStore
                 removeSchedule.Transaction = transaction;
                 removeSchedule.CommandText = "DELETE FROM scheduled_operation WHERE effective_step=$effective_step;";
                 removeSchedule.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
-                if (await removeSchedule.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != scheduled.Count)
+                if (await removeSchedule.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != scheduledCount)
                     throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-delete-count-drift");
             }
 
@@ -217,7 +209,7 @@ WHERE lifecycle=$scheduled_lifecycle AND effective_step=$effective_step;
 """;
                 removeOperation.Parameters.AddWithValue("$scheduled_lifecycle", ScheduledLifecycle);
                 removeOperation.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
-                if (await removeOperation.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != scheduled.Count)
+                if (await removeOperation.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != scheduledCount)
                     throw new InvalidDataException("persistence.qa04-canonical-transition.operation-delete-count-drift");
             }
 
@@ -275,6 +267,59 @@ WHERE singleton=1;
             transaction.Rollback();
             throw;
         }
+    }
+
+    private async Task<int> RequireQa04CanonicalScheduledCoverageAsync(
+        ulong effectiveStep,
+        IReadOnlyList<OpaqueId128> appliedOperationIds,
+        IReadOnlyList<TerminalOperationCommit> decodedOutcomes,
+        IReadOnlyDictionary<OpaqueId128, TerminalOperationCommit> terminalById,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        if (appliedOperationIds.Count != decodedOutcomes.Count ||
+            appliedOperationIds.Count != terminalById.Count)
+            throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-count-drift");
+
+        await using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+SELECT o.operation_id, o.lifecycle, o.effective_step
+FROM scheduled_operation s
+JOIN operation_state o ON o.operation_id=s.operation_id
+WHERE s.effective_step=$effective_step
+ORDER BY s.order_key ASC, s.operation_id ASC;
+""";
+        command.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
+
+        var index = 0;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (index >= appliedOperationIds.Count)
+                throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-count-drift");
+
+            var operationId = OpaqueId128.FromBytes((byte[])reader[0]);
+            var lifecycle = (DurableOperationLifecycleV1)reader.GetInt32(1);
+            var durableEffectiveStep = reader.IsDBNull(2)
+                ? (ulong?)null
+                : U64Be.Decode((byte[])reader[2]);
+            var expectedOperationId = appliedOperationIds[index];
+            var outcome = decodedOutcomes[index];
+
+            if (operationId != expectedOperationId ||
+                lifecycle != DurableOperationLifecycleV1.ScheduledDurable ||
+                durableEffectiveStep != effectiveStep ||
+                !terminalById.TryGetValue(expectedOperationId, out var terminal) ||
+                !Qa04TransitionCommittedAuthorityV1.TerminalEquals(outcome, terminal))
+                throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
+
+            index++;
+        }
+
+        if (index != appliedOperationIds.Count)
+            throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-count-drift");
+        return index;
     }
 
     public async IAsyncEnumerable<Qa04TransitionCommittedAuthorityV1> StreamQa04CanonicalTransitionHistoryAfterAsync(
