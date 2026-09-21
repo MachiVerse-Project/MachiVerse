@@ -163,16 +163,17 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
         Qa04CanonicalOperationBindingResultV1? previous = null;
         foreach (var binding in bindings)
         {
+            if (!operationIds.Add(binding.SourceDescriptor.OperationId))
+                throw new InvalidDataException("qa04.operation-batch.operation-id-duplicate");
+
             if (previous is not null)
             {
                 var order = previous.OrderKey.CompareTo(binding.OrderKey);
                 if (order > 0 ||
                     (order == 0 &&
-                     previous.SourceDescriptor.OperationId.CompareTo(binding.SourceDescriptor.OperationId) >= 0))
+                     previous.SourceDescriptor.OperationId.CompareTo(binding.SourceDescriptor.OperationId) > 0))
                     throw new InvalidDataException("qa04.operation-batch.noncanonical-order");
             }
-            if (!operationIds.Add(binding.SourceDescriptor.OperationId))
-                throw new InvalidDataException("qa04.operation-batch.operation-id-duplicate");
             previous = binding;
         }
 
