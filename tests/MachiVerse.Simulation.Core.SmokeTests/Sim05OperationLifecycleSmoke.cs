@@ -174,6 +174,7 @@ component = "simulation-core"
         var secondId = OpaqueId128.Parse("00000000000000000000000000000602");
         var futureId = OpaqueId128.Parse("00000000000000000000000000000603");
         var staleId = OpaqueId128.Parse("00000000000000000000000000000604");
+        var middleId = OpaqueId128.Parse("00000000000000000000000000000606");
 
         SameStepOrderKey Key(OpaqueId128 id, int priority) => new(
             phase: 1,
@@ -190,6 +191,17 @@ component = "simulation-core"
         var step10 = scheduler.ForEffectiveStep(10);
         Require(step10.Count == 2 && step10[0].OperationId == firstId && step10[1].OperationId == secondId,
             "Scheduler bucket must follow canonical SameStepOrderKey order, not insertion order.");
+        Require(ReferenceEquals(step10, scheduler.ForEffectiveStep(10)),
+            "Scheduler must reuse the immutable canonical bucket snapshot while the bucket is unchanged.");
+
+        scheduler.AddDurable(new ScheduledOperationRefV1(middleId, 10, Key(middleId, 0)));
+        var refreshedStep10 = scheduler.ForEffectiveStep(10);
+        Require(!ReferenceEquals(step10, refreshedStep10) &&
+                refreshedStep10.Count == 3 &&
+                refreshedStep10[0].OperationId == firstId &&
+                refreshedStep10[1].OperationId == middleId &&
+                refreshedStep10[2].OperationId == secondId,
+            "Scheduler must invalidate and rebuild the canonical bucket snapshot after a durable add.");
 
         scheduler.FreezeExternalInput(10);
         Require(scheduler.FreezeStep == 10 && scheduler.NextSchedulableStep == 11,
