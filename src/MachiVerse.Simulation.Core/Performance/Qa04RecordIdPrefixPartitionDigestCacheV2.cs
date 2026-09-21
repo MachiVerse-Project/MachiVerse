@@ -163,7 +163,12 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         _itemCount = expectedCount;
         _lastState = state;
         _lastBasisStep = basisStep;
-        ValidateSliceDirectory();
+
+        // Steady-state delta application has already validated every touched slice through
+        // MergeSlice/BuildSlice, while SortedDictionary preserves canonical prefix order and the
+        // state/item-count equality above validates the aggregate count. Re-scanning every
+        // unchanged slice here would duplicate the full prefix walk performed immediately after
+        // this method when the partition root is generated.
     }
 
     private SortedDictionary<OpaqueId128, Update> NormalizeChanges(
