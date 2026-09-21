@@ -180,7 +180,7 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
         var scheduledBatchDigest = ComputeScheduledBatchDigest(bindings);
 
         var physical = new MvDcborWriter();
-        WriteNormalized(physical, injectionStep, effectiveStep, checked((ulong)ordered.Length), scheduledBatchDigest);
+        WriteNormalized(physical, injectionStep, effectiveStep, checked((ulong)bindings.Count), scheduledBatchDigest);
         var history = HistoryRecordMaterial.Create(
             worldId,
             checked(anchor.Sequence + 1UL),
@@ -190,11 +190,11 @@ public static class Qa04ScheduledOperationBatchAuthorityBuilderV1
             1,
             0,
             physical.ToArray(),
-            writer => WriteNormalized(writer, injectionStep, effectiveStep, checked((ulong)ordered.Length), scheduledBatchDigest));
+            writer => WriteNormalized(writer, injectionStep, effectiveStep, checked((ulong)bindings.Count), scheduledBatchDigest));
         return new Qa04ScheduledOperationBatchAuthorityV1(
             injectionStep,
             effectiveStep,
-            checked((ulong)ordered.Length),
+            checked((ulong)bindings.Count),
             scheduledBatchDigest,
             history);
     }
