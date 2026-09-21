@@ -186,6 +186,41 @@ public static class RecordIdPrefixPartitionDigestV2
             session.Complete());
     }
 
+    internal static PartitionDigestSliceV2 CreateSliceFromPrevalidatedCanonicalBytes(
+        DomainPartitionIdentityV1 identity,
+        ushort prefix,
+        ulong recordCount,
+        ReadOnlySpan<byte> concatenatedCanonicalRecords)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        if (prefix >= PrefixCount)
+            throw new ArgumentOutOfRangeException(nameof(prefix));
+        if (recordCount == 0)
+            throw new ArgumentOutOfRangeException(nameof(recordCount));
+        if (concatenatedCanonicalRecords.IsEmpty)
+            throw new ArgumentException(
+                "Canonical record bytes cannot be empty.",
+                nameof(concatenatedCanonicalRecords));
+
+        using var session = HashSuite.BeginDomainHashStreaming(SliceContentLabel);
+        var writer = session.Writer;
+        writer.WriteMapStart(7);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
+        writer.WriteUnsigned(1); writer.WriteAsciiText(identity.RecordSchema.SchemaId.Value);
+        writer.WriteUnsigned(2); writer.WriteUnsigned(identity.RecordSchema.Version.Major);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(identity.RecordSchema.Version.Minor);
+        writer.WriteUnsigned(4); writer.WriteUnsigned(DiagnosticPartitionVersion);
+        writer.WriteUnsigned(5); writer.WriteUnsigned(prefix);
+        writer.WriteUnsigned(6);
+        writer.WriteArrayStart(recordCount);
+        session.AppendCanonicalBytes(concatenatedCanonicalRecords);
+
+        return new PartitionDigestSliceV2(
+            prefix,
+            recordCount,
+            session.Complete());
+    }
+
     internal static PartitionStateHeaderV1 CreateHeaderFromPrevalidatedSlices(
         DomainPartitionIdentityV1 identity,
         ulong revision,
