@@ -109,7 +109,8 @@ INSERT INTO qa04_operation_closed_prefix (
             authority,
             bindings,
             insertBatchSize: null,
-            cancellationToken);
+            cancellationToken,
+            authorityAlreadyValidated: false);
 
     public Task<Qa04ScheduledOperationBatchDurableResultV1> PersistQa04ScheduledOperationBatchBatchedAsync(
         Qa04ScheduledOperationBatchAuthorityV1 authority,
@@ -123,14 +124,32 @@ INSERT INTO qa04_operation_closed_prefix (
             authority,
             bindings,
             insertBatchSize,
-            cancellationToken);
+            cancellationToken,
+            authorityAlreadyValidated: false);
+    }
+
+    internal Task<Qa04ScheduledOperationBatchDurableResultV1> PersistQa04ValidatedScheduledOperationBatchAsync(
+        Qa04ScheduledOperationBatchAuthorityV1 authority,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        int? insertBatchSize,
+        CancellationToken cancellationToken)
+    {
+        if (insertBatchSize is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(insertBatchSize));
+        return PersistQa04ScheduledOperationBatchCoreAsync(
+            authority,
+            bindings,
+            insertBatchSize,
+            cancellationToken,
+            authorityAlreadyValidated: true);
     }
 
     private async Task<Qa04ScheduledOperationBatchDurableResultV1> PersistQa04ScheduledOperationBatchCoreAsync(
         Qa04ScheduledOperationBatchAuthorityV1 authority,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
         int? insertBatchSize,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool authorityAlreadyValidated)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(bindings);
@@ -141,15 +160,18 @@ INSERT INTO qa04_operation_closed_prefix (
             authority.OperationCount != Qa04ReferenceLoadV1.OperationCountForStep(authority.InjectionStep))
             throw new InvalidDataException("persistence.qa04-operation-batch-cardinality-drift");
 
-        var expected = Qa04ScheduledOperationBatchAuthorityBuilderV1.Create(
-            authority.History.WorldId,
-            new HistoryAnchor(checked(authority.History.Sequence - 1UL), authority.History.PreviousRecordDigest),
-            authority.InjectionStep,
-            authority.EffectiveStep,
-            bindings);
-        if (!CryptographicOperations.FixedTimeEquals(expected.ScheduledBatchDigest, authority.ScheduledBatchDigest) ||
-            !CryptographicOperations.FixedTimeEquals(expected.History.RecordDigest, authority.History.RecordDigest))
-            throw new InvalidDataException("persistence.qa04-operation-batch-authority-drift");
+        if (!authorityAlreadyValidated)
+        {
+            var expected = Qa04ScheduledOperationBatchAuthorityBuilderV1.Create(
+                authority.History.WorldId,
+                new HistoryAnchor(checked(authority.History.Sequence - 1UL), authority.History.PreviousRecordDigest),
+                authority.InjectionStep,
+                authority.EffectiveStep,
+                bindings);
+            if (!CryptographicOperations.FixedTimeEquals(expected.ScheduledBatchDigest, authority.ScheduledBatchDigest) ||
+                !CryptographicOperations.FixedTimeEquals(expected.History.RecordDigest, authority.History.RecordDigest))
+                throw new InvalidDataException("persistence.qa04-operation-batch-authority-drift");
+        }
 
         using var transaction = _connection.BeginTransaction();
         try
