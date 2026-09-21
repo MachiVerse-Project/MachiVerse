@@ -757,7 +757,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             transitionAuthority,
             crossDomainTransactionStateChanges,
             detailDecisionAuthority,
-            effectiveScheduledBatchDigest);
+            effectiveScheduledBatchDigest,
+            diagnosticPhaseObserver);
         ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-transition-authority", ref diagnosticPhaseStarted);
 
         var receipt = await new StepFinalizationCoordinatorV1(durability)
@@ -1003,7 +1004,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         Qa04TransitionCommittedAuthorityV1 transitionAuthority,
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
         Qa04DetailDecisionAuthorityV1? detailDecisionAuthority,
-        byte[] scheduledBatchDigest) : IStepTransitionDurabilityV1
+        byte[] scheduledBatchDigest,
+        Action<string, double>? diagnosticPhaseObserver) : IStepTransitionDurabilityV1
     {
         public Task<DurableTransitionResult> CommitAsync(
             StepCandidateV1 candidate,
@@ -1027,7 +1029,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                 crossDomainTransactionStateChanges,
                 cancellationToken,
                 detailDecisionAuthority,
-                scheduledBatchDigest);
+                scheduledBatchDigest,
+                diagnosticPhaseObserver);
         }
     }
 }
