@@ -43,7 +43,8 @@ public sealed partial class SqlitePersistenceStore
         CancellationToken cancellationToken = default,
         Qa04DetailDecisionAuthorityV1? detailDecisionAuthority = null,
         byte[]? expectedScheduledBatchDigest = null,
-        Action<string, double>? diagnosticPhaseObserver = null)
+        Action<string, double>? diagnosticPhaseObserver = null,
+        bool terminalOperationsAreCanonical = false)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(terminalOperations);
@@ -83,14 +84,30 @@ public sealed partial class SqlitePersistenceStore
                 throw new InvalidDataException("persistence.qa04-canonical-transition.detail-decision-chain-drift");
         }
 
-        var terminalById = terminalOperations.ToDictionary(static value => value.OperationId);
-        if (terminalById.Count != terminalOperations.Count)
-            throw new InvalidDataException("persistence.qa04-canonical-transition.terminal-duplicate");
-        foreach (var terminal in terminalOperations)
+        IReadOnlyList<TerminalOperationCommit>? canonicalTerminalOperations = null;
+        Dictionary<OpaqueId128, TerminalOperationCommit>? terminalById = null;
+        if (terminalOperationsAreCanonical)
         {
-            if (terminal.OperationId.IsZero)
-                throw new InvalidDataException("persistence.qa04-canonical-transition.terminal-id-zero");
-            _ = new StableToken(terminal.ResultCode);
+            canonicalTerminalOperations = terminalOperations as IReadOnlyList<TerminalOperationCommit>
+                ?? throw new InvalidDataException("persistence.qa04-canonical-transition.terminal-canonical-list-required");
+            foreach (var terminal in canonicalTerminalOperations)
+            {
+                if (terminal.OperationId.IsZero)
+                    throw new InvalidDataException("persistence.qa04-canonical-transition.terminal-id-zero");
+                _ = new StableToken(terminal.ResultCode);
+            }
+        }
+        else
+        {
+            terminalById = terminalOperations.ToDictionary(static value => value.OperationId);
+            if (terminalById.Count != terminalOperations.Count)
+                throw new InvalidDataException("persistence.qa04-canonical-transition.terminal-duplicate");
+            foreach (var terminal in terminalOperations)
+            {
+                if (terminal.OperationId.IsZero)
+                    throw new InvalidDataException("persistence.qa04-canonical-transition.terminal-id-zero");
+                _ = new StableToken(terminal.ResultCode);
+            }
         }
 
         var transactionChanges = crossDomainTransactionStateChanges
@@ -178,8 +195,24 @@ public sealed partial class SqlitePersistenceStore
             {
                 var operationId = decoded.AppliedOperationIds[index];
                 var outcome = decoded.OperationOutcomes[index];
-                if (!terminalById.TryGetValue(operationId, out var terminal) ||
-                    !Qa04TransitionCommittedAuthorityV1.TerminalEquals(outcome, terminal))
+                TerminalOperationCommit terminal;
+                if (canonicalTerminalOperations is not null)
+                {
+                    terminal = canonicalTerminalOperations[index];
+                    if (terminal.OperationId != operationId)
+                        throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
+                }
+                else
+                {
+                    if (terminalById is null ||
+                        !terminalById.TryGetValue(operationId, out var mappedTerminal))
+                    {
+                        throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
+                    }
+                    terminal = mappedTerminal;
+                }
+
+                if (!Qa04TransitionCommittedAuthorityV1.TerminalEquals(outcome, terminal))
                     throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
             }
             ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-operation-coverage", ref diagnosticPhaseStarted);

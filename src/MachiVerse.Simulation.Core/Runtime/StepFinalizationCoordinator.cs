@@ -12,6 +12,40 @@ public sealed class StepFinalizeMaterialV1
         ReadOnlySpan<byte> resultingStateContinuityToken,
         HistoryRecordMaterial transitionHistory,
         IEnumerable<TerminalOperationCommit> terminalOperations)
+        : this(
+            activeConfigGeneration,
+            activeConfigDigest,
+            resultingStateContinuityToken,
+            transitionHistory,
+            CanonicalizeTerminalOperations(terminalOperations),
+            terminalOperationsCanonicalToFrozenInput: false)
+    {
+    }
+
+    internal static StepFinalizeMaterialV1 CreateFromValidatedCanonicalTerminalOrder(
+        ulong activeConfigGeneration,
+        ReadOnlySpan<byte> activeConfigDigest,
+        ReadOnlySpan<byte> resultingStateContinuityToken,
+        HistoryRecordMaterial transitionHistory,
+        IReadOnlyList<TerminalOperationCommit> terminalOperations)
+    {
+        ArgumentNullException.ThrowIfNull(terminalOperations);
+        return new StepFinalizeMaterialV1(
+            activeConfigGeneration,
+            activeConfigDigest,
+            resultingStateContinuityToken,
+            transitionHistory,
+            terminalOperations,
+            terminalOperationsCanonicalToFrozenInput: true);
+    }
+
+    private StepFinalizeMaterialV1(
+        ulong activeConfigGeneration,
+        ReadOnlySpan<byte> activeConfigDigest,
+        ReadOnlySpan<byte> resultingStateContinuityToken,
+        HistoryRecordMaterial transitionHistory,
+        IReadOnlyList<TerminalOperationCommit> terminalOperations,
+        bool terminalOperationsCanonicalToFrozenInput)
     {
         if (activeConfigGeneration == 0)
             throw new ArgumentOutOfRangeException(nameof(activeConfigGeneration), "ConfigGeneration starts at 1.");
@@ -22,6 +56,25 @@ public sealed class StepFinalizeMaterialV1
         ArgumentNullException.ThrowIfNull(transitionHistory);
         ArgumentNullException.ThrowIfNull(terminalOperations);
 
+        ActiveConfigGeneration = activeConfigGeneration;
+        ActiveConfigDigest = activeConfigDigest.ToArray();
+        ResultingStateContinuityToken = resultingStateContinuityToken.ToArray();
+        TransitionHistory = transitionHistory;
+        TerminalOperations = terminalOperations;
+        TerminalOperationsCanonicalToFrozenInput = terminalOperationsCanonicalToFrozenInput;
+    }
+
+    public ulong ActiveConfigGeneration { get; }
+    public byte[] ActiveConfigDigest { get; }
+    public byte[] ResultingStateContinuityToken { get; }
+    public HistoryRecordMaterial TransitionHistory { get; }
+    public IReadOnlyList<TerminalOperationCommit> TerminalOperations { get; }
+    internal bool TerminalOperationsCanonicalToFrozenInput { get; }
+
+    private static IReadOnlyList<TerminalOperationCommit> CanonicalizeTerminalOperations(
+        IEnumerable<TerminalOperationCommit> terminalOperations)
+    {
+        ArgumentNullException.ThrowIfNull(terminalOperations);
         var orderedTerminal = terminalOperations
             .OrderBy(static item => item.OperationId)
             .ToArray();
@@ -30,19 +83,8 @@ public sealed class StepFinalizeMaterialV1
             if (orderedTerminal[index - 1].OperationId == orderedTerminal[index].OperationId)
                 throw new InvalidDataException("step-finalize.duplicate-terminal-operation");
         }
-
-        ActiveConfigGeneration = activeConfigGeneration;
-        ActiveConfigDigest = activeConfigDigest.ToArray();
-        ResultingStateContinuityToken = resultingStateContinuityToken.ToArray();
-        TransitionHistory = transitionHistory;
-        TerminalOperations = Array.AsReadOnly(orderedTerminal);
+        return Array.AsReadOnly(orderedTerminal);
     }
-
-    public ulong ActiveConfigGeneration { get; }
-    public byte[] ActiveConfigDigest { get; }
-    public byte[] ResultingStateContinuityToken { get; }
-    public HistoryRecordMaterial TransitionHistory { get; }
-    public IReadOnlyList<TerminalOperationCommit> TerminalOperations { get; }
 }
 
 public sealed record DurableStepReceiptV1(
@@ -123,7 +165,7 @@ public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 du
             throw new InvalidDataException("step-finalize.history-record-type-mismatch");
 
         RequireFrozenSchedulerMatch(candidate, scheduler);
-        RequireTerminalCoverage(candidate, material.TerminalOperations);
+        RequireTerminalCoverage(candidate, material);
 
         // This await is the authority boundary. Any exception before/inside COMMIT leaves the
         // frozen scheduler and State(S) authority untouched and creates no publishable receipt.
@@ -163,11 +205,24 @@ public sealed class StepFinalizationCoordinatorV1(IStepTransitionDurabilityV1 du
 
     private static void RequireTerminalCoverage(
         StepCandidateV1 candidate,
-        IReadOnlyCollection<TerminalOperationCommit> terminalOperations)
+        StepFinalizeMaterialV1 material)
     {
         var expected = candidate.FrozenInput.ScheduledOperations;
+        var terminalOperations = material.TerminalOperations;
         if (terminalOperations.Count != expected.Count)
             throw new InvalidDataException("step-finalize.terminal-operation-coverage-mismatch");
+
+        if (material.TerminalOperationsCanonicalToFrozenInput)
+        {
+            for (var index = 0; index < expected.Count; index++)
+            {
+                var terminal = terminalOperations[index]
+                    ?? throw new InvalidDataException("step-finalize.terminal-operation-null");
+                if (terminal.OperationId != expected[index].OperationId)
+                    throw new InvalidDataException("step-finalize.terminal-operation-coverage-mismatch");
+            }
+            return;
+        }
 
         var actual = new HashSet<OpaqueId128>(terminalOperations.Count);
         foreach (var terminal in terminalOperations)

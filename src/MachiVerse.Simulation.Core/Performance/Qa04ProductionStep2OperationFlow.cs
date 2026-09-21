@@ -741,12 +741,12 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             partitionDigests);
         var transition = transitionAuthority.History;
         var resultingContinuity = transitionAuthority.ResultingStateContinuityToken;
-        var material = new StepFinalizeMaterialV1(
+        var material = StepFinalizeMaterialV1.CreateFromValidatedCanonicalTerminalOrder(
             candidate.ConfigGeneration,
             candidate.ConfigDigest,
             resultingContinuity,
             transition,
-            alignedTerminal);
+            transitionAuthority.OperationOutcomes);
         var effectiveScheduledBatchDigest = scheduledBatchDigest ??
             Qa04ScheduledOperationBatchAuthorityBuilderV1.ComputeScheduledBatchDigest(bindings);
         var durability = new Qa04ProductionStep2TransitionDurabilityV1(
@@ -1030,7 +1030,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
                 cancellationToken,
                 detailDecisionAuthority,
                 scheduledBatchDigest,
-                diagnosticPhaseObserver);
+                diagnosticPhaseObserver,
+                material.TerminalOperationsCanonicalToFrozenInput);
         }
     }
 }
