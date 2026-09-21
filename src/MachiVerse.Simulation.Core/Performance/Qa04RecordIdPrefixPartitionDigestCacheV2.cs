@@ -161,7 +161,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             updates.Clear();
         }
 
-        foreach (var update in normalized.Values)
+        foreach (var update in normalized)
         {
             var prefix = RecordIdPrefixPartitionDigestV2.PrefixOf(update.RecordId);
             if (currentPrefix is { } previousPrefix && prefix < previousPrefix)
@@ -189,7 +189,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         // this method when the partition root is generated.
     }
 
-    private SortedDictionary<OpaqueId128, Update> NormalizeChanges(
+    private List<Update> NormalizeChanges(
         DomainPartitionStateV1<TPayload> state,
         ulong basisStep,
         IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> changes,
@@ -202,28 +202,26 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             if (change.PartitionId != state.Identity.PartitionId)
                 throw new InvalidDataException("qa04.prefix-digest-cache.change-partition-drift");
 
-            if (!modes.TryGetValue(change.ChangedRecordId, out var mode))
-            {
-                mode = new ChangeMode();
-                modes.Add(change.ChangedRecordId, mode);
-            }
+            modes.TryGetValue(change.ChangedRecordId, out var mode);
 
             switch (change.MutationMode.Value)
             {
                 case "create":
-                    if (mode.HasCreate)
+                    if ((mode & ChangeMode.Create) != 0)
                         throw new InvalidDataException("qa04.prefix-digest-cache.duplicate-create");
-                    mode.HasCreate = true;
+                    mode |= ChangeMode.Create;
                     break;
                 case "revise":
-                    mode.HasRevision = true;
+                    mode |= ChangeMode.Revision;
                     break;
                 default:
                     throw new InvalidDataException("qa04.prefix-digest-cache.mutation-mode");
             }
+
+            modes[change.ChangedRecordId] = mode;
         }
 
-        var normalized = new SortedDictionary<OpaqueId128, Update>();
+        var normalized = new List<Update>(modes.Count);
         createdCount = 0;
         foreach (var pair in modes)
         {
@@ -234,7 +232,8 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             ValidateRecord(record, state.Identity, basisStep);
 
             var existed = TryFind(recordId, out _);
-            if (mode.HasCreate)
+            var isCreate = (mode & ChangeMode.Create) != 0;
+            if (isCreate)
             {
                 if (existed)
                     throw new InvalidDataException("qa04.prefix-digest-cache.create-collision");
@@ -245,11 +244,10 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
                 throw new InvalidDataException("qa04.prefix-digest-cache.revision-target-missing");
             }
 
-            normalized.Add(
-                recordId,
-                new Update(recordId, Encode(record), mode.HasCreate));
+            normalized.Add(new Update(recordId, Encode(record), isCreate));
         }
 
+        normalized.Sort(static (left, right) => left.RecordId.CompareTo(right.RecordId));
         return normalized;
     }
 
@@ -420,10 +418,12 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             throw new InvalidDataException("qa04.prefix-digest-cache.slice-directory-count");
     }
 
-    private sealed class ChangeMode
+    [Flags]
+    private enum ChangeMode : byte
     {
-        public bool HasCreate;
-        public bool HasRevision;
+        None = 0,
+        Create = 1 << 0,
+        Revision = 1 << 1,
     }
 
     private readonly record struct Update(
