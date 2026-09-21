@@ -488,7 +488,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "step-preparation", phaseStarted);
         phaseStarted = Stopwatch.GetTimestamp();
 
-        var finalized = await Qa04ProductionStep2OperationFinalizationV1.CommitAndPublishAsync(
+        var finalized = await Qa04ProductionStep2OperationFinalizationV1.CommitAndPublishValidatedBasisAsync(
             store,
             scheduler,
             preparation,
@@ -634,7 +634,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             Array.Empty<CrossDomainTransactionStateV1>(),
             cancellationToken);
 
-    public static async Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishAsync(
+    public static Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishAsync(
         SqlitePersistenceStore store,
         OperationSchedulerStateV1 scheduler,
         Qa04CanonicalOperationStepPreparationResultV1 preparation,
@@ -650,6 +650,75 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         byte[]? scheduledBatchDigest = null,
         bool terminalOperationsAreCanonical = false,
         Action<string, double>? diagnosticPhaseObserver = null)
+        => CommitAndPublishCoreAsync(
+            store,
+            scheduler,
+            preparation,
+            bindings,
+            mutableOperations,
+            terminalOperations,
+            basisPrefix,
+            basisActiveTransactions,
+            resultingActiveTransactions,
+            crossDomainTransactionStateChanges,
+            cancellationToken,
+            detailTransition,
+            scheduledBatchDigest,
+            terminalOperationsAreCanonical,
+            diagnosticPhaseObserver,
+            basisOperationAuthorityAlreadyValidated: false);
+
+    internal static Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishValidatedBasisAsync(
+        SqlitePersistenceStore store,
+        OperationSchedulerStateV1 scheduler,
+        Qa04CanonicalOperationStepPreparationResultV1 preparation,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        IReadOnlyCollection<DurableOperationStateV1> mutableOperations,
+        IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        Qa04OperationClosedPrefixV1 basisPrefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> basisActiveTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> resultingActiveTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
+        CancellationToken cancellationToken = default,
+        Qa04ProductionDetailTransitionStepV1? detailTransition = null,
+        byte[]? scheduledBatchDigest = null,
+        bool terminalOperationsAreCanonical = false,
+        Action<string, double>? diagnosticPhaseObserver = null)
+        => CommitAndPublishCoreAsync(
+            store,
+            scheduler,
+            preparation,
+            bindings,
+            mutableOperations,
+            terminalOperations,
+            basisPrefix,
+            basisActiveTransactions,
+            resultingActiveTransactions,
+            crossDomainTransactionStateChanges,
+            cancellationToken,
+            detailTransition,
+            scheduledBatchDigest,
+            terminalOperationsAreCanonical,
+            diagnosticPhaseObserver,
+            basisOperationAuthorityAlreadyValidated: true);
+
+    private static async Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishCoreAsync(
+        SqlitePersistenceStore store,
+        OperationSchedulerStateV1 scheduler,
+        Qa04CanonicalOperationStepPreparationResultV1 preparation,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        IReadOnlyCollection<DurableOperationStateV1> mutableOperations,
+        IReadOnlyCollection<TerminalOperationCommit> terminalOperations,
+        Qa04OperationClosedPrefixV1 basisPrefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> basisActiveTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> resultingActiveTransactions,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
+        CancellationToken cancellationToken,
+        Qa04ProductionDetailTransitionStepV1? detailTransition,
+        byte[]? scheduledBatchDigest,
+        bool terminalOperationsAreCanonical,
+        Action<string, double>? diagnosticPhaseObserver,
+        bool basisOperationAuthorityAlreadyValidated)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -703,15 +772,23 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             throw new InvalidDataException("qa04.step2.finalization-persistence-basis-drift");
         ObserveDiagnosticPhase(diagnosticPhaseObserver, "finalize-recovery-head", ref diagnosticPhaseStarted);
 
-        var expectedBasisOperation = Qa04OperationAuthorityV1.Canonicalize(
-            mutableOperations,
-            basisPrefix,
-            basisActiveTransactions,
-            step5Candidate.BasisStep);
-        Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
-            expectedBasisOperation,
-            basisState.OperationState,
-            "qa04.step2.finalization-operation-basis-drift");
+        if (basisOperationAuthorityAlreadyValidated)
+        {
+            if (basisState.OperationState.Schema != Qa04OperationAuthorityV1.Schema)
+                throw new InvalidDataException("qa04.step2.finalization-operation-basis-drift");
+        }
+        else
+        {
+            var expectedBasisOperation = Qa04OperationAuthorityV1.Canonicalize(
+                mutableOperations,
+                basisPrefix,
+                basisActiveTransactions,
+                step5Candidate.BasisStep);
+            Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
+                expectedBasisOperation,
+                basisState.OperationState,
+                "qa04.step2.finalization-operation-basis-drift");
+        }
 
         if (crossDomainTransactionStateChanges.Count > 0)
         {
