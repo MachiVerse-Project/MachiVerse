@@ -121,12 +121,9 @@ public sealed partial class SqlitePersistenceStore
         using var transaction = _connection.BeginTransaction();
         try
         {
-            var decoded = Qa04TransitionCommittedAuthorityV1.DecodeAndValidate(authority.History);
-            Qa04TransitionCommittedAuthorityV1.RequireEquivalent(
-                decoded,
-                authority,
-                "persistence.qa04-canonical-transition.decoded-authority-drift");
-            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-decode-authority", ref diagnosticPhaseStarted);
+            Qa04TransitionCommittedAuthorityV1.RequireMaterializedAuthorityIntegrity(authority);
+            var decoded = authority;
+            ObserveQa04TransitionCommitPhase(diagnosticPhaseObserver, "persist-validate-authority", ref diagnosticPhaseStarted);
 
             var transitionHead = await ReadTransitionHeadAsync(transaction, cancellationToken).ConfigureAwait(false);
             if (transitionHead.FinalizedStep != effectiveStep)
