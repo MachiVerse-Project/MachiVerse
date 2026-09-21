@@ -684,7 +684,7 @@ public sealed class Qa04TransitionCommittedAuthorityV1
     {
         var writer = new MvDcborWriter();
         writer.WriteMapStart(10);
-        writer.WriteUnsigned(0); writer.WriteUnsigned(resultingStep - 1UL);
+        writer.WriteUnsigned(0); writer.WriteUnsigned(effectiveStep);
         writer.WriteUnsigned(1); writer.WriteUnsigned(resultingStep);
         writer.WriteUnsigned(2); writer.WriteUnsigned(configGeneration);
         writer.WriteUnsigned(3); writer.WriteBytes(configDigest);
