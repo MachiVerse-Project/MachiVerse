@@ -167,15 +167,18 @@ INSERT INTO qa04_operation_closed_prefix (
                 .ConfigureAwait(false);
             if (existing is not null)
             {
-                RequireSameQa04Batch(existing, authority);
+                RequireSameQa04BatchIdentity(existing, authority);
                 if (existing.TerminalHistorySequence is not null)
                     throw new InvalidDataException("persistence.qa04-operation-batch-already-closed");
-                var durableExisting = CreateQa04LogicalScheduledOperations(bindings, authority);
+                var durableExisting = CreateQa04LogicalScheduledOperations(
+                    bindings,
+                    authority.EffectiveStep,
+                    existing.ScheduledHistorySequence);
                 transaction.Commit();
                 return new Qa04ScheduledOperationBatchDurableResultV1(
                     authority.InjectionStep,
                     authority.EffectiveStep,
-                    authority.History.Sequence,
+                    existing.ScheduledHistorySequence,
                     Duplicate: true,
                     durableExisting);
             }
@@ -214,7 +217,10 @@ INSERT INTO qa04_operation_batch (
             transaction.Commit();
             ObserveSuccessfulCommit(Stopwatch.GetElapsedTime(commitStarted));
 
-            var durable = CreateQa04LogicalScheduledOperations(bindings, authority);
+            var durable = CreateQa04LogicalScheduledOperations(
+                bindings,
+                authority.EffectiveStep,
+                authority.History.Sequence);
             return new Qa04ScheduledOperationBatchDurableResultV1(
                 authority.InjectionStep,
                 authority.EffectiveStep,
@@ -365,16 +371,17 @@ WHERE singleton=1;
 
     private static IReadOnlyList<DurableOperationStateV1> CreateQa04LogicalScheduledOperations(
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
-        Qa04ScheduledOperationBatchAuthorityV1 authority)
+        ulong effectiveStep,
+        ulong scheduledHistorySequence)
     {
-        if (authority.OperationCount != checked((ulong)bindings.Count))
+        if (bindings.Count == 0 || scheduledHistorySequence == 0)
             throw new InvalidDataException("persistence.qa04-operation-batch-logical-count-drift");
 
         var durable = new DurableOperationStateV1[bindings.Count];
         for (var index = 0; index < bindings.Count; index++)
         {
             var binding = bindings[index];
-            if (binding.ScheduledOperation.EffectiveStep != authority.EffectiveStep ||
+            if (binding.ScheduledOperation.EffectiveStep != effectiveStep ||
                 binding.SourceDescriptor.OperationId.IsZero ||
                 binding.BoundDescriptor.PayloadDigest.Length != 32)
                 throw new InvalidDataException("persistence.qa04-operation-batch-logical-item-drift");
@@ -383,9 +390,9 @@ WHERE singleton=1;
                 binding.SourceDescriptor.OperationId,
                 binding.BoundDescriptor.PayloadDigest.ToArray(),
                 DurableOperationLifecycleV1.ScheduledDurable,
-                authority.History.Sequence,
-                authority.History.Sequence,
-                authority.EffectiveStep,
+                scheduledHistorySequence,
+                scheduledHistorySequence,
+                effectiveStep,
                 null,
                 null,
                 null,
@@ -427,7 +434,7 @@ WHERE singleton=1;
                         payloadDigest.Length != 32 ||
                         orderKey.Length != SameStepOrderKey.DatabaseKeyLength)
                         throw new InvalidDataException("persistence.qa04-operation-batch-item-invalid");
-                    if (binding.ScheduledOperation.EffectiveStep != authority.EffectiveStep)
+                    if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
                         throw new InvalidDataException("persistence.qa04-operation-batch-item-effective-step-drift");
 
                     if (localIndex > 0) sql.Append(',');
@@ -486,7 +493,7 @@ WHERE singleton=1;
         var orderKey = binding.OrderKey.ToDatabaseBytes();
         if (operationId.IsZero || payloadDigest.Length != 32 || orderKey.Length != SameStepOrderKey.DatabaseKeyLength)
             throw new InvalidDataException("persistence.qa04-operation-batch-item-invalid");
-        if (binding.ScheduledOperation.EffectiveStep != authority.EffectiveStep)
+        if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
             throw new InvalidDataException("persistence.qa04-operation-batch-item-effective-step-drift");
 
         await using (var operation = _connection.CreateCommand())
@@ -673,7 +680,7 @@ ORDER BY s.order_key ASC, s.operation_id ASC;
         }
     }
 
-    private static void RequireSameQa04Batch(
+    private static void RequireSameQa04BatchIdentity(
         Qa04OperationBatchRowV1 existing,
         Qa04ScheduledOperationBatchAuthorityV1 expected)
     {
@@ -681,7 +688,6 @@ ORDER BY s.order_key ASC, s.operation_id ASC;
             !string.Equals(existing.ProfileId, Qa04ReferenceLoadV1.BenchmarkProfileId, StringComparison.Ordinal) ||
             existing.EffectiveStep != expected.EffectiveStep ||
             existing.OperationCount != expected.OperationCount ||
-            existing.ScheduledHistorySequence != expected.History.Sequence ||
             !CryptographicOperations.FixedTimeEquals(existing.ScheduledBatchDigest, expected.ScheduledBatchDigest))
             throw new InvalidDataException("persistence.qa04-operation-batch-idempotency-mismatch");
     }
