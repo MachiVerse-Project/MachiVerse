@@ -84,13 +84,20 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
     public byte[] ToDatabaseBytes()
     {
         var bytes = new byte[DatabaseKeyLength];
-        bytes[0] = Phase;
-        BinaryPrimitives.WriteUInt16BigEndian(bytes.AsSpan(1, 2), DomainRank);
-        _conflictScopeDigest.CopyTo(bytes.AsSpan(3, ConflictScopeDigestLength));
-        var sortablePriority = unchecked((uint)(SemanticPriority ^ int.MinValue));
-        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(35, 4), sortablePriority);
-        IntentId.ToBytes().CopyTo(bytes.AsSpan(39, 16));
+        WriteDatabaseBytes(bytes);
         return bytes;
+    }
+
+    internal void WriteDatabaseBytes(Span<byte> destination)
+    {
+        if (destination.Length != DatabaseKeyLength)
+            throw new ArgumentException($"SameStepOrderKey database encoding must be {DatabaseKeyLength} bytes.", nameof(destination));
+        destination[0] = Phase;
+        BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(1, 2), DomainRank);
+        _conflictScopeDigest.CopyTo(destination.Slice(3, ConflictScopeDigestLength));
+        var sortablePriority = unchecked((uint)(SemanticPriority ^ int.MinValue));
+        BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(35, 4), sortablePriority);
+        IntentId.WriteBytes(destination.Slice(39, 16));
     }
 
     public static SameStepOrderKey FromDatabaseBytes(ReadOnlySpan<byte> bytes)
