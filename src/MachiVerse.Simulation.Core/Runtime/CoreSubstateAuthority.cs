@@ -191,14 +191,16 @@ public static class OperationSchedulerSubstateV1
             throw new InvalidDataException("scheduler-substate.frozen-barrier-mismatch");
 
         var current = scheduler.ForEffectiveStep(frozenInput.BasisStep);
-        if (current.Count != frozenInput.ScheduledOperations.Count)
-            throw new InvalidDataException("scheduler-substate.frozen-set-mismatch");
-        for (var index = 0; index < current.Count; index++)
+        if (!ReferenceEquals(current, frozenInput.ScheduledOperations))
         {
-            if (current[index].OperationId != frozenInput.ScheduledOperations[index].OperationId ||
-                !current[index].OrderKey.ToDatabaseBytes().AsSpan()
-                    .SequenceEqual(frozenInput.ScheduledOperations[index].OrderKey.ToDatabaseBytes()))
+            if (current.Count != frozenInput.ScheduledOperations.Count)
                 throw new InvalidDataException("scheduler-substate.frozen-set-mismatch");
+            for (var index = 0; index < current.Count; index++)
+            {
+                if (current[index].OperationId != frozenInput.ScheduledOperations[index].OperationId ||
+                    !current[index].OrderKey.CanonicallyEquals(frozenInput.ScheduledOperations[index].OrderKey))
+                    throw new InvalidDataException("scheduler-substate.frozen-set-mismatch");
+            }
         }
 
         var future = scheduler.CanonicalBuckets
