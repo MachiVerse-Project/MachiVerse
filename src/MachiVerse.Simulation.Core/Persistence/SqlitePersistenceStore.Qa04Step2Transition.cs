@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Runtime;
-using Microsoft.Data.Sqlite;
 
 namespace MachiVerse.Simulation.Core.Persistence;
 
@@ -42,13 +41,16 @@ public sealed partial class SqlitePersistenceStore
         Qa04OperationClosedPrefixV1 resultingPrefix,
         IReadOnlyCollection<CrossDomainTransactionStateV1> crossDomainTransactionStateChanges,
         CancellationToken cancellationToken = default,
-        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority = null)
+        Qa04DetailDecisionAuthorityV1? detailDecisionAuthority = null,
+        byte[]? expectedScheduledBatchDigest = null)
     {
         ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(terminalOperations);
         ArgumentNullException.ThrowIfNull(basisPrefix);
         ArgumentNullException.ThrowIfNull(resultingPrefix);
         ArgumentNullException.ThrowIfNull(crossDomainTransactionStateChanges);
+        if (expectedScheduledBatchDigest is not null)
+            RequireHash256(expectedScheduledBatchDigest, nameof(expectedScheduledBatchDigest));
         var effectiveStep = authority.EffectiveStep;
         var resultingStep = authority.ResultingStep;
         if (effectiveStep != checked(injectionStep + 1UL) || resultingStep != checked(effectiveStep + 1UL))
@@ -142,14 +144,38 @@ public sealed partial class SqlitePersistenceStore
                 batch.OperationCount != checked((ulong)terminalOperations.Count))
                 throw new InvalidDataException("persistence.qa04-canonical-transition.batch-drift");
 
-            var scheduledCount = await RequireQa04CanonicalScheduledCoverageAsync(
-                    effectiveStep,
-                    decoded.AppliedOperationIds,
-                    decoded.OperationOutcomes,
-                    terminalById,
-                    transaction,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var scheduledBatchDigest = expectedScheduledBatchDigest;
+            if (scheduledBatchDigest is null)
+            {
+                var regeneratedBindings = Qa04ReferenceLoadV1.OperationsForStep(injectionStep)
+                    .Select(descriptor => Qa04CanonicalOperationBindingV1.Bind(
+                        descriptor,
+                        authority.ActiveConfigGeneration))
+                    .OrderBy(static binding => binding.OrderKey)
+                    .ThenBy(static binding => binding.SourceDescriptor.OperationId)
+                    .ToArray();
+                if (regeneratedBindings.Length != decoded.AppliedOperationIds.Count)
+                    throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-count-drift");
+                for (var index = 0; index < regeneratedBindings.Length; index++)
+                {
+                    if (regeneratedBindings[index].SourceDescriptor.OperationId != decoded.AppliedOperationIds[index])
+                        throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
+                }
+                scheduledBatchDigest =
+                    Qa04ScheduledOperationBatchAuthorityBuilderV1.ComputeScheduledBatchDigest(regeneratedBindings);
+            }
+
+            if (!CryptographicOperations.FixedTimeEquals(batch.ScheduledBatchDigest, scheduledBatchDigest))
+                throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-batch-digest-drift");
+
+            for (var index = 0; index < decoded.AppliedOperationIds.Count; index++)
+            {
+                var operationId = decoded.AppliedOperationIds[index];
+                var outcome = decoded.OperationOutcomes[index];
+                if (!terminalById.TryGetValue(operationId, out var terminal) ||
+                    !Qa04TransitionCommittedAuthorityV1.TerminalEquals(outcome, terminal))
+                    throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
+            }
 
             var context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
             if (detailDecisionAuthority is not null)
@@ -190,28 +216,6 @@ public sealed partial class SqlitePersistenceStore
                         transaction,
                         cancellationToken)
                     .ConfigureAwait(false);
-            }
-
-            await using (var removeSchedule = _connection.CreateCommand())
-            {
-                removeSchedule.Transaction = transaction;
-                removeSchedule.CommandText = "DELETE FROM scheduled_operation WHERE effective_step=$effective_step;";
-                removeSchedule.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
-                if (await removeSchedule.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != scheduledCount)
-                    throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-delete-count-drift");
-            }
-
-            await using (var removeOperation = _connection.CreateCommand())
-            {
-                removeOperation.Transaction = transaction;
-                removeOperation.CommandText = """
-DELETE FROM operation_state
-WHERE lifecycle=$scheduled_lifecycle AND effective_step=$effective_step;
-""";
-                removeOperation.Parameters.AddWithValue("$scheduled_lifecycle", ScheduledLifecycle);
-                removeOperation.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
-                if (await removeOperation.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != scheduledCount)
-                    throw new InvalidDataException("persistence.qa04-canonical-transition.operation-delete-count-drift");
             }
 
             await using (var closeBatch = _connection.CreateCommand())
@@ -268,59 +272,6 @@ WHERE singleton=1;
             transaction.Rollback();
             throw;
         }
-    }
-
-    private async Task<int> RequireQa04CanonicalScheduledCoverageAsync(
-        ulong effectiveStep,
-        IReadOnlyList<OpaqueId128> appliedOperationIds,
-        IReadOnlyList<TerminalOperationCommit> decodedOutcomes,
-        IReadOnlyDictionary<OpaqueId128, TerminalOperationCommit> terminalById,
-        SqliteTransaction transaction,
-        CancellationToken cancellationToken)
-    {
-        if (appliedOperationIds.Count != decodedOutcomes.Count ||
-            appliedOperationIds.Count != terminalById.Count)
-            throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-count-drift");
-
-        await using var command = _connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-SELECT o.operation_id, o.lifecycle, o.effective_step
-FROM scheduled_operation s
-JOIN operation_state o ON o.operation_id=s.operation_id
-WHERE s.effective_step=$effective_step
-ORDER BY s.order_key ASC, s.operation_id ASC;
-""";
-        command.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
-
-        var index = 0;
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            if (index >= appliedOperationIds.Count)
-                throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-count-drift");
-
-            var operationId = OpaqueId128.FromBytes((byte[])reader[0]);
-            var lifecycle = (DurableOperationLifecycleV1)reader.GetInt32(1);
-            var durableEffectiveStep = reader.IsDBNull(2)
-                ? (ulong?)null
-                : U64Be.Decode((byte[])reader[2]);
-            var expectedOperationId = appliedOperationIds[index];
-            var outcome = decodedOutcomes[index];
-
-            if (operationId != expectedOperationId ||
-                lifecycle != DurableOperationLifecycleV1.ScheduledDurable ||
-                durableEffectiveStep != effectiveStep ||
-                !terminalById.TryGetValue(expectedOperationId, out var terminal) ||
-                !Qa04TransitionCommittedAuthorityV1.TerminalEquals(outcome, terminal))
-                throw new InvalidDataException("persistence.qa04-canonical-transition.operation-outcome-drift");
-
-            index++;
-        }
-
-        if (index != appliedOperationIds.Count)
-            throw new InvalidDataException("persistence.qa04-canonical-transition.scheduled-count-drift");
-        return index;
     }
 
     public async IAsyncEnumerable<Qa04TransitionCommittedAuthorityV1> StreamQa04CanonicalTransitionHistoryAfterAsync(
