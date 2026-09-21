@@ -281,6 +281,80 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         return ValidateDecodedHistory(history, decoded, semantic, encodedCollections);
     }
 
+    internal static void RequireMaterializedAuthorityIntegrity(
+        Qa04TransitionCommittedAuthorityV1 authority)
+    {
+        ArgumentNullException.ThrowIfNull(authority);
+        var history = authority.History;
+        RequireTransitionHistorySchema(
+            history.RecordType,
+            history.PayloadSchemaId,
+            history.PayloadSchemaMajor,
+            history.PayloadSchemaMinor);
+
+        if (authority.EffectiveStep == ulong.MaxValue ||
+            authority.ResultingStep != authority.EffectiveStep + 1UL)
+            throw new InvalidDataException("qa04.transition-authority.step-drift");
+        if (authority.ActiveConfigGeneration == 0)
+            throw new InvalidDataException("qa04.transition-authority.config-generation-invalid");
+        RequireHash256(authority.ActiveConfigDigest, "qa04.transition-authority.config-digest-invalid");
+        RequireHash256(authority.PreviousStateContinuityToken, "qa04.transition-authority.previous-continuity-invalid");
+        RequireHash256(authority.ResultingStateContinuityToken, "qa04.transition-authority.resulting-continuity-invalid");
+        RequireHash256(authority.StateDiagnosticHash, "qa04.transition-authority.state-diagnostic-invalid");
+        if (authority.AppliedOperationIds.Count != authority.OperationOutcomes.Count)
+            throw new InvalidDataException("qa04.transition-authority.operation-outcome-count-drift");
+
+        var encodedCollections = EncodeCollectionValues(
+            authority.AppliedOperationIds,
+            authority.OperationOutcomes,
+            authority.PartitionDigests);
+        var semantic = EncodeSemanticBody(
+            authority.EffectiveStep,
+            authority.ResultingStep,
+            authority.ActiveConfigGeneration,
+            authority.ActiveConfigDigest,
+            encodedCollections,
+            authority.PreviousStateContinuityToken,
+            authority.StateDiagnosticHash);
+        if (!semantic.AsSpan().SequenceEqual(history.NormalizedPayloadBytes))
+            throw new InvalidDataException("qa04.transition-materialized.semantic-body-drift");
+
+        var physical = EncodePhysicalWrapper(
+            authority.EffectiveStep,
+            authority.ResultingStep,
+            authority.ActiveConfigGeneration,
+            authority.ActiveConfigDigest,
+            encodedCollections,
+            authority.PreviousStateContinuityToken,
+            authority.ResultingStateContinuityToken,
+            authority.StateDiagnosticHash);
+        if (!physical.AsSpan().SequenceEqual(history.PayloadBytes))
+            throw new InvalidDataException("qa04.transition-materialized.physical-body-drift");
+
+        var normalizedDigest = HashSuite.Hash256(semantic);
+        if (!CryptographicOperations.FixedTimeEquals(normalizedDigest, history.NormalizedPayloadDigest))
+            throw new InvalidDataException("qa04.transition-materialized.normalized-digest-drift");
+
+        var recordDigest = HistoryIntegrity.ComputeHistoryRecordDigest(
+            history.WorldId,
+            history.Sequence,
+            history.PreviousRecordDigest,
+            RecordTypeToken,
+            semantic);
+        if (!CryptographicOperations.FixedTimeEquals(recordDigest, history.RecordDigest))
+            throw new InvalidDataException("qa04.transition-materialized.record-digest-drift");
+
+        var expectedResultingContinuity = HistoryIntegrity.ComputeTransitionContinuityToken(
+            history.WorldId,
+            authority.ResultingStep,
+            authority.PreviousStateContinuityToken,
+            recordDigest);
+        if (!CryptographicOperations.FixedTimeEquals(
+                expectedResultingContinuity,
+                authority.ResultingStateContinuityToken))
+            throw new InvalidDataException("qa04.transition-materialized.resulting-continuity-drift");
+    }
+
     /// <summary>
     /// Restores a transition authority directly from the persisted history_record columns.
     /// The normalized semantic bytes are intentionally reconstructed from the canonical physical
