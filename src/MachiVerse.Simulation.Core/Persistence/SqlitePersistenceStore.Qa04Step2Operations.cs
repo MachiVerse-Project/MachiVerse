@@ -17,10 +17,11 @@ public sealed record Qa04ScheduledOperationBatchDurableResultV1(
 
 /// <summary>
 /// QA-04 Gate4 Step2 persistence authority for the closed perf.reference.v1 Operation set.
-/// Generated Operations are admitted/scheduled in one SQLite transaction per injection Step.
-/// Their current-Step lifecycle rows remain ordinary operation_state/scheduled_operation material
-/// until transition COMMIT, then are removed atomically as the durable closed-prefix advances.
-/// Ordinary/non-profile Operations continue to use the standard per-Operation persistence APIs.
+/// Generated Operations are admitted/scheduled as one compact durable batch per injection Step.
+/// The complete logical Operation set is deterministically regenerable from perf.reference.v1 and
+/// is bound by ScheduledBatchDigest, so the hot path does not expand 5,000 generated Operations into
+/// transient operation_state/scheduled_operation rows. Ordinary/non-profile Operations continue to
+/// use the standard per-Operation persistence APIs.
 /// </summary>
 public sealed partial class SqlitePersistenceStore
 {
@@ -169,18 +170,14 @@ INSERT INTO qa04_operation_closed_prefix (
                 RequireSameQa04Batch(existing, authority);
                 if (existing.TerminalHistorySequence is not null)
                     throw new InvalidDataException("persistence.qa04-operation-batch-already-closed");
-                var durableExisting = await ReadQa04ScheduledBatchOperationsAsync(
-                    authority.EffectiveStep,
-                    transaction,
-                    cancellationToken).ConfigureAwait(false);
-                RequireScheduledRowsMatchBindings(durableExisting, bindings, authority.History.Sequence, authority.EffectiveStep);
+                var durableExisting = CreateQa04LogicalScheduledOperations(bindings, authority);
                 transaction.Commit();
                 return new Qa04ScheduledOperationBatchDurableResultV1(
                     authority.InjectionStep,
                     authority.EffectiveStep,
                     authority.History.Sequence,
                     Duplicate: true,
-                    Array.AsReadOnly(durableExisting.Select(static row => row.State).ToArray()));
+                    durableExisting);
             }
 
             var context = await ReadHistoryContextAsync(transaction, cancellationToken).ConfigureAwait(false);
@@ -207,48 +204,23 @@ INSERT INTO qa04_operation_batch (
                     throw new InvalidDataException("persistence.qa04-operation-batch-insert-failed");
             }
 
-            if (insertBatchSize is { } configuredBatchSize)
-            {
-                await InsertQa04ScheduledOperationsBatchedAsync(
-                        bindings,
-                        authority,
-                        configuredBatchSize,
-                        transaction,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                foreach (var binding in bindings)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await InsertQa04ScheduledOperationAsync(binding, authority, transaction, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-            }
+            // perf.reference.v1 generated Operations are represented durably by the batch row,
+            // history record and ScheduledBatchDigest. Keep the complete logical Operation set
+            // in memory for the current Step instead of expanding it into 10,000 transient rows.
+            _ = insertBatchSize;
 
             await UpdateHistoryAnchorAsync(authority.History, transaction, cancellationToken).ConfigureAwait(false);
             var commitStarted = Stopwatch.GetTimestamp();
             transaction.Commit();
             ObserveSuccessfulCommit(Stopwatch.GetElapsedTime(commitStarted));
 
-            var durable = bindings.Select(binding => new DurableOperationStateV1(
-                binding.SourceDescriptor.OperationId,
-                binding.BoundDescriptor.PayloadDigest.ToArray(),
-                DurableOperationLifecycleV1.ScheduledDurable,
-                authority.History.Sequence,
-                authority.History.Sequence,
-                authority.EffectiveStep,
-                null,
-                null,
-                null,
-                null)).ToArray();
+            var durable = CreateQa04LogicalScheduledOperations(bindings, authority);
             return new Qa04ScheduledOperationBatchDurableResultV1(
                 authority.InjectionStep,
                 authority.EffectiveStep,
                 authority.History.Sequence,
                 Duplicate: false,
-                Array.AsReadOnly(durable));
+                durable);
         }
         catch
         {
@@ -312,15 +284,19 @@ INSERT INTO qa04_operation_batch (
                 batch.OperationCount != checked((ulong)terminalOperations.Count))
                 throw new InvalidDataException("persistence.qa04-transition-batch-drift");
 
-            var scheduled = await ReadQa04ScheduledBatchOperationsAsync(effectiveStep, transaction, cancellationToken)
-                .ConfigureAwait(false);
-            if (scheduled.Count != terminalOperations.Count)
-                throw new InvalidDataException("persistence.qa04-transition-scheduled-count-drift");
-            foreach (var row in scheduled)
+            var regeneratedBindings = Qa04ReferenceLoadV1.OperationsForStep(injectionStep)
+                .Select(descriptor => Qa04CanonicalOperationBindingV1.Bind(descriptor, activeConfigGeneration))
+                .OrderBy(static binding => binding.OrderKey)
+                .ThenBy(static binding => binding.SourceDescriptor.OperationId)
+                .ToArray();
+            if (regeneratedBindings.Length != terminalOperations.Count ||
+                !CryptographicOperations.FixedTimeEquals(
+                    batch.ScheduledBatchDigest,
+                    Qa04ScheduledOperationBatchAuthorityBuilderV1.ComputeScheduledBatchDigest(regeneratedBindings)))
+                throw new InvalidDataException("persistence.qa04-transition-scheduled-batch-digest-drift");
+            foreach (var binding in regeneratedBindings)
             {
-                if (!terminalById.ContainsKey(row.State.OperationId) ||
-                    row.State.Lifecycle != DurableOperationLifecycleV1.ScheduledDurable ||
-                    row.State.EffectiveStep != effectiveStep)
+                if (!terminalById.ContainsKey(binding.SourceDescriptor.OperationId))
                     throw new InvalidDataException("persistence.qa04-transition-terminal-coverage-drift");
             }
 
@@ -334,28 +310,6 @@ INSERT INTO qa04_operation_batch (
             if (!CryptographicOperations.FixedTimeEquals(expectedContinuity, resultingStateContinuityToken))
                 throw new InvalidDataException("persistence.qa04-transition-continuity-token-mismatch");
             await InsertHistoryRecordAsync(history, transaction, cancellationToken).ConfigureAwait(false);
-
-            await using (var removeSchedule = _connection.CreateCommand())
-            {
-                removeSchedule.Transaction = transaction;
-                removeSchedule.CommandText = "DELETE FROM scheduled_operation WHERE effective_step=$effective_step;";
-                removeSchedule.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
-                if (await removeSchedule.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != terminalOperations.Count)
-                    throw new InvalidDataException("persistence.qa04-transition-scheduled-delete-count-drift");
-            }
-
-            await using (var removeOperation = _connection.CreateCommand())
-            {
-                removeOperation.Transaction = transaction;
-                removeOperation.CommandText = """
-DELETE FROM operation_state
-WHERE lifecycle=$scheduled_lifecycle AND effective_step=$effective_step;
-""";
-                removeOperation.Parameters.AddWithValue("$scheduled_lifecycle", ScheduledLifecycle);
-                removeOperation.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
-                if (await removeOperation.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != terminalOperations.Count)
-                    throw new InvalidDataException("persistence.qa04-transition-operation-delete-count-drift");
-            }
 
             await using (var closeBatch = _connection.CreateCommand())
             {
@@ -407,6 +361,37 @@ WHERE singleton=1;
             transaction.Rollback();
             throw;
         }
+    }
+
+    private static IReadOnlyList<DurableOperationStateV1> CreateQa04LogicalScheduledOperations(
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        Qa04ScheduledOperationBatchAuthorityV1 authority)
+    {
+        if (authority.OperationCount != checked((ulong)bindings.Count))
+            throw new InvalidDataException("persistence.qa04-operation-batch-logical-count-drift");
+
+        var durable = new DurableOperationStateV1[bindings.Count];
+        for (var index = 0; index < bindings.Count; index++)
+        {
+            var binding = bindings[index];
+            if (binding.ScheduledOperation.EffectiveStep != authority.EffectiveStep ||
+                binding.SourceDescriptor.OperationId.IsZero ||
+                binding.BoundDescriptor.PayloadDigest.Length != 32)
+                throw new InvalidDataException("persistence.qa04-operation-batch-logical-item-drift");
+
+            durable[index] = new DurableOperationStateV1(
+                binding.SourceDescriptor.OperationId,
+                binding.BoundDescriptor.PayloadDigest.ToArray(),
+                DurableOperationLifecycleV1.ScheduledDurable,
+                authority.History.Sequence,
+                authority.History.Sequence,
+                authority.EffectiveStep,
+                null,
+                null,
+                null,
+                null);
+        }
+        return Array.AsReadOnly(durable);
     }
 
     private async Task InsertQa04ScheduledOperationsBatchedAsync(
