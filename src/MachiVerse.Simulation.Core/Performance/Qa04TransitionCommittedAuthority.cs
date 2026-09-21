@@ -95,16 +95,18 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         var previousContinuity = previousStateContinuityToken.ToArray();
         var stateDigest = stateDiagnosticHash.ToArray();
 
+        var encodedCollections = EncodeCollectionValues(
+            operations.Ids,
+            operations.Outcomes,
+            partitions);
         var semanticBytes = EncodeSemanticBody(
             effectiveStep,
             resultingStep,
             activeConfigGeneration,
             configDigest,
-            operations.Ids,
-            operations.Outcomes,
+            encodedCollections,
             previousContinuity,
-            stateDigest,
-            partitions);
+            stateDigest);
         var expectedRecordDigest = HistoryIntegrity.ComputeHistoryRecordDigest(
             worldId,
             historySequence,
@@ -121,12 +123,10 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             resultingStep,
             activeConfigGeneration,
             configDigest,
-            operations.Ids,
-            operations.Outcomes,
+            encodedCollections,
             previousContinuity,
             resultingContinuity,
-            stateDigest,
-            partitions);
+            stateDigest);
 
         var history = HistoryRecordMaterial.Create(
             worldId,
@@ -171,20 +171,22 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             history.PayloadSchemaMinor);
 
         var decoded = DecodePhysicalWrapper(history.PayloadBytes);
+        var encodedCollections = EncodeCollectionValues(
+            decoded.OperationIds,
+            decoded.Outcomes,
+            decoded.Partitions);
         var semantic = EncodeSemanticBody(
             decoded.EffectiveStep,
             decoded.ResultingStep,
             decoded.ConfigGeneration,
             decoded.ConfigDigest,
-            decoded.OperationIds,
-            decoded.Outcomes,
+            encodedCollections,
             decoded.PreviousContinuity,
-            decoded.StateDiagnostic,
-            decoded.Partitions);
+            decoded.StateDiagnostic);
         if (!semantic.AsSpan().SequenceEqual(history.NormalizedPayloadBytes))
             throw new InvalidDataException("qa04.transition-decode.semantic-body-drift");
 
-        return ValidateDecodedHistory(history, decoded, semantic);
+        return ValidateDecodedHistory(history, decoded, semantic, encodedCollections);
     }
 
     /// <summary>
@@ -211,16 +213,18 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             payloadSchemaMinor);
 
         var decoded = DecodePhysicalWrapper(payloadBytes);
+        var encodedCollections = EncodeCollectionValues(
+            decoded.OperationIds,
+            decoded.Outcomes,
+            decoded.Partitions);
         var semantic = EncodeSemanticBody(
             decoded.EffectiveStep,
             decoded.ResultingStep,
             decoded.ConfigGeneration,
             decoded.ConfigDigest,
-            decoded.OperationIds,
-            decoded.Outcomes,
+            encodedCollections,
             decoded.PreviousContinuity,
-            decoded.StateDiagnostic,
-            decoded.Partitions);
+            decoded.StateDiagnostic);
         var history = HistoryRecordMaterial.RestoreValidated(
             worldId,
             sequence,
@@ -233,25 +237,24 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             semantic,
             normalizedPayloadDigest,
             recordDigest);
-        return ValidateDecodedHistory(history, decoded, semantic);
+        return ValidateDecodedHistory(history, decoded, semantic, encodedCollections);
     }
 
     private static Qa04TransitionCommittedAuthorityV1 ValidateDecodedHistory(
         HistoryRecordMaterial history,
         DecodedPhysicalTransitionV1 decoded,
-        byte[] semantic)
+        byte[] semantic,
+        EncodedCollectionValuesV1 encodedCollections)
     {
         var canonicalPhysical = EncodePhysicalWrapper(
             decoded.EffectiveStep,
             decoded.ResultingStep,
             decoded.ConfigGeneration,
             decoded.ConfigDigest,
-            decoded.OperationIds,
-            decoded.Outcomes,
+            encodedCollections,
             decoded.PreviousContinuity,
             decoded.ResultingContinuity,
-            decoded.StateDiagnostic,
-            decoded.Partitions);
+            decoded.StateDiagnostic);
         if (!canonicalPhysical.AsSpan().SequenceEqual(history.PayloadBytes))
             throw new InvalidDataException("qa04.transition-decode.physical-not-canonical");
 
@@ -501,16 +504,39 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         return Array.AsReadOnly(partitions);
     }
 
+    private sealed record EncodedCollectionValuesV1(
+        byte[] OperationIds,
+        byte[] Outcomes,
+        byte[] Partitions);
+
+    private static EncodedCollectionValuesV1 EncodeCollectionValues(
+        IReadOnlyList<OpaqueId128> operationIds,
+        IReadOnlyList<TerminalOperationCommit> outcomes,
+        IReadOnlyList<Qa04TransitionPartitionDigestV1> partitions)
+    {
+        var operationWriter = new MvDcborWriter();
+        WriteOperationIds(operationWriter, operationIds);
+
+        var outcomeWriter = new MvDcborWriter();
+        WriteOutcomes(outcomeWriter, outcomes);
+
+        var partitionWriter = new MvDcborWriter();
+        WritePartitions(partitionWriter, partitions);
+
+        return new EncodedCollectionValuesV1(
+            operationWriter.ToArray(),
+            outcomeWriter.ToArray(),
+            partitionWriter.ToArray());
+    }
+
     private static byte[] EncodeSemanticBody(
         ulong effectiveStep,
         ulong resultingStep,
         ulong configGeneration,
         ReadOnlySpan<byte> configDigest,
-        IReadOnlyList<OpaqueId128> operationIds,
-        IReadOnlyList<TerminalOperationCommit> outcomes,
+        EncodedCollectionValuesV1 encodedCollections,
         ReadOnlySpan<byte> previousContinuity,
-        ReadOnlySpan<byte> stateDiagnostic,
-        IReadOnlyList<Qa04TransitionPartitionDigestV1> partitions)
+        ReadOnlySpan<byte> stateDiagnostic)
     {
         var writer = new MvDcborWriter();
         writer.WriteMapStart(9);
@@ -518,11 +544,11 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         writer.WriteUnsigned(1); writer.WriteUnsigned(resultingStep);
         writer.WriteUnsigned(2); writer.WriteUnsigned(configGeneration);
         writer.WriteUnsigned(3); writer.WriteBytes(configDigest);
-        writer.WriteUnsigned(4); WriteOperationIds(writer, operationIds);
-        writer.WriteUnsigned(5); WriteOutcomes(writer, outcomes);
+        writer.WriteUnsigned(4); writer.WriteCanonicalValue(encodedCollections.OperationIds);
+        writer.WriteUnsigned(5); writer.WriteCanonicalValue(encodedCollections.Outcomes);
         writer.WriteUnsigned(6); writer.WriteBytes(previousContinuity);
         writer.WriteUnsigned(7); writer.WriteBytes(stateDiagnostic);
-        writer.WriteUnsigned(8); WritePartitions(writer, partitions);
+        writer.WriteUnsigned(8); writer.WriteCanonicalValue(encodedCollections.Partitions);
         return writer.ToArray();
     }
 
@@ -531,12 +557,10 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         ulong resultingStep,
         ulong configGeneration,
         ReadOnlySpan<byte> configDigest,
-        IReadOnlyList<OpaqueId128> operationIds,
-        IReadOnlyList<TerminalOperationCommit> outcomes,
+        EncodedCollectionValuesV1 encodedCollections,
         ReadOnlySpan<byte> previousContinuity,
         ReadOnlySpan<byte> resultingContinuity,
-        ReadOnlySpan<byte> stateDiagnostic,
-        IReadOnlyList<Qa04TransitionPartitionDigestV1> partitions)
+        ReadOnlySpan<byte> stateDiagnostic)
     {
         var writer = new MvDcborWriter();
         writer.WriteMapStart(10);
@@ -544,19 +568,19 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         writer.WriteUnsigned(1); writer.WriteUnsigned(resultingStep);
         writer.WriteUnsigned(2); writer.WriteUnsigned(configGeneration);
         writer.WriteUnsigned(3); writer.WriteBytes(configDigest);
-        writer.WriteUnsigned(4); WriteOperationIds(writer, operationIds);
-        writer.WriteUnsigned(5); WriteOutcomes(writer, outcomes);
+        writer.WriteUnsigned(4); writer.WriteCanonicalValue(encodedCollections.OperationIds);
+        writer.WriteUnsigned(5); writer.WriteCanonicalValue(encodedCollections.Outcomes);
         writer.WriteUnsigned(6); writer.WriteBytes(previousContinuity);
         writer.WriteUnsigned(7); writer.WriteBytes(resultingContinuity);
         writer.WriteUnsigned(8); writer.WriteBytes(stateDiagnostic);
-        writer.WriteUnsigned(9); WritePartitions(writer, partitions);
+        writer.WriteUnsigned(9); writer.WriteCanonicalValue(encodedCollections.Partitions);
         return writer.ToArray();
     }
 
     private static void WriteOperationIds(MvDcborWriter writer, IReadOnlyList<OpaqueId128> operationIds)
     {
         writer.WriteArrayStart((ulong)operationIds.Count);
-        foreach (var operationId in operationIds) writer.WriteBytes(operationId.ToBytes());
+        foreach (var operationId in operationIds) WriteOpaqueId(writer, operationId);
     }
 
     private static void WriteOutcomes(MvDcborWriter writer, IReadOnlyList<TerminalOperationCommit> outcomes)
@@ -565,7 +589,7 @@ public sealed class Qa04TransitionCommittedAuthorityV1
         foreach (var outcome in outcomes)
         {
             writer.WriteArrayStart(4);
-            writer.WriteBytes(outcome.OperationId.ToBytes());
+            WriteOpaqueId(writer, outcome.OperationId);
             writer.WriteUnsigned(checked((ulong)outcome.TerminalStatus));
             writer.WriteAsciiText(outcome.ResultCode);
             if (outcome.RichResultPayload is null)
@@ -578,6 +602,14 @@ public sealed class Qa04TransitionCommittedAuthorityV1
                 writer.WriteBytes(outcome.RichResultPayload);
             }
         }
+    }
+
+    private static void WriteOpaqueId(MvDcborWriter writer, OpaqueId128 value)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        BinaryPrimitives.WriteUInt64BigEndian(bytes[..8], (ulong)(value.Value >> 64));
+        BinaryPrimitives.WriteUInt64BigEndian(bytes[8..], (ulong)value.Value);
+        writer.WriteBytes(bytes);
     }
 
     private static void WritePartitions(MvDcborWriter writer, IReadOnlyList<Qa04TransitionPartitionDigestV1> partitions)
