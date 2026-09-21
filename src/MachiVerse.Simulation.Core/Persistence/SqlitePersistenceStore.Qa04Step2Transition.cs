@@ -71,6 +71,7 @@ public sealed partial class SqlitePersistenceStore
         byte[] expectedScheduledBatchDigest,
         Action<string, double>? diagnosticPhaseObserver)
     {
+        ArgumentNullException.ThrowIfNull(authority);
         ArgumentNullException.ThrowIfNull(terminalOperations);
         if (!ReferenceEquals(terminalOperations, authority.OperationOutcomes))
             throw new InvalidDataException("persistence.qa04-canonical-transition.validated-terminal-reference-drift");
