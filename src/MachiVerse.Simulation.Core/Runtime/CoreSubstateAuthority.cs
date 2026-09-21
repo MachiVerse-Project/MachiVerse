@@ -146,38 +146,44 @@ public static class OperationSchedulerSubstateV1
         if (scheduler.FreezeStep is { } freeze && freeze >= scheduler.NextSchedulableStep)
             throw new InvalidDataException("scheduler-substate.freeze-barrier-invalid");
 
-        var digest = HashSuite.DomainHash("mv.core-scheduler-state.v1", writer =>
+        using var session = HashSuite.BeginDomainHashStreaming("mv.core-scheduler-state.v1");
+        var writer = session.Writer;
+        writer.WriteMapStart(5);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
+        writer.WriteUnsigned(1); writer.WriteUnsigned(worldStep);
+        writer.WriteUnsigned(2); writer.WriteUnsigned(scheduler.NextSchedulableStep);
+        writer.WriteUnsigned(3);
+        if (scheduler.FreezeStep is { } frozen)
         {
-            writer.WriteMapStart(5);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
-            writer.WriteUnsigned(1); writer.WriteUnsigned(worldStep);
-            writer.WriteUnsigned(2); writer.WriteUnsigned(scheduler.NextSchedulableStep);
-            writer.WriteUnsigned(3);
-            if (scheduler.FreezeStep is { } frozen)
+            writer.WriteArrayStart(1);
+            writer.WriteUnsigned(frozen);
+        }
+        else writer.WriteArrayStart(0);
+        writer.WriteUnsigned(4);
+        writer.WriteArrayStart((ulong)buckets.Length);
+
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        Span<byte> orderKeyBytes = stackalloc byte[SameStepOrderKey.DatabaseKeyLength];
+        foreach (var bucket in buckets)
+        {
+            writer.WriteArrayStart(2);
+            writer.WriteUnsigned(bucket.Key);
+            writer.WriteArrayStart((ulong)bucket.Value.Count);
+            foreach (var operation in bucket.Value)
             {
-                writer.WriteArrayStart(1);
-                writer.WriteUnsigned(frozen);
-            }
-            else writer.WriteArrayStart(0);
-            writer.WriteUnsigned(4);
-            writer.WriteArrayStart((ulong)buckets.Length);
-            foreach (var bucket in buckets)
-            {
+                operation.Validate();
+                if (operation.EffectiveStep != bucket.Key)
+                    throw new InvalidDataException("scheduler-substate.bucket-effective-step-mismatch");
+
+                operation.OperationId.WriteBytes(operationIdBytes);
+                operation.OrderKey.WriteDatabaseBytes(orderKeyBytes);
                 writer.WriteArrayStart(2);
-                writer.WriteUnsigned(bucket.Key);
-                writer.WriteArrayStart((ulong)bucket.Value.Count);
-                foreach (var operation in bucket.Value)
-                {
-                    operation.Validate();
-                    if (operation.EffectiveStep != bucket.Key)
-                        throw new InvalidDataException("scheduler-substate.bucket-effective-step-mismatch");
-                    writer.WriteArrayStart(2);
-                    writer.WriteBytes(operation.OperationId.ToBytes());
-                    writer.WriteBytes(operation.OrderKey.ToDatabaseBytes());
-                }
+                writer.WriteBytes(operationIdBytes);
+                writer.WriteBytes(orderKeyBytes);
             }
-        });
-        return new WorldSubstateRefV1(Schema, digest);
+        }
+
+        return new WorldSubstateRefV1(Schema, session.Complete());
     }
 
     public static OperationSchedulerStateV1 ProjectAfterFinalization(
