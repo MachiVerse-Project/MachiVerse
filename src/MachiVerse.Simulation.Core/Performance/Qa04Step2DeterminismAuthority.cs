@@ -306,6 +306,39 @@ public static class Qa04TerminalSemanticAuthorityV1
         return session.Complete();
     }
 
+    internal static byte[] ComputeFinalizationBatchDigest(
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings,
+        IReadOnlyList<TerminalOperationCommit> outcomes)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        ArgumentNullException.ThrowIfNull(outcomes);
+        if (bindings.Count != outcomes.Count)
+            throw new InvalidDataException("qa04.step2.finalization-terminal-coverage-count-drift");
+
+        using var session = HashSuite.BeginDomainHashStreaming("mv.qa04-operation-terminal-batch.v1");
+        var writer = session.Writer;
+        writer.WriteArrayStart((ulong)outcomes.Count);
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        for (var index = 0; index < outcomes.Count; index++)
+        {
+            var outcome = outcomes[index];
+            if (outcome.OperationId != bindings[index].SourceDescriptor.OperationId)
+                throw new InvalidDataException("qa04.step2.finalization-terminal-coverage-drift");
+            if (!Enum.IsDefined(typeof(CoreOperationResultStatusV1), outcome.TerminalStatus) ||
+                !OperationLifecycleRulesV1.IsTerminalResult((CoreOperationResultStatusV1)outcome.TerminalStatus))
+                throw new InvalidDataException("qa04.step2.finalization-terminal-status-invalid");
+            _ = new StableToken(outcome.ResultCode);
+
+            outcome.OperationId.WriteBytes(operationIdBytes);
+            writer.WriteArrayStart(4);
+            writer.WriteBytes(operationIdBytes);
+            writer.WriteUnsigned(checked((ulong)outcome.TerminalStatus));
+            writer.WriteAsciiText(outcome.ResultCode);
+            writer.WriteArrayStart(0);
+        }
+        return session.Complete();
+    }
+
     public static byte[] ComputeStepItemDigest(ulong effectiveStep, ulong operationCount, byte[] terminalBatchDigest)
         => HashSuite.DomainHash("mv.qa04-operation-terminal-step.v1", writer =>
         {
