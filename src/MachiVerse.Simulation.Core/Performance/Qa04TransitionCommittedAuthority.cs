@@ -219,7 +219,8 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             resultingContinuity,
             stateDigest);
 
-        var history = HistoryRecordMaterial.Create(
+        var normalizedPayloadDigest = HashSuite.Hash256(semanticBytes);
+        var history = HistoryRecordMaterial.CreateFromOwnedCanonicalPayloads(
             worldId,
             historySequence,
             previousHistoryRecordDigest,
@@ -228,7 +229,9 @@ public sealed class Qa04TransitionCommittedAuthorityV1
             1,
             0,
             physicalBytes,
-            writer => writer.WriteCanonicalValue(semanticBytes));
+            semanticBytes,
+            normalizedPayloadDigest,
+            expectedRecordDigest);
         if (!CryptographicOperations.FixedTimeEquals(history.RecordDigest, expectedRecordDigest) ||
             !history.NormalizedPayloadBytes.AsSpan().SequenceEqual(semanticBytes) ||
             !history.PayloadBytes.AsSpan().SequenceEqual(physicalBytes))
