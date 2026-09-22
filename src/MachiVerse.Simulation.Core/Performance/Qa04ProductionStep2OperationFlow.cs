@@ -315,12 +315,13 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             partitionAuthorityState.Header.Step != basisStep)
             throw new InvalidDataException("qa04.step2.production-loop.basis-state-drift");
         closedPrefix.Validate(basisStep);
-        Qa04ProductionCrossDomainTurnoverContractV1.Validate(
+        Qa04ProductionCrossDomainTurnoverContractV1.ValidateProductionStep(
             basisStep,
             resultingStep,
             basisCrossDomainTransactions,
             resultingCrossDomainTransactions,
-            crossDomainTransactionStateChanges);
+            crossDomainTransactionStateChanges,
+            digestCache);
         if (scheduler.FreezeStep is not null || scheduler.NextSchedulableStep != basisStep ||
             scheduler.CanonicalBuckets.Any())
             throw new InvalidDataException("qa04.step2.production-loop.scheduler-not-closed-at-basis");
@@ -767,12 +768,13 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             throw new InvalidDataException("qa04.step2.finalization-detail-transition-drift");
 
         basisPrefix.Validate(step5Candidate.BasisStep);
-        Qa04ProductionCrossDomainTurnoverContractV1.Validate(
+        Qa04ProductionCrossDomainTurnoverContractV1.ValidateProductionStep(
             step5Candidate.BasisStep,
             step5Candidate.TargetStep,
             basisActiveTransactions,
             resultingActiveTransactions,
-            crossDomainTransactionStateChanges);
+            crossDomainTransactionStateChanges,
+            digestCache);
         var alignedTerminal = AlignTerminalCoverage(
             bindings,
             terminalOperations,
