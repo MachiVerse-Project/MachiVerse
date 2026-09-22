@@ -15,6 +15,7 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
         var fixture = CreateCanonicalFirstStepFixture();
 
         VerifyCanonicalAppend(fixture);
+        VerifyProductionFrozenAuthorityDriftRejected(fixture);
         VerifyAccumulatorBoundariesRejected();
         VerifyMissingAuthorityRejected(fixture);
         VerifyOrdinalGapAndDuplicateRejected(fixture);
@@ -54,6 +55,45 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
             productionProducer.CommittedTransitionCount == producer.CommittedTransitionCount &&
             productionProducer.TerminalOperationCount == producer.TerminalOperationCount,
             "QA-04 production evidence fast path drifted from canonical append.");
+    }
+
+    private static void VerifyProductionFrozenAuthorityDriftRejected(StepFixture fixture)
+    {
+        var truncatedFrozen = new FrozenStepInputV1(
+            Qa04ReferenceLoadV1.WorldId,
+            basisStep: 1,
+            fixture.Config.Generation,
+            fixture.Config.Digest,
+            fixture.Bindings
+                .Take(fixture.Bindings.Count - 1)
+                .Select(static binding => binding.ScheduledOperation));
+        var producer = new Qa04ProductionDeterminismEvidenceProducerV1();
+        RequireInvalidData(
+            () => producer.AppendValidatedProductionStep(
+                fixture.InjectionStep,
+                fixture.Transition,
+                fixture.DetailDecision,
+                fixture.ResultingPrefix,
+                truncatedFrozen),
+            "qa04.determinism-evidence.operation-cardinality-drift");
+
+        var wrongConfigDigest = fixture.Config.Digest.ToArray();
+        wrongConfigDigest[0] ^= 0x01;
+        var driftedFrozen = new FrozenStepInputV1(
+            Qa04ReferenceLoadV1.WorldId,
+            basisStep: 1,
+            fixture.Config.Generation,
+            wrongConfigDigest,
+            fixture.Bindings.Select(static binding => binding.ScheduledOperation));
+        var configProducer = new Qa04ProductionDeterminismEvidenceProducerV1();
+        RequireInvalidData(
+            () => configProducer.AppendValidatedProductionStep(
+                fixture.InjectionStep,
+                fixture.Transition,
+                fixture.DetailDecision,
+                fixture.ResultingPrefix,
+                driftedFrozen),
+            "qa04.determinism-evidence.frozen-authority-drift");
     }
 
     private static void VerifyAccumulatorBoundariesRejected()
