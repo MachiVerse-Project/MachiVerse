@@ -19,8 +19,8 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
     private static readonly StableToken ProductionInvariant = new("qa04.production-authoritative-step");
     private static readonly IReadOnlyDictionary<string, int> CanonicalFamilyIndexByToken =
         Qa04ReferenceLoadV1.OperationFamilies
-            .Select(static (family, index) => (family.FamilyToken.Value, Index: index))
-            .ToDictionary(static pair => pair.Value, static pair => pair.Index, StringComparer.Ordinal);
+            .Select(static (family, index) => (Token: family.FamilyToken.Value, Index: index))
+            .ToDictionary(static pair => pair.Token, static pair => pair.Index, StringComparer.Ordinal);
 
     public static Qa04CanonicalOperationStepPreparationResultV1 Prepare(
         OpaqueId128 candidateId,
