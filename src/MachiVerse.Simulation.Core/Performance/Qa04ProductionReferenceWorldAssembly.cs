@@ -23,7 +23,7 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
         IDomainRecordSchemaResolverV1 references,
         Qa04ProductionReferenceWorldStateValidationV1 validation,
         IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> basisDomainAuthorities,
-        IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>> canonicalTransactionRecordPools)
+        IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>>? canonicalTransactionRecordPools = null)
     {
         PartitionAuthorityState = partitionAuthorityState ?? throw new ArgumentNullException(nameof(partitionAuthorityState));
         MutationState = mutationState ?? throw new ArgumentNullException(nameof(mutationState));
@@ -32,10 +32,10 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
         References = references ?? throw new ArgumentNullException(nameof(references));
         Validation = validation ?? throw new ArgumentNullException(nameof(validation));
         BasisDomainAuthorities = basisDomainAuthorities ?? throw new ArgumentNullException(nameof(basisDomainAuthorities));
-        ArgumentNullException.ThrowIfNull(canonicalTransactionRecordPools);
         CanonicalTransactionRecordPools =
             new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>>(
-                canonicalTransactionRecordPools.ToDictionary(
+                (canonicalTransactionRecordPools ?? new Dictionary<string, IReadOnlyList<OpaqueId128>>(StringComparer.Ordinal))
+                .ToDictionary(
                     static pair => pair.Key,
                     static pair => (IReadOnlyList<OpaqueId128>)Array.AsReadOnly(pair.Value.ToArray()),
                     StringComparer.Ordinal));
