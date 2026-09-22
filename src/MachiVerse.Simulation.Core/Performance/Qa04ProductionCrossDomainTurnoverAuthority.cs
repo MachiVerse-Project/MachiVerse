@@ -105,7 +105,8 @@ public static class Qa04ProductionCrossDomainTurnoverContractV1
 
         if (digestCache is not null &&
             stateChanges.Count == 0 &&
-            ReferenceEquals(basisActive, resultingActive))
+            ReferenceEquals(basisActive, resultingActive) &&
+            basisActive is System.Collections.ObjectModel.ReadOnlyCollection<CrossDomainTransactionStateV1>)
         {
             // The production run carries the same immutable active-transaction collection across
             // ordinary Steps. ActiveTransactionSetDigest performs the full count/lifecycle/order/
