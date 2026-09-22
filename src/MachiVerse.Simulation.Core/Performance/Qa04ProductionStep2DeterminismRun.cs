@@ -223,11 +223,12 @@ public static class Qa04ProductionStep2DeterminismRunV1
                     StringComparison.Ordinal))
                 throw new InvalidDataException("qa04.step2-determinism.detail-decision-authority-drift");
 
-            determinismEvidence.Append(
+            determinismEvidence.AppendValidatedProductionStep(
                 injectionStep,
                 completed.Finalization.TransitionAuthority,
                 detailDecisionAuthority,
-                completed.ClosedPrefix);
+                completed.ClosedPrefix,
+                completed.Finalization.Preparation.Candidate.FrozenInput);
 
             currentState = completed.Finalization.AuthoritativeState.State;
             currentMutationState = completed.MutationState;
