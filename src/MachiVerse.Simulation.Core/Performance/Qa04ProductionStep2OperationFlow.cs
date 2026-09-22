@@ -181,7 +181,7 @@ public static class Qa04ProductionStep2BasisAuthorityV1
                 activeTransactions,
                 basisStep,
                 digestCache);
-        return new WorldStateV1(
+        var state = new WorldStateV1(
             partitionAuthorityState.Header,
             partitionAuthorityState.Partitions,
             schedulerState,
@@ -189,6 +189,15 @@ public static class Qa04ProductionStep2BasisAuthorityV1
             partitionAuthorityState.DetailState,
             partitionAuthorityState.DomainRegistryState,
             partitionAuthorityState.Diagnostic.ConfigDigest);
+        RequireSubstateMatch(
+            schedulerState,
+            state.SchedulerState,
+            "qa04.step2.scheduler-substate-drift");
+        RequireSubstateMatch(
+            operationState,
+            state.OperationState,
+            "qa04.step2.operation-substate-drift");
+        return state;
     }
 
     public static void Validate(
