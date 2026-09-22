@@ -92,7 +92,8 @@ public static class Qa04ProductionStep2BasisAuthorityV1
         OperationSchedulerStateV1 scheduler,
         IReadOnlyList<DurableOperationStateV1> mutableOperations,
         Qa04OperationClosedPrefixV1 closedPrefix,
-        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions)
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null)
     {
         ArgumentNullException.ThrowIfNull(partitionAuthorityState);
         ArgumentNullException.ThrowIfNull(scheduler);
@@ -109,11 +110,18 @@ public static class Qa04ProductionStep2BasisAuthorityV1
         var schedulerState = OperationSchedulerSubstateV1.Canonicalize(
             scheduler,
             partitionAuthorityState.Header.Step);
-        var operationState = Qa04OperationAuthorityV1.Canonicalize(
-            mutableOperations,
-            closedPrefix,
-            activeTransactions,
-            partitionAuthorityState.Header.Step);
+        var operationState = digestCache is null
+            ? Qa04OperationAuthorityV1.Canonicalize(
+                mutableOperations,
+                closedPrefix,
+                activeTransactions,
+                partitionAuthorityState.Header.Step)
+            : Qa04OperationAuthorityV1.Canonicalize(
+                mutableOperations,
+                closedPrefix,
+                activeTransactions,
+                partitionAuthorityState.Header.Step,
+                digestCache);
         var state = new WorldStateV1(
             partitionAuthorityState.Header,
             partitionAuthorityState.Partitions,
@@ -301,29 +309,38 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         if (phaseLogIntervalTransitions <= 0)
             throw new ArgumentOutOfRangeException(nameof(phaseLogIntervalTransitions));
 
+        var preStepPhaseStarted = Stopwatch.GetTimestamp();
         var basisStep = checked(injectionStep + 1UL);
         var resultingStep = checked(basisStep + 1UL);
         if (partitionAuthorityState.Header.WorldId != Qa04ReferenceLoadV1.WorldId ||
             partitionAuthorityState.Header.Step != basisStep)
             throw new InvalidDataException("qa04.step2.production-loop.basis-state-drift");
         closedPrefix.Validate(basisStep);
-        Qa04ProductionCrossDomainTurnoverContractV1.Validate(
+        Qa04ProductionCrossDomainTurnoverContractV1.ValidateProductionStep(
             basisStep,
             resultingStep,
             basisCrossDomainTransactions,
             resultingCrossDomainTransactions,
-            crossDomainTransactionStateChanges);
+            crossDomainTransactionStateChanges,
+            digestCache);
         if (scheduler.FreezeStep is not null || scheduler.NextSchedulableStep != basisStep ||
             scheduler.CanonicalBuckets.Any())
             throw new InvalidDataException("qa04.step2.production-loop.scheduler-not-closed-at-basis");
         if (domainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.step2.production-loop.domain-authority-count-not-97");
 
-        var expectedClosedOperation = Qa04OperationAuthorityV1.Canonicalize(
-            Array.Empty<DurableOperationStateV1>(),
-            closedPrefix,
-            basisCrossDomainTransactions,
-            basisStep);
+        var expectedClosedOperation = digestCache is null
+            ? Qa04OperationAuthorityV1.Canonicalize(
+                Array.Empty<DurableOperationStateV1>(),
+                closedPrefix,
+                basisCrossDomainTransactions,
+                basisStep)
+            : Qa04OperationAuthorityV1.Canonicalize(
+                Array.Empty<DurableOperationStateV1>(),
+                closedPrefix,
+                basisCrossDomainTransactions,
+                basisStep,
+                digestCache);
         Qa04ProductionStep2BasisAuthorityV1.RequireSubstateMatch(
             expectedClosedOperation,
             partitionAuthorityState.OperationState,
@@ -334,6 +351,13 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             basisStep);
         if (candidateIdentity.TargetStep != resultingStep)
             throw new InvalidDataException("qa04.step2.production-loop.candidate-target-step-drift");
+        if (detailedPhaseDiagnostics)
+            EmitPhase(
+                injectionStep,
+                workerCount,
+                phaseLogIntervalTransitions,
+                "pre-step-authority",
+                preStepPhaseStarted);
 
         var phaseStarted = Stopwatch.GetTimestamp();
         var descriptors = Qa04ReferenceLoadV1.OperationsForStep(injectionStep).ToArray();
@@ -396,7 +420,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             scheduler,
             batch.ScheduledOperations,
             closedPrefix,
-            basisCrossDomainTransactions);
+            basisCrossDomainTransactions,
+            digestCache);
         if (detailedPhaseDiagnostics)
             EmitPhase(injectionStep, workerCount, phaseLogIntervalTransitions, "freeze-basis-bind", freezeSubphaseStarted);
         freezeSubphaseStarted = Stopwatch.GetTimestamp();
@@ -503,7 +528,8 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
                     injectionStep,
                     workerCount,
                     phaseLogIntervalTransitions)
-                : null).ConfigureAwait(false);
+                : null,
+            digestCache: digestCache).ConfigureAwait(false);
         var verification = finalized.PostCommitVerification;
         var nextPrefix = finalized.ClosedPrefix;
         if (verification.ResultingStep != resultingStep ||
@@ -661,6 +687,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             scheduledBatchDigest,
             terminalOperationsAreCanonical,
             diagnosticPhaseObserver,
+            digestCache: null,
             basisOperationAuthorityAlreadyValidated: false);
 
     internal static Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishValidatedBasisAsync(
@@ -678,7 +705,8 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         Qa04ProductionDetailTransitionStepV1? detailTransition = null,
         byte[]? scheduledBatchDigest = null,
         bool terminalOperationsAreCanonical = false,
-        Action<string, double>? diagnosticPhaseObserver = null)
+        Action<string, double>? diagnosticPhaseObserver = null,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null)
         => CommitAndPublishCoreAsync(
             store,
             scheduler,
@@ -695,6 +723,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             scheduledBatchDigest,
             terminalOperationsAreCanonical,
             diagnosticPhaseObserver,
+            digestCache,
             basisOperationAuthorityAlreadyValidated: true);
 
     private static async Task<Qa04ProductionStep2FinalizationResultV1> CommitAndPublishCoreAsync(
@@ -713,6 +742,7 @@ public static class Qa04ProductionStep2OperationFinalizationV1
         byte[]? scheduledBatchDigest,
         bool terminalOperationsAreCanonical,
         Action<string, double>? diagnosticPhaseObserver,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache,
         bool basisOperationAuthorityAlreadyValidated)
     {
         ArgumentNullException.ThrowIfNull(store);
@@ -746,12 +776,13 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             throw new InvalidDataException("qa04.step2.finalization-detail-transition-drift");
 
         basisPrefix.Validate(step5Candidate.BasisStep);
-        Qa04ProductionCrossDomainTurnoverContractV1.Validate(
+        Qa04ProductionCrossDomainTurnoverContractV1.ValidateProductionStep(
             step5Candidate.BasisStep,
             step5Candidate.TargetStep,
             basisActiveTransactions,
             resultingActiveTransactions,
-            crossDomainTransactionStateChanges);
+            crossDomainTransactionStateChanges,
+            digestCache);
         var alignedTerminal = AlignTerminalCoverage(
             bindings,
             terminalOperations,
@@ -821,11 +852,18 @@ public static class Qa04ProductionStep2OperationFinalizationV1
             basisState,
             scheduler,
             step5Candidate.FrozenInput);
-        var resultingOperation = Qa04OperationAuthorityV1.Canonicalize(
-            Array.Empty<DurableOperationStateV1>(),
-            resultingPrefix,
-            resultingActiveTransactions,
-            step5Candidate.TargetStep);
+        var resultingOperation = digestCache is null
+            ? Qa04OperationAuthorityV1.Canonicalize(
+                Array.Empty<DurableOperationStateV1>(),
+                resultingPrefix,
+                resultingActiveTransactions,
+                step5Candidate.TargetStep)
+            : Qa04OperationAuthorityV1.Canonicalize(
+                Array.Empty<DurableOperationStateV1>(),
+                resultingPrefix,
+                resultingActiveTransactions,
+                step5Candidate.TargetStep,
+                digestCache);
         var operationCore = new StepCoreSubstateCandidateV1(
             StepCoreSubstateKindV1.Operation,
             step5Candidate.BasisStep,

@@ -6,6 +6,7 @@ using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
 using MachiVerse.Simulation.Core.Domains.Resident;
 using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
 using MachiVerse.Simulation.Core.Persistence;
+using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
@@ -30,6 +31,7 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
     private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>, byte[]> _marketRecords = new();
     private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<GovernanceSecurityIncidentPayloadV1>, byte[]> _governanceRecords = new();
     private readonly ConditionalWeakTable<DomainRecordEnvelopeV1<EnvironmentHazardPayloadV1>, byte[]> _environmentRecords = new();
+    private readonly ConditionalWeakTable<IReadOnlyCollection<CrossDomainTransactionStateV1>, byte[]> _activeTransactionSets = new();
     private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<InfrastructureServiceQueuePayloadV1> _infrastructureChunks;
     private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<ResidentBehaviorStatePayloadV1> _residentChunks;
     private readonly Qa04RecordIdPrefixPartitionDigestCacheV2<PhysicalPresencePayloadV1> _physicalChunks;
@@ -52,6 +54,15 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
             PartitionStateHeaderV1.EncodeCanonicalRecord(record, Governance(record.Payload)));
         _environmentChunks = new(record =>
             PartitionStateHeaderV1.EncodeCanonicalRecord(record, Environment(record.Payload)));
+    }
+
+    internal byte[] ActiveTransactionSetDigest(
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions)
+    {
+        ArgumentNullException.ThrowIfNull(activeTransactions);
+        return _activeTransactionSets.GetValue(
+            activeTransactions,
+            static states => Qa04OperationAuthorityV1.ComputeActiveTransactionSetDigest(states)).ToArray();
     }
 
     internal Qa04RecordIdPrefixPartitionDigestCacheV2<InfrastructureServiceQueuePayloadV1> InfrastructureChunks

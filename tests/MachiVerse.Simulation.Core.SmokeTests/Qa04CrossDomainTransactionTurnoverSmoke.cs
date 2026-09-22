@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Performance;
 using MachiVerse.Simulation.Core.Runtime;
+using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Qa04CrossDomainTransactionTurnoverSmoke
 {
@@ -14,6 +15,8 @@ internal static class Qa04CrossDomainTransactionTurnoverSmoke
         var active = Qa04CrossDomainTransactionTurnoverMaterializerV1.Initialize(genesis);
         Require(active.Count == 10_000 && active.All(static slot => slot.Generation == 0 && slot.State.IsActive),
             "Turnover authority must initialize exactly 10,000 generation-0 ACTIVE slots.");
+
+        VerifyProductionNonTurnoverCache(active);
 
         var terminalIds = new HashSet<OpaqueId128>();
         for (ulong basisStep = 300; basisStep <= 3_000; basisStep += 300)
@@ -72,6 +75,59 @@ internal static class Qa04CrossDomainTransactionTurnoverSmoke
         ExpectReject(
             () => Qa04CrossDomainTransactionTurnoverMaterializerV1.Apply(301, active, pools),
             "Non-cadence turnover basis must fail closed.");
+    }
+
+    private static void VerifyProductionNonTurnoverCache(
+        IReadOnlyList<Qa04ActiveTransactionSlotV1> active)
+    {
+        var states = Array.AsReadOnly(active.Select(static slot => slot.State).ToArray());
+        var cache = new Qa04ProductionStep2CanonicalDigestCacheV1(new NullSchemaResolver());
+
+        Qa04ProductionCrossDomainTurnoverContractV1.ValidateProductionStep(
+            basisStep: 1,
+            resultingStep: 2,
+            states,
+            states,
+            Array.Empty<CrossDomainTransactionStateV1>(),
+            cache);
+        Qa04ProductionCrossDomainTurnoverContractV1.ValidateProductionStep(
+            basisStep: 2,
+            resultingStep: 3,
+            states,
+            states,
+            Array.Empty<CrossDomainTransactionStateV1>(),
+            cache);
+
+        var copiedStates = Array.AsReadOnly(states.ToArray());
+        Qa04ProductionCrossDomainTurnoverContractV1.ValidateProductionStep(
+            basisStep: 3,
+            resultingStep: 4,
+            states,
+            copiedStates,
+            Array.Empty<CrossDomainTransactionStateV1>(),
+            cache);
+
+        var truncated = Array.AsReadOnly(states.Take(states.Count - 1).ToArray());
+        ExpectReject(
+            () => Qa04ProductionCrossDomainTurnoverContractV1.ValidateProductionStep(
+                basisStep: 4,
+                resultingStep: 5,
+                truncated,
+                truncated,
+                Array.Empty<CrossDomainTransactionStateV1>(),
+                cache),
+            "Production non-turnover cache must fail closed on an invalid active transaction set.");
+    }
+
+    private sealed class NullSchemaResolver : IDomainRecordSchemaResolverV1
+    {
+        public bool Exists(PartitionRecordRefV1 reference) => false;
+
+        public bool TryGetRecordSchema(PartitionRecordRefV1 reference, out SchemaRefV1 schema)
+        {
+            schema = default!;
+            return false;
+        }
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>> CreatePools()

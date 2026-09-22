@@ -86,26 +86,45 @@ public static class Qa04OperationAuthorityV1
         Qa04OperationClosedPrefixV1 prefix,
         IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions,
         ulong stateStep)
+        => CanonicalizeCore(
+            mutableOrdinaryOperations,
+            prefix,
+            activeTransactions,
+            stateStep,
+            digestCache: null);
+
+    internal static WorldSubstateRefV1 Canonicalize(
+        IReadOnlyCollection<DurableOperationStateV1> mutableOrdinaryOperations,
+        Qa04OperationClosedPrefixV1 prefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions,
+        ulong stateStep,
+        Qa04ProductionStep2CanonicalDigestCacheV1 digestCache)
+    {
+        ArgumentNullException.ThrowIfNull(digestCache);
+        return CanonicalizeCore(
+            mutableOrdinaryOperations,
+            prefix,
+            activeTransactions,
+            stateStep,
+            digestCache);
+    }
+
+    private static WorldSubstateRefV1 CanonicalizeCore(
+        IReadOnlyCollection<DurableOperationStateV1> mutableOrdinaryOperations,
+        Qa04OperationClosedPrefixV1 prefix,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions,
+        ulong stateStep,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache)
     {
         ArgumentNullException.ThrowIfNull(mutableOrdinaryOperations);
         ArgumentNullException.ThrowIfNull(prefix);
         ArgumentNullException.ThrowIfNull(activeTransactions);
         prefix.Validate(stateStep);
-        if (activeTransactions.Count != checked((int)Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount) ||
-            activeTransactions.Any(static state => !state.IsActive || state.TerminalStep is not null))
-            throw new InvalidDataException("qa04.operation-authority.active-transaction-set-invalid");
 
         var ordinary = DurableOperationSubstateV1.Canonicalize(mutableOrdinaryOperations);
-        var orderedTransactions = activeTransactions.OrderBy(static state => state.TransactionId).ToArray();
-        if (orderedTransactions.Select(static state => state.TransactionId).Distinct().Count() != orderedTransactions.Length)
-            throw new InvalidDataException("qa04.operation-authority.transaction-id-duplicate");
-
-        var transactionDigest = HashSuite.DomainHash("mv.cross-domain-transaction-state-set.v1", writer =>
-        {
-            writer.WriteArrayStart((ulong)orderedTransactions.Length);
-            foreach (var state in orderedTransactions)
-                writer.WriteBytes(state.CanonicalDigest());
-        });
+        var transactionDigest = digestCache is null
+            ? ComputeActiveTransactionSetDigest(activeTransactions)
+            : digestCache.ActiveTransactionSetDigest(activeTransactions);
 
         var digest = HashSuite.DomainHash("mv.qa04-operation-authority.v1", writer =>
         {
@@ -115,6 +134,29 @@ public static class Qa04OperationAuthorityV1
             writer.WriteUnsigned(2); writer.WriteBytes(transactionDigest);
         });
         return new WorldSubstateRefV1(Schema, digest);
+    }
+
+    internal static byte[] ComputeActiveTransactionSetDigest(
+        IReadOnlyCollection<CrossDomainTransactionStateV1> activeTransactions)
+    {
+        ArgumentNullException.ThrowIfNull(activeTransactions);
+        if (activeTransactions.Count != checked((int)Qa04CrossDomainTransactionGenesisMaterializerV1.CanonicalActiveCount) ||
+            activeTransactions.Any(static state => !state.IsActive || state.TerminalStep is not null))
+            throw new InvalidDataException("qa04.operation-authority.active-transaction-set-invalid");
+
+        var orderedTransactions = activeTransactions.OrderBy(static state => state.TransactionId).ToArray();
+        for (var index = 1; index < orderedTransactions.Length; index++)
+        {
+            if (orderedTransactions[index - 1].TransactionId == orderedTransactions[index].TransactionId)
+                throw new InvalidDataException("qa04.operation-authority.transaction-id-duplicate");
+        }
+
+        using var session = HashSuite.BeginDomainHashStreaming("mv.cross-domain-transaction-state-set.v1");
+        var writer = session.Writer;
+        writer.WriteArrayStart((ulong)orderedTransactions.Length);
+        foreach (var state in orderedTransactions)
+            writer.WriteBytes(state.CanonicalDigest());
+        return session.Complete();
     }
 
     internal static void WritePrefix(MvDcborWriter writer, Qa04OperationClosedPrefixV1 prefix)
