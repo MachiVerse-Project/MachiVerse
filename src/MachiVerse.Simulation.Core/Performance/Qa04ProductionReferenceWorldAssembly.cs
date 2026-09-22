@@ -22,7 +22,8 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
         IReadOnlyList<PartitionStateHeaderV1> environmentD1Headers,
         IDomainRecordSchemaResolverV1 references,
         Qa04ProductionReferenceWorldStateValidationV1 validation,
-        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> basisDomainAuthorities)
+        IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> basisDomainAuthorities,
+        IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>> canonicalTransactionRecordPools)
     {
         PartitionAuthorityState = partitionAuthorityState ?? throw new ArgumentNullException(nameof(partitionAuthorityState));
         MutationState = mutationState ?? throw new ArgumentNullException(nameof(mutationState));
@@ -31,6 +32,13 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
         References = references ?? throw new ArgumentNullException(nameof(references));
         Validation = validation ?? throw new ArgumentNullException(nameof(validation));
         BasisDomainAuthorities = basisDomainAuthorities ?? throw new ArgumentNullException(nameof(basisDomainAuthorities));
+        ArgumentNullException.ThrowIfNull(canonicalTransactionRecordPools);
+        CanonicalTransactionRecordPools =
+            new System.Collections.ObjectModel.ReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>>(
+                canonicalTransactionRecordPools.ToDictionary(
+                    static pair => pair.Key,
+                    static pair => (IReadOnlyList<OpaqueId128>)Array.AsReadOnly(pair.Value.ToArray()),
+                    StringComparer.Ordinal));
         if (BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-reference-world.snapshot-authority-count-not-97");
     }
@@ -42,6 +50,7 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
     public IDomainRecordSchemaResolverV1 References { get; }
     public Qa04ProductionReferenceWorldStateValidationV1 Validation { get; }
     public IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> BasisDomainAuthorities { get; }
+    internal IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>> CanonicalTransactionRecordPools { get; }
 }
 
 /// <summary>
@@ -234,7 +243,8 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
             environmentD1Headers,
             mutationReferences,
             validation,
-            basisDomainAuthorities);
+            basisDomainAuthorities,
+            pools);
     }
 
     private static SocietyGovernanceBuildResult BuildSocietyGovernance(
