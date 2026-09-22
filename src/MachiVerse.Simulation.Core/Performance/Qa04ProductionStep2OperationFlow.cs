@@ -309,6 +309,7 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
         if (phaseLogIntervalTransitions <= 0)
             throw new ArgumentOutOfRangeException(nameof(phaseLogIntervalTransitions));
 
+        var preStepPhaseStarted = Stopwatch.GetTimestamp();
         var basisStep = checked(injectionStep + 1UL);
         var resultingStep = checked(basisStep + 1UL);
         if (partitionAuthorityState.Header.WorldId != Qa04ReferenceLoadV1.WorldId ||
@@ -350,6 +351,13 @@ public static class Qa04ProductionStep2AuthoritativeStepExecutorV1
             basisStep);
         if (candidateIdentity.TargetStep != resultingStep)
             throw new InvalidDataException("qa04.step2.production-loop.candidate-target-step-drift");
+        if (detailedPhaseDiagnostics)
+            EmitPhase(
+                injectionStep,
+                workerCount,
+                phaseLogIntervalTransitions,
+                "pre-step-authority",
+                preStepPhaseStarted);
 
         var phaseStarted = Stopwatch.GetTimestamp();
         var descriptors = Qa04ReferenceLoadV1.OperationsForStep(injectionStep).ToArray();
