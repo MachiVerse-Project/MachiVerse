@@ -62,7 +62,7 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
         ArgumentNullException.ThrowIfNull(activeTransactions);
         return _activeTransactionSets.GetValue(
             activeTransactions,
-            static states => Qa04OperationAuthorityV1.ComputeActiveTransactionSetDigest(states));
+            static states => Qa04OperationAuthorityV1.ComputeActiveTransactionSetDigest(states)).ToArray();
     }
 
     internal Qa04RecordIdPrefixPartitionDigestCacheV2<InfrastructureServiceQueuePayloadV1> InfrastructureChunks
