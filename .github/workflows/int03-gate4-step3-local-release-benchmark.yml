@@ -272,6 +272,10 @@ jobs:
             $exitCode = $process.ExitCode
             $process.Dispose()
 
+            $progressLines = @($stderr -split [Environment]::NewLine | Where-Object { $_ -match '^QA04_PROGRESS ' })
+            foreach ($progressTelemetryLine in $progressLines) {
+              Write-Host $progressTelemetryLine
+            }
             $phaseLines = @($stderr -split [Environment]::NewLine | Where-Object { $_ -match '^QA04_PHASE ' })
             foreach ($phaseLine in $phaseLines) {
               Write-Host $phaseLine
