@@ -94,10 +94,8 @@ public static class Qa04ProductionStep2DeterminismRunV1
             currentActiveSlots.Select(static slot => slot.State).ToArray());
         var currentClosedPrefix = Qa04OperationClosedPrefixV1.Empty();
 
-        var detailMaterial = Qa04DetailRegionCanonicalAuthorityV1.MaterializeCanonical();
-        var currentDetailDirectory = new DetailDirectoryV1(
-            detailMaterial.RegionsByTile,
-            Array.Empty<DetailTransitionCandidateV1>());
+        var currentDetailDirectory = assembly.InitialDetailDirectory
+            ?? throw new InvalidDataException("qa04.production-reference-world.initial-detail-directory-missing");
         var detailPolicy = DetailTransitionPolicyV1.FromConfig(Qa04ReferenceConfigAuthorityV1.CreateCanonical());
 
         var scheduler = new OperationSchedulerStateV1(
