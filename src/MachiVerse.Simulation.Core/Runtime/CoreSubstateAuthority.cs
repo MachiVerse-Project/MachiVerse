@@ -271,43 +271,44 @@ public static class DurableOperationSubstateV1
             previous = state;
         }
 
-        var digest = HashSuite.DomainHash("mv.core-operation-state.v1", writer =>
+        using var session = HashSuite.BeginDomainHashStreaming("mv.core-operation-state.v1");
+        var writer = session.Writer;
+        writer.WriteMapStart(2);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
+        writer.WriteUnsigned(1);
+        writer.WriteArrayStart((ulong)ordered.Count);
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        foreach (var state in ordered)
         {
-            writer.WriteMapStart(2);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
-            writer.WriteUnsigned(1);
-            writer.WriteArrayStart((ulong)ordered.Count);
-            foreach (var state in ordered)
+            state.OperationId.WriteBytes(operationIdBytes);
+            writer.WriteMapStart(10);
+            writer.WriteUnsigned(0); writer.WriteBytes(operationIdBytes);
+            writer.WriteUnsigned(1); writer.WriteBytes(state.OperationPayloadDigest);
+            writer.WriteUnsigned(2); writer.WriteUnsigned((byte)state.Lifecycle);
+            WriteOptional(writer, 3, state.AcceptedSequence);
+            WriteOptional(writer, 4, state.ScheduledSequence);
+            WriteOptional(writer, 5, state.EffectiveStep);
+            WriteOptional(writer, 6, state.TerminalSequence);
+            writer.WriteUnsigned(7);
+            if (state.TerminalStatus is { } status)
             {
-                writer.WriteMapStart(10);
-                writer.WriteUnsigned(0); writer.WriteBytes(state.OperationId.ToBytes());
-                writer.WriteUnsigned(1); writer.WriteBytes(state.OperationPayloadDigest);
-                writer.WriteUnsigned(2); writer.WriteUnsigned((byte)state.Lifecycle);
-                WriteOptional(writer, 3, state.AcceptedSequence);
-                WriteOptional(writer, 4, state.ScheduledSequence);
-                WriteOptional(writer, 5, state.EffectiveStep);
-                WriteOptional(writer, 6, state.TerminalSequence);
-                writer.WriteUnsigned(7);
-                if (state.TerminalStatus is { } status)
-                {
-                    writer.WriteArrayStart(1); writer.WriteInt64(status);
-                }
-                else writer.WriteArrayStart(0);
-                writer.WriteUnsigned(8);
-                if (state.ResultCode is { } code)
-                {
-                    writer.WriteArrayStart(1); writer.WriteAsciiText(code);
-                }
-                else writer.WriteArrayStart(0);
-                writer.WriteUnsigned(9);
-                if (state.RichResultPayload is { } rich)
-                {
-                    writer.WriteArrayStart(1); writer.WriteBytes(rich);
-                }
-                else writer.WriteArrayStart(0);
+                writer.WriteArrayStart(1); writer.WriteInt64(status);
             }
-        });
-        return new WorldSubstateRefV1(Schema, digest);
+            else writer.WriteArrayStart(0);
+            writer.WriteUnsigned(8);
+            if (state.ResultCode is { } code)
+            {
+                writer.WriteArrayStart(1); writer.WriteAsciiText(code);
+            }
+            else writer.WriteArrayStart(0);
+            writer.WriteUnsigned(9);
+            if (state.RichResultPayload is { } rich)
+            {
+                writer.WriteArrayStart(1); writer.WriteBytes(rich);
+            }
+            else writer.WriteArrayStart(0);
+        }
+        return new WorldSubstateRefV1(Schema, session.Complete());
     }
 
     public static IReadOnlyList<DurableOperationStateV1> ProjectTerminalCommit(
