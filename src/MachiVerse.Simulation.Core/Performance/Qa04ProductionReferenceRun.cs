@@ -98,8 +98,8 @@ public static class Qa04ProductionReferenceRunV1
             assembly.BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-run.reference-world-incomplete");
 
-        var turnoverAuthority = Qa04ProductionCrossDomainTurnoverAuthorityBuilderV1.CreateCanonical(
-            assembly.ActiveTransactions);
+        var turnoverAuthority =
+            Qa04ProductionCrossDomainTurnoverAuthorityBuilderV1.CreateFromValidatedAssembly(assembly);
         IReadOnlyList<Qa04ActiveTransactionSlotV1> currentActiveSlots = turnoverAuthority.ActiveSlots;
         IReadOnlyList<CrossDomainTransactionStateV1> currentActiveTransactions = Array.AsReadOnly(
             currentActiveSlots.Select(static slot => slot.State).ToArray());
