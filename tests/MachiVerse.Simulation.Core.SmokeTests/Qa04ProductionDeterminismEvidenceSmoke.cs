@@ -42,6 +42,18 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
             "QA-04 determinism producer did not append exactly one canonical transition.");
         Require(producer.TerminalOperationCount == checked((ulong)fixture.Bindings.Count),
             "QA-04 determinism producer terminal operation count drifted after canonical append.");
+
+        var productionProducer = new Qa04ProductionDeterminismEvidenceProducerV1();
+        productionProducer.AppendValidatedProductionStep(
+            fixture.InjectionStep,
+            fixture.Transition,
+            fixture.DetailDecision,
+            fixture.ResultingPrefix,
+            fixture.FrozenInput);
+        Require(
+            productionProducer.CommittedTransitionCount == producer.CommittedTransitionCount &&
+            productionProducer.TerminalOperationCount == producer.TerminalOperationCount,
+            "QA-04 production evidence fast path drifted from canonical append.");
     }
 
     private static void VerifyAccumulatorBoundariesRejected()
@@ -314,6 +326,13 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
             effectiveStep,
             resultingStep);
 
+        var frozenInput = new FrozenStepInputV1(
+            Qa04ReferenceLoadV1.WorldId,
+            effectiveStep,
+            config.Generation,
+            config.Digest,
+            bindings.Select(static binding => binding.ScheduledOperation));
+
         var terminalBatchDigest = Qa04TerminalSemanticAuthorityV1.ComputeBatchDigest(bindings, outcomes);
         var terminalStepDigest = Qa04TerminalSemanticAuthorityV1.ComputeStepItemDigest(
             effectiveStep,
@@ -334,7 +353,8 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
             Array.AsReadOnly(outcomes),
             detailDecision,
             transition,
-            resultingPrefix);
+            resultingPrefix,
+            frozenInput);
     }
 
     private static WorldStateV1 CreateMinimalWorldState()
@@ -437,5 +457,6 @@ internal static class Qa04ProductionDeterminismEvidenceSmoke
         IReadOnlyList<TerminalOperationCommit> Outcomes,
         Qa04DetailDecisionAuthorityV1 DetailDecision,
         Qa04TransitionCommittedAuthorityV1 Transition,
-        Qa04OperationClosedPrefixV1 ResultingPrefix);
+        Qa04OperationClosedPrefixV1 ResultingPrefix,
+        FrozenStepInputV1 FrozenInput);
 }
