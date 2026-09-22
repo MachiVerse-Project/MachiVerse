@@ -331,7 +331,7 @@ public sealed class DetailDirectoryV1
             : throw new KeyNotFoundException("Detail region is not present.");
 
     internal byte[] ComputeAuthorityDigest()
-        => _authorityDigest.Value;
+        => _authorityDigest.Value.ToArray();
 
     private byte[] ComputeAuthorityDigestCore()
         => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
