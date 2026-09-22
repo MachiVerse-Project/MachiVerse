@@ -23,7 +23,8 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
         IDomainRecordSchemaResolverV1 references,
         Qa04ProductionReferenceWorldStateValidationV1 validation,
         IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> basisDomainAuthorities,
-        IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>>? canonicalTransactionRecordPools = null)
+        IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>>? canonicalTransactionRecordPools = null,
+        DetailDirectoryV1? initialDetailDirectory = null)
     {
         PartitionAuthorityState = partitionAuthorityState ?? throw new ArgumentNullException(nameof(partitionAuthorityState));
         MutationState = mutationState ?? throw new ArgumentNullException(nameof(mutationState));
@@ -39,6 +40,7 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
                     static pair => pair.Key,
                     static pair => (IReadOnlyList<OpaqueId128>)Array.AsReadOnly(pair.Value.ToArray()),
                     StringComparer.Ordinal));
+        InitialDetailDirectory = initialDetailDirectory;
         if (BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-reference-world.snapshot-authority-count-not-97");
     }
@@ -51,6 +53,7 @@ public sealed class Qa04ProductionReferenceWorldAssemblyV1
     public Qa04ProductionReferenceWorldStateValidationV1 Validation { get; }
     public IReadOnlyList<IDomainPartitionSnapshotAuthorityV1> BasisDomainAuthorities { get; }
     internal IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>> CanonicalTransactionRecordPools { get; }
+    internal DetailDirectoryV1? InitialDetailDirectory { get; }
 }
 
 /// <summary>
@@ -157,10 +160,13 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
 
         var society = BuildSocietyGovernance(headers, facility, participation.References, scopeResolver);
 
+        var initialDetailDirectory = new DetailDirectoryV1(
+            detailRegions.RegionsByTile,
+            Array.Empty<DetailTransitionCandidateV1>());
         var partitionState = BuildWorldState(
             resident.WorldState,
             headers,
-            detailRegions,
+            initialDetailDirectory,
             basisStep);
 
         snapshotAuthorities.Replace(scopes, headers[SpatialScopeRegistryPayloadV1.PartitionId], static payload => payload.CanonicalDigest());
@@ -244,7 +250,8 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
             mutationReferences,
             validation,
             basisDomainAuthorities,
-            pools);
+            pools,
+            initialDetailDirectory);
     }
 
     private static SocietyGovernanceBuildResult BuildSocietyGovernance(
@@ -381,18 +388,16 @@ public static class Qa04ProductionReferenceWorldAssemblerV1
     private static WorldStateV1 BuildWorldState(
         WorldStateV1 template,
         IReadOnlyDictionary<string, PartitionStateHeaderV1> headers,
-        Qa04DetailRegionCanonicalMaterializationV1 detailRegions,
+        DetailDirectoryV1 detailDirectory,
         ulong basisStep)
     {
         if (headers.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-reference-world.assembly-header-count");
+        ArgumentNullException.ThrowIfNull(detailDirectory);
 
         var partitionRefs = StandardDomainPartitionRegistry.Entries
             .Select(identity => new PartitionStateRefV1(headers[identity.PartitionId.Value]))
             .ToArray();
-        var detailDirectory = new DetailDirectoryV1(
-            detailRegions.RegionsByTile,
-            Array.Empty<DetailTransitionCandidateV1>());
 
         return new WorldStateV1(
             new WorldStateHeaderV1(
