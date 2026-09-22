@@ -80,9 +80,15 @@ public static class Qa04ProductionStep2DeterminismRunV1
         if (assembly.Validation.CanonicalInitialRecordCount != Qa04ReferenceLoadV1.CanonicalInitialRecordCount ||
             assembly.BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.step2-determinism.reference-world-incomplete");
+        Console.Error.WriteLine(
+            $"QA04_PROGRESS phase=reference-world-ready workers={workerCount} transitions=0/{transitionCount} " +
+            $"elapsed_seconds={progress.Elapsed.TotalSeconds:F1}");
 
         var turnoverAuthority =
             Qa04ProductionCrossDomainTurnoverAuthorityBuilderV1.CreateFromValidatedAssembly(assembly);
+        Console.Error.WriteLine(
+            $"QA04_PROGRESS phase=turnover-authority-ready workers={workerCount} transitions=0/{transitionCount} " +
+            $"elapsed_seconds={progress.Elapsed.TotalSeconds:F1}");
         IReadOnlyList<Qa04ActiveTransactionSlotV1> currentActiveSlots = turnoverAuthority.ActiveSlots;
         IReadOnlyList<CrossDomainTransactionStateV1> currentActiveTransactions = Array.AsReadOnly(
             currentActiveSlots.Select(static slot => slot.State).ToArray());
