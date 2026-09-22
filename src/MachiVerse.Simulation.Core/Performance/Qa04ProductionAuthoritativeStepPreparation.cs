@@ -86,7 +86,7 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
                 binding.ScheduledOperation.EffectiveStep != basisState.Header.Step ||
                 frozen.OperationId != binding.SourceDescriptor.OperationId ||
                 mutationResult.AppliedOperationIds[index] != frozen.OperationId ||
-                !frozen.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(binding.OrderKey.ToDatabaseBytes()))
+                !frozen.OrderKey.CanonicallyEquals(binding.OrderKey))
             {
                 throw new InvalidDataException("qa04.production-step.operation-order-drift");
             }
@@ -314,7 +314,7 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
                 binding.ScheduledOperation.EffectiveStep != basisState.Header.Step ||
                 frozen.OperationId != binding.SourceDescriptor.OperationId ||
                 mutationResult.AppliedOperationIds[index] != frozen.OperationId ||
-                !frozen.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(binding.OrderKey.ToDatabaseBytes()))
+                !frozen.OrderKey.CanonicallyEquals(binding.OrderKey))
             {
                 throw new InvalidDataException("qa04.production-step.operation-order-drift");
             }
