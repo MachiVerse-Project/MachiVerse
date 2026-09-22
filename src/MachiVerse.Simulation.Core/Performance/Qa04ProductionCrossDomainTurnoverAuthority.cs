@@ -89,6 +89,41 @@ public static class Qa04ProductionCrossDomainTurnoverAuthorityBuilderV1
 /// </summary>
 public static class Qa04ProductionCrossDomainTurnoverContractV1
 {
+    internal static void ValidateProductionStep(
+        ulong basisStep,
+        ulong resultingStep,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> basisActive,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> resultingActive,
+        IReadOnlyCollection<CrossDomainTransactionStateV1> stateChanges,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache)
+    {
+        ArgumentNullException.ThrowIfNull(basisActive);
+        ArgumentNullException.ThrowIfNull(resultingActive);
+        ArgumentNullException.ThrowIfNull(stateChanges);
+        if (resultingStep != checked(basisStep + 1UL))
+            throw new InvalidDataException("qa04.production-turnover.resulting-step-drift");
+
+        if (digestCache is not null &&
+            stateChanges.Count == 0 &&
+            ReferenceEquals(basisActive, resultingActive))
+        {
+            // The production run carries the same immutable active-transaction collection across
+            // ordinary Steps. ActiveTransactionSetDigest performs the full count/lifecycle/order/
+            // duplicate/canonical-digest validation on the first generation access and caches it
+            // by exact collection identity. A turnover creates a new collection and falls back to
+            // the full delta contract below.
+            _ = digestCache.ActiveTransactionSetDigest(basisActive);
+            return;
+        }
+
+        Validate(
+            basisStep,
+            resultingStep,
+            basisActive,
+            resultingActive,
+            stateChanges);
+    }
+
     public static void Validate(
         ulong basisStep,
         ulong resultingStep,
