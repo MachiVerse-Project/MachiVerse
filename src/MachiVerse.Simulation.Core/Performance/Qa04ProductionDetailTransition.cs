@@ -45,10 +45,9 @@ public static class Qa04ProductionDetailTransitionV1
             requirement => basisDirectory.GetRegion(
                 Qa04DetailRegionCanonicalAuthorityV1.RegionId(requirement.TileIndex)));
 
-        var triggerAuthority = DetailTransitionTriggerAuthorityV1.FromStep(frozenInput);
-        var admitted = bindings
-            .Select(binding => DetailTransitionAdmissionV1.Admit(binding.Request, triggerAuthority))
-            .ToArray();
+        var admitted = bindings.Count == 0
+            ? Array.Empty<DetailTransitionCandidateV1>()
+            : AdmitBindings(bindings, frozenInput);
         if (admitted.Length != bindings.Count)
             throw new InvalidDataException("qa04.detail-production.admission-cardinality-drift");
 
@@ -88,6 +87,16 @@ public static class Qa04ProductionDetailTransitionV1
             conservation,
             projection,
             admitted.Length);
+    }
+
+    private static DetailTransitionCandidateV1[] AdmitBindings(
+        IReadOnlyList<Qa04CanonicalDetailTransitionBindingResultV1> bindings,
+        FrozenStepInputV1 frozenInput)
+    {
+        var triggerAuthority = DetailTransitionTriggerAuthorityV1.FromStep(frozenInput);
+        return bindings
+            .Select(binding => DetailTransitionAdmissionV1.Admit(binding.Request, triggerAuthority))
+            .ToArray();
     }
 
     private static void ValidateClassification(
