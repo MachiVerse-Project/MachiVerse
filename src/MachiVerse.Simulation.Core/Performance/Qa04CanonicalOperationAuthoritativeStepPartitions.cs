@@ -313,23 +313,33 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> changes)
     {
         ArgumentNullException.ThrowIfNull(changes);
-        var grouped = changes
-            .GroupBy(static change => change.PartitionId.Value, StringComparer.Ordinal)
-            .ToDictionary(
-                static group => group.Key,
-                static group => (IReadOnlyList<Qa04CanonicalOperationMutationChangeV1>)Array.AsReadOnly(group.ToArray()),
-                StringComparer.Ordinal);
 
+        var grouped = new Dictionary<string, List<Qa04CanonicalOperationMutationChangeV1>>(
+            PartitionByFamily.Count,
+            StringComparer.Ordinal);
         foreach (var partitionId in PartitionByFamily.Values)
+            grouped.Add(partitionId, new List<Qa04CanonicalOperationMutationChangeV1>());
+
+        for (var index = 0; index < changes.Count; index++)
         {
-            if (!grouped.ContainsKey(partitionId))
-                throw new InvalidDataException($"qa04.full-step.authoritative-partition-change-coverage:{partitionId}");
+            var change = changes[index];
+            if (!grouped.TryGetValue(change.PartitionId.Value, out var partitionChanges))
+                throw new InvalidDataException("qa04.full-step.authoritative-partition-change-unregistered");
+            partitionChanges.Add(change);
         }
 
-        if (grouped.Keys.Any(partitionId => !PartitionByFamily.Values.Contains(partitionId, StringComparer.Ordinal)))
-            throw new InvalidDataException("qa04.full-step.authoritative-partition-change-unregistered");
+        var result = new Dictionary<string, IReadOnlyList<Qa04CanonicalOperationMutationChangeV1>>(
+            PartitionByFamily.Count,
+            StringComparer.Ordinal);
+        foreach (var partitionId in PartitionByFamily.Values)
+        {
+            var partitionChanges = grouped[partitionId];
+            if (partitionChanges.Count == 0)
+                throw new InvalidDataException($"qa04.full-step.authoritative-partition-change-coverage:{partitionId}");
+            result.Add(partitionId, Array.AsReadOnly(partitionChanges.ToArray()));
+        }
 
-        return grouped;
+        return result;
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<Qa04CanonicalOperationBindingResultV1>> ValidateAndGroupBindings(
@@ -339,6 +349,13 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
     {
         if (orderedBindings.Count == 0 || orderedBindings.Count != mutationResult.AppliedOperationIds.Count)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-operation-count-drift");
+
+        var familyCapacity = checked((orderedBindings.Count + PartitionByFamily.Count - 1) / PartitionByFamily.Count);
+        var grouped = new Dictionary<string, List<Qa04CanonicalOperationBindingResultV1>>(
+            PartitionByFamily.Count,
+            StringComparer.Ordinal);
+        foreach (var family in PartitionByFamily.Keys)
+            grouped.Add(family, new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity));
 
         SameStepOrderKey? previousOrderKey = null;
         var seenOperationIds = new HashSet<OpaqueId128>();
@@ -350,12 +367,11 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                 throw new InvalidDataException("qa04.full-step.authoritative-partition-binding-null");
 
             var family = binding.SourceDescriptor.FamilyToken.Value;
-            if (!PartitionByFamily.ContainsKey(family))
+            if (!grouped.TryGetValue(family, out var familyBindings))
                 throw new InvalidDataException($"qa04.full-step.authoritative-partition-family-unregistered:{family}");
             if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
                 throw new InvalidDataException("qa04.full-step.authoritative-partition-binding-step-drift");
-            if (!binding.OrderKey.ToDatabaseBytes().AsSpan().SequenceEqual(
-                    binding.ScheduledOperation.OrderKey.ToDatabaseBytes()))
+            if (!binding.OrderKey.CanonicallyEquals(binding.ScheduledOperation.OrderKey))
                 throw new InvalidDataException("qa04.full-step.authoritative-partition-order-key-drift");
             if (previousOrderKey is not null && previousOrderKey.CompareTo(binding.OrderKey) >= 0)
                 throw new InvalidDataException("qa04.full-step.authoritative-partition-order-not-canonical");
@@ -366,17 +382,21 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                 throw new InvalidDataException("qa04.full-step.authoritative-partition-operation-id-duplicate");
             if (mutationResult.AppliedOperationIds[index] != operationId)
                 throw new InvalidDataException("qa04.full-step.authoritative-partition-receipt-order-drift");
+
+            familyBindings.Add(binding);
         }
 
-        var grouped = orderedBindings
-            .GroupBy(static binding => binding.SourceDescriptor.FamilyToken.Value, StringComparer.Ordinal)
-            .ToDictionary(
-                static group => group.Key,
-                static group => (IReadOnlyList<Qa04CanonicalOperationBindingResultV1>)Array.AsReadOnly(group.ToArray()),
-                StringComparer.Ordinal);
-        if (grouped.Count != PartitionByFamily.Count || PartitionByFamily.Keys.Any(family => !grouped.ContainsKey(family)))
-            throw new InvalidDataException("qa04.full-step.authoritative-partition-family-coverage-drift");
-        return grouped;
+        var result = new Dictionary<string, IReadOnlyList<Qa04CanonicalOperationBindingResultV1>>(
+            PartitionByFamily.Count,
+            StringComparer.Ordinal);
+        foreach (var family in PartitionByFamily.Keys)
+        {
+            var familyBindings = grouped[family];
+            if (familyBindings.Count == 0)
+                throw new InvalidDataException("qa04.full-step.authoritative-partition-family-coverage-drift");
+            result.Add(family, Array.AsReadOnly(familyBindings.ToArray()));
+        }
+        return result;
     }
 
     private static Qa04CanonicalOperationPartitionMutationV1 BindStandard<TPayload>(
@@ -461,10 +481,11 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             resultingHeader.DetailLevel != basisHeader.DetailLevel)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-result-header-drift");
 
-        var operationIds = bindings.Select(static binding => binding.SourceDescriptor.OperationId).ToArray();
-        if (operationIds.Length == 0 || operationIds.Any(static id => id.IsZero) ||
-            operationIds.Distinct().Count() != operationIds.Length)
+        if (bindings.Count == 0)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-operation-id-drift");
+        var operationIds = new OpaqueId128[bindings.Count];
+        for (var index = 0; index < bindings.Count; index++)
+            operationIds[index] = bindings[index].SourceDescriptor.OperationId;
 
         var receiptDigest = ComputeReceiptDigest(
             basisHeader,
@@ -566,8 +587,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             throw new InvalidDataException($"qa04.full-step.authoritative-partition-operation-empty:{partitionId}");
         var family = bindings[0].SourceDescriptor.FamilyToken.Value;
         if (!PartitionByFamily.TryGetValue(family, out var expectedPartition) ||
-            !string.Equals(expectedPartition, partitionId, StringComparison.Ordinal) ||
-            bindings.Any(binding => binding.SourceDescriptor.FamilyToken.Value != family))
+            !string.Equals(expectedPartition, partitionId, StringComparison.Ordinal))
             throw new InvalidDataException($"qa04.full-step.authoritative-partition-family-target-drift:{partitionId}");
     }
 
