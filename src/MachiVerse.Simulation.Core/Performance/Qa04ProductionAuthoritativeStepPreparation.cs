@@ -17,6 +17,10 @@ namespace MachiVerse.Simulation.Core.Performance;
 public static class Qa04ProductionAuthoritativeStepPreparationV1
 {
     private static readonly StableToken ProductionInvariant = new("qa04.production-authoritative-step");
+    private static readonly IReadOnlyDictionary<string, int> CanonicalFamilyIndexByToken =
+        Qa04ReferenceLoadV1.OperationFamilies
+            .Select(static (family, index) => (Token: family.FamilyToken.Value, Index: index))
+            .ToDictionary(static pair => pair.Token, static pair => pair.Index, StringComparer.Ordinal);
 
     public static Qa04CanonicalOperationStepPreparationResultV1 Prepare(
         OpaqueId128 candidateId,
@@ -58,41 +62,13 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             throw new InvalidDataException("qa04.production-step.basis-drift");
         }
 
-        var expectedFamilyCounts = expectedDescriptors
-            .GroupBy(static descriptor => descriptor.FamilyToken.Value, StringComparer.Ordinal)
-            .ToDictionary(
-                static group => group.Key,
-                static group => checked((ulong)group.LongCount()),
-                StringComparer.Ordinal);
-        if (mutationResult.AppliedCountByFamily.Count != expectedFamilyCounts.Count ||
-            expectedFamilyCounts.Any(pair =>
-                !mutationResult.AppliedCountByFamily.TryGetValue(pair.Key, out var actual) || actual != pair.Value))
-        {
-            throw new InvalidDataException("qa04.production-step.family-coverage-drift");
-        }
-
-        var expectedByOperationId = expectedDescriptors.ToDictionary(static descriptor => descriptor.OperationId);
-        var observedOperationIds = new HashSet<OpaqueId128>();
-        for (var index = 0; index < orderedBindings.Count; index++)
-        {
-            var binding = orderedBindings[index];
-            var frozen = frozenInput.ScheduledOperations[index];
-            if (!expectedByOperationId.TryGetValue(binding.SourceDescriptor.OperationId, out var expected) ||
-                !observedOperationIds.Add(binding.SourceDescriptor.OperationId) ||
-                binding.SourceDescriptor.InjectionStep != injectionStep ||
-                binding.SourceDescriptor.FamilyToken != expected.FamilyToken ||
-                binding.SourceDescriptor.FamilyOrdinal != expected.FamilyOrdinal ||
-                !binding.SourceDescriptor.PayloadDigest.AsSpan().SequenceEqual(expected.PayloadDigest) ||
-                binding.ScheduledOperation.EffectiveStep != basisState.Header.Step ||
-                frozen.OperationId != binding.SourceDescriptor.OperationId ||
-                mutationResult.AppliedOperationIds[index] != frozen.OperationId ||
-                !frozen.OrderKey.CanonicallyEquals(binding.OrderKey))
-            {
-                throw new InvalidDataException("qa04.production-step.operation-order-drift");
-            }
-        }
-        if (observedOperationIds.Count != expectedByOperationId.Count)
-            throw new InvalidDataException("qa04.production-step.operation-set-drift");
+        ValidateCanonicalWorkloadAlignment(
+            injectionStep,
+            basisState.Header.Step,
+            expectedDescriptors,
+            orderedBindings,
+            frozenInput,
+            mutationResult);
 
         var plan = StandardDomainExecutionPlanV1.Create();
         var runtimeByDomain = runtimeOutputs.ToDictionary(static output => output.DomainToken);
@@ -286,41 +262,13 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             throw new InvalidDataException("qa04.production-step.basis-drift");
         }
 
-        var expectedFamilyCounts = expectedDescriptors
-            .GroupBy(static descriptor => descriptor.FamilyToken.Value, StringComparer.Ordinal)
-            .ToDictionary(
-                static group => group.Key,
-                static group => checked((ulong)group.LongCount()),
-                StringComparer.Ordinal);
-        if (mutationResult.AppliedCountByFamily.Count != expectedFamilyCounts.Count ||
-            expectedFamilyCounts.Any(pair =>
-                !mutationResult.AppliedCountByFamily.TryGetValue(pair.Key, out var actual) || actual != pair.Value))
-        {
-            throw new InvalidDataException("qa04.production-step.family-coverage-drift");
-        }
-
-        var expectedByOperationId = expectedDescriptors.ToDictionary(static descriptor => descriptor.OperationId);
-        var observedOperationIds = new HashSet<OpaqueId128>();
-        for (var index = 0; index < orderedBindings.Count; index++)
-        {
-            var binding = orderedBindings[index];
-            var frozen = frozenInput.ScheduledOperations[index];
-            if (!expectedByOperationId.TryGetValue(binding.SourceDescriptor.OperationId, out var expected) ||
-                !observedOperationIds.Add(binding.SourceDescriptor.OperationId) ||
-                binding.SourceDescriptor.InjectionStep != injectionStep ||
-                binding.SourceDescriptor.FamilyToken != expected.FamilyToken ||
-                binding.SourceDescriptor.FamilyOrdinal != expected.FamilyOrdinal ||
-                !binding.SourceDescriptor.PayloadDigest.AsSpan().SequenceEqual(expected.PayloadDigest) ||
-                binding.ScheduledOperation.EffectiveStep != basisState.Header.Step ||
-                frozen.OperationId != binding.SourceDescriptor.OperationId ||
-                mutationResult.AppliedOperationIds[index] != frozen.OperationId ||
-                !frozen.OrderKey.CanonicallyEquals(binding.OrderKey))
-            {
-                throw new InvalidDataException("qa04.production-step.operation-order-drift");
-            }
-        }
-        if (observedOperationIds.Count != expectedByOperationId.Count)
-            throw new InvalidDataException("qa04.production-step.operation-set-drift");
+        ValidateCanonicalWorkloadAlignment(
+            injectionStep,
+            basisState.Header.Step,
+            expectedDescriptors,
+            orderedBindings,
+            frozenInput,
+            mutationResult);
 
         var plan = StandardDomainExecutionPlanV1.Create();
         var runtimeByDomain = runtimeOutputs.ToDictionary(static output => output.DomainToken);
@@ -410,4 +358,73 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             PartitionBatch = partitionBatch,
         };
     }
+    private static void ValidateCanonicalWorkloadAlignment(
+        ulong injectionStep,
+        ulong basisStep,
+        IReadOnlyList<Qa04OperationDescriptorV1> expectedDescriptors,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+        FrozenStepInputV1 frozenInput,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult)
+    {
+        if (expectedDescriptors.Count != orderedBindings.Count ||
+            frozenInput.ScheduledOperations.Count != orderedBindings.Count ||
+            mutationResult.AppliedOperationIds.Count != orderedBindings.Count)
+            throw new InvalidDataException("qa04.production-step.workload-count-drift");
+
+        var seenOrdinals = new bool[expectedDescriptors.Count];
+        Span<ulong> familyCounts = stackalloc ulong[6];
+        if (CanonicalFamilyIndexByToken.Count != familyCounts.Length)
+            throw new InvalidDataException("qa04.production-step.family-contract-drift");
+
+        for (var index = 0; index < orderedBindings.Count; index++)
+        {
+            var binding = orderedBindings[index]
+                ?? throw new InvalidDataException("qa04.production-step.operation-order-drift");
+            var source = binding.SourceDescriptor
+                ?? throw new InvalidDataException("qa04.production-step.operation-order-drift");
+            var ordinal = source.FamilyOrdinal;
+            if (ordinal >= checked((ulong)expectedDescriptors.Count))
+                throw new InvalidDataException("qa04.production-step.operation-order-drift");
+            var expectedIndex = checked((int)ordinal);
+            if (seenOrdinals[expectedIndex])
+                throw new InvalidDataException("qa04.production-step.operation-order-drift");
+            seenOrdinals[expectedIndex] = true;
+
+            var expected = expectedDescriptors[expectedIndex]
+                ?? throw new InvalidDataException("qa04.production-step.expected-descriptor-drift");
+            if (expected.InjectionStep != injectionStep ||
+                expected.FamilyOrdinal != ordinal ||
+                source.InjectionStep != injectionStep ||
+                source.OperationId != expected.OperationId ||
+                source.FamilyToken != expected.FamilyToken ||
+                !source.PayloadDigest.AsSpan().SequenceEqual(expected.PayloadDigest) ||
+                binding.ScheduledOperation.EffectiveStep != basisStep)
+            {
+                throw new InvalidDataException("qa04.production-step.operation-order-drift");
+            }
+
+            var frozen = frozenInput.ScheduledOperations[index];
+            if (frozen.OperationId != source.OperationId ||
+                mutationResult.AppliedOperationIds[index] != frozen.OperationId ||
+                !frozen.OrderKey.CanonicallyEquals(binding.OrderKey))
+            {
+                throw new InvalidDataException("qa04.production-step.operation-order-drift");
+            }
+
+            if (!CanonicalFamilyIndexByToken.TryGetValue(expected.FamilyToken.Value, out var familyIndex))
+                throw new InvalidDataException("qa04.production-step.family-coverage-drift");
+            familyCounts[familyIndex] = checked(familyCounts[familyIndex] + 1UL);
+        }
+
+        if (mutationResult.AppliedCountByFamily.Count != CanonicalFamilyIndexByToken.Count)
+            throw new InvalidDataException("qa04.production-step.family-coverage-drift");
+        for (var familyIndex = 0; familyIndex < Qa04ReferenceLoadV1.OperationFamilies.Count; familyIndex++)
+        {
+            var token = Qa04ReferenceLoadV1.OperationFamilies[familyIndex].FamilyToken.Value;
+            if (!mutationResult.AppliedCountByFamily.TryGetValue(token, out var actual) ||
+                actual != familyCounts[familyIndex])
+                throw new InvalidDataException("qa04.production-step.family-coverage-drift");
+        }
+    }
+
 }
