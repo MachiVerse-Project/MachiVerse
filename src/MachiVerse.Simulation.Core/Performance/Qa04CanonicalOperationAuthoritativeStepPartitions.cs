@@ -160,7 +160,6 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             Array.AsReadOnly(bound));
     }
 
-
     public static async Task<Qa04CanonicalOperationPartitionCandidateBatchV1> BindParallelAsync(
         WorldStateV1 basisState,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
@@ -483,16 +482,13 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
 
         if (bindings.Count == 0)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-operation-id-drift");
-        var operationIds = new OpaqueId128[bindings.Count];
-        for (var index = 0; index < bindings.Count; index++)
-            operationIds[index] = bindings[index].SourceDescriptor.OperationId;
 
         var receiptDigest = ComputeReceiptDigest(
             basisHeader,
             resultingHeader,
             basisState.Header.Step,
             targetStep,
-            operationIds);
+            bindings);
         var candidate = CreateOwnerCandidate(
             basisState,
             basisHeader.PartitionId.Value,
@@ -536,7 +532,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         PartitionStateHeaderV1 resultingHeader,
         ulong basisStep,
         ulong targetStep,
-        IReadOnlyList<OpaqueId128> operationIds)
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings)
     {
         if (basisHeader.DigestAlgorithm == PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1 &&
             resultingHeader.DigestAlgorithm == PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1)
@@ -553,9 +549,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                 writer.WriteUnsigned(6); writer.WriteBytes(basisHeader.CanonicalDigest);
                 writer.WriteUnsigned(7); writer.WriteBytes(resultingHeader.CanonicalDigest);
                 writer.WriteUnsigned(8);
-                writer.WriteArrayStart(checked((ulong)operationIds.Count));
-                foreach (var operationId in operationIds)
-                    writer.WriteBytes(operationId.ToBytes());
+                WriteOperationIds(writer, bindings);
             });
         }
 
@@ -573,10 +567,21 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             writer.WriteUnsigned(8); writer.WriteUnsigned((byte)resultingHeader.DigestAlgorithm);
             writer.WriteUnsigned(9); writer.WriteBytes(resultingHeader.CanonicalDigest);
             writer.WriteUnsigned(10);
-            writer.WriteArrayStart(checked((ulong)operationIds.Count));
-            foreach (var operationId in operationIds)
-                writer.WriteBytes(operationId.ToBytes());
+            WriteOperationIds(writer, bindings);
         });
+    }
+
+    private static void WriteOperationIds(
+        MvDcborWriter writer,
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings)
+    {
+        writer.WriteArrayStart(checked((ulong)bindings.Count));
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        for (var index = 0; index < bindings.Count; index++)
+        {
+            bindings[index].SourceDescriptor.OperationId.WriteBytes(operationIdBytes);
+            writer.WriteBytes(operationIdBytes);
+        }
     }
 
     private static void RequireFamilyTarget(
