@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
@@ -91,18 +92,122 @@ public sealed class Qa04ProductionDeterminismEvidenceProducerV1
             checked((ulong)bindings.Length),
             terminalBatchDigest);
 
-        RequireDigest(transitionAuthority.TransitionCommittedItemDigest, "qa04.determinism-evidence.transition-item-digest-invalid");
-        RequireDigest(detailDecisionAuthority.History.NormalizedPayloadDigest, "qa04.determinism-evidence.detail-item-digest-invalid");
+        AppendEvidenceDigests(
+            injectionStep,
+            ordinal,
+            resultingStep,
+            checked((ulong)bindings.Length),
+            transitionAuthority,
+            detailDecisionAuthority,
+            resultingPrefix,
+            terminalStepDigest);
+    }
+
+    internal void AppendValidatedProductionStep(
+        ulong injectionStep,
+        Qa04TransitionCommittedAuthorityV1 transitionAuthority,
+        Qa04DetailDecisionAuthorityV1 detailDecisionAuthority,
+        Qa04OperationClosedPrefixV1 resultingPrefix,
+        FrozenStepInputV1 frozenInput)
+    {
+        ArgumentNullException.ThrowIfNull(transitionAuthority);
+        ArgumentNullException.ThrowIfNull(detailDecisionAuthority);
+        ArgumentNullException.ThrowIfNull(resultingPrefix);
+        ArgumentNullException.ThrowIfNull(frozenInput);
+
+        var ordinal = checked(_transitionCommitted.Count + 1UL);
+        var expectedInjectionStep = checked(ordinal - 1UL);
+        if (injectionStep != expectedInjectionStep ||
+            injectionStep >= Qa04ProductionReferenceRunV1.CanonicalTransitionCount)
+            throw new InvalidDataException("qa04.determinism-evidence.transition-ordinal-drift");
+
+        var effectiveStep = ordinal;
+        var resultingStep = checked(ordinal + 1UL);
+        if (transitionAuthority.EffectiveStep != effectiveStep ||
+            transitionAuthority.ResultingStep != resultingStep)
+            throw new InvalidDataException("qa04.determinism-evidence.transition-step-drift");
+        if (transitionAuthority.ActiveConfigGeneration != _configGeneration ||
+            !CryptographicOperations.FixedTimeEquals(transitionAuthority.ActiveConfigDigest, _configDigest))
+            throw new InvalidDataException("qa04.determinism-evidence.config-authority-drift");
+        if (detailDecisionAuthority.BasisStep != effectiveStep ||
+            detailDecisionAuthority.ResultingStep != resultingStep ||
+            !string.Equals(
+                detailDecisionAuthority.History.RecordType,
+                "qa04.detail-promotion-decision.v1",
+                StringComparison.Ordinal))
+            throw new InvalidDataException("qa04.determinism-evidence.detail-decision-step-drift");
+
+        var expectedOperationCount = Qa04ReferenceLoadV1.OperationCountForStep(injectionStep);
+        if (frozenInput.WorldId != transitionAuthority.History.WorldId ||
+            frozenInput.BasisStep != effectiveStep ||
+            frozenInput.ConfigGeneration != transitionAuthority.ActiveConfigGeneration ||
+            !CryptographicOperations.FixedTimeEquals(
+                frozenInput.ConfigDigest,
+                transitionAuthority.ActiveConfigDigest))
+            throw new InvalidDataException("qa04.determinism-evidence.frozen-authority-drift");
+        if ((ulong)frozenInput.ScheduledOperations.Count != expectedOperationCount ||
+            transitionAuthority.AppliedOperationIds.Count != frozenInput.ScheduledOperations.Count ||
+            transitionAuthority.OperationOutcomes.Count != frozenInput.ScheduledOperations.Count)
+            throw new InvalidDataException("qa04.determinism-evidence.operation-cardinality-drift");
+
+        for (var index = 0; index < frozenInput.ScheduledOperations.Count; index++)
+        {
+            if (transitionAuthority.AppliedOperationIds[index] !=
+                frozenInput.ScheduledOperations[index].OperationId)
+                throw new InvalidDataException("qa04.determinism-evidence.operation-order-drift");
+        }
+
+        var terminalBatchDigest = Qa04TerminalSemanticAuthorityV1.ComputeFrozenAuthorityBatchDigest(
+            frozenInput.ScheduledOperations,
+            transitionAuthority.OperationOutcomes);
+        var terminalStepDigest = Qa04TerminalSemanticAuthorityV1.ComputeStepItemDigest(
+            effectiveStep,
+            expectedOperationCount,
+            terminalBatchDigest);
+
+        AppendEvidenceDigests(
+            injectionStep,
+            ordinal,
+            resultingStep,
+            expectedOperationCount,
+            transitionAuthority,
+            detailDecisionAuthority,
+            resultingPrefix,
+            terminalStepDigest);
+    }
+
+    private void AppendEvidenceDigests(
+        ulong injectionStep,
+        ulong ordinal,
+        ulong resultingStep,
+        ulong operationCount,
+        Qa04TransitionCommittedAuthorityV1 transitionAuthority,
+        Qa04DetailDecisionAuthorityV1 detailDecisionAuthority,
+        Qa04OperationClosedPrefixV1 resultingPrefix,
+        byte[] terminalStepDigest)
+    {
+        RequireDigest(
+            transitionAuthority.TransitionCommittedItemDigest,
+            "qa04.determinism-evidence.transition-item-digest-invalid");
+        RequireDigest(
+            detailDecisionAuthority.History.NormalizedPayloadDigest,
+            "qa04.determinism-evidence.detail-item-digest-invalid");
+        RequireDigest(
+            terminalStepDigest,
+            "qa04.determinism-evidence.terminal-item-digest-invalid");
         _transitionCommitted.Append(ordinal, transitionAuthority.TransitionCommittedItemDigest);
         _operationTerminal.Append(ordinal, terminalStepDigest);
         _promotionDeferralOrder.Append(ordinal, detailDecisionAuthority.History.NormalizedPayloadDigest);
-        _terminalOperationCount = checked(_terminalOperationCount + (ulong)bindings.Length);
+        _terminalOperationCount = checked(_terminalOperationCount + operationCount);
 
         resultingPrefix.Validate(resultingStep);
         if (resultingPrefix.LastClosedInjectionStep != injectionStep ||
             resultingPrefix.TerminalOperationCount != _terminalOperationCount ||
-            resultingPrefix.TerminalOperationCount != Qa04OperationClosedPrefixV1.ExpectedTerminalOperationCount(injectionStep) ||
-            !CryptographicOperations.FixedTimeEquals(resultingPrefix.TerminalSemanticDigest, _operationTerminal.Digest))
+            resultingPrefix.TerminalOperationCount !=
+                Qa04OperationClosedPrefixV1.ExpectedTerminalOperationCount(injectionStep) ||
+            !CryptographicOperations.FixedTimeEquals(
+                resultingPrefix.TerminalSemanticDigest,
+                _operationTerminal.Digest))
             throw new InvalidDataException("qa04.determinism-evidence.operation-prefix-drift");
     }
 
