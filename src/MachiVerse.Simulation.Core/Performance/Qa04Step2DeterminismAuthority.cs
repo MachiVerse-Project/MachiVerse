@@ -381,6 +381,42 @@ public static class Qa04TerminalSemanticAuthorityV1
         return session.Complete();
     }
 
+    internal static byte[] ComputeFrozenAuthorityBatchDigest(
+        IReadOnlyList<ScheduledOperationRefV1> frozenOperations,
+        IReadOnlyList<TerminalOperationCommit> outcomes)
+    {
+        ArgumentNullException.ThrowIfNull(frozenOperations);
+        ArgumentNullException.ThrowIfNull(outcomes);
+        if (frozenOperations.Count != outcomes.Count)
+            throw new InvalidDataException("qa04.determinism-evidence.operation-cardinality-drift");
+
+        using var session = HashSuite.BeginDomainHashStreaming("mv.qa04-operation-terminal-batch.v1");
+        var writer = session.Writer;
+        writer.WriteArrayStart((ulong)outcomes.Count);
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        for (var index = 0; index < outcomes.Count; index++)
+        {
+            var frozen = frozenOperations[index]
+                ?? throw new InvalidDataException("qa04.determinism-evidence.operation-authority-null");
+            var outcome = outcomes[index]
+                ?? throw new InvalidDataException("qa04.determinism-evidence.operation-outcome-null");
+            if (outcome.OperationId != frozen.OperationId)
+                throw new InvalidDataException("qa04.determinism-evidence.operation-order-drift");
+            if (!Enum.IsDefined(typeof(CoreOperationResultStatusV1), outcome.TerminalStatus) ||
+                !OperationLifecycleRulesV1.IsTerminalResult((CoreOperationResultStatusV1)outcome.TerminalStatus))
+                throw new InvalidDataException("qa04.determinism-evidence.operation-status-invalid");
+            _ = new StableToken(outcome.ResultCode);
+
+            outcome.OperationId.WriteBytes(operationIdBytes);
+            writer.WriteArrayStart(4);
+            writer.WriteBytes(operationIdBytes);
+            writer.WriteUnsigned(checked((ulong)outcome.TerminalStatus));
+            writer.WriteAsciiText(outcome.ResultCode);
+            writer.WriteArrayStart(0);
+        }
+        return session.Complete();
+    }
+
     public static byte[] ComputeStepItemDigest(ulong effectiveStep, ulong operationCount, byte[] terminalBatchDigest)
         => HashSuite.DomainHash("mv.qa04-operation-terminal-step.v1", writer =>
         {

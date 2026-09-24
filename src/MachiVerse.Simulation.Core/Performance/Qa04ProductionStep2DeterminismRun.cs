@@ -223,11 +223,20 @@ public static class Qa04ProductionStep2DeterminismRunV1
                     StringComparison.Ordinal))
                 throw new InvalidDataException("qa04.step2-determinism.detail-decision-authority-drift");
 
-            determinismEvidence.Append(
+            var evidenceAppendStarted = Stopwatch.GetTimestamp();
+            determinismEvidence.AppendValidatedProductionStep(
                 injectionStep,
                 completed.Finalization.TransitionAuthority,
                 detailDecisionAuthority,
-                completed.ClosedPrefix);
+                completed.ClosedPrefix,
+                completed.Finalization.Preparation.Candidate.FrozenInput);
+            if (detailedPhaseDiagnostics &&
+                injectionStep % checked((ulong)progressIntervalTransitions) == 0)
+            {
+                Console.Error.WriteLine(
+                    $"QA04_PHASE workers={workerCount} injection_step={injectionStep} phase=evidence-append " +
+                    $"elapsed_ms={Stopwatch.GetElapsedTime(evidenceAppendStarted).TotalMilliseconds:F1}");
+            }
 
             currentState = completed.Finalization.AuthoritativeState.State;
             currentMutationState = completed.MutationState;
