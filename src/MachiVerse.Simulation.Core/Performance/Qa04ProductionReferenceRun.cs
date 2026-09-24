@@ -98,17 +98,15 @@ public static class Qa04ProductionReferenceRunV1
             assembly.BasisDomainAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
             throw new InvalidDataException("qa04.production-run.reference-world-incomplete");
 
-        var turnoverAuthority = Qa04ProductionCrossDomainTurnoverAuthorityBuilderV1.CreateCanonical(
-            assembly.ActiveTransactions);
+        var turnoverAuthority =
+            Qa04ProductionCrossDomainTurnoverAuthorityBuilderV1.CreateFromValidatedAssembly(assembly);
         IReadOnlyList<Qa04ActiveTransactionSlotV1> currentActiveSlots = turnoverAuthority.ActiveSlots;
         IReadOnlyList<CrossDomainTransactionStateV1> currentActiveTransactions = Array.AsReadOnly(
             currentActiveSlots.Select(static slot => slot.State).ToArray());
         var currentClosedPrefix = Qa04OperationClosedPrefixV1.Empty();
 
-        var detailMaterial = Qa04DetailRegionCanonicalAuthorityV1.MaterializeCanonical();
-        var currentDetailDirectory = new DetailDirectoryV1(
-            detailMaterial.RegionsByTile,
-            Array.Empty<DetailTransitionCandidateV1>());
+        var currentDetailDirectory = assembly.InitialDetailDirectory
+            ?? throw new InvalidDataException("qa04.production-reference-world.initial-detail-directory-missing");
         var detailPolicy = DetailTransitionPolicyV1.FromConfig(Qa04ReferenceConfigAuthorityV1.CreateCanonical());
 
         var scheduler = new OperationSchedulerStateV1(

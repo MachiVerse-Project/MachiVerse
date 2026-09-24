@@ -50,6 +50,28 @@ public static class Qa04ProductionCrossDomainTurnoverAuthorityBuilderV1
             [InfrastructureServiceQueuePayloadV1.PartitionId] = RecordIds(facility.ServiceAuthority.ServiceQueue),
         };
 
+        return CreateFromPools(assembledActiveTransactions, pools);
+    }
+
+    internal static Qa04ProductionCrossDomainTurnoverAuthorityV1 CreateFromValidatedAssembly(
+        Qa04ProductionReferenceWorldAssemblyV1 assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+        Qa04CrossDomainTransactionTurnoverMaterializerV1.ValidateCanonicalContract();
+        return CreateFromPools(
+            assembly.ActiveTransactions,
+            assembly.CanonicalTransactionRecordPools);
+    }
+
+    private static Qa04ProductionCrossDomainTurnoverAuthorityV1 CreateFromPools(
+        IReadOnlyCollection<CrossDomainTransactionStateV1> assembledActiveTransactions,
+        IReadOnlyDictionary<string, IReadOnlyList<OpaqueId128>> pools)
+    {
+        ArgumentNullException.ThrowIfNull(assembledActiveTransactions);
+        ArgumentNullException.ThrowIfNull(pools);
+        if (pools.Count != 8)
+            throw new InvalidDataException("qa04.production-turnover.record-pool-count-drift");
+
         var genesis = Qa04CrossDomainTransactionGenesisMaterializerV1.Materialize(pools);
         var slots = Qa04CrossDomainTransactionTurnoverMaterializerV1.Initialize(genesis);
         RequireGenesisMatchesAssembly(assembledActiveTransactions, slots);
