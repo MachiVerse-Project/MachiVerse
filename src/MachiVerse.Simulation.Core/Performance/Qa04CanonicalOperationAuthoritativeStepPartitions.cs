@@ -20,6 +20,7 @@ namespace MachiVerse.Simulation.Core.Performance;
 /// </summary>
 public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
 {
+    private const int FamilyCount = 6;
     private const string InfrastructureFamily = "infrastructure-service-delivery";
     private const string ResidentFamily = "participation-control-resident-action";
     private const string PhysicalFamily = "physical-item-movement-work";
@@ -27,16 +28,15 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
     private const string GovernanceFamily = "governance-security";
     private const string EnvironmentFamily = "environment-spatial-admin-synthetic";
 
-    private static readonly IReadOnlyDictionary<string, string> PartitionByFamily =
-        new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            [InfrastructureFamily] = InfrastructureServiceQueuePayloadV1.PartitionId,
-            [ResidentFamily] = ResidentBehaviorStatePayloadV1.PartitionId,
-            [PhysicalFamily] = PhysicalPresencePayloadV1.PartitionId,
-            [MarketFamily] = SocietyMarketTransactionRecordSchemaV2.PartitionId,
-            [GovernanceFamily] = GovernanceSecurityIncidentPayloadV1.PartitionId,
-            [EnvironmentFamily] = EnvironmentHazardPayloadV1.PartitionId,
-        };
+    private static readonly string[] FamilyOrder =
+    {
+        InfrastructureFamily,
+        ResidentFamily,
+        PhysicalFamily,
+        MarketFamily,
+        GovernanceFamily,
+        EnvironmentFamily,
+    };
 
     public static Qa04CanonicalOperationPartitionCandidateBatchV1 Bind(
         WorldStateV1 basisState,
@@ -73,9 +73,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             BindStandard(
                 basisState,
                 targetStep,
-                bindingsByFamily[InfrastructureFamily],
+                bindingsByFamily.Infrastructure,
                 state.InfrastructureServiceQueue,
-                changesByPartition[InfrastructureServiceQueuePayloadV1.PartitionId],
+                changesByPartition.Infrastructure,
                 payload => digestCache?.Infrastructure(payload) ??
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         InfrastructureServiceQueuePayloadV1.PartitionId,
@@ -86,9 +86,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             BindStandard(
                 basisState,
                 targetStep,
-                bindingsByFamily[ResidentFamily],
+                bindingsByFamily.Resident,
                 state.ResidentBehaviorState,
-                changesByPartition[ResidentBehaviorStatePayloadV1.PartitionId],
+                changesByPartition.Resident,
                 payload => digestCache?.Resident(payload) ??
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         ResidentBehaviorStatePayloadV1.PartitionId,
@@ -99,9 +99,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             BindStandard(
                 basisState,
                 targetStep,
-                bindingsByFamily[PhysicalFamily],
+                bindingsByFamily.Physical,
                 state.PhysicalPresence,
-                changesByPartition[PhysicalPresencePayloadV1.PartitionId],
+                changesByPartition.Physical,
                 payload => digestCache?.Physical(payload) ??
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         PhysicalPresencePayloadV1.PartitionId,
@@ -112,17 +112,17 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             BindMarket(
                 basisState,
                 targetStep,
-                bindingsByFamily[MarketFamily],
+                bindingsByFamily.Market,
                 state.MarketTransaction,
-                changesByPartition[SocietyMarketTransactionRecordSchemaV2.PartitionId],
+                changesByPartition.Market,
                 references,
                 digestCache),
             BindStandard(
                 basisState,
                 targetStep,
-                bindingsByFamily[GovernanceFamily],
+                bindingsByFamily.Governance,
                 state.GovernanceSecurityIncident,
-                changesByPartition[GovernanceSecurityIncidentPayloadV1.PartitionId],
+                changesByPartition.Governance,
                 payload => digestCache?.Governance(payload) ??
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         GovernanceSecurityIncidentPayloadV1.PartitionId,
@@ -133,9 +133,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             BindStandard(
                 basisState,
                 targetStep,
-                bindingsByFamily[EnvironmentFamily],
+                bindingsByFamily.Environment,
                 state.EnvironmentHazard,
-                changesByPartition[EnvironmentHazardPayloadV1.PartitionId],
+                changesByPartition.Environment,
                 payload => digestCache?.Environment(payload) ??
                     StandardDomainPayloadCanonicalDigestV1.Compute(
                         EnvironmentHazardPayloadV1.PartitionId,
@@ -147,7 +147,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         .OrderBy(static item => item.Candidate.PartitionId.Value, StringComparer.Ordinal)
         .ToArray();
 
-        if (bound.Length != 6 || bound.Select(static item => item.Candidate.PartitionId).Distinct().Count() != 6)
+        if (bound.Length != FamilyCount || bound.Select(static item => item.Candidate.PartitionId).Distinct().Count() != FamilyCount)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-coverage-drift");
         if (bound.Any(item => item.Candidate.BasisStep != basisState.Header.Step ||
                               item.Candidate.TargetStep != targetStep ||
@@ -192,18 +192,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             basisState.Header.Step);
         var state = mutationResult.State;
         var changesByPartition = GroupChanges(mutationResult.Changes);
-        var families = new[]
-        {
-            InfrastructureFamily,
-            ResidentFamily,
-            PhysicalFamily,
-            MarketFamily,
-            GovernanceFamily,
-            EnvironmentFamily,
-        };
 
         var batch = await DeterministicBatchExecutor.RunCpuBoundAsync(
-            families,
+            FamilyOrder,
             workerCount,
             (family, token) =>
             {
@@ -213,9 +204,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     InfrastructureFamily => BindStandard(
                         basisState,
                         targetStep,
-                        bindingsByFamily[InfrastructureFamily],
+                        bindingsByFamily.Infrastructure,
                         state.InfrastructureServiceQueue,
-                        changesByPartition[InfrastructureServiceQueuePayloadV1.PartitionId],
+                        changesByPartition.Infrastructure,
                         payload => digestCache?.Infrastructure(payload) ??
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 InfrastructureServiceQueuePayloadV1.PartitionId,
@@ -226,9 +217,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     ResidentFamily => BindStandard(
                         basisState,
                         targetStep,
-                        bindingsByFamily[ResidentFamily],
+                        bindingsByFamily.Resident,
                         state.ResidentBehaviorState,
-                        changesByPartition[ResidentBehaviorStatePayloadV1.PartitionId],
+                        changesByPartition.Resident,
                         payload => digestCache?.Resident(payload) ??
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 ResidentBehaviorStatePayloadV1.PartitionId,
@@ -239,9 +230,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     PhysicalFamily => BindStandard(
                         basisState,
                         targetStep,
-                        bindingsByFamily[PhysicalFamily],
+                        bindingsByFamily.Physical,
                         state.PhysicalPresence,
-                        changesByPartition[PhysicalPresencePayloadV1.PartitionId],
+                        changesByPartition.Physical,
                         payload => digestCache?.Physical(payload) ??
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 PhysicalPresencePayloadV1.PartitionId,
@@ -252,17 +243,17 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     MarketFamily => BindMarket(
                         basisState,
                         targetStep,
-                        bindingsByFamily[MarketFamily],
+                        bindingsByFamily.Market,
                         state.MarketTransaction,
-                        changesByPartition[SocietyMarketTransactionRecordSchemaV2.PartitionId],
+                        changesByPartition.Market,
                         references,
                         digestCache),
                     GovernanceFamily => BindStandard(
                         basisState,
                         targetStep,
-                        bindingsByFamily[GovernanceFamily],
+                        bindingsByFamily.Governance,
                         state.GovernanceSecurityIncident,
-                        changesByPartition[GovernanceSecurityIncidentPayloadV1.PartitionId],
+                        changesByPartition.Governance,
                         payload => digestCache?.Governance(payload) ??
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 GovernanceSecurityIncidentPayloadV1.PartitionId,
@@ -273,9 +264,9 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                     EnvironmentFamily => BindStandard(
                         basisState,
                         targetStep,
-                        bindingsByFamily[EnvironmentFamily],
+                        bindingsByFamily.Environment,
                         state.EnvironmentHazard,
-                        changesByPartition[EnvironmentHazardPayloadV1.PartitionId],
+                        changesByPartition.Environment,
                         payload => digestCache?.Environment(payload) ??
                             StandardDomainPayloadCanonicalDigestV1.Compute(
                                 EnvironmentHazardPayloadV1.PartitionId,
@@ -292,7 +283,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         var bound = batch.Outputs
             .OrderBy(static item => item.Candidate.PartitionId.Value, StringComparer.Ordinal)
             .ToArray();
-        if (bound.Length != 6 || bound.Select(static item => item.Candidate.PartitionId).Distinct().Count() != 6)
+        if (bound.Length != FamilyCount || bound.Select(static item => item.Candidate.PartitionId).Distinct().Count() != FamilyCount)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-coverage-drift");
         if (bound.Any(item => item.Candidate.BasisStep != basisState.Header.Step ||
                               item.Candidate.TargetStep != targetStep ||
@@ -308,40 +299,52 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         };
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<Qa04CanonicalOperationMutationChangeV1>> GroupChanges(
+    private static ChangeGroups GroupChanges(
         IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> changes)
     {
         ArgumentNullException.ThrowIfNull(changes);
 
-        var grouped = new Dictionary<string, List<Qa04CanonicalOperationMutationChangeV1>>(
-            PartitionByFamily.Count,
-            StringComparer.Ordinal);
-        foreach (var partitionId in PartitionByFamily.Values)
-            grouped.Add(partitionId, new List<Qa04CanonicalOperationMutationChangeV1>());
+        var partitionCapacity = checked((changes.Count + FamilyCount - 1) / FamilyCount);
+        var infrastructure = new List<Qa04CanonicalOperationMutationChangeV1>(partitionCapacity);
+        var resident = new List<Qa04CanonicalOperationMutationChangeV1>(partitionCapacity);
+        var physical = new List<Qa04CanonicalOperationMutationChangeV1>(partitionCapacity);
+        var market = new List<Qa04CanonicalOperationMutationChangeV1>(partitionCapacity);
+        var governance = new List<Qa04CanonicalOperationMutationChangeV1>(partitionCapacity);
+        var environment = new List<Qa04CanonicalOperationMutationChangeV1>(partitionCapacity);
 
         for (var index = 0; index < changes.Count; index++)
         {
             var change = changes[index];
-            if (!grouped.TryGetValue(change.PartitionId.Value, out var partitionChanges))
-                throw new InvalidDataException("qa04.full-step.authoritative-partition-change-unregistered");
+            var partitionChanges = change.PartitionId.Value switch
+            {
+                InfrastructureServiceQueuePayloadV1.PartitionId => infrastructure,
+                ResidentBehaviorStatePayloadV1.PartitionId => resident,
+                PhysicalPresencePayloadV1.PartitionId => physical,
+                SocietyMarketTransactionRecordSchemaV2.PartitionId => market,
+                GovernanceSecurityIncidentPayloadV1.PartitionId => governance,
+                EnvironmentHazardPayloadV1.PartitionId => environment,
+                _ => throw new InvalidDataException("qa04.full-step.authoritative-partition-change-unregistered"),
+            };
             partitionChanges.Add(change);
         }
 
-        var result = new Dictionary<string, IReadOnlyList<Qa04CanonicalOperationMutationChangeV1>>(
-            PartitionByFamily.Count,
-            StringComparer.Ordinal);
-        foreach (var partitionId in PartitionByFamily.Values)
-        {
-            var partitionChanges = grouped[partitionId];
-            if (partitionChanges.Count == 0)
-                throw new InvalidDataException($"qa04.full-step.authoritative-partition-change-coverage:{partitionId}");
-            result.Add(partitionId, Array.AsReadOnly(partitionChanges.ToArray()));
-        }
+        RequireChangeCoverage(infrastructure, InfrastructureServiceQueuePayloadV1.PartitionId);
+        RequireChangeCoverage(resident, ResidentBehaviorStatePayloadV1.PartitionId);
+        RequireChangeCoverage(physical, PhysicalPresencePayloadV1.PartitionId);
+        RequireChangeCoverage(market, SocietyMarketTransactionRecordSchemaV2.PartitionId);
+        RequireChangeCoverage(governance, GovernanceSecurityIncidentPayloadV1.PartitionId);
+        RequireChangeCoverage(environment, EnvironmentHazardPayloadV1.PartitionId);
 
-        return result;
+        return new ChangeGroups(
+            infrastructure,
+            resident,
+            physical,
+            market,
+            governance,
+            environment);
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<Qa04CanonicalOperationBindingResultV1>> ValidateAndGroupBindings(
+    private static BindingGroups ValidateAndGroupBindings(
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
         Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
         ulong effectiveStep)
@@ -349,15 +352,16 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         if (orderedBindings.Count == 0 || orderedBindings.Count != mutationResult.AppliedOperationIds.Count)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-operation-count-drift");
 
-        var familyCapacity = checked((orderedBindings.Count + PartitionByFamily.Count - 1) / PartitionByFamily.Count);
-        var grouped = new Dictionary<string, List<Qa04CanonicalOperationBindingResultV1>>(
-            PartitionByFamily.Count,
-            StringComparer.Ordinal);
-        foreach (var family in PartitionByFamily.Keys)
-            grouped.Add(family, new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity));
+        var familyCapacity = checked((orderedBindings.Count + FamilyCount - 1) / FamilyCount);
+        var infrastructure = new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity);
+        var resident = new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity);
+        var physical = new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity);
+        var market = new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity);
+        var governance = new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity);
+        var environment = new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity);
 
         SameStepOrderKey? previousOrderKey = null;
-        var seenOperationIds = new HashSet<OpaqueId128>();
+        var seenOperationIds = new HashSet<OpaqueId128>(orderedBindings.Count);
         for (var index = 0; index < orderedBindings.Count; index++)
         {
             var binding = orderedBindings[index]
@@ -366,8 +370,16 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
                 throw new InvalidDataException("qa04.full-step.authoritative-partition-binding-null");
 
             var family = binding.SourceDescriptor.FamilyToken.Value;
-            if (!grouped.TryGetValue(family, out var familyBindings))
-                throw new InvalidDataException($"qa04.full-step.authoritative-partition-family-unregistered:{family}");
+            var familyBindings = family switch
+            {
+                InfrastructureFamily => infrastructure,
+                ResidentFamily => resident,
+                PhysicalFamily => physical,
+                MarketFamily => market,
+                GovernanceFamily => governance,
+                EnvironmentFamily => environment,
+                _ => throw new InvalidDataException($"qa04.full-step.authoritative-partition-family-unregistered:{family}"),
+            };
             if (binding.ScheduledOperation.EffectiveStep != effectiveStep)
                 throw new InvalidDataException("qa04.full-step.authoritative-partition-binding-step-drift");
             if (!binding.OrderKey.CanonicallyEquals(binding.ScheduledOperation.OrderKey))
@@ -385,17 +397,35 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             familyBindings.Add(binding);
         }
 
-        var result = new Dictionary<string, IReadOnlyList<Qa04CanonicalOperationBindingResultV1>>(
-            PartitionByFamily.Count,
-            StringComparer.Ordinal);
-        foreach (var family in PartitionByFamily.Keys)
-        {
-            var familyBindings = grouped[family];
-            if (familyBindings.Count == 0)
-                throw new InvalidDataException("qa04.full-step.authoritative-partition-family-coverage-drift");
-            result.Add(family, Array.AsReadOnly(familyBindings.ToArray()));
-        }
-        return result;
+        RequireFamilyCoverage(infrastructure);
+        RequireFamilyCoverage(resident);
+        RequireFamilyCoverage(physical);
+        RequireFamilyCoverage(market);
+        RequireFamilyCoverage(governance);
+        RequireFamilyCoverage(environment);
+
+        return new BindingGroups(
+            infrastructure,
+            resident,
+            physical,
+            market,
+            governance,
+            environment);
+    }
+
+    private static void RequireChangeCoverage(
+        IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> changes,
+        string partitionId)
+    {
+        if (changes.Count == 0)
+            throw new InvalidDataException($"qa04.full-step.authoritative-partition-change-coverage:{partitionId}");
+    }
+
+    private static void RequireFamilyCoverage(
+        IReadOnlyList<Qa04CanonicalOperationBindingResultV1> bindings)
+    {
+        if (bindings.Count == 0)
+            throw new InvalidDataException("qa04.full-step.authoritative-partition-family-coverage-drift");
     }
 
     private static Qa04CanonicalOperationPartitionMutationV1 BindStandard<TPayload>(
@@ -591,8 +621,17 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         if (bindings.Count == 0)
             throw new InvalidDataException($"qa04.full-step.authoritative-partition-operation-empty:{partitionId}");
         var family = bindings[0].SourceDescriptor.FamilyToken.Value;
-        if (!PartitionByFamily.TryGetValue(family, out var expectedPartition) ||
-            !string.Equals(expectedPartition, partitionId, StringComparison.Ordinal))
+        var expectedPartition = family switch
+        {
+            InfrastructureFamily => InfrastructureServiceQueuePayloadV1.PartitionId,
+            ResidentFamily => ResidentBehaviorStatePayloadV1.PartitionId,
+            PhysicalFamily => PhysicalPresencePayloadV1.PartitionId,
+            MarketFamily => SocietyMarketTransactionRecordSchemaV2.PartitionId,
+            GovernanceFamily => GovernanceSecurityIncidentPayloadV1.PartitionId,
+            EnvironmentFamily => EnvironmentHazardPayloadV1.PartitionId,
+            _ => throw new InvalidDataException($"qa04.full-step.authoritative-partition-family-target-drift:{partitionId}"),
+        };
+        if (!string.Equals(expectedPartition, partitionId, StringComparison.Ordinal))
             throw new InvalidDataException($"qa04.full-step.authoritative-partition-family-target-drift:{partitionId}");
     }
 
@@ -611,5 +650,57 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         if (basisHeader.Revision == ulong.MaxValue)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-revision-overflow");
         return basisHeader.Revision + 1UL;
+    }
+
+    private readonly struct BindingGroups
+    {
+        public BindingGroups(
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> infrastructure,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> resident,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> physical,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> market,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> governance,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> environment)
+        {
+            Infrastructure = infrastructure;
+            Resident = resident;
+            Physical = physical;
+            Market = market;
+            Governance = governance;
+            Environment = environment;
+        }
+
+        public IReadOnlyList<Qa04CanonicalOperationBindingResultV1> Infrastructure { get; }
+        public IReadOnlyList<Qa04CanonicalOperationBindingResultV1> Resident { get; }
+        public IReadOnlyList<Qa04CanonicalOperationBindingResultV1> Physical { get; }
+        public IReadOnlyList<Qa04CanonicalOperationBindingResultV1> Market { get; }
+        public IReadOnlyList<Qa04CanonicalOperationBindingResultV1> Governance { get; }
+        public IReadOnlyList<Qa04CanonicalOperationBindingResultV1> Environment { get; }
+    }
+
+    private readonly struct ChangeGroups
+    {
+        public ChangeGroups(
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> infrastructure,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> resident,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> physical,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> market,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> governance,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> environment)
+        {
+            Infrastructure = infrastructure;
+            Resident = resident;
+            Physical = physical;
+            Market = market;
+            Governance = governance;
+            Environment = environment;
+        }
+
+        public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Infrastructure { get; }
+        public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Resident { get; }
+        public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Physical { get; }
+        public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Market { get; }
+        public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Governance { get; }
+        public IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> Environment { get; }
     }
 }
