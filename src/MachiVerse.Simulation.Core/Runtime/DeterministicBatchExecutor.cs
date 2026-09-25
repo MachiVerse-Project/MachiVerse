@@ -3,18 +3,7 @@ namespace MachiVerse.Simulation.Core.Runtime;
 public sealed record DeterministicCpuBatchObservationV1(
     int RequestedWorkerCount,
     int EffectiveWorkerCount,
-    int MaxObservedConcurrency)
-{
-    public int MinimumShardItemCount { get; init; }
-    public int MaximumShardItemCount { get; init; }
-    public long MinimumShardElapsedTimeTicks { get; init; }
-    public long MaximumShardElapsedTimeTicks { get; init; }
-    public int ClaimChunkSize { get; init; }
-    public int ClaimChunkCount { get; init; }
-
-    public int ShardItemCountSpread => MaximumShardItemCount - MinimumShardItemCount;
-    public long ShardElapsedTimeSpreadTicks => MaximumShardElapsedTimeTicks - MinimumShardElapsedTimeTicks;
-}
+    int MaxObservedConcurrency);
 
 public sealed record DeterministicCpuBatchResultV1<TOutput>(
     IReadOnlyList<TOutput> Outputs,
@@ -61,13 +50,8 @@ public static class DeterministicBatchExecutor
 
     /// <summary>
     /// Executes independent CPU-bound work with a requested worker budget while preserving the
-    /// input index as the only output placement authority. Workers dynamically claim deterministic
-    /// contiguous canonical chunks from a shared monotonic cursor. Claim/completion order is not an
-    /// authority and cannot affect semantic output placement. Chunk granularity is derived from the
-    /// batch size and effective worker count so load can rebalance without returning to per-item
-    /// atomic claims. Concurrency is observed at worker lifetime rather than around every input item.
-    /// A single effective worker executes directly on the caller continuation without Task.Run or
-    /// per-worker diagnostic arrays.
+    /// input index as the only output placement authority. Physical completion order is diagnostic
+    /// only and cannot affect the returned semantic order.
     ///
     /// This primitive intentionally has no fixed 16-worker ceiling. The caller owns deployment and
     /// Config policy; the executor only requires a positive worker budget and bounds active workers
@@ -92,36 +76,9 @@ public static class DeterministicBatchExecutor
         }
 
         var effectiveWorkerCount = Math.Min(workerCount, inputs.Count);
-        if (effectiveWorkerCount == 1)
-        {
-            var startedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
-            for (var index = 0; index < inputs.Count; index++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                output[index] = execute(inputs[index], cancellationToken);
-            }
-
-            var elapsedTicks = System.Diagnostics.Stopwatch.GetElapsedTime(startedTimestamp).Ticks;
-            return new DeterministicCpuBatchResultV1<TOutput>(
-                output,
-                new DeterministicCpuBatchObservationV1(workerCount, 1, 1)
-                {
-                    MinimumShardItemCount = inputs.Count,
-                    MaximumShardItemCount = inputs.Count,
-                    MinimumShardElapsedTimeTicks = elapsedTicks,
-                    MaximumShardElapsedTimeTicks = elapsedTicks,
-                    ClaimChunkSize = inputs.Count,
-                    ClaimChunkCount = 1,
-                });
-        }
-
-        var claimChunkSize = CalculateClaimChunkSize(inputs.Count, effectiveWorkerCount);
-        var claimChunkCount = (int)(((long)inputs.Count + claimChunkSize - 1L) / claimChunkSize);
-        long nextIndex = 0;
+        var nextIndex = -1;
         var activeWorkers = 0;
         var maxObservedConcurrency = 0;
-        var shardItemCounts = new int[effectiveWorkerCount];
-        var shardElapsedTimeTicks = new long[effectiveWorkerCount];
 
         using var executionCancellation =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -130,35 +87,27 @@ public static class DeterministicBatchExecutor
 
         for (var workerIndex = 0; workerIndex < workers.Length; workerIndex++)
         {
-            var stableWorkerIndex = workerIndex;
             workers[workerIndex] = Task.Run(
                 () =>
                 {
-                    var startedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
-                    var processedItemCount = 0;
-                    var observedAsActive = false;
                     try
                     {
                         while (true)
                         {
                             executionToken.ThrowIfCancellationRequested();
-                            var claimedStart = Interlocked.Add(ref nextIndex, claimChunkSize) - claimChunkSize;
-                            if (claimedStart >= inputs.Count)
+                            var stableIndex = Interlocked.Increment(ref nextIndex);
+                            if (stableIndex >= inputs.Count)
                                 return;
 
-                            if (!observedAsActive)
+                            var active = Interlocked.Increment(ref activeWorkers);
+                            UpdateMaximum(ref maxObservedConcurrency, active);
+                            try
                             {
-                                observedAsActive = true;
-                                var active = Interlocked.Increment(ref activeWorkers);
-                                UpdateMaximum(ref maxObservedConcurrency, active);
-                            }
-
-                            var claimedEnd = Math.Min((long)inputs.Count, claimedStart + claimChunkSize);
-                            for (var stableIndex = (int)claimedStart; stableIndex < claimedEnd; stableIndex++)
-                            {
-                                executionToken.ThrowIfCancellationRequested();
                                 output[stableIndex] = execute(inputs[stableIndex], executionToken);
-                                processedItemCount++;
+                            }
+                            finally
+                            {
+                                Interlocked.Decrement(ref activeWorkers);
                             }
                         }
                     }
@@ -167,15 +116,6 @@ public static class DeterministicBatchExecutor
                         executionCancellation.Cancel();
                         throw;
                     }
-                    finally
-                    {
-                        if (observedAsActive)
-                            Interlocked.Decrement(ref activeWorkers);
-                        shardItemCounts[stableWorkerIndex] = processedItemCount;
-                        shardElapsedTimeTicks[stableWorkerIndex] = System.Diagnostics.Stopwatch
-                            .GetElapsedTime(startedTimestamp)
-                            .Ticks;
-                    }
                 },
                 CancellationToken.None);
         }
@@ -183,38 +123,12 @@ public static class DeterministicBatchExecutor
         await Task.WhenAll(workers).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var minimumShardItemCount = int.MaxValue;
-        var maximumShardItemCount = 0;
-        var minimumShardElapsedTimeTicks = long.MaxValue;
-        var maximumShardElapsedTimeTicks = 0L;
-        for (var workerIndex = 0; workerIndex < effectiveWorkerCount; workerIndex++)
-        {
-            minimumShardItemCount = Math.Min(minimumShardItemCount, shardItemCounts[workerIndex]);
-            maximumShardItemCount = Math.Max(maximumShardItemCount, shardItemCounts[workerIndex]);
-            minimumShardElapsedTimeTicks = Math.Min(minimumShardElapsedTimeTicks, shardElapsedTimeTicks[workerIndex]);
-            maximumShardElapsedTimeTicks = Math.Max(maximumShardElapsedTimeTicks, shardElapsedTimeTicks[workerIndex]);
-        }
-
         return new DeterministicCpuBatchResultV1<TOutput>(
             output,
             new DeterministicCpuBatchObservationV1(
                 workerCount,
                 effectiveWorkerCount,
-                Volatile.Read(ref maxObservedConcurrency))
-            {
-                MinimumShardItemCount = minimumShardItemCount,
-                MaximumShardItemCount = maximumShardItemCount,
-                MinimumShardElapsedTimeTicks = minimumShardElapsedTimeTicks,
-                MaximumShardElapsedTimeTicks = maximumShardElapsedTimeTicks,
-                ClaimChunkSize = claimChunkSize,
-                ClaimChunkCount = claimChunkCount,
-            });
-    }
-
-    private static int CalculateClaimChunkSize(int itemCount, int effectiveWorkerCount)
-    {
-        var targetClaimCount = (long)effectiveWorkerCount * effectiveWorkerCount;
-        return Math.Max(1, (int)(itemCount / targetClaimCount));
+                Volatile.Read(ref maxObservedConcurrency)));
     }
 
     private static void UpdateMaximum(ref int target, int observed)
