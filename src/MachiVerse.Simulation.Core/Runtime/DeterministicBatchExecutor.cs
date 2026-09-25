@@ -9,6 +9,8 @@ public sealed record DeterministicCpuBatchObservationV1(
     public int MaximumShardItemCount { get; init; }
     public long MinimumShardElapsedTimeTicks { get; init; }
     public long MaximumShardElapsedTimeTicks { get; init; }
+    public int ClaimChunkSize { get; init; }
+    public int ClaimChunkCount { get; init; }
 
     public int ShardItemCountSpread => MaximumShardItemCount - MinimumShardItemCount;
     public long ShardElapsedTimeSpreadTicks => MaximumShardElapsedTimeTicks - MinimumShardElapsedTimeTicks;
@@ -59,11 +61,12 @@ public static class DeterministicBatchExecutor
 
     /// <summary>
     /// Executes independent CPU-bound work with a requested worker budget while preserving the
-    /// input index as the only output placement authority. Each worker owns a deterministic static
-    /// shard (worker index, worker index + worker count, ...), so scheduling/completion order cannot
-    /// influence work assignment or semantic output placement. Concurrency is observed at the shard
-    /// lifetime boundary rather than around every input item, avoiding hot-path atomic operations.
-    /// A single effective shard executes directly on the caller continuation without Task.Run or
+    /// input index as the only output placement authority. Workers dynamically claim deterministic
+    /// contiguous canonical chunks from a shared monotonic cursor. Claim/completion order is not an
+    /// authority and cannot affect semantic output placement. Chunk granularity is derived from the
+    /// batch size and effective worker count so load can rebalance without returning to per-item
+    /// atomic claims. Concurrency is observed at worker lifetime rather than around every input item.
+    /// A single effective worker executes directly on the caller continuation without Task.Run or
     /// per-worker diagnostic arrays.
     ///
     /// This primitive intentionally has no fixed 16-worker ceiling. The caller owns deployment and
@@ -107,9 +110,14 @@ public static class DeterministicBatchExecutor
                     MaximumShardItemCount = inputs.Count,
                     MinimumShardElapsedTimeTicks = elapsedTicks,
                     MaximumShardElapsedTimeTicks = elapsedTicks,
+                    ClaimChunkSize = inputs.Count,
+                    ClaimChunkCount = 1,
                 });
         }
 
+        var claimChunkSize = CalculateClaimChunkSize(inputs.Count, effectiveWorkerCount);
+        var claimChunkCount = (int)(((long)inputs.Count + claimChunkSize - 1L) / claimChunkSize);
+        long nextIndex = 0;
         var activeWorkers = 0;
         var maxObservedConcurrency = 0;
         var shardItemCounts = new int[effectiveWorkerCount];
@@ -128,17 +136,30 @@ public static class DeterministicBatchExecutor
                 {
                     var startedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
                     var processedItemCount = 0;
-                    var active = Interlocked.Increment(ref activeWorkers);
-                    UpdateMaximum(ref maxObservedConcurrency, active);
+                    var observedAsActive = false;
                     try
                     {
-                        for (var stableIndex = stableWorkerIndex;
-                             stableIndex < inputs.Count;
-                             stableIndex += effectiveWorkerCount)
+                        while (true)
                         {
                             executionToken.ThrowIfCancellationRequested();
-                            output[stableIndex] = execute(inputs[stableIndex], executionToken);
-                            processedItemCount++;
+                            var claimedStart = Interlocked.Add(ref nextIndex, claimChunkSize) - claimChunkSize;
+                            if (claimedStart >= inputs.Count)
+                                return;
+
+                            if (!observedAsActive)
+                            {
+                                observedAsActive = true;
+                                var active = Interlocked.Increment(ref activeWorkers);
+                                UpdateMaximum(ref maxObservedConcurrency, active);
+                            }
+
+                            var claimedEnd = Math.Min((long)inputs.Count, claimedStart + claimChunkSize);
+                            for (var stableIndex = (int)claimedStart; stableIndex < claimedEnd; stableIndex++)
+                            {
+                                executionToken.ThrowIfCancellationRequested();
+                                output[stableIndex] = execute(inputs[stableIndex], executionToken);
+                                processedItemCount++;
+                            }
                         }
                     }
                     catch
@@ -148,7 +169,8 @@ public static class DeterministicBatchExecutor
                     }
                     finally
                     {
-                        Interlocked.Decrement(ref activeWorkers);
+                        if (observedAsActive)
+                            Interlocked.Decrement(ref activeWorkers);
                         shardItemCounts[stableWorkerIndex] = processedItemCount;
                         shardElapsedTimeTicks[stableWorkerIndex] = System.Diagnostics.Stopwatch
                             .GetElapsedTime(startedTimestamp)
@@ -184,7 +206,15 @@ public static class DeterministicBatchExecutor
                 MaximumShardItemCount = maximumShardItemCount,
                 MinimumShardElapsedTimeTicks = minimumShardElapsedTimeTicks,
                 MaximumShardElapsedTimeTicks = maximumShardElapsedTimeTicks,
+                ClaimChunkSize = claimChunkSize,
+                ClaimChunkCount = claimChunkCount,
             });
+    }
+
+    private static int CalculateClaimChunkSize(int itemCount, int effectiveWorkerCount)
+    {
+        var targetClaimCount = (long)effectiveWorkerCount * effectiveWorkerCount;
+        return Math.Max(1, (int)(itemCount / targetClaimCount));
     }
 
     private static void UpdateMaximum(ref int target, int observed)

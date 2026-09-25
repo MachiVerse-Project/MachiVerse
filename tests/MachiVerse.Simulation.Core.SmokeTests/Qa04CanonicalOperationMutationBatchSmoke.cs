@@ -140,14 +140,18 @@ internal static class Qa04CanonicalOperationMutationBatchSmoke
                     observation.MaxObservedConcurrency is >= 1 &&
                     observation.MaxObservedConcurrency <= observation.EffectiveWorkerCount,
                 $"Gate2 parallel mutation worker observation drifted for workers={workerCount}.");
-            Require(observation.MinimumShardItemCount >= 1 &&
+            Require(observation.MinimumShardItemCount >= 0 &&
                     observation.MaximumShardItemCount >= observation.MinimumShardItemCount &&
-                    observation.ShardItemCountSpread <= 1,
-                $"Gate2 parallel mutation static shard assignment drifted for workers={workerCount}.");
+                    observation.MaximumShardItemCount >= 1,
+                $"Gate2 parallel mutation dynamic worker assignment drifted for workers={workerCount}.");
             Require(observation.MinimumShardElapsedTimeTicks >= 0 &&
                     observation.MaximumShardElapsedTimeTicks >= observation.MinimumShardElapsedTimeTicks &&
                     observation.ShardElapsedTimeSpreadTicks >= 0,
-                $"Gate2 parallel mutation shard timing observation drifted for workers={workerCount}.");
+                $"Gate2 parallel mutation worker timing observation drifted for workers={workerCount}.");
+            Require(observation.ClaimChunkSize >= 1 &&
+                    observation.ClaimChunkCount >= 1 &&
+                    observation.ClaimChunkCount <= bindings.Length,
+                $"Gate2 parallel mutation dynamic chunk observation drifted for workers={workerCount}.");
             Require(parallel.AppliedOperationIds.SequenceEqual(result.AppliedOperationIds),
                 $"Gate2 parallel mutation operation order drifted for workers={workerCount}.");
             Require(parallel.Changes.Count == result.Changes.Count,
