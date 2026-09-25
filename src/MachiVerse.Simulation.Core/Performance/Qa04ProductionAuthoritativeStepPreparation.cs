@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
@@ -235,6 +236,7 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         ArgumentNullException.ThrowIfNull(runtimeOutputs);
         ArgumentNullException.ThrowIfNull(expectedDescriptors);
 
+        var diagnosticStarted = Stopwatch.GetTimestamp();
         Qa04ReferenceWorldDependencyContractV1.ValidateCanonicalContract();
         Qa04ReferenceWorldMaterialContractV1.RequireAllProductionMaterializersAvailable();
         Qa04CanonicalOperationBindingV1.ValidateCanonicalContract();
@@ -280,12 +282,11 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             throw new InvalidDataException("qa04.production-step.runtime-output-coverage-drift");
         }
 
-        // The current production workload mutations are applied by the six approved typed handlers.
-        // A runtime-owned partition candidate for the same Step would introduce a second mutation
-        // authority and is therefore rejected rather than merged heuristically.
         if (runtimeOutputs.Any(static output => output.LocalPartitionCandidates.Count != 0))
             throw new InvalidDataException("qa04.production-step.runtime-local-candidate-overlap");
+        EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-alignment", diagnosticStarted);
 
+        diagnosticStarted = Stopwatch.GetTimestamp();
         var partitionBatch = await Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.BindParallelAsync(
             basisState,
             orderedBindings,
@@ -294,6 +295,9 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             workerCount,
             digestCache,
             cancellationToken).ConfigureAwait(false);
+        EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-partition-bind", diagnosticStarted);
+
+        diagnosticStarted = Stopwatch.GetTimestamp();
         var mutationOutputs = Qa04CanonicalOperationDomainOutputBinderV1.Bind(basisState, partitionBatch);
         var mutationByDomain = mutationOutputs.Outputs.ToDictionary(static output => output.DomainToken);
 
@@ -315,7 +319,9 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         {
             throw new InvalidDataException("qa04.production-step.merged-output-drift");
         }
+        EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-domain-output-merge", diagnosticStarted);
 
+        diagnosticStarted = Stopwatch.GetTimestamp();
         var candidate = StepCandidateV1.Build(
             candidateId,
             basisState,
@@ -334,7 +340,9 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         {
             throw new InvalidDataException("qa04.production-step.candidate-authority-drift");
         }
+        EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-candidate-build", diagnosticStarted);
 
+        diagnosticStarted = Stopwatch.GetTimestamp();
         var prepared = StepStateApplicationV1.Prepare(
             basisState,
             candidate,
@@ -345,6 +353,7 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         {
             throw new InvalidDataException("qa04.production-step.prepared-authority-drift");
         }
+        EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-state-prepare", diagnosticStarted);
 
         return new Qa04CanonicalOperationStepPreparationResultV1(
             new Qa04CanonicalOperationDomainOutputBatchV1(
@@ -358,6 +367,33 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             PartitionBatch = partitionBatch,
         };
     }
+
+    private static void EmitDiagnosticPhase(
+        ulong injectionStep,
+        int workerCount,
+        string phase,
+        long startedTimestamp)
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("MACHIVERSE_QA04_DETAILED_PHASE_DIAGNOSTICS"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var intervalRaw = Environment.GetEnvironmentVariable("MACHIVERSE_GATE4_STEP3_PHASE_LOG_INTERVAL_TRANSITIONS");
+        var interval = int.TryParse(intervalRaw, out var parsedInterval) && parsedInterval > 0
+            ? parsedInterval
+            : 1;
+        if (injectionStep % checked((ulong)interval) != 0)
+            return;
+
+        Console.Error.WriteLine(
+            $"QA04_PHASE workers={workerCount} injection_step={injectionStep} phase={phase} " +
+            $"elapsed_ms={Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds:F1}");
+    }
+
     private static void ValidateCanonicalWorkloadAlignment(
         ulong injectionStep,
         ulong basisStep,
@@ -426,5 +462,4 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
                 throw new InvalidDataException("qa04.production-step.family-coverage-drift");
         }
     }
-
 }
