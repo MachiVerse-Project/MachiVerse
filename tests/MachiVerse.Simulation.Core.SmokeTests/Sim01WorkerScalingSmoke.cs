@@ -6,6 +6,7 @@ internal static class Sim01WorkerScalingSmoke
     {
         await VerifyAsyncWorkerBudgetBeyondSixteenAsync();
         await VerifyEmptyCpuBatchObservationAsync();
+        await VerifySingleEffectiveCpuShardAsync();
         await VerifyCpuWorkerBudgetBeyondSixteenAsync();
         await VerifyCpuWorkerSemanticOrderAsync();
         await VerifyCpuWorkerFailurePropagationAsync();
@@ -43,6 +44,31 @@ internal static class Sim01WorkerScalingSmoke
                 result.Observation.MaximumShardElapsedTimeTicks == 0 &&
                 result.Observation.ShardElapsedTimeSpreadTicks == 0,
             "SIM-01 empty CPU batch observation must stay zeroed.");
+    }
+
+    private static async Task VerifySingleEffectiveCpuShardAsync()
+    {
+        var result = await DeterministicBatchExecutor.RunCpuBoundAsync(
+            new[] { 21 },
+            workerCount: 16,
+            static (value, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return value * 2;
+            });
+
+        Require(result.Outputs.SequenceEqual(new[] { 42 }),
+            "SIM-01 single effective CPU shard changed semantic output.");
+        Require(result.Observation.RequestedWorkerCount == 16 &&
+                result.Observation.EffectiveWorkerCount == 1 &&
+                result.Observation.MaxObservedConcurrency == 1 &&
+                result.Observation.MinimumShardItemCount == 1 &&
+                result.Observation.MaximumShardItemCount == 1 &&
+                result.Observation.ShardItemCountSpread == 0 &&
+                result.Observation.MinimumShardElapsedTimeTicks >= 0 &&
+                result.Observation.MaximumShardElapsedTimeTicks == result.Observation.MinimumShardElapsedTimeTicks &&
+                result.Observation.ShardElapsedTimeSpreadTicks == 0,
+            "SIM-01 single effective CPU shard observation drifted.");
     }
 
     private static async Task VerifyCpuWorkerBudgetBeyondSixteenAsync()
