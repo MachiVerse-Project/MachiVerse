@@ -44,6 +44,14 @@ internal static class Sim01WorkerScalingSmoke
             "SIM-01 CPU worker executor retained a hidden 16-worker ceiling.");
         Require(result.Observation.MaxObservedConcurrency is >= 1 and <= 64,
             "SIM-01 CPU worker concurrency observation is outside its execution budget.");
+        Require(result.Observation.MinimumShardItemCount == 4 &&
+                result.Observation.MaximumShardItemCount == 4 &&
+                result.Observation.ShardItemCountSpread == 0,
+            "SIM-01 deterministic static shards did not preserve equal item assignment.");
+        Require(result.Observation.MinimumShardElapsedTimeTicks >= 0 &&
+                result.Observation.MaximumShardElapsedTimeTicks >= result.Observation.MinimumShardElapsedTimeTicks &&
+                result.Observation.ShardElapsedTimeSpreadTicks >= 0,
+            "SIM-01 deterministic static shard timing observation is invalid.");
         Require(result.Outputs.Count == input.Length,
             "SIM-01 CPU worker executor changed output cardinality.");
     }
@@ -69,6 +77,9 @@ internal static class Sim01WorkerScalingSmoke
             Require(
                 actual.SequenceEqual(baseline),
                 $"SIM-01 CPU worker semantic output changed at worker-count={workerCount}.");
+            Require(
+                result.Observation.ShardItemCountSpread <= 1,
+                $"SIM-01 static shard item assignment drifted at worker-count={workerCount}.");
         }
     }
 
