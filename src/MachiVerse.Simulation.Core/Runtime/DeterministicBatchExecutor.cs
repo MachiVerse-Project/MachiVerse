@@ -3,7 +3,16 @@ namespace MachiVerse.Simulation.Core.Runtime;
 public sealed record DeterministicCpuBatchObservationV1(
     int RequestedWorkerCount,
     int EffectiveWorkerCount,
-    int MaxObservedConcurrency);
+    int MaxObservedConcurrency)
+{
+    public int MinimumShardItemCount { get; init; }
+    public int MaximumShardItemCount { get; init; }
+    public long MinimumShardElapsedTimeTicks { get; init; }
+    public long MaximumShardElapsedTimeTicks { get; init; }
+
+    public int ShardItemCountSpread => MaximumShardItemCount - MinimumShardItemCount;
+    public long ShardElapsedTimeSpreadTicks => MaximumShardElapsedTimeTicks - MinimumShardElapsedTimeTicks;
+}
 
 public sealed record DeterministicCpuBatchResultV1<TOutput>(
     IReadOnlyList<TOutput> Outputs,
@@ -79,6 +88,8 @@ public static class DeterministicBatchExecutor
         var effectiveWorkerCount = Math.Min(workerCount, inputs.Count);
         var activeWorkers = 0;
         var maxObservedConcurrency = 0;
+        var shardItemCounts = new int[effectiveWorkerCount];
+        var shardElapsedTimeTicks = new long[effectiveWorkerCount];
 
         using var executionCancellation =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -91,6 +102,8 @@ public static class DeterministicBatchExecutor
             workers[workerIndex] = Task.Run(
                 () =>
                 {
+                    var startedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+                    var processedItemCount = 0;
                     try
                     {
                         for (var stableIndex = stableWorkerIndex;
@@ -104,6 +117,7 @@ public static class DeterministicBatchExecutor
                             try
                             {
                                 output[stableIndex] = execute(inputs[stableIndex], executionToken);
+                                processedItemCount++;
                             }
                             finally
                             {
@@ -116,6 +130,13 @@ public static class DeterministicBatchExecutor
                         executionCancellation.Cancel();
                         throw;
                     }
+                    finally
+                    {
+                        shardItemCounts[stableWorkerIndex] = processedItemCount;
+                        shardElapsedTimeTicks[stableWorkerIndex] = System.Diagnostics.Stopwatch
+                            .GetElapsedTime(startedTimestamp)
+                            .Ticks;
+                    }
                 },
                 CancellationToken.None);
         }
@@ -123,12 +144,30 @@ public static class DeterministicBatchExecutor
         await Task.WhenAll(workers).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 
+        var minimumShardItemCount = int.MaxValue;
+        var maximumShardItemCount = 0;
+        var minimumShardElapsedTimeTicks = long.MaxValue;
+        var maximumShardElapsedTimeTicks = 0L;
+        for (var workerIndex = 0; workerIndex < effectiveWorkerCount; workerIndex++)
+        {
+            minimumShardItemCount = Math.Min(minimumShardItemCount, shardItemCounts[workerIndex]);
+            maximumShardItemCount = Math.Max(maximumShardItemCount, shardItemCounts[workerIndex]);
+            minimumShardElapsedTimeTicks = Math.Min(minimumShardElapsedTimeTicks, shardElapsedTimeTicks[workerIndex]);
+            maximumShardElapsedTimeTicks = Math.Max(maximumShardElapsedTimeTicks, shardElapsedTimeTicks[workerIndex]);
+        }
+
         return new DeterministicCpuBatchResultV1<TOutput>(
             output,
             new DeterministicCpuBatchObservationV1(
                 workerCount,
                 effectiveWorkerCount,
-                Volatile.Read(ref maxObservedConcurrency)));
+                Volatile.Read(ref maxObservedConcurrency))
+            {
+                MinimumShardItemCount = minimumShardItemCount,
+                MaximumShardItemCount = maximumShardItemCount,
+                MinimumShardElapsedTimeTicks = minimumShardElapsedTimeTicks,
+                MaximumShardElapsedTimeTicks = maximumShardElapsedTimeTicks,
+            });
     }
 
     private static void UpdateMaximum(ref int target, int observed)
