@@ -63,6 +63,8 @@ public static class DeterministicBatchExecutor
     /// shard (worker index, worker index + worker count, ...), so scheduling/completion order cannot
     /// influence work assignment or semantic output placement. Concurrency is observed at the shard
     /// lifetime boundary rather than around every input item, avoiding hot-path atomic operations.
+    /// A single effective shard executes directly on the caller continuation without Task.Run or
+    /// per-worker diagnostic arrays.
     ///
     /// This primitive intentionally has no fixed 16-worker ceiling. The caller owns deployment and
     /// Config policy; the executor only requires a positive worker budget and bounds active workers
@@ -87,6 +89,27 @@ public static class DeterministicBatchExecutor
         }
 
         var effectiveWorkerCount = Math.Min(workerCount, inputs.Count);
+        if (effectiveWorkerCount == 1)
+        {
+            var startedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (var index = 0; index < inputs.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                output[index] = execute(inputs[index], cancellationToken);
+            }
+
+            var elapsedTicks = System.Diagnostics.Stopwatch.GetElapsedTime(startedTimestamp).Ticks;
+            return new DeterministicCpuBatchResultV1<TOutput>(
+                output,
+                new DeterministicCpuBatchObservationV1(workerCount, 1, 1)
+                {
+                    MinimumShardItemCount = inputs.Count,
+                    MaximumShardItemCount = inputs.Count,
+                    MinimumShardElapsedTimeTicks = elapsedTicks,
+                    MaximumShardElapsedTimeTicks = elapsedTicks,
+                });
+        }
+
         var activeWorkers = 0;
         var maxObservedConcurrency = 0;
         var shardItemCounts = new int[effectiveWorkerCount];
