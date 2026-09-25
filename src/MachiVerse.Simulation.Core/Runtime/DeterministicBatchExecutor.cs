@@ -61,7 +61,8 @@ public static class DeterministicBatchExecutor
     /// Executes independent CPU-bound work with a requested worker budget while preserving the
     /// input index as the only output placement authority. Each worker owns a deterministic static
     /// shard (worker index, worker index + worker count, ...), so scheduling/completion order cannot
-    /// influence work assignment or semantic output placement.
+    /// influence work assignment or semantic output placement. Concurrency is observed at the shard
+    /// lifetime boundary rather than around every input item, avoiding hot-path atomic operations.
     ///
     /// This primitive intentionally has no fixed 16-worker ceiling. The caller owns deployment and
     /// Config policy; the executor only requires a positive worker budget and bounds active workers
