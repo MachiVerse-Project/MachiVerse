@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -5,16 +7,15 @@ namespace MachiVerse.Simulation.Core.Determinism;
 
 public static class HashSuite
 {
+    private static readonly ConcurrentDictionary<string, byte[]> DomainLabelBytes =
+        new(StringComparer.Ordinal);
+
     public static byte[] Hash256(ReadOnlySpan<byte> data) => SHA256.HashData(data);
 
     public static byte[] DomainHash(string label, Action<MvDcborWriter> writeValue)
     {
-        ArgumentNullException.ThrowIfNull(label);
         ArgumentNullException.ThrowIfNull(writeValue);
-        if (label.Any(static c => c > 0x7f))
-            throw new ArgumentException("Domain label must be ASCII.", nameof(label));
-
-        var labelBytes = Encoding.ASCII.GetBytes(label);
+        var labelBytes = EncodeDomainLabel(label);
         var writer = new MvDcborWriter();
         writeValue(writer);
         var valueBytes = writer.ToArray();
@@ -25,9 +26,136 @@ public static class HashSuite
         return SHA256.HashData(preimage);
     }
 
+    internal static byte[] DomainHashCanonicalValue(string label, ReadOnlySpan<byte> canonicalValue)
+    {
+        if (canonicalValue.IsEmpty)
+            throw new ArgumentException("Canonical MV-DCBOR value cannot be empty.", nameof(canonicalValue));
+
+        var labelBytes = EncodeDomainLabel(label);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(labelBytes);
+        Span<byte> separator = stackalloc byte[1];
+        separator[0] = 0;
+        hash.AppendData(separator);
+        hash.AppendData(canonicalValue);
+        return hash.GetHashAndReset();
+    }
+
+    /// <summary>
+    /// Computes the exact same domain hash as <see cref="DomainHash"/> while feeding canonical
+    /// MV-DCBOR bytes directly into SHA-256. The full canonical value/preimage is never retained.
+    /// </summary>
+    public static byte[] DomainHashStreaming(string label, Action<MvDcborWriter> writeValue)
+    {
+        ArgumentNullException.ThrowIfNull(writeValue);
+        using var session = BeginDomainHashStreaming(label);
+        writeValue(session.Writer);
+        return session.Complete();
+    }
+
+    /// <summary>
+    /// Opens an incremental domain-hash session. Callers may keep the canonical writer across async
+    /// suspension points and finalize after the complete value has been emitted. The resulting hash
+    /// uses the identical ASCII-label + NUL + MV-DCBOR preimage as DomainHash/DomainHashStreaming.
+    /// </summary>
+    public static StreamingDomainHashSession BeginDomainHashStreaming(string label)
+        => new(EncodeDomainLabel(label));
+
     public static OpaqueId128 Trunc128(ReadOnlySpan<byte> hash)
     {
         if (hash.Length < 16) throw new ArgumentException("Hash must contain at least 16 bytes.", nameof(hash));
         return OpaqueId128.FromBytes(hash[..16]);
+    }
+
+    private static byte[] EncodeDomainLabel(string label)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        return DomainLabelBytes.GetOrAdd(
+            label,
+            static value =>
+            {
+                if (value.Any(static c => c > 0x7f))
+                    throw new ArgumentException("Domain label must be ASCII.", "label");
+                return Encoding.ASCII.GetBytes(value);
+            });
+    }
+
+    public sealed class StreamingDomainHashSession : IDisposable
+    {
+        private readonly IncrementalHash _hash;
+        private bool _completed;
+        private bool _disposed;
+
+        internal StreamingDomainHashSession(byte[] labelBytes)
+        {
+            ArgumentNullException.ThrowIfNull(labelBytes);
+            _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            _hash.AppendData(labelBytes);
+            Span<byte> separator = stackalloc byte[1];
+            separator[0] = 0;
+            _hash.AppendData(separator);
+            Writer = new MvDcborWriter(new IncrementalHashBufferWriter(_hash));
+        }
+
+        public MvDcborWriter Writer { get; }
+
+        internal void AppendCanonicalBytes(ReadOnlySpan<byte> canonicalBytes)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_completed) throw new InvalidOperationException("Domain hash streaming session is already complete.");
+            if (canonicalBytes.IsEmpty)
+                throw new ArgumentException("Canonical byte sequence cannot be empty.", nameof(canonicalBytes));
+            _hash.AppendData(canonicalBytes);
+        }
+
+        public byte[] Complete()
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_completed) throw new InvalidOperationException("Domain hash streaming session is already complete.");
+            _completed = true;
+            return _hash.GetHashAndReset();
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _hash.Dispose();
+        }
+    }
+
+    private sealed class IncrementalHashBufferWriter : IBufferWriter<byte>
+    {
+        private readonly IncrementalHash _hash;
+        private byte[] _buffer = new byte[256];
+
+        public IncrementalHashBufferWriter(IncrementalHash hash)
+            => _hash = hash ?? throw new ArgumentNullException(nameof(hash));
+
+        public void Advance(int count)
+        {
+            if (count < 0 || count > _buffer.Length) throw new ArgumentOutOfRangeException(nameof(count));
+            if (count != 0) _hash.AppendData(_buffer.AsSpan(0, count));
+        }
+
+        public Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            EnsureCapacity(sizeHint);
+            return _buffer;
+        }
+
+        public Span<byte> GetSpan(int sizeHint = 0)
+        {
+            EnsureCapacity(sizeHint);
+            return _buffer;
+        }
+
+        private void EnsureCapacity(int sizeHint)
+        {
+            if (sizeHint < 0) throw new ArgumentOutOfRangeException(nameof(sizeHint));
+            if (sizeHint == 0) sizeHint = 1;
+            if (sizeHint <= _buffer.Length) return;
+            Array.Resize(ref _buffer, sizeHint);
+        }
     }
 }

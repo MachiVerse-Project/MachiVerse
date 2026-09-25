@@ -57,6 +57,9 @@ public sealed class StepCandidateV1
 {
     private static readonly StableToken TransactionAtomicityInvariant = new("transaction.atomicity");
     private static readonly StableToken TransactionAtomicityFailure = new("transaction.invariant-failed");
+    private static readonly StandardDomainExecutionPlanV1 StandardPlan = StandardDomainExecutionPlanV1.Create();
+    private static readonly IReadOnlyDictionary<StableToken, ushort> StandardRankByDomain =
+        StandardPlan.Entries.ToDictionary(static entry => entry.DomainToken, static entry => entry.DomainRank);
 
     private StepCandidateV1(
         OpaqueId128 candidateId,
@@ -138,10 +141,9 @@ public sealed class StepCandidateV1
             !CryptographicOperations.FixedTimeEquals(frozenInput.ConfigDigest, state.Diagnostic.ConfigDigest))
             throw new InvalidDataException("step-candidate.config-digest-mismatch-at-generation");
 
-        var plan = StandardDomainExecutionPlanV1.Create();
-        var rankByDomain = plan.Entries.ToDictionary(static entry => entry.DomainToken, static entry => entry.DomainRank);
+        var plan = StandardPlan;
         var outputs = domainOutputs
-            .OrderBy(output => rankByDomain.TryGetValue(output.DomainToken, out var rank) ? rank : ushort.MaxValue)
+            .OrderBy(output => StandardRankByDomain.TryGetValue(output.DomainToken, out var rank) ? rank : ushort.MaxValue)
             .ThenBy(static output => output.DomainToken.Value, StringComparer.Ordinal)
             .ToArray();
         if (outputs.Length != plan.Entries.Count ||
@@ -301,114 +303,133 @@ public sealed class StepCandidateV1
         IReadOnlyList<CrossDomainTransactionCandidateV1> transactions,
         IReadOnlyList<InvariantResultV1> invariants,
         ulong targetStep)
-        => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
+    {
+        using var session = HashSuite.BeginDomainHashStreaming("mv.state-diagnostic.v1");
+        var writer = session.Writer;
+        Span<byte> idBytes = stackalloc byte[16];
+        Span<byte> orderKeyBytes = stackalloc byte[SameStepOrderKey.DatabaseKeyLength];
+
+        var hasTransactions = transactions.Count != 0;
+        var hasCoreSubstates = coreSubstates.Count != 0;
+        var baseMapCount = hasTransactions ? 11UL : 10UL;
+        writer.WriteMapStart(baseMapCount + (hasCoreSubstates ? 1UL : 0UL));
+        writer.WriteUnsigned(0);
+        state.Header.WorldId.WriteBytes(idBytes);
+        writer.WriteBytes(idBytes);
+        writer.WriteUnsigned(1); writer.WriteUnsigned(state.Header.Step);
+        writer.WriteUnsigned(2); writer.WriteUnsigned(targetStep);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(frozenInput.ConfigGeneration);
+        writer.WriteUnsigned(4); writer.WriteBytes(frozenInput.ConfigDigest);
+        writer.WriteUnsigned(5);
+        writer.WriteArrayStart((ulong)frozenInput.ScheduledOperations.Count);
+        foreach (var operation in frozenInput.ScheduledOperations)
         {
-            var hasTransactions = transactions.Count != 0;
-            var hasCoreSubstates = coreSubstates.Count != 0;
-            var baseMapCount = hasTransactions ? 11UL : 10UL;
-            writer.WriteMapStart(baseMapCount + (hasCoreSubstates ? 1UL : 0UL));
-            writer.WriteUnsigned(0); writer.WriteBytes(state.Header.WorldId.ToBytes());
-            writer.WriteUnsigned(1); writer.WriteUnsigned(state.Header.Step);
-            writer.WriteUnsigned(2); writer.WriteUnsigned(targetStep);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(frozenInput.ConfigGeneration);
-            writer.WriteUnsigned(4); writer.WriteBytes(frozenInput.ConfigDigest);
-            writer.WriteUnsigned(5);
-            writer.WriteArrayStart((ulong)frozenInput.ScheduledOperations.Count);
-            foreach (var operation in frozenInput.ScheduledOperations)
+            operation.OperationId.WriteBytes(idBytes);
+            operation.OrderKey.WriteDatabaseBytes(orderKeyBytes);
+            writer.WriteArrayStart(2);
+            writer.WriteBytes(idBytes);
+            writer.WriteBytes(orderKeyBytes);
+        }
+
+        writer.WriteUnsigned(6);
+        writer.WriteArrayStart((ulong)outputs.Count);
+        foreach (var output in outputs)
+        {
+            writer.WriteArrayStart(2);
+            writer.WriteAsciiText(output.DomainToken.Value);
+            writer.WriteArrayStart((ulong)output.Intents.Count);
+            foreach (var intent in output.Intents)
             {
-                writer.WriteArrayStart(2);
-                writer.WriteBytes(operation.OperationId.ToBytes());
-                writer.WriteBytes(operation.OrderKey.ToDatabaseBytes());
+                intent.IntentId.WriteBytes(idBytes);
+                writer.WriteBytes(idBytes);
             }
-            writer.WriteUnsigned(6);
-            writer.WriteArrayStart((ulong)outputs.Count);
-            foreach (var output in outputs)
+        }
+
+        writer.WriteUnsigned(7);
+        writer.WriteArrayStart((ulong)resolutions.Count);
+        foreach (var resolution in resolutions)
+        {
+            writer.WriteMapStart(4);
+            writer.WriteUnsigned(0); writer.WriteBytes(resolution.Group.Scope.Digest);
+            writer.WriteUnsigned(1); writer.WriteUnsigned((uint)resolution.Group.ResolutionMode);
+            writer.WriteUnsigned(2);
+            writer.WriteArrayStart((ulong)resolution.Outcomes.Count);
+            foreach (var outcome in resolution.Outcomes)
             {
+                outcome.Intent.IntentId.WriteBytes(idBytes);
                 writer.WriteArrayStart(2);
-                writer.WriteAsciiText(output.DomainToken.Value);
-                writer.WriteArrayStart((ulong)output.Intents.Count);
-                foreach (var intent in output.Intents)
-                    writer.WriteBytes(intent.IntentId.ToBytes());
+                writer.WriteBytes(idBytes);
+                writer.WriteUnsigned((uint)outcome.Disposition);
             }
-            writer.WriteUnsigned(7);
-            writer.WriteArrayStart((ulong)resolutions.Count);
-            foreach (var resolution in resolutions)
+            writer.WriteUnsigned(3);
+            if (resolution.AggregateDigest is null)
             {
+                writer.WriteArrayStart(0);
+            }
+            else
+            {
+                writer.WriteArrayStart(1);
+                writer.WriteBytes(resolution.AggregateDigest);
+            }
+        }
+
+        writer.WriteUnsigned(8);
+        writer.WriteArrayStart((ulong)partitions.Count);
+        foreach (var partition in partitions)
+        {
+            writer.WriteArrayStart(2);
+            writer.WriteAsciiText(partition.PartitionId.Value);
+            writer.WriteBytes(partition.CandidateDigest);
+        }
+
+        if (hasTransactions)
+        {
+            writer.WriteUnsigned(9);
+            writer.WriteArrayStart((ulong)transactions.Count);
+            foreach (var transaction in transactions)
+            {
+                transaction.TransactionId.WriteBytes(idBytes);
                 writer.WriteMapStart(4);
-                writer.WriteUnsigned(0); writer.WriteBytes(resolution.Group.Scope.Digest);
-                writer.WriteUnsigned(1); writer.WriteUnsigned((uint)resolution.Group.ResolutionMode);
-                writer.WriteUnsigned(2);
-                writer.WriteArrayStart((ulong)resolution.Outcomes.Count);
-                foreach (var outcome in resolution.Outcomes)
-                {
-                    writer.WriteArrayStart(2);
-                    writer.WriteBytes(outcome.Intent.IntentId.ToBytes());
-                    writer.WriteUnsigned((uint)outcome.Disposition);
-                }
-                writer.WriteUnsigned(3);
-                if (resolution.AggregateDigest is null)
-                {
-                    writer.WriteArrayStart(0);
-                }
-                else
-                {
-                    writer.WriteArrayStart(1);
-                    writer.WriteBytes(resolution.AggregateDigest);
-                }
+                writer.WriteUnsigned(0); writer.WriteBytes(idBytes);
+                writer.WriteUnsigned(1); writer.WriteAsciiText(transaction.TransactionKind.Value);
+                writer.WriteUnsigned(2); writer.WriteUnsigned((uint)transaction.Status);
+                writer.WriteUnsigned(3); writer.WriteBytes(transaction.DiagnosticDigest);
             }
-            writer.WriteUnsigned(8);
-            writer.WriteArrayStart((ulong)partitions.Count);
-            foreach (var partition in partitions)
+        }
+
+        writer.WriteUnsigned(hasTransactions ? 10UL : 9UL);
+        writer.WriteArrayStart((ulong)invariants.Count);
+        foreach (var invariant in invariants)
+        {
+            writer.WriteMapStart(4);
+            writer.WriteUnsigned(0); writer.WriteAsciiText(invariant.InvariantId.Value);
+            writer.WriteUnsigned(1); writer.WriteUnsigned((uint)invariant.Severity);
+            writer.WriteUnsigned(2); writer.WriteUnsigned((uint)invariant.Outcome);
+            writer.WriteUnsigned(3);
+            if (invariant.DiagnosticCode is { } code)
+            {
+                writer.WriteArrayStart(1);
+                writer.WriteAsciiText(code.Value);
+            }
+            else
+            {
+                writer.WriteArrayStart(0);
+            }
+        }
+
+        if (hasCoreSubstates)
+        {
+            writer.WriteUnsigned(hasTransactions ? 11UL : 10UL);
+            writer.WriteArrayStart((ulong)coreSubstates.Count);
+            foreach (var core in coreSubstates)
             {
                 writer.WriteArrayStart(2);
-                writer.WriteAsciiText(partition.PartitionId.Value);
-                writer.WriteBytes(partition.CandidateDigest);
+                writer.WriteUnsigned((byte)core.Kind);
+                writer.WriteBytes(core.CandidateDigest);
             }
+        }
 
-            if (hasTransactions)
-            {
-                writer.WriteUnsigned(9);
-                writer.WriteArrayStart((ulong)transactions.Count);
-                foreach (var transaction in transactions)
-                {
-                    writer.WriteMapStart(4);
-                    writer.WriteUnsigned(0); writer.WriteBytes(transaction.TransactionId.ToBytes());
-                    writer.WriteUnsigned(1); writer.WriteAsciiText(transaction.TransactionKind.Value);
-                    writer.WriteUnsigned(2); writer.WriteUnsigned((uint)transaction.Status);
-                    writer.WriteUnsigned(3); writer.WriteBytes(transaction.DiagnosticDigest);
-                }
-            }
+        return session.Complete();
+    }
 
-            writer.WriteUnsigned(hasTransactions ? 10UL : 9UL);
-            writer.WriteArrayStart((ulong)invariants.Count);
-            foreach (var invariant in invariants)
-            {
-                writer.WriteMapStart(4);
-                writer.WriteUnsigned(0); writer.WriteAsciiText(invariant.InvariantId.Value);
-                writer.WriteUnsigned(1); writer.WriteUnsigned((uint)invariant.Severity);
-                writer.WriteUnsigned(2); writer.WriteUnsigned((uint)invariant.Outcome);
-                writer.WriteUnsigned(3);
-                if (invariant.DiagnosticCode is { } code)
-                {
-                    writer.WriteArrayStart(1);
-                    writer.WriteAsciiText(code.Value);
-                }
-                else
-                {
-                    writer.WriteArrayStart(0);
-                }
-            }
-
-            if (hasCoreSubstates)
-            {
-                writer.WriteUnsigned(hasTransactions ? 11UL : 10UL);
-                writer.WriteArrayStart((ulong)coreSubstates.Count);
-                foreach (var core in coreSubstates)
-                {
-                    writer.WriteArrayStart(2);
-                    writer.WriteUnsigned((byte)core.Kind);
-                    writer.WriteBytes(core.CandidateDigest);
-                }
-            }
-        });
 }

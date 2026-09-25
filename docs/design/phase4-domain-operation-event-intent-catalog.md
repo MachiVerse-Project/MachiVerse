@@ -101,8 +101,6 @@ Normal gameplayではgeometry operationは通常foreign domain intentから生�
 | `participation.absence-policy.set` | diver ref, expected policy generation, ordered policy rules | `exclusive_first_valid` |
 | `participation.control.submit` | binding ref, resident action payload, client basis ref | `sequential` |
 
-#240の承認により、binding release/rebindの明示Operationは通常のuser-level処理で存命ResidentのDiverを交代させる許可を意味しない。交代は管理者権限による明示変更に限定し、generationを進めて旧authorityをstaleとして拒否する。死亡時のbinding終了と死亡後の同じDiverによる別の既存Residentへの参加は参加規則に従う。詳細は `phase3-participation-domain-design.md` §15 と `../protocols/participation-binding.md` §7を正本とする。
-
 ### 4.5 Resident — 9
 
 | token | minimum payload | conflict mode |

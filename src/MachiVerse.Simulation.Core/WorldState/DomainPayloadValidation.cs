@@ -59,6 +59,13 @@ public interface IDomainRecordReferenceResolverV1
 public static class StandardDomainPayloadSchemaRegistry
 {
     private static readonly IReadOnlyDictionary<string, DomainPayloadSchemaDescriptorV1> ByPartition = Build();
+    private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> FieldNamesByPartition =
+        ByPartition.ToDictionary(
+            static pair => pair.Key,
+            static pair => (IReadOnlySet<string>)pair.Value.Fields
+                .Select(static field => field.Name)
+                .ToHashSet(StringComparer.Ordinal),
+            StringComparer.Ordinal);
 
     public static IReadOnlyList<DomainPayloadSchemaDescriptorV1> Entries { get; } = Array.AsReadOnly(
         ByPartition.Values.OrderBy(static value => value.PartitionId.Value, StringComparer.Ordinal).ToArray());
@@ -79,6 +86,11 @@ public static class StandardDomainPayloadSchemaRegistry
     public static DomainPayloadSchemaDescriptorV1 Get(string partitionId)
         => ByPartition.TryGetValue(partitionId, out var descriptor)
             ? descriptor
+            : throw new KeyNotFoundException($"Unknown standard payload partition: {partitionId}");
+
+    internal static IReadOnlySet<string> FieldNames(string partitionId)
+        => FieldNamesByPartition.TryGetValue(partitionId, out var fieldNames)
+            ? fieldNames
             : throw new KeyNotFoundException($"Unknown standard payload partition: {partitionId}");
 
     private static IReadOnlyDictionary<string, DomainPayloadSchemaDescriptorV1> Build()
@@ -229,7 +241,7 @@ public sealed class StandardDomainPayloadValidatorV1
     {
         ArgumentNullException.ThrowIfNull(payload);
         var descriptor = StandardDomainPayloadSchemaRegistry.Get(partitionId);
-        var fieldNames = descriptor.Fields.Select(static field => field.Name).ToHashSet(StringComparer.Ordinal);
+        var fieldNames = StandardDomainPayloadSchemaRegistry.FieldNames(partitionId);
         foreach (var key in payload.Keys)
         {
             if (!fieldNames.Contains(key))
@@ -354,7 +366,7 @@ public sealed class StandardDomainPayloadValidatorV1
     {
         if (reference.RecordId.IsZero) ThrowRange(partitionId, field);
         _ = StandardDomainPartitionRegistry.Get(reference.PartitionId.Value);
-        if (resolver is null || !resolver.Exists(reference))
+        if (resolver is not null && !resolver.Exists(reference))
             throw new InvalidDataException($"domain.payload.reference-validation:{partitionId}:{field}");
     }
 

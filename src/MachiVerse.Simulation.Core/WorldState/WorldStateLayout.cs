@@ -45,6 +45,23 @@ public sealed class WorldStateHeaderV1
     }
 }
 
+internal sealed class CanonicalRecordChunkV1
+{
+    public CanonicalRecordChunkV1(ulong recordCount, byte[] encodedRecords)
+    {
+        if (recordCount == 0) throw new ArgumentOutOfRangeException(nameof(recordCount));
+        ArgumentNullException.ThrowIfNull(encodedRecords);
+        if (encodedRecords.Length == 0)
+            throw new ArgumentException("Canonical record chunk bytes cannot be empty.", nameof(encodedRecords));
+
+        RecordCount = recordCount;
+        EncodedRecords = encodedRecords;
+    }
+
+    public ulong RecordCount { get; }
+    public byte[] EncodedRecords { get; }
+}
+
 public sealed class PartitionStateHeaderV1
 {
     public PartitionStateHeaderV1(
@@ -53,11 +70,13 @@ public sealed class PartitionStateHeaderV1
         ulong basisStep,
         DetailLevelV1 detailLevel,
         ulong itemCount,
-        byte[] canonicalDigest)
+        byte[] canonicalDigest,
+        PartitionCanonicalDigestAlgorithmV1 digestAlgorithm = PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1)
     {
         ArgumentNullException.ThrowIfNull(identity);
         if (revision == 0) throw new ArgumentOutOfRangeException(nameof(revision), "Partition revision starts at 1.");
         if (!Enum.IsDefined(detailLevel)) throw new ArgumentOutOfRangeException(nameof(detailLevel));
+        if (!Enum.IsDefined(digestAlgorithm)) throw new ArgumentOutOfRangeException(nameof(digestAlgorithm));
         ArgumentNullException.ThrowIfNull(canonicalDigest);
         if (canonicalDigest.Length != 32) throw new ArgumentException("canonical_digest must be exactly 32 bytes.", nameof(canonicalDigest));
 
@@ -69,6 +88,7 @@ public sealed class PartitionStateHeaderV1
         DetailLevel = detailLevel;
         ItemCount = itemCount;
         CanonicalDigest = canonicalDigest.ToArray();
+        DigestAlgorithm = digestAlgorithm;
     }
 
     public StableToken PartitionId { get; }
@@ -79,6 +99,7 @@ public sealed class PartitionStateHeaderV1
     public DetailLevelV1 DetailLevel { get; }
     public ulong ItemCount { get; }
     public byte[] CanonicalDigest { get; }
+    public PartitionCanonicalDigestAlgorithmV1 DigestAlgorithm { get; }
 
     public static PartitionStateHeaderV1 CreateCanonical<TPayload>(
         DomainPartitionStateV1<TPayload> partition,
@@ -86,21 +107,99 @@ public sealed class PartitionStateHeaderV1
         ulong basisStep,
         DetailLevelV1 detailLevel,
         Func<TPayload, byte[]> canonicalPayloadDigest)
+        => CreateCanonicalCore(
+            partition,
+            revision,
+            basisStep,
+            detailLevel,
+            canonicalPayloadDigest,
+            canonicalRecordEncoding: null);
+
+    internal static PartitionStateHeaderV1 CreateCanonicalCached<TPayload>(
+        DomainPartitionStateV1<TPayload> partition,
+        ulong revision,
+        ulong basisStep,
+        DetailLevelV1 detailLevel,
+        Func<TPayload, byte[]> canonicalPayloadDigest,
+        Func<DomainRecordEnvelopeV1<TPayload>, byte[]> canonicalRecordEncoding)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalRecordEncoding);
+        return CreateCanonicalCore(
+            partition,
+            revision,
+            basisStep,
+            detailLevel,
+            canonicalPayloadDigest,
+            canonicalRecordEncoding);
+    }
+
+    internal static PartitionStateHeaderV1 CreateCanonicalPrevalidatedChunks(
+        DomainPartitionIdentityV1 identity,
+        ulong revision,
+        ulong basisStep,
+        DetailLevelV1 detailLevel,
+        ulong itemCount,
+        IReadOnlyList<CanonicalRecordChunkV1> canonicalRecordChunks)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        ArgumentNullException.ThrowIfNull(canonicalRecordChunks);
+        if (revision == 0) throw new ArgumentOutOfRangeException(nameof(revision));
+        if (!Enum.IsDefined(detailLevel)) throw new ArgumentOutOfRangeException(nameof(detailLevel));
+        if (itemCount == 0 && canonicalRecordChunks.Count != 0)
+            throw new InvalidDataException("domain.record-chunk-count-mismatch");
+        if (itemCount != 0 && canonicalRecordChunks.Count == 0)
+            throw new InvalidDataException("domain.record-chunk-count-mismatch");
+
+        ulong actualCount = 0;
+        using var session = HashSuite.BeginDomainHashStreaming("mv.state-diagnostic.v1");
+        var writer = session.Writer;
+        writer.WriteMapStart(8);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(identity.PartitionId.Value);
+        writer.WriteUnsigned(1); writer.WriteAsciiText(identity.OwnerDomain.Value);
+        writer.WriteUnsigned(2); writer.WriteAsciiText(identity.PartitionSchema.SchemaId.Value);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(revision);
+        writer.WriteUnsigned(4); writer.WriteUnsigned(basisStep);
+        writer.WriteUnsigned(5); writer.WriteUnsigned((byte)detailLevel);
+        writer.WriteUnsigned(6); writer.WriteUnsigned(itemCount);
+        writer.WriteUnsigned(7);
+        writer.WriteArrayStart(itemCount);
+
+        foreach (var chunk in canonicalRecordChunks)
+        {
+            ArgumentNullException.ThrowIfNull(chunk);
+            actualCount = checked(actualCount + chunk.RecordCount);
+            if (actualCount > itemCount)
+                throw new InvalidDataException("domain.record-chunk-count-mismatch");
+            session.AppendCanonicalBytes(chunk.EncodedRecords);
+        }
+
+        if (actualCount != itemCount)
+            throw new InvalidDataException("domain.record-chunk-count-mismatch");
+        var digest = session.Complete();
+
+        return new PartitionStateHeaderV1(
+            identity,
+            revision,
+            basisStep,
+            detailLevel,
+            itemCount,
+            digest);
+    }
+
+    private static PartitionStateHeaderV1 CreateCanonicalCore<TPayload>(
+        DomainPartitionStateV1<TPayload> partition,
+        ulong revision,
+        ulong basisStep,
+        DetailLevelV1 detailLevel,
+        Func<TPayload, byte[]> canonicalPayloadDigest,
+        Func<DomainRecordEnvelopeV1<TPayload>, byte[]>? canonicalRecordEncoding)
     {
         ArgumentNullException.ThrowIfNull(partition);
         ArgumentNullException.ThrowIfNull(canonicalPayloadDigest);
         if (revision == 0) throw new ArgumentOutOfRangeException(nameof(revision));
         if (!Enum.IsDefined(detailLevel)) throw new ArgumentOutOfRangeException(nameof(detailLevel));
 
-        foreach (var record in partition.RecordsCanonical)
-        {
-            if (record.CreatedStep > basisStep)
-                throw new InvalidDataException("domain.record-created-after-partition-basis");
-            if (record.RetiredStep is { } retired && retired > basisStep)
-                throw new InvalidDataException("domain.record-retired-after-partition-basis");
-        }
-
-        var digest = HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
+        var digest = HashSuite.DomainHashStreaming("mv.state-diagnostic.v1", writer =>
         {
             writer.WriteMapStart(8);
             writer.WriteUnsigned(0); writer.WriteAsciiText(partition.Identity.PartitionId.Value);
@@ -114,34 +213,26 @@ public sealed class PartitionStateHeaderV1
             writer.WriteArrayStart(partition.ItemCount);
             foreach (var record in partition.RecordsCanonical)
             {
+                if (record.CreatedStep > basisStep)
+                    throw new InvalidDataException("domain.record-created-after-partition-basis");
+                if (record.RetiredStep is { } retiredAfterBasis && retiredAfterBasis > basisStep)
+                    throw new InvalidDataException("domain.record-retired-after-partition-basis");
+
+                if (canonicalRecordEncoding is not null)
+                {
+                    var encoded = canonicalRecordEncoding(record)
+                        ?? throw new InvalidDataException("domain.record-canonical-encoding-null");
+                    if (encoded.Length == 0)
+                        throw new InvalidDataException("domain.record-canonical-encoding-empty");
+                    writer.WriteCanonicalValue(encoded);
+                    continue;
+                }
+
                 var payloadDigest = canonicalPayloadDigest(record.Payload)
                     ?? throw new InvalidDataException("domain.payload-digest-null");
                 if (payloadDigest.Length != 32)
                     throw new InvalidDataException("domain.payload-digest-invalid-length");
-
-                writer.WriteMapStart(10);
-                writer.WriteUnsigned(0); writer.WriteBytes(record.RecordId.ToBytes());
-                writer.WriteUnsigned(1); writer.WriteAsciiText(record.RecordSchema.SchemaId.Value);
-                writer.WriteUnsigned(2); writer.WriteUnsigned(record.RecordSchema.Version.Major);
-                writer.WriteUnsigned(3); writer.WriteUnsigned(record.RecordSchema.Version.Minor);
-                writer.WriteUnsigned(4); writer.WriteUnsigned(record.Revision);
-                writer.WriteUnsigned(5); writer.WriteUnsigned(record.CreatedStep);
-                writer.WriteUnsigned(6);
-                if (record.RetiredStep is { } retired)
-                {
-                    writer.WriteArrayStart(1);
-                    writer.WriteUnsigned(retired);
-                }
-                else writer.WriteArrayStart(0);
-                writer.WriteUnsigned(7); writer.WriteUnsigned((byte)record.DetailLevel);
-                writer.WriteUnsigned(8);
-                if (record.LineageRef is { } lineage)
-                {
-                    writer.WriteArrayStart(1);
-                    writer.WriteBytes(lineage.ToBytes());
-                }
-                else writer.WriteArrayStart(0);
-                writer.WriteUnsigned(9); writer.WriteBytes(payloadDigest);
+                WriteCanonicalRecord(writer, record, payloadDigest);
             }
         });
 
@@ -152,6 +243,55 @@ public sealed class PartitionStateHeaderV1
             detailLevel,
             partition.ItemCount,
             digest);
+    }
+
+    internal static byte[] EncodeCanonicalRecord<TPayload>(
+        DomainRecordEnvelopeV1<TPayload> record,
+        byte[] payloadDigest)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(payloadDigest);
+        if (payloadDigest.Length != 32)
+            throw new InvalidDataException("domain.payload-digest-invalid-length");
+
+        var writer = new MvDcborWriter();
+        WriteCanonicalRecord(writer, record, payloadDigest);
+        return writer.ToArray();
+    }
+
+    private static void WriteCanonicalRecord<TPayload>(
+        MvDcborWriter writer,
+        DomainRecordEnvelopeV1<TPayload> record,
+        ReadOnlySpan<byte> payloadDigest)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(record);
+        if (payloadDigest.Length != 32)
+            throw new InvalidDataException("domain.payload-digest-invalid-length");
+
+        writer.WriteMapStart(10);
+        writer.WriteUnsigned(0); writer.WriteBytes(record.RecordId.ToBytes());
+        writer.WriteUnsigned(1); writer.WriteAsciiText(record.RecordSchema.SchemaId.Value);
+        writer.WriteUnsigned(2); writer.WriteUnsigned(record.RecordSchema.Version.Major);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(record.RecordSchema.Version.Minor);
+        writer.WriteUnsigned(4); writer.WriteUnsigned(record.Revision);
+        writer.WriteUnsigned(5); writer.WriteUnsigned(record.CreatedStep);
+        writer.WriteUnsigned(6);
+        if (record.RetiredStep is { } retired)
+        {
+            writer.WriteArrayStart(1);
+            writer.WriteUnsigned(retired);
+        }
+        else writer.WriteArrayStart(0);
+        writer.WriteUnsigned(7); writer.WriteUnsigned((byte)record.DetailLevel);
+        writer.WriteUnsigned(8);
+        if (record.LineageRef is { } lineage)
+        {
+            writer.WriteArrayStart(1);
+            writer.WriteBytes(lineage.ToBytes());
+        }
+        else writer.WriteArrayStart(0);
+        writer.WriteUnsigned(9); writer.WriteBytes(payloadDigest);
     }
 }
 
@@ -207,17 +347,26 @@ public sealed record WorldSubstateRefV1(
     }
 }
 
+public enum StateDiagnosticAlgorithmV1 : byte
+{
+    LegacyFlatV1 = 0,
+    HierarchyRootV1 = 1,
+}
+
 public sealed class StateDiagnosticV1
 {
     public StateDiagnosticV1(
         byte[] stateDigest,
         IEnumerable<KeyValuePair<string, byte[]>> partitionDigests,
         byte[] schemaRegistryDigest,
-        byte[] configDigest)
+        byte[] configDigest,
+        StateDiagnosticAlgorithmV1 algorithm = StateDiagnosticAlgorithmV1.LegacyFlatV1,
+        StateDiagnosticRootV1? hierarchyRoot = null)
     {
         RequireHash(stateDigest, nameof(stateDigest));
         RequireHash(schemaRegistryDigest, nameof(schemaRegistryDigest));
         RequireHash(configDigest, nameof(configDigest));
+        if (!Enum.IsDefined(algorithm)) throw new ArgumentOutOfRangeException(nameof(algorithm));
         ArgumentNullException.ThrowIfNull(partitionDigests);
 
         var ordered = partitionDigests
@@ -228,16 +377,30 @@ public sealed class StateDiagnosticV1
             throw new InvalidDataException("world-state.duplicate-partition-diagnostic");
         foreach (var item in ordered) RequireHash(item.Value, item.Key);
 
+        if (algorithm == StateDiagnosticAlgorithmV1.LegacyFlatV1 && hierarchyRoot is not null)
+            throw new InvalidDataException("world-state.legacy-diagnostic-hierarchy-root-present");
+        if (algorithm == StateDiagnosticAlgorithmV1.HierarchyRootV1)
+        {
+            if (hierarchyRoot is null)
+                throw new InvalidDataException("world-state.hierarchy-diagnostic-root-missing");
+            if (!hierarchyRoot.Hash.AsSpan().SequenceEqual(stateDigest))
+                throw new InvalidDataException("world-state.hierarchy-diagnostic-root-drift");
+        }
+
         StateDigest = stateDigest.ToArray();
         PartitionDigests = Array.AsReadOnly(ordered);
         SchemaRegistryDigest = schemaRegistryDigest.ToArray();
         ConfigDigest = configDigest.ToArray();
+        Algorithm = algorithm;
+        HierarchyRoot = hierarchyRoot;
     }
 
     public byte[] StateDigest { get; }
     public IReadOnlyList<KeyValuePair<string, byte[]>> PartitionDigests { get; }
     public byte[] SchemaRegistryDigest { get; }
     public byte[] ConfigDigest { get; }
+    public StateDiagnosticAlgorithmV1 Algorithm { get; }
+    public StateDiagnosticRootV1? HierarchyRoot { get; }
 
     private static void RequireHash(byte[] value, string field)
     {
@@ -248,6 +411,8 @@ public sealed class StateDiagnosticV1
 
 public sealed class WorldStateV1
 {
+    private static readonly byte[] CachedSchemaRegistryDigest = ComputeSchemaRegistryDigestCore();
+
     public WorldStateV1(
         WorldStateHeaderV1 header,
         OrderedPartitionDirectoryV1 partitions,
@@ -318,41 +483,152 @@ public sealed class WorldStateV1
         WorldSubstateRefV1 domainRegistry,
         byte[] configDigest)
     {
-        var partitionDigests = partitions.CanonicalEntries
+        var partitionEntries = partitions.CanonicalEntries.ToArray();
+        var partitionDigests = partitionEntries
             .Select(static item => new KeyValuePair<string, byte[]>(
                 item.Header.PartitionId.Value,
                 item.Header.CanonicalDigest.ToArray()))
             .ToArray();
         var schemaRegistryDigest = ComputeSchemaRegistryDigest();
-        var stateDigest = HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
-        {
-            writer.WriteMapStart(13);
-            writer.WriteUnsigned(0); writer.WriteBytes(header.WorldId.ToBytes());
-            writer.WriteUnsigned(1); writer.WriteUnsigned(header.Step);
-            writer.WriteUnsigned(2); writer.WriteBytes(header.WorldSeedDigest);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(header.ConfigGeneration);
-            writer.WriteUnsigned(4); writer.WriteUnsigned(header.MasterGeneration);
-            writer.WriteUnsigned(5); writer.WriteUnsigned(header.RateGeneration);
-            writer.WriteUnsigned(6); writer.WriteBytes(configDigest);
-            writer.WriteUnsigned(7); writer.WriteBytes(schemaRegistryDigest);
-            writer.WriteUnsigned(8); writer.WriteBytes(scheduler.CanonicalDigest);
-            writer.WriteUnsigned(9); writer.WriteBytes(operation.CanonicalDigest);
-            writer.WriteUnsigned(10); writer.WriteBytes(detail.CanonicalDigest);
-            writer.WriteUnsigned(11); writer.WriteBytes(domainRegistry.CanonicalDigest);
-            writer.WriteUnsigned(12);
-            writer.WriteArrayStart((ulong)partitionDigests.Length);
-            foreach (var partition in partitionDigests)
-            {
-                writer.WriteArrayStart(2);
-                writer.WriteAsciiText(partition.Key);
-                writer.WriteBytes(partition.Value);
-            }
-        });
 
-        return new StateDiagnosticV1(stateDigest, partitionDigests, schemaRegistryDigest, configDigest);
+        if (partitionEntries.All(static item =>
+                item.Header.DigestAlgorithm == PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1))
+        {
+            var legacyStateDigest = HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
+            {
+                writer.WriteMapStart(13);
+                writer.WriteUnsigned(0); writer.WriteBytes(header.WorldId.ToBytes());
+                writer.WriteUnsigned(1); writer.WriteUnsigned(header.Step);
+                writer.WriteUnsigned(2); writer.WriteBytes(header.WorldSeedDigest);
+                writer.WriteUnsigned(3); writer.WriteUnsigned(header.ConfigGeneration);
+                writer.WriteUnsigned(4); writer.WriteUnsigned(header.MasterGeneration);
+                writer.WriteUnsigned(5); writer.WriteUnsigned(header.RateGeneration);
+                writer.WriteUnsigned(6); writer.WriteBytes(configDigest);
+                writer.WriteUnsigned(7); writer.WriteBytes(schemaRegistryDigest);
+                writer.WriteUnsigned(8); writer.WriteBytes(scheduler.CanonicalDigest);
+                writer.WriteUnsigned(9); writer.WriteBytes(operation.CanonicalDigest);
+                writer.WriteUnsigned(10); writer.WriteBytes(detail.CanonicalDigest);
+                writer.WriteUnsigned(11); writer.WriteBytes(domainRegistry.CanonicalDigest);
+                writer.WriteUnsigned(12);
+                writer.WriteArrayStart((ulong)partitionDigests.Length);
+                foreach (var partition in partitionDigests)
+                {
+                    writer.WriteArrayStart(2);
+                    writer.WriteAsciiText(partition.Key);
+                    writer.WriteBytes(partition.Value);
+                }
+            });
+
+            return new StateDiagnosticV1(
+                legacyStateDigest,
+                partitionDigests,
+                schemaRegistryDigest,
+                configDigest);
+        }
+
+        var hierarchyRoot = ComputeHierarchyDiagnostic(
+            header,
+            partitionEntries,
+            scheduler,
+            operation,
+            detail,
+            domainRegistry,
+            schemaRegistryDigest,
+            configDigest);
+        return new StateDiagnosticV1(
+            hierarchyRoot.Hash,
+            partitionDigests,
+            schemaRegistryDigest,
+            configDigest,
+            StateDiagnosticAlgorithmV1.HierarchyRootV1,
+            hierarchyRoot);
+    }
+
+    private static StateDiagnosticRootV1 ComputeHierarchyDiagnostic(
+        WorldStateHeaderV1 header,
+        IReadOnlyList<PartitionStateRefV1> partitions,
+        WorldSubstateRefV1 scheduler,
+        WorldSubstateRefV1 operation,
+        WorldSubstateRefV1 detail,
+        WorldSubstateRefV1 domainRegistry,
+        byte[] schemaRegistryDigest,
+        byte[] configDigest)
+    {
+        const uint diagnosticPartitionVersion = 2;
+        var domains = new List<DomainDiagnosticHashV1>();
+
+        var coreDomain = new StableToken("core");
+        var coreWriter = new MvDcborWriter();
+        coreWriter.WriteMapStart(10);
+        coreWriter.WriteUnsigned(0); coreWriter.WriteBytes(header.WorldSeedDigest);
+        coreWriter.WriteUnsigned(1); coreWriter.WriteUnsigned(header.ConfigGeneration);
+        coreWriter.WriteUnsigned(2); coreWriter.WriteUnsigned(header.MasterGeneration);
+        coreWriter.WriteUnsigned(3); coreWriter.WriteUnsigned(header.RateGeneration);
+        coreWriter.WriteUnsigned(4); coreWriter.WriteBytes(configDigest);
+        coreWriter.WriteUnsigned(5); coreWriter.WriteBytes(schemaRegistryDigest);
+        coreWriter.WriteUnsigned(6); coreWriter.WriteBytes(scheduler.CanonicalDigest);
+        coreWriter.WriteUnsigned(7); coreWriter.WriteBytes(operation.CanonicalDigest);
+        coreWriter.WriteUnsigned(8); coreWriter.WriteBytes(detail.CanonicalDigest);
+        coreWriter.WriteUnsigned(9); coreWriter.WriteBytes(domainRegistry.CanonicalDigest);
+        var coreSlice = StateDiagnosticHierarchyV1.CreateSliceHash(
+            header.WorldId,
+            header.Step,
+            coreDomain,
+            diagnosticPartitionVersion,
+            new StableToken("core.state"),
+            coreWriter.ToArray());
+        domains.Add(StateDiagnosticHierarchyV1.CreateDomainHash(
+            header.WorldId,
+            header.Step,
+            coreDomain,
+            diagnosticPartitionVersion,
+            [coreSlice]));
+
+        foreach (var group in partitions.GroupBy(static item => item.Header.OwnerDomain))
+        {
+            var domainToken = group.Key;
+            var slices = group
+                .Select(partition =>
+                {
+                    var partitionHeader = partition.Header;
+                    var writer = new MvDcborWriter();
+                    writer.WriteMapStart(9);
+                    writer.WriteUnsigned(0); writer.WriteUnsigned((byte)partitionHeader.DigestAlgorithm);
+                    writer.WriteUnsigned(1); writer.WriteAsciiText(partitionHeader.Schema.SchemaId.Value);
+                    writer.WriteUnsigned(2); writer.WriteUnsigned(partitionHeader.Schema.Version.Major);
+                    writer.WriteUnsigned(3); writer.WriteUnsigned(partitionHeader.Schema.Version.Minor);
+                    writer.WriteUnsigned(4); writer.WriteUnsigned(partitionHeader.Revision);
+                    writer.WriteUnsigned(5); writer.WriteUnsigned(partitionHeader.BasisStep);
+                    writer.WriteUnsigned(6); writer.WriteUnsigned((byte)partitionHeader.DetailLevel);
+                    writer.WriteUnsigned(7); writer.WriteUnsigned(partitionHeader.ItemCount);
+                    writer.WriteUnsigned(8); writer.WriteBytes(partitionHeader.CanonicalDigest);
+                    return StateDiagnosticHierarchyV1.CreateSliceHash(
+                        header.WorldId,
+                        header.Step,
+                        domainToken,
+                        diagnosticPartitionVersion,
+                        partitionHeader.PartitionId,
+                        writer.ToArray());
+                })
+                .ToArray();
+            domains.Add(StateDiagnosticHierarchyV1.CreateDomainHash(
+                header.WorldId,
+                header.Step,
+                domainToken,
+                diagnosticPartitionVersion,
+                slices));
+        }
+
+        return StateDiagnosticHierarchyV1.CreateRootHash(
+            header.WorldId,
+            header.Step,
+            domains);
     }
 
     private static byte[] ComputeSchemaRegistryDigest()
+        => CachedSchemaRegistryDigest;
+
+    private static byte[] ComputeSchemaRegistryDigestCore()
         => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {
             writer.WriteArrayStart((ulong)StandardDomainPartitionRegistry.Entries.Count);

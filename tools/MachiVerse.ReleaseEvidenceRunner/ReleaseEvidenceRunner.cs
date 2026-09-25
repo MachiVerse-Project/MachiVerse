@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 
-internal static class ReleaseEvidenceRunner
+internal static partial class ReleaseEvidenceRunner
 {
     private const string SchemaVersion = "1.0";
     private const string ReferenceProfile = "perf.reference.v1";
@@ -10,6 +10,7 @@ internal static class ReleaseEvidenceRunner
     private const string PublicationProfile = "perf.publication.v1";
     private const string SoakProfile = "performance.soak.24h";
     private const long MinimumSoakSeconds = 86_400;
+    private const string Step3HeartbeatEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_HEARTBEAT_SECONDS";
 
     private static readonly JsonSerializerOptions JsonLine = new()
     {
@@ -57,6 +58,157 @@ internal static class ReleaseEvidenceRunner
         Console.WriteLine($"QA-04 manifest SHA-256: {digest}");
         Console.WriteLine("Adapter boundary: external JSONL process only; no production component assembly reference.");
         Console.WriteLine("Contract-smoke output is never release-eligible.");
+    }
+
+    internal static async Task RunGate4Step2ActualRunAsync(
+        string repositoryRoot,
+        string sourceCommit,
+        string coreExecutable,
+        int workerCount,
+        int runOrdinal,
+        string outputPath)
+    {
+        Program.RequireLowerHex(sourceCommit, 40, "sourceCommit");
+        if (!File.Exists(coreExecutable))
+            throw new FileNotFoundException("Simulation Core executable was not found.", coreExecutable);
+
+        var planPath = Path.Combine(
+            repositoryRoot,
+            "tests",
+            "performance-fixtures",
+            "v1",
+            "gate4-step2-determinism-plan.json");
+        var plan = Program.ReadJson<Gate4Step2DeterminismPlan>(
+            planPath,
+            "Gate4 Step2 bounded determinism plan");
+        Qa04DeterminismEvidenceVerifier.ValidateActualPlan(plan);
+
+        if (!plan.WorkerCounts.Contains(workerCount))
+            throw new ArgumentOutOfRangeException(nameof(workerCount), "Gate4 Step2 worker count is not in the evidence plan.");
+        if (runOrdinal < 1 || runOrdinal > plan.ProcessRunsPerWorker)
+            throw new ArgumentOutOfRangeException(nameof(runOrdinal), "Gate4 Step2 run ordinal is outside the evidence plan.");
+
+        var persistenceRoot = Path.Combine(
+            Path.GetTempPath(),
+            "machiverse-gate4-step2-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = coreExecutable,
+                UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("qa04-target");
+
+            using var process = new Process { StartInfo = startInfo };
+            if (!process.Start())
+                throw new InvalidOperationException("Failed to start Simulation Core Gate4 Step2 process.");
+
+            var request = new
+            {
+                schemaVersion = "1.0",
+                command = "production-step2-determinism-run",
+                workerCount,
+                transitionCount = plan.TransitionCount,
+                persistenceInsertBatchSize = plan.PersistenceInsertBatchSize,
+                progressIntervalTransitions = plan.ProgressIntervalTransitions,
+                persistenceRoot,
+            };
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, JsonLine));
+            process.StandardInput.Close();
+
+            Console.Error.WriteLine(
+                $"GATE4_STEP2_START workers={workerCount} run={runOrdinal} transitions={plan.TransitionCount} " +
+                $"persistence_batch_size={plan.PersistenceInsertBatchSize} progress_interval_transitions={plan.ProgressIntervalTransitions}");
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrBuffer = new StringBuilder();
+            string latestProgress = "not-started";
+
+            async Task PumpStandardErrorAsync()
+            {
+                while (await process.StandardError.ReadLineAsync() is { } line)
+                {
+                    Console.Error.WriteLine(line);
+                    stderrBuffer.AppendLine(line);
+                    if (line.StartsWith("QA04_PROGRESS ", StringComparison.Ordinal))
+                        Volatile.Write(ref latestProgress, line);
+                }
+            }
+
+            using var heartbeatCancellation = new CancellationTokenSource();
+            async Task EmitHeartbeatAsync()
+            {
+                var elapsed = Stopwatch.StartNew();
+                try
+                {
+                    while (true)
+                    {
+                        await Task.Delay(
+                            TimeSpan.FromSeconds(plan.HeartbeatIntervalSeconds),
+                            heartbeatCancellation.Token);
+                        var progressSnapshot = Volatile.Read(ref latestProgress);
+                        Console.Error.WriteLine(
+                            $"GATE4_STEP2_HEARTBEAT workers={workerCount} run={runOrdinal} " +
+                            $"elapsed_seconds={elapsed.Elapsed.TotalSeconds:F1} latest_progress=\"{progressSnapshot}\"");
+                    }
+                }
+                catch (OperationCanceledException) when (heartbeatCancellation.IsCancellationRequested)
+                {
+                }
+            }
+
+            var stderrTask = PumpStandardErrorAsync();
+            var heartbeatTask = EmitHeartbeatAsync();
+            try
+            {
+                await process.WaitForExitAsync();
+            }
+            finally
+            {
+                heartbeatCancellation.Cancel();
+            }
+
+            var stdout = await stdoutTask;
+            await stderrTask;
+            await heartbeatTask;
+            var stderr = stderrBuffer.ToString();
+            if (process.ExitCode != 0)
+                throw new InvalidDataException(
+                    $"Simulation Core Gate4 Step2 process exited {process.ExitCode}: {Limit(stderr, 2000)}");
+
+            var lines = stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length != 1)
+                throw new InvalidDataException(
+                    $"Simulation Core Gate4 Step2 process must emit exactly one JSON line; found {lines.Length}.");
+
+            var result = JsonSerializer.Deserialize<Gate4Step2CoreRunResult>(lines[0], JsonLine)
+                ?? throw new InvalidDataException("Simulation Core Gate4 Step2 result decoded to null.");
+            var row = Qa04DeterminismEvidenceVerifier.ParseActualRun(
+                plan,
+                sourceCommit,
+                workerCount,
+                runOrdinal,
+                result);
+            Program.WriteJson(outputPath, row);
+
+            Console.WriteLine(
+                $"Gate4 Step2 bounded actual run captured: run={row.RunId} workers={row.WorkerCount} ordinal={row.RunOrdinal} transitions={row.TransitionCount} terminal_operations={row.TerminalOperationCount}");
+            Console.WriteLine($"final_state_digest={row.FinalStateDigest}");
+            Console.WriteLine($"transition_committed_digest={row.TransitionCommittedDigest}");
+            Console.WriteLine($"operation_terminal_semantic_digest={row.OperationTerminalSemanticDigest}");
+            Console.WriteLine($"config_history_digest={row.ConfigHistoryDigest}");
+            Console.WriteLine($"promotion_deferral_order_digest={row.PromotionDeferralOrderDigest}");
+        }
+        finally
+        {
+            if (Directory.Exists(persistenceRoot))
+                Directory.Delete(persistenceRoot, recursive: true);
+        }
     }
 
     internal static async Task<int> RunAsync(
@@ -272,8 +424,43 @@ internal static class ReleaseEvidenceRunner
         await process.StandardInput.WriteLineAsync(requestLine);
         process.StandardInput.Close();
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        var stderrTask = PumpAdapterStderrAsync(process.StandardError);
+
+        using var heartbeatCancellation = new CancellationTokenSource();
+        var heartbeatSeconds = Step3HeartbeatSeconds();
+        async Task EmitStep3HeartbeatAsync()
+        {
+            if (!string.Equals(request.RequestKind, "benchmark-run", StringComparison.Ordinal))
+                return;
+
+            try
+            {
+                while (true)
+                {
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(heartbeatSeconds),
+                        heartbeatCancellation.Token).ConfigureAwait(false);
+                    Console.Error.WriteLine(
+                        $"GATE4_STEP3_HEARTBEAT request_id={request.RequestId} " +
+                        $"workers={request.Run?.WorkerCount ?? 0} run={request.Run?.RunOrdinal ?? 0} " +
+                        $"elapsed_seconds={stopwatch.Elapsed.TotalSeconds:F1}");
+                }
+            }
+            catch (OperationCanceledException) when (heartbeatCancellation.IsCancellationRequested)
+            {
+            }
+        }
+
+        var heartbeatTask = EmitStep3HeartbeatAsync();
+        try
+        {
+            await process.WaitForExitAsync();
+        }
+        finally
+        {
+            heartbeatCancellation.Cancel();
+        }
+        await heartbeatTask.ConfigureAwait(false);
         stopwatch.Stop();
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
@@ -287,6 +474,19 @@ internal static class ReleaseEvidenceRunner
         var response = JsonSerializer.Deserialize<Qa04AdapterResponse>(lines[0], JsonLine)
             ?? throw new InvalidDataException($"QA-04 adapter response decoded to null for {request.RequestId}.");
         return new AdapterInvocation(response, stopwatch.Elapsed);
+    }
+
+    private static async Task<string> PumpAdapterStderrAsync(StreamReader reader)
+    {
+        var tail = new StringBuilder();
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            Console.Error.WriteLine(line);
+            tail.AppendLine(line);
+            if (tail.Length > 16_384)
+                tail.Remove(0, tail.Length - 8_192);
+        }
+        return tail.ToString();
     }
 
     private static void ValidateResponse(Qa04AdapterResponse response, Qa04AdapterRequest request, string expectedResponseKind)
@@ -327,11 +527,34 @@ internal static class ReleaseEvidenceRunner
         var reportFailures = ReadStringArray(report, "failure_codes");
         var combinedFailures = response.FailureCodes.Concat(reportFailures).Distinct(StringComparer.Ordinal).ToArray();
         var snapshot = report.GetProperty("snapshot_summary");
+        var cpu = report.GetProperty("domain_cpu_summary");
+        foreach (var field in new[]
+        {
+            "measured", "configured_worker_count", "effective_worker_count", "max_observed_concurrency",
+            "worker_budget_applied", "parallel_execution_observed", "operation_binding", "typed_mutation", "preparation"
+        })
+            if (!cpu.TryGetProperty(field, out _))
+                throw new InvalidDataException($"Benchmark domain_cpu_summary missing required field: {field}.");
+
+        if (string.Equals(response.ExecutionClass, "release", StringComparison.Ordinal))
+        {
+            var expectedFamilyWorkers = Math.Min(run.WorkerCount, 6);
+            RequireCpuStage(cpu.GetProperty("operation_binding"), run.WorkerCount, run.WorkerCount, "operation_binding");
+            RequireCpuStage(cpu.GetProperty("typed_mutation"), run.WorkerCount, expectedFamilyWorkers, "typed_mutation");
+            RequireCpuStage(cpu.GetProperty("preparation"), run.WorkerCount, expectedFamilyWorkers, "preparation");
+        }
+
         return new BenchmarkRunObservation
         {
             RunId = run.RunId,
             WorkerCount = run.WorkerCount,
             RunOrdinal = run.RunOrdinal,
+            CpuParallelismMeasured = GetBool(cpu, "measured"),
+            ConfiguredWorkerCount = GetInt(cpu, "configured_worker_count"),
+            EffectiveWorkerCount = GetInt(cpu, "effective_worker_count"),
+            MaxObservedCpuConcurrency = GetInt(cpu, "max_observed_concurrency"),
+            WorkerBudgetApplied = GetBool(cpu, "worker_budget_applied"),
+            ParallelExecutionObserved = GetBool(cpu, "parallel_execution_observed"),
             StepP95Ms = GetDouble(report, "step_p95_ms"),
             StepP99Ms = GetDouble(report, "step_p99_ms"),
             Mean60sStepMs = GetDouble(report, "step_mean_60s_ms"),
@@ -361,6 +584,19 @@ internal static class ReleaseEvidenceRunner
         {
             if (!observation.TargetPassed) failures.Add("target-report-failed");
             foreach (var code in observation.TargetFailureCodes) failures.Add($"target:{code}");
+            if (string.Equals(executionClass, "release", StringComparison.Ordinal))
+            {
+                if (!observation.CpuParallelismMeasured) failures.Add("cpu-parallelism-unmeasured");
+                if (observation.ConfiguredWorkerCount != observation.WorkerCount) failures.Add("cpu-worker-configured-mismatch");
+                if (observation.EffectiveWorkerCount != observation.WorkerCount) failures.Add("cpu-worker-effective-mismatch");
+                if (!observation.WorkerBudgetApplied) failures.Add("cpu-worker-budget-not-applied");
+                if (!observation.ParallelExecutionObserved) failures.Add("cpu-parallelism-not-observed");
+                if (observation.MaxObservedCpuConcurrency < 1 ||
+                    observation.MaxObservedCpuConcurrency > observation.WorkerCount)
+                    failures.Add("cpu-max-observed-invalid");
+                if (observation.WorkerCount > 1 && observation.MaxObservedCpuConcurrency <= 1)
+                    failures.Add("cpu-parallelism-not-observed");
+            }
         }
 
         var criteria = manifest.GetProperty("passCriteria");
@@ -393,6 +629,25 @@ internal static class ReleaseEvidenceRunner
             Passed = failures.Count == 0,
             FailureCodes = failures.ToArray(),
         };
+    }
+
+    private static void RequireCpuStage(
+        JsonElement stage,
+        int configuredWorkerCount,
+        int expectedEffectiveWorkerCount,
+        string stageName)
+    {
+        var effective = GetInt(stage, "effective_worker_count");
+        var maxObserved = GetInt(stage, "max_observed_concurrency");
+        if (effective != expectedEffectiveWorkerCount)
+            throw new InvalidDataException(
+                $"Benchmark {stageName} effective worker count {effective} did not match expected {expectedEffectiveWorkerCount} for configured worker count {configuredWorkerCount}.");
+        if (maxObserved < 1 || maxObserved > expectedEffectiveWorkerCount)
+            throw new InvalidDataException(
+                $"Benchmark {stageName} max observed concurrency {maxObserved} is outside 1..{expectedEffectiveWorkerCount}.");
+        if (configuredWorkerCount > 1 && maxObserved <= 1)
+            throw new InvalidDataException(
+                $"Benchmark {stageName} did not observe concurrent execution for configured worker count {configuredWorkerCount}.");
     }
 
     private static PerformanceReportEvidence EvaluatePersistence(
@@ -462,7 +717,13 @@ internal static class ReleaseEvidenceRunner
             ? Math.Min(reportedDuration, measuredDuration)
             : reportedDuration;
         var reportFailures = ReadStringArray(report, "failure_codes");
-        var passed = response.Passed && response.FailureCodes.Length == 0 && reportFailures.Length == 0;
+        var explicitReleaseReady =
+            !string.Equals(executionClass, "release", StringComparison.Ordinal) ||
+            response.ReleaseEvidenceCapable == true;
+        var passed = response.Passed &&
+            response.FailureCodes.Length == 0 &&
+            reportFailures.Length == 0 &&
+            explicitReleaseReady;
         return new SoakEvidence
         {
             TestCaseId = SoakProfile,
@@ -615,6 +876,17 @@ internal static class ReleaseEvidenceRunner
     {
         if (actual.Length != expected.Length || !actual.ToHashSet(StringComparer.Ordinal).SetEquals(expected))
             throw new InvalidDataException($"{name} does not match the canonical set.");
+    }
+
+    private static int Step3HeartbeatSeconds()
+    {
+        var raw = Environment.GetEnvironmentVariable(Step3HeartbeatEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(raw))
+            return 60;
+        if (!int.TryParse(raw, out var seconds) || seconds <= 0)
+            throw new InvalidDataException(
+                $"{Step3HeartbeatEnvironmentVariable} must be a positive integer number of seconds.");
+        return seconds;
     }
 
     private static string Limit(string value, int max)

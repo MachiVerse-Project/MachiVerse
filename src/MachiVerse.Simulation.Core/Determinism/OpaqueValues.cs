@@ -11,9 +11,16 @@ public readonly record struct OpaqueId128(UInt128 Value) : IComparable<OpaqueId1
     public byte[] ToBytes()
     {
         var bytes = new byte[16];
-        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(0, 8), (ulong)(Value >> 64));
-        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(8, 8), (ulong)Value);
+        WriteBytes(bytes);
         return bytes;
+    }
+
+    internal void WriteBytes(Span<byte> destination)
+    {
+        if (destination.Length != 16)
+            throw new ArgumentException("OpaqueId128 requires exactly 16 bytes.", nameof(destination));
+        BinaryPrimitives.WriteUInt64BigEndian(destination[..8], (ulong)(Value >> 64));
+        BinaryPrimitives.WriteUInt64BigEndian(destination[8..], (ulong)Value);
     }
 
     public static OpaqueId128 FromBytes(ReadOnlySpan<byte> bytes)

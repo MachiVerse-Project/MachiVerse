@@ -1,0 +1,135 @@
+name: INT-03 Gate4 Step1 release runtime evidence
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tools/MachiVerse.Qa04RuntimeTarget/**'
+      - '.github/workflows/int03-gate4-step1-release-runtime-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-gate4-step1-release-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actual-release-runtime:
+    name: External adapter -> bounded production reference connection
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact evidence head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      - name: Determine whether actual evidence execution was explicitly requested
+        id: evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          subject="$(git log -1 --format=%s)"
+          echo "Evidence head subject: $subject"
+          if [[ "$subject" == *"[gate4-step1-evidence]"* ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Actual Gate4 Step1 connection evidence is marker-gated; ordinary PR CI remains bounded."
+          fi
+
+      - name: Setup .NET SDK
+        if: steps.evidence.outputs.run == 'true'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Build Simulation Core and external runtime adapter
+        if: steps.evidence.outputs.run == 'true'
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release
+
+      - name: Execute actual external-adapter production connection probe
+        if: steps.evidence.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
+          adapter="$GITHUB_WORKSPACE/tools/MachiVerse.Qa04RuntimeTarget/bin/Release/net10.0/MachiVerse.Qa04RuntimeTarget"
+          export MACHIVERSE_QA04_CORE_EXECUTABLE="$core"
+          request=$(python3 - <<'PY'
+          import json
+          print(json.dumps({
+              'schemaVersion':'1.0',
+              'requestKind':'benchmark-run',
+              'executionClass':'contract-smoke',
+              'requestId':'gate4.step1.production-connection',
+              'sourceCommit':'${{ github.event.pull_request.head.sha || github.sha }}',
+              'qa04ManifestSha256':'5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423',
+              'profileId':'perf.reference.v1',
+              'run':{
+                  'runId':'gate4.step1.production-connection',
+                  'benchmarkProfileId':'perf.reference.v1',
+                  'workerCount':1,
+                  'runOrdinal':1,
+                  'warmupSteps':9000,
+                  'measurementSteps':18000,
+                  'worldSeed':'000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
+              },
+              'profile':{'connectionProbe': True}
+          }, separators=(',', ':')))
+          PY
+          )
+          printf '%s\n' "$request" | "$adapter" | tee "$RUNNER_TEMP/gate4-step1-connection-response.json"
+
+      - name: Validate actual production connection evidence
+        if: steps.evidence.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/gate4-step1-connection-response.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as f:
+              response = json.load(f)
+          report = response['report']
+          connection = report['connection_probe']
+          assert response['executionClass'] == 'contract-smoke', response
+          assert response['responseKind'] == 'performance-benchmark-report-v1', response
+          assert response['referenceWorldMaterialized'] is True, response
+          assert response['releaseEvidenceCapable'] is False, response
+          assert response['blockingFailureCodes'] == [], response
+          assert response['passed'] is False, response
+          assert response['failureCodes'] == ['qa04.measurement.step-sample-count'], response
+          assert report['runtime_version'] == 'assembled-core-production-connection-probe.v1', report
+          assert report['worker_count'] == 1, report
+          assert report['step_count'] == 0, report
+          assert connection['production_executor_observed'] is True, connection
+          assert connection['real_sqlite_commit_observed'] is True, connection
+          assert connection['transition_count'] == 2, connection
+          assert connection['basis_step'] == 1, connection
+          assert connection['finalized_step'] == 3, connection
+          assert connection['reference_initial_record_count'] == 6760000, connection
+          assert connection['domain_authority_count'] == 97, connection
+          assert connection['operation_count'] == 10000, connection
+          for key in ('final_history_digest','final_continuity_token','candidate_id_sequence_digest'):
+              value = connection[key]
+              assert len(value) == 64 and value == value.lower() and set(value) != {'0'}, (key, value)
+          final_state = report['final_state_digest']
+          assert len(final_state) == 64 and final_state == final_state.lower() and set(final_state) != {'0'}, final_state
+          print('Gate4 Step1 actual external-adapter production connection PASS')
+          print('final_state_digest=' + final_state)
+          print('final_history_digest=' + connection['final_history_digest'])
+          print('final_continuity_token=' + connection['final_continuity_token'])
+          print('candidate_id_sequence_digest=' + connection['candidate_id_sequence_digest'])
+          PY

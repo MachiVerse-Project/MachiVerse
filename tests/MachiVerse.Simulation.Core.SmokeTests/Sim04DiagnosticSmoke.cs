@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
 
 internal static class Sim04DiagnosticSmoke
@@ -53,6 +54,9 @@ internal static class Sim04DiagnosticSmoke
 
         Require(canonicalWorld.Diagnostic.StateDigest.AsSpan().SequenceEqual(reversedWorld.Diagnostic.StateDigest),
             "StateDiagnostic must be independent of partition insertion order.");
+        Require(canonicalWorld.Diagnostic.Algorithm == StateDiagnosticAlgorithmV1.LegacyFlatV1 &&
+                canonicalWorld.Diagnostic.HierarchyRoot is null,
+            "All-legacy partition headers must preserve the exact legacy state diagnostic path.");
         Require(canonicalWorld.Diagnostic.PartitionDigests.Count == 97,
             "StateDiagnostic must contain all 97 standard partition digests.");
         var diagnosticOrder = canonicalWorld.Diagnostic.PartitionDigests.Select(static item => item.Key).ToArray();
@@ -148,6 +152,403 @@ internal static class Sim04DiagnosticSmoke
             PayloadDigest).CanonicalDigest;
         Require(orderedDigest.AsSpan().SequenceEqual(permutedDigest),
             "Partition digest must be independent of runtime record insertion order.");
+
+        RunHierarchySmoke();
+        RunRecordIdPrefixSliceSmoke();
+        RunRecordIdPrefixPartitionDigestV2Smoke();
+        RunHierarchyWorldStateMigrationSmoke();
+    }
+
+    private static void RunHierarchySmoke()
+    {
+        static byte[] CanonicalSliceValue(ulong value)
+        {
+            var writer = new MvDcborWriter();
+            writer.WriteMapStart(1);
+            writer.WriteUnsigned(0);
+            writer.WriteUnsigned(value);
+            return writer.ToArray();
+        }
+
+        var worldId = OpaqueId128.Parse("00000000000000000000000000000050");
+        const ulong step = 77;
+        var residentDomain = new StableToken("resident");
+        var physicalDomain = new StableToken("physical-built");
+        var residentSliceA = StateDiagnosticHierarchyV1.CreateSliceHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            new StableToken("resident.slice-a"),
+            CanonicalSliceValue(10));
+        var residentSliceB = StateDiagnosticHierarchyV1.CreateSliceHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            new StableToken("resident.slice-b"),
+            CanonicalSliceValue(20));
+
+        var residentCanonical = StateDiagnosticHierarchyV1.CreateDomainHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            [residentSliceA, residentSliceB]);
+        var residentReversed = StateDiagnosticHierarchyV1.CreateDomainHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            [residentSliceB, residentSliceA]);
+        Require(residentCanonical.Hash.AsSpan().SequenceEqual(residentReversed.Hash),
+            "Domain diagnostic hash must use canonical DiagnosticSliceKey order.");
+
+        var changedResidentSlice = StateDiagnosticHierarchyV1.CreateSliceHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            new StableToken("resident.slice-b"),
+            CanonicalSliceValue(21));
+        var changedResident = StateDiagnosticHierarchyV1.CreateDomainHash(
+            worldId,
+            step,
+            residentDomain,
+            partitionVersion: 1,
+            [residentSliceA, changedResidentSlice]);
+        Require(!residentCanonical.Hash.AsSpan().SequenceEqual(changedResident.Hash),
+            "Authoritative slice content must participate in the domain diagnostic hash.");
+
+        var physicalSlice = StateDiagnosticHierarchyV1.CreateSliceHash(
+            worldId,
+            step,
+            physicalDomain,
+            partitionVersion: 1,
+            new StableToken("physical.slice-a"),
+            CanonicalSliceValue(30));
+        var physical = StateDiagnosticHierarchyV1.CreateDomainHash(
+            worldId,
+            step,
+            physicalDomain,
+            partitionVersion: 1,
+            [physicalSlice]);
+
+        var canonicalRoot = StateDiagnosticHierarchyV1.CreateRootHash(
+            worldId,
+            step,
+            [residentCanonical, physical]);
+        var reversedRoot = StateDiagnosticHierarchyV1.CreateRootHash(
+            worldId,
+            step,
+            [physical, residentCanonical]);
+        Require(canonicalRoot.Hash.AsSpan().SequenceEqual(reversedRoot.Hash),
+            "State diagnostic root must use canonical DomainToken order.");
+        Require(canonicalRoot.Domains.Count == 2 &&
+                canonicalRoot.Domains[0].DomainToken.Value == "physical-built" &&
+                canonicalRoot.Domains[1].DomainToken.Value == "resident",
+            "State diagnostic root must expose canonical DomainToken order.");
+
+        var changedRoot = StateDiagnosticHierarchyV1.CreateRootHash(
+            worldId,
+            step,
+            [changedResident, physical]);
+        Require(!canonicalRoot.Hash.AsSpan().SequenceEqual(changedRoot.Hash),
+            "Domain diagnostic changes must propagate to the state diagnostic root.");
+
+        var duplicateSliceRejected = false;
+        try
+        {
+            StateDiagnosticHierarchyV1.CreateDomainHash(
+                worldId,
+                step,
+                residentDomain,
+                partitionVersion: 1,
+                [residentSliceA, residentSliceA]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "world-state.duplicate-diagnostic-slice-key")
+        {
+            duplicateSliceRejected = true;
+        }
+        Require(duplicateSliceRejected, "Duplicate DiagnosticSliceKey must fail closed.");
+
+        var duplicateDomainRejected = false;
+        try
+        {
+            StateDiagnosticHierarchyV1.CreateRootHash(
+                worldId,
+                step,
+                [residentCanonical, residentCanonical]);
+        }
+        catch (InvalidDataException ex) when (ex.Message == "world-state.duplicate-diagnostic-domain")
+        {
+            duplicateDomainRejected = true;
+        }
+        Require(duplicateDomainRejected, "Duplicate DomainToken must fail closed.");
+    }
+
+    private static void RunRecordIdPrefixSliceSmoke()
+    {
+        static byte[] EncodeRecord(DomainRecordEnvelopeV1<byte[]> record)
+        {
+            var writer = new MvDcborWriter();
+            writer.WriteMapStart(3);
+            writer.WriteUnsigned(0); writer.WriteBytes(record.RecordId.ToBytes());
+            writer.WriteUnsigned(1); writer.WriteUnsigned(record.Revision);
+            writer.WriteUnsigned(2); writer.WriteBytes(SHA256.HashData(record.Payload));
+            return writer.ToArray();
+        }
+
+        var identity = StandardDomainPartitionRegistry.Get("resident.behavior_state");
+        var worldId = OpaqueId128.Parse("00000000000000000000000000000060");
+        const ulong step = 91;
+        var lowA = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("10000000000000000000000000000001"),
+            identity.RecordSchema,
+            1,
+            step,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [1]);
+        var lowB = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("10000000000000000000000000000002"),
+            identity.RecordSchema,
+            1,
+            step,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [2]);
+        var high = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("f0000000000000000000000000000001"),
+            identity.RecordSchema,
+            1,
+            step,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [3]);
+
+        var state = new DomainPartitionStateV1<byte[]>(identity, [high, lowB, lowA]);
+        var slices = RecordIdPrefixDiagnosticPartitionV1.CreateSliceHashes(
+            worldId,
+            step,
+            state,
+            EncodeRecord);
+
+        Require(RecordIdPrefixDiagnosticPartitionV1.PartitionVersion == 1,
+            "RecordId diagnostic partition version must remain explicit.");
+        Require(slices.Count == 2,
+            "RecordId prefix diagnostic partitioning must create one slice per non-empty prefix.");
+        Require(slices[0].SliceKey.Value == "resident.behavior_state/rid-10" &&
+                slices[1].SliceKey.Value == "resident.behavior_state/rid-f0",
+            "RecordId prefix slice keys must be stable and canonical.");
+        Require(slices.All(slice =>
+                slice.DomainToken == identity.OwnerDomain &&
+                slice.PartitionVersion == RecordIdPrefixDiagnosticPartitionV1.PartitionVersion),
+            "RecordId prefix slices must bind the owner domain and partition version.");
+
+        var permutedState = new DomainPartitionStateV1<byte[]>(identity, [lowB, high, lowA]);
+        var permutedSlices = RecordIdPrefixDiagnosticPartitionV1.CreateSliceHashes(
+            worldId,
+            step,
+            permutedState,
+            EncodeRecord);
+        Require(slices.Count == permutedSlices.Count &&
+                slices.Zip(permutedSlices).All(pair =>
+                    pair.First.SliceKey == pair.Second.SliceKey &&
+                    pair.First.Hash.AsSpan().SequenceEqual(pair.Second.Hash)),
+            "RecordId prefix slice hashes must be independent of insertion order.");
+
+        var changedLowB = new DomainRecordEnvelopeV1<byte[]>(
+            lowB.RecordId,
+            identity.RecordSchema,
+            2,
+            step,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [9]);
+        var changedState = new DomainPartitionStateV1<byte[]>(identity, [lowA, changedLowB, high]);
+        var changedSlices = RecordIdPrefixDiagnosticPartitionV1.CreateSliceHashes(
+            worldId,
+            step,
+            changedState,
+            EncodeRecord);
+
+        Require(!slices[0].Hash.AsSpan().SequenceEqual(changedSlices[0].Hash),
+            "Changing a record must change its logical slice hash.");
+        Require(slices[1].Hash.AsSpan().SequenceEqual(changedSlices[1].Hash),
+            "Changing one RecordId prefix must not change another slice at the same Step.");
+    }
+
+    private static void RunRecordIdPrefixPartitionDigestV2Smoke()
+    {
+        static byte[] EncodeRecord(DomainRecordEnvelopeV1<byte[]> record)
+        {
+            var writer = new MvDcborWriter();
+            writer.WriteMapStart(4);
+            writer.WriteUnsigned(0); writer.WriteBytes(record.RecordId.ToBytes());
+            writer.WriteUnsigned(1); writer.WriteUnsigned(record.Revision);
+            writer.WriteUnsigned(2); writer.WriteUnsigned(record.CreatedStep);
+            writer.WriteUnsigned(3); writer.WriteBytes(SHA256.HashData(record.Payload));
+            return writer.ToArray();
+        }
+
+        var identity = StandardDomainPartitionRegistry.Get("resident.behavior_state");
+        const ulong basisStep = 101;
+        var first = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("10000000000000000000000000000001"),
+            identity.RecordSchema,
+            1,
+            basisStep,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [1, 2, 3]);
+        var second = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("10040000000000000000000000000002"),
+            identity.RecordSchema,
+            1,
+            basisStep,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [4, 5, 6]);
+        var third = new DomainRecordEnvelopeV1<byte[]>(
+            OpaqueId128.Parse("f0000000000000000000000000000003"),
+            identity.RecordSchema,
+            1,
+            basisStep,
+            null,
+            DetailLevelV1.D0Entity,
+            null,
+            [7, 8, 9]);
+
+        var canonical = RecordIdPrefixPartitionDigestV2.CreateHeader(
+            new DomainPartitionStateV1<byte[]>(identity, [first, second, third]),
+            revision: 3,
+            basisStep,
+            DetailLevelV1.D0Entity,
+            EncodeRecord);
+        var permuted = RecordIdPrefixPartitionDigestV2.CreateHeader(
+            new DomainPartitionStateV1<byte[]>(identity, [third, first, second]),
+            revision: 3,
+            basisStep,
+            DetailLevelV1.D0Entity,
+            EncodeRecord);
+
+        Require(canonical.DigestAlgorithm == PartitionCanonicalDigestAlgorithmV1.RecordIdPrefixV2,
+            "RecordId-prefix V2 header must carry its explicit digest algorithm.");
+        Require(canonical.CanonicalDigest.AsSpan().SequenceEqual(permuted.CanonicalDigest),
+            "RecordId-prefix V2 digest must be independent of runtime insertion order.");
+        Require(RecordIdPrefixPartitionDigestV2.PrefixOf(first.RecordId) !=
+                RecordIdPrefixPartitionDigestV2.PrefixOf(second.RecordId),
+            "V2 smoke records must exercise distinct stable 14-bit prefixes.");
+
+        var revised = first.Revise([9, 9, 9]);
+        var changed = RecordIdPrefixPartitionDigestV2.CreateHeader(
+            new DomainPartitionStateV1<byte[]>(identity, [revised, second, third]),
+            revision: 4,
+            basisStep,
+            DetailLevelV1.D0Entity,
+            EncodeRecord);
+        Require(!canonical.CanonicalDigest.AsSpan().SequenceEqual(changed.CanonicalDigest),
+            "RecordId-prefix V2 digest must change when canonical record material changes.");
+
+        var encodedHeader = DomainPartitionSnapshotWireCodecV1.EncodeHeader(canonical);
+        var decodedHeader = DomainPartitionSnapshotWireCodecV1.DecodeHeader(encodedHeader);
+        Require(decodedHeader.DigestAlgorithm == canonical.DigestAlgorithm &&
+                decodedHeader.PartitionId == canonical.PartitionId &&
+                decodedHeader.Revision == canonical.Revision &&
+                decodedHeader.BasisStep == canonical.BasisStep &&
+                decodedHeader.ItemCount == canonical.ItemCount &&
+                decodedHeader.CanonicalDigest.AsSpan().SequenceEqual(canonical.CanonicalDigest),
+            "Snapshot header wire round-trip must preserve the explicit V2 digest algorithm.");
+    }
+
+    private static void RunHierarchyWorldStateMigrationSmoke()
+    {
+        static byte[] PayloadDigest(byte[] payload) => SHA256.HashData(payload);
+
+        var migratedPartition = "resident.behavior_state";
+        var partitions = StandardDomainPartitionRegistry.Entries
+            .Select(identity =>
+            {
+                var state = new DomainPartitionStateV1<byte[]>(identity, []);
+                var partitionHeader = string.Equals(
+                        identity.PartitionId.Value,
+                        migratedPartition,
+                        StringComparison.Ordinal)
+                    ? RecordIdPrefixPartitionDigestV2.CreateHeader(
+                        state,
+                        revision: 1,
+                        basisStep: 0,
+                        DetailLevelV1.D0Entity,
+                        record => SHA256.HashData(record.Payload))
+                    : PartitionStateHeaderV1.CreateCanonical(
+                        state,
+                        revision: 1,
+                        basisStep: 0,
+                        DetailLevelV1.D0Entity,
+                        PayloadDigest);
+                return new PartitionStateRefV1(partitionHeader);
+            })
+            .ToArray();
+
+        var header = new WorldStateHeaderV1(
+            OpaqueId128.Parse("00000000000000000000000000000070"),
+            step: 12,
+            worldSeedDigest: SHA256.HashData("hierarchy-world-seed"u8),
+            configGeneration: 2,
+            masterGeneration: 3,
+            rateGeneration: 1);
+        var scheduler = WorldStateV1.EmptySubstate("core.scheduler-state");
+        var operation = WorldStateV1.EmptySubstate("core.operation-state");
+        var detail = WorldStateV1.EmptySubstate("core.detail-directory");
+        var registry = WorldStateV1.EmptySubstate("core.domain-registry-state");
+        var config = SHA256.HashData("hierarchy-config"u8);
+
+        var canonical = new WorldStateV1(
+            header,
+            new OrderedPartitionDirectoryV1(partitions),
+            scheduler,
+            operation,
+            detail,
+            registry,
+            config);
+        var reversed = new WorldStateV1(
+            header,
+            new OrderedPartitionDirectoryV1(partitions.Reverse()),
+            scheduler,
+            operation,
+            detail,
+            registry,
+            config);
+
+        Require(canonical.Diagnostic.Algorithm == StateDiagnosticAlgorithmV1.HierarchyRootV1 &&
+                canonical.Diagnostic.HierarchyRoot is not null,
+            "A V2 partition header must explicitly migrate WorldState diagnostic authority to the hierarchy root.");
+        Require(canonical.Diagnostic.StateDigest.AsSpan().SequenceEqual(
+                canonical.Diagnostic.HierarchyRoot!.Hash),
+            "Hierarchy WorldState digest must be the Phase 1 root hash.");
+        Require(canonical.Diagnostic.StateDigest.AsSpan().SequenceEqual(reversed.Diagnostic.StateDigest),
+            "Hierarchy WorldState diagnostic must remain independent of partition insertion order.");
+
+        var changedScheduler = new WorldSubstateRefV1(
+            scheduler.Schema,
+            SHA256.HashData("changed-scheduler"u8));
+        var changed = new WorldStateV1(
+            header,
+            new OrderedPartitionDirectoryV1(partitions),
+            changedScheduler,
+            operation,
+            detail,
+            registry,
+            config);
+        Require(!canonical.Diagnostic.StateDigest.AsSpan().SequenceEqual(changed.Diagnostic.StateDigest),
+            "Hierarchy WorldState root must commit core substate authority as well as domain partitions.");
     }
 
     private static void Require(bool condition, string message)

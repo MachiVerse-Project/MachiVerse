@@ -80,8 +80,35 @@ internal static class Qa04ReferenceLoadSmoke
             "QA-04 steady Operation materialization count mismatch.");
         Require(steady.Select(static operation => operation.OperationId).Distinct().Count() == steady.Length,
             "QA-04 steady OperationId collision detected.");
+        Require(steady.Select(static (operation, index) => operation.FamilyOrdinal == checked((ulong)index)).All(static value => value),
+            "QA-04 steady Operation FamilyOrdinal must equal canonical descriptor index.");
         Require(steady.All(static operation => operation.PayloadDigest.Length == 32),
             "QA-04 Operation payload digest length mismatch.");
+
+        var probe = steady[0];
+        var expectedProbePayload = HashSuite.DomainHash(
+            "mv.perf-reference-operation-payload.v1",
+            writer =>
+            {
+                writer.WriteMapStart(4);
+                writer.WriteUnsigned(0); writer.WriteAsciiText(Qa04ReferenceLoadV1.BenchmarkProfileId);
+                writer.WriteUnsigned(1); writer.WriteUnsigned(probe.InjectionStep);
+                writer.WriteUnsigned(2); writer.WriteAsciiText(probe.FamilyToken.Value);
+                writer.WriteUnsigned(3); writer.WriteUnsigned(probe.FamilyOrdinal);
+            });
+        var expectedProbeId = HashSuite.Trunc128(HashSuite.DomainHash(
+            "mv.perf-reference-operation-id.v1",
+            writer =>
+            {
+                writer.WriteMapStart(4);
+                writer.WriteUnsigned(0); writer.WriteAsciiText(Qa04ReferenceLoadV1.BenchmarkProfileId);
+                writer.WriteUnsigned(1); writer.WriteUnsigned(probe.InjectionStep);
+                writer.WriteUnsigned(2); writer.WriteAsciiText(probe.FamilyToken.Value);
+                writer.WriteUnsigned(3); writer.WriteUnsigned(probe.FamilyOrdinal);
+            }));
+        Require(probe.OperationId == expectedProbeId &&
+                probe.PayloadDigest.AsSpan().SequenceEqual(expectedProbePayload),
+            "QA-04 shared canonical Operation preimage changed descriptor identity.");
 
         var steadyRepeat = Qa04ReferenceLoadV1.OperationsForStep(1).ToArray();
         Require(steady.Select(static operation => operation.OperationId)
@@ -96,6 +123,8 @@ internal static class Qa04ReferenceLoadSmoke
             "QA-04 burst Operation materialization count mismatch.");
         Require(burst.Select(static operation => operation.OperationId).Distinct().Count() == burst.Length,
             "QA-04 burst OperationId collision detected.");
+        Require(burst.Select(static (operation, index) => operation.FamilyOrdinal == checked((ulong)index)).All(static value => value),
+            "QA-04 burst Operation FamilyOrdinal must equal canonical descriptor index.");
 
         var transactionBuckets = Enumerable.Range(0, 1_000)
             .Select(index => Qa04ReferenceScenariosV1.SelectTransactionKind((ulong)index).Value)

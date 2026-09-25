@@ -15,11 +15,73 @@ public sealed class FrozenStepInputV1
         ReadOnlySpan<byte> configDigest,
         IEnumerable<ScheduledOperationRefV1> scheduledOperations)
     {
+        ValidateEnvelope(worldId, configGeneration, configDigest);
+        ArgumentNullException.ThrowIfNull(scheduledOperations);
+        var ordered = CanonicalizeScheduledOperations(basisStep, scheduledOperations);
+
+        WorldId = worldId;
+        BasisStep = basisStep;
+        ConfigGeneration = configGeneration;
+        ConfigDigest = configDigest.ToArray();
+        ScheduledOperations = ordered;
+    }
+
+    internal static FrozenStepInputV1 CreateFromCanonicalSchedulerBucket(
+        OpaqueId128 worldId,
+        ulong basisStep,
+        ulong configGeneration,
+        ReadOnlySpan<byte> configDigest,
+        IReadOnlyList<ScheduledOperationRefV1> scheduledOperations)
+    {
+        ValidateEnvelope(worldId, configGeneration, configDigest);
+        ArgumentNullException.ThrowIfNull(scheduledOperations);
+        ValidateCanonicalSchedulerBucket(basisStep, scheduledOperations);
+        return new FrozenStepInputV1(
+            worldId,
+            basisStep,
+            configGeneration,
+            configDigest,
+            scheduledOperations);
+    }
+
+    private FrozenStepInputV1(
+        OpaqueId128 worldId,
+        ulong basisStep,
+        ulong configGeneration,
+        ReadOnlySpan<byte> configDigest,
+        IReadOnlyList<ScheduledOperationRefV1> scheduledOperations)
+    {
+        ValidateEnvelope(worldId, configGeneration, configDigest);
+        ArgumentNullException.ThrowIfNull(scheduledOperations);
+
+        WorldId = worldId;
+        BasisStep = basisStep;
+        ConfigGeneration = configGeneration;
+        ConfigDigest = configDigest.ToArray();
+        ScheduledOperations = scheduledOperations;
+    }
+
+    public OpaqueId128 WorldId { get; }
+    public ulong BasisStep { get; }
+    public ulong ConfigGeneration { get; }
+    public byte[] ConfigDigest { get; }
+    public IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations { get; }
+
+    private static void ValidateEnvelope(
+        OpaqueId128 worldId,
+        ulong configGeneration,
+        ReadOnlySpan<byte> configDigest)
+    {
         if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid.", nameof(worldId));
         if (configGeneration == 0) throw new ArgumentOutOfRangeException(nameof(configGeneration));
         if (configDigest.Length != 32) throw new ArgumentException("ConfigDigest must be exactly 32 bytes.", nameof(configDigest));
-        ArgumentNullException.ThrowIfNull(scheduledOperations);
+    }
 
+    private static IReadOnlyList<ScheduledOperationRefV1> CanonicalizeScheduledOperations(
+        ulong basisStep,
+        IEnumerable<ScheduledOperationRefV1> scheduledOperations)
+    {
+        ArgumentNullException.ThrowIfNull(scheduledOperations);
         var ordered = scheduledOperations
             .OrderBy(static item => item.OrderKey)
             .ThenBy(static item => item.OperationId)
@@ -32,19 +94,31 @@ public sealed class FrozenStepInputV1
             if (item.EffectiveStep != basisStep)
                 throw new InvalidDataException("step-input.operation-effective-step-mismatch");
         }
-
-        WorldId = worldId;
-        BasisStep = basisStep;
-        ConfigGeneration = configGeneration;
-        ConfigDigest = configDigest.ToArray();
-        ScheduledOperations = Array.AsReadOnly(ordered);
+        return Array.AsReadOnly(ordered);
     }
 
-    public OpaqueId128 WorldId { get; }
-    public ulong BasisStep { get; }
-    public ulong ConfigGeneration { get; }
-    public byte[] ConfigDigest { get; }
-    public IReadOnlyList<ScheduledOperationRefV1> ScheduledOperations { get; }
+    private static void ValidateCanonicalSchedulerBucket(
+        ulong basisStep,
+        IReadOnlyList<ScheduledOperationRefV1> scheduledOperations)
+    {
+        ScheduledOperationRefV1? previous = null;
+        foreach (var item in scheduledOperations)
+        {
+            ArgumentNullException.ThrowIfNull(item);
+            item.Validate();
+            if (item.EffectiveStep != basisStep)
+                throw new InvalidDataException("step-input.operation-effective-step-mismatch");
+
+            if (previous is not null)
+            {
+                var order = previous.OrderKey.CompareTo(item.OrderKey);
+                if (order > 0 ||
+                    (order == 0 && previous.OperationId.CompareTo(item.OperationId) >= 0))
+                    throw new InvalidDataException("step-input.noncanonical-operation-order");
+            }
+            previous = item;
+        }
+    }
 }
 
 public static class StepInputFreezerV1
@@ -92,7 +166,7 @@ public static class StepInputFreezerV1
 
         var scheduled = scheduler.ForEffectiveStep(step);
         scheduler.FreezeExternalInput(step);
-        return new FrozenStepInputV1(
+        return FrozenStepInputV1.CreateFromCanonicalSchedulerBucket(
             state.Header.WorldId,
             step,
             configGeneration,
@@ -113,6 +187,9 @@ public sealed record DomainExecutionPlanEntryV1(
 
 public sealed class StandardDomainExecutionPlanV1
 {
+    private static readonly Lazy<StandardDomainExecutionPlanV1> DefaultPlan =
+        new(static () => CreateCore(Array.Empty<DomainSameStepDependencyV1>()));
+
     private StandardDomainExecutionPlanV1(
         IReadOnlyList<DomainExecutionPlanEntryV1> entries,
         IReadOnlyList<IReadOnlyList<DomainExecutionPlanEntryV1>> executionWaves)
@@ -126,6 +203,12 @@ public sealed class StandardDomainExecutionPlanV1
 
     public static StandardDomainExecutionPlanV1 Create(
         IEnumerable<DomainSameStepDependencyV1>? sameStepDependencies = null)
+        => sameStepDependencies is null
+            ? DefaultPlan.Value
+            : CreateCore(sameStepDependencies);
+
+    private static StandardDomainExecutionPlanV1 CreateCore(
+        IEnumerable<DomainSameStepDependencyV1> sameStepDependencies)
     {
         var baseEntries = StandardDomainPartitionRegistry.Entries
             .GroupBy(static partition => partition.OwnerDomain)
@@ -157,7 +240,7 @@ public sealed class StandardDomainExecutionPlanV1
             static _ => new SortedSet<string>(StringComparer.Ordinal));
         var seen = new HashSet<(StableToken Producer, StableToken Consumer)>();
 
-        foreach (var dependency in (sameStepDependencies ?? Array.Empty<DomainSameStepDependencyV1>())
+        foreach (var dependency in sameStepDependencies
                      .OrderBy(static item => item.ConsumerDomain.Value, StringComparer.Ordinal)
                      .ThenBy(static item => item.ProducerDomain.Value, StringComparer.Ordinal))
         {

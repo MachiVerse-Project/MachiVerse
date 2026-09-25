@@ -302,6 +302,7 @@ public sealed class DetailDirectoryV1
 {
     private readonly SortedDictionary<OpaqueId128, DetailRegionStateV1> _regions;
     private readonly IReadOnlyList<DetailTransitionCandidateV1> _pendingTransitions;
+    private readonly Lazy<byte[]> _authorityDigest;
 
     public DetailDirectoryV1(
         IEnumerable<DetailRegionStateV1> regions,
@@ -318,6 +319,7 @@ public sealed class DetailDirectoryV1
 
         _pendingTransitions = Array.AsReadOnly(
             DetailTransitionCanonicalOrderV1.Order(pendingTransitions ?? Array.Empty<DetailTransitionCandidateV1>()).ToArray());
+        _authorityDigest = new Lazy<byte[]>(ComputeAuthorityDigestCore);
     }
 
     public IReadOnlyCollection<DetailRegionStateV1> Regions => _regions.Values;
@@ -329,6 +331,9 @@ public sealed class DetailDirectoryV1
             : throw new KeyNotFoundException("Detail region is not present.");
 
     internal byte[] ComputeAuthorityDigest()
+        => _authorityDigest.Value.ToArray();
+
+    private byte[] ComputeAuthorityDigestCore()
         => HashSuite.DomainHash("mv.state-diagnostic.v1", writer =>
         {
             writer.WriteMapStart(2);
@@ -375,6 +380,14 @@ public sealed class DetailDirectoryV1
         if (!conservationValidation.Decision.CanCommit)
             throw new InvalidDataException("detail.conservation-blocked");
 
+        var nextPending = plan.Deferred.Concat(plan.NotYetEligible).ToArray();
+        if (plan.Selected.Count == 0 &&
+            nextPending.Length == _pendingTransitions.Count &&
+            nextPending.SequenceEqual(_pendingTransitions))
+        {
+            return this;
+        }
+
         var nextRegions = new SortedDictionary<OpaqueId128, DetailRegionStateV1>(_regions);
         foreach (var candidate in plan.Selected)
         {
@@ -387,7 +400,7 @@ public sealed class DetailDirectoryV1
 
         return new DetailDirectoryV1(
             nextRegions.Values,
-            plan.Deferred.Concat(plan.NotYetEligible));
+            nextPending);
     }
 }
 
