@@ -50,8 +50,9 @@ public static class DeterministicBatchExecutor
 
     /// <summary>
     /// Executes independent CPU-bound work with a requested worker budget while preserving the
-    /// input index as the only output placement authority. Physical completion order is diagnostic
-    /// only and cannot affect the returned semantic order.
+    /// input index as the only output placement authority. Each worker owns a deterministic static
+    /// shard (worker index, worker index + worker count, ...), so scheduling/completion order cannot
+    /// influence work assignment or semantic output placement.
     ///
     /// This primitive intentionally has no fixed 16-worker ceiling. The caller owns deployment and
     /// Config policy; the executor only requires a positive worker budget and bounds active workers
@@ -76,7 +77,6 @@ public static class DeterministicBatchExecutor
         }
 
         var effectiveWorkerCount = Math.Min(workerCount, inputs.Count);
-        var nextIndex = -1;
         var activeWorkers = 0;
         var maxObservedConcurrency = 0;
 
@@ -87,17 +87,17 @@ public static class DeterministicBatchExecutor
 
         for (var workerIndex = 0; workerIndex < workers.Length; workerIndex++)
         {
+            var stableWorkerIndex = workerIndex;
             workers[workerIndex] = Task.Run(
                 () =>
                 {
                     try
                     {
-                        while (true)
+                        for (var stableIndex = stableWorkerIndex;
+                             stableIndex < inputs.Count;
+                             stableIndex += effectiveWorkerCount)
                         {
                             executionToken.ThrowIfCancellationRequested();
-                            var stableIndex = Interlocked.Increment(ref nextIndex);
-                            if (stableIndex >= inputs.Count)
-                                return;
 
                             var active = Interlocked.Increment(ref activeWorkers);
                             UpdateMaximum(ref maxObservedConcurrency, active);
