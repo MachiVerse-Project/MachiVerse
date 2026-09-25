@@ -104,6 +104,8 @@ public static class DeterministicBatchExecutor
                 {
                     var startedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
                     var processedItemCount = 0;
+                    var active = Interlocked.Increment(ref activeWorkers);
+                    UpdateMaximum(ref maxObservedConcurrency, active);
                     try
                     {
                         for (var stableIndex = stableWorkerIndex;
@@ -111,18 +113,8 @@ public static class DeterministicBatchExecutor
                              stableIndex += effectiveWorkerCount)
                         {
                             executionToken.ThrowIfCancellationRequested();
-
-                            var active = Interlocked.Increment(ref activeWorkers);
-                            UpdateMaximum(ref maxObservedConcurrency, active);
-                            try
-                            {
-                                output[stableIndex] = execute(inputs[stableIndex], executionToken);
-                                processedItemCount++;
-                            }
-                            finally
-                            {
-                                Interlocked.Decrement(ref activeWorkers);
-                            }
+                            output[stableIndex] = execute(inputs[stableIndex], executionToken);
+                            processedItemCount++;
                         }
                     }
                     catch
@@ -132,6 +124,7 @@ public static class DeterministicBatchExecutor
                     }
                     finally
                     {
+                        Interlocked.Decrement(ref activeWorkers);
                         shardItemCounts[stableWorkerIndex] = processedItemCount;
                         shardElapsedTimeTicks[stableWorkerIndex] = System.Diagnostics.Stopwatch
                             .GetElapsedTime(startedTimestamp)
