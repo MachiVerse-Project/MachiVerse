@@ -5,6 +5,7 @@ internal static class Sim01WorkerScalingSmoke
     internal static async Task RunAsync()
     {
         await VerifyAsyncWorkerBudgetBeyondSixteenAsync();
+        await VerifyEmptyCpuBatchObservationAsync();
         await VerifyCpuWorkerBudgetBeyondSixteenAsync();
         await VerifyCpuWorkerSemanticOrderAsync();
         await VerifyCpuWorkerFailurePropagationAsync();
@@ -21,6 +22,27 @@ internal static class Sim01WorkerScalingSmoke
         Require(
             output.SequenceEqual(input.Select(static value => value * value)),
             "SIM-01 scalable async worker budget changed semantic output order.");
+    }
+
+    private static async Task VerifyEmptyCpuBatchObservationAsync()
+    {
+        var result = await DeterministicBatchExecutor.RunCpuBoundAsync(
+            Array.Empty<int>(),
+            workerCount: 16,
+            static (value, _) => value);
+
+        Require(result.Outputs.Count == 0,
+            "SIM-01 empty CPU batch changed output cardinality.");
+        Require(result.Observation.RequestedWorkerCount == 16 &&
+                result.Observation.EffectiveWorkerCount == 0 &&
+                result.Observation.MaxObservedConcurrency == 0 &&
+                result.Observation.MinimumShardItemCount == 0 &&
+                result.Observation.MaximumShardItemCount == 0 &&
+                result.Observation.ShardItemCountSpread == 0 &&
+                result.Observation.MinimumShardElapsedTimeTicks == 0 &&
+                result.Observation.MaximumShardElapsedTimeTicks == 0 &&
+                result.Observation.ShardElapsedTimeSpreadTicks == 0,
+            "SIM-01 empty CPU batch observation must stay zeroed.");
     }
 
     private static async Task VerifyCpuWorkerBudgetBeyondSixteenAsync()
