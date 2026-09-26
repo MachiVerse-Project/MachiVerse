@@ -489,7 +489,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
         }
     }
 
-    private sealed record IndexedBindingV1(
+    private readonly record struct IndexedBindingV1(
         int CanonicalIndex,
         Qa04CanonicalOperationBindingResultV1 Binding);
 
@@ -498,7 +498,7 @@ public static class Qa04CanonicalOperationMutationBatchV1
         string Family,
         IReadOnlyList<IndexedBindingV1> Bindings);
 
-    private sealed record IndexedChangeV1(
+    private readonly record struct IndexedChangeV1(
         int CanonicalIndex,
         Qa04CanonicalOperationMutationChangeV1 Change);
 
