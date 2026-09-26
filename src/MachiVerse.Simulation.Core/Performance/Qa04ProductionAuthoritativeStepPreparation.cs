@@ -17,6 +17,7 @@ namespace MachiVerse.Simulation.Core.Performance;
 /// </summary>
 public static class Qa04ProductionAuthoritativeStepPreparationV1
 {
+    private const int CanonicalDomainCount = 8;
     private static readonly StableToken ProductionInvariant = new("qa04.production-authoritative-step");
     private static readonly IReadOnlyDictionary<string, int> CanonicalFamilyIndexByToken =
         Qa04ReferenceLoadV1.OperationFamilies
@@ -72,20 +73,11 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             mutationResult);
 
         var plan = StandardDomainExecutionPlanV1.Create();
-        var runtimeByDomain = runtimeOutputs.ToDictionary(static output => output.DomainToken);
-        if (runtimeOutputs.Count != plan.Entries.Count ||
-            runtimeByDomain.Count != plan.Entries.Count ||
-            plan.Entries.Any(entry => !runtimeByDomain.ContainsKey(entry.DomainToken)) ||
-            runtimeOutputs.Any(output => output.BasisStep != basisState.Header.Step))
-        {
-            throw new InvalidDataException("qa04.production-step.runtime-output-coverage-drift");
-        }
-
-        // The current production workload mutations are applied by the six approved typed handlers.
-        // A runtime-owned partition candidate for the same Step would introduce a second mutation
-        // authority and is therefore rejected rather than merged heuristically.
-        if (runtimeOutputs.Any(static output => output.LocalPartitionCandidates.Count != 0))
-            throw new InvalidDataException("qa04.production-step.runtime-local-candidate-overlap");
+        var runtimeByDomain = IndexCanonicalDomainOutputs(
+            plan,
+            runtimeOutputs,
+            "qa04.production-step.runtime-output-coverage-drift");
+        ValidateRuntimeOutputs(runtimeByDomain, basisState.Header.Step);
 
         var partitionBatch = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.Bind(
             basisState,
@@ -94,26 +86,15 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             references,
             digestCache);
         var mutationOutputs = Qa04CanonicalOperationDomainOutputBinderV1.Bind(basisState, partitionBatch);
-        var mutationByDomain = mutationOutputs.Outputs.ToDictionary(static output => output.DomainToken);
-
-        var mergedOutputs = plan.Entries
-            .Select(entry =>
-            {
-                var runtime = runtimeByDomain[entry.DomainToken];
-                var mutation = mutationByDomain[entry.DomainToken];
-                return new DomainCandidateOutputV1(
-                    entry.DomainToken,
-                    basisState.Header.Step,
-                    intents: runtime.Intents,
-                    localPartitionCandidates: mutation.LocalPartitionCandidates);
-            })
-            .ToArray();
-
-        if (mergedOutputs.Length != 8 ||
-            mergedOutputs.Sum(static output => output.LocalPartitionCandidates.Count) != 6)
-        {
-            throw new InvalidDataException("qa04.production-step.merged-output-drift");
-        }
+        var mutationByDomain = IndexCanonicalDomainOutputs(
+            plan,
+            mutationOutputs.Outputs,
+            "qa04.production-step.merged-output-drift");
+        var mergedOutputs = MergeCanonicalDomainOutputs(
+            plan,
+            basisState.Header.Step,
+            runtimeByDomain,
+            mutationByDomain);
 
         var candidate = StepCandidateV1.Build(
             candidateId,
@@ -274,17 +255,11 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             mutationResult);
 
         var plan = StandardDomainExecutionPlanV1.Create();
-        var runtimeByDomain = runtimeOutputs.ToDictionary(static output => output.DomainToken);
-        if (runtimeOutputs.Count != plan.Entries.Count ||
-            runtimeByDomain.Count != plan.Entries.Count ||
-            plan.Entries.Any(entry => !runtimeByDomain.ContainsKey(entry.DomainToken)) ||
-            runtimeOutputs.Any(output => output.BasisStep != basisState.Header.Step))
-        {
-            throw new InvalidDataException("qa04.production-step.runtime-output-coverage-drift");
-        }
-
-        if (runtimeOutputs.Any(static output => output.LocalPartitionCandidates.Count != 0))
-            throw new InvalidDataException("qa04.production-step.runtime-local-candidate-overlap");
+        var runtimeByDomain = IndexCanonicalDomainOutputs(
+            plan,
+            runtimeOutputs,
+            "qa04.production-step.runtime-output-coverage-drift");
+        ValidateRuntimeOutputs(runtimeByDomain, basisState.Header.Step);
         EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-alignment", diagnosticStarted);
 
         diagnosticStarted = Stopwatch.GetTimestamp();
@@ -300,26 +275,15 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
 
         diagnosticStarted = Stopwatch.GetTimestamp();
         var mutationOutputs = Qa04CanonicalOperationDomainOutputBinderV1.Bind(basisState, partitionBatch);
-        var mutationByDomain = mutationOutputs.Outputs.ToDictionary(static output => output.DomainToken);
-
-        var mergedOutputs = plan.Entries
-            .Select(entry =>
-            {
-                var runtime = runtimeByDomain[entry.DomainToken];
-                var mutation = mutationByDomain[entry.DomainToken];
-                return new DomainCandidateOutputV1(
-                    entry.DomainToken,
-                    basisState.Header.Step,
-                    intents: runtime.Intents,
-                    localPartitionCandidates: mutation.LocalPartitionCandidates);
-            })
-            .ToArray();
-
-        if (mergedOutputs.Length != 8 ||
-            mergedOutputs.Sum(static output => output.LocalPartitionCandidates.Count) != 6)
-        {
-            throw new InvalidDataException("qa04.production-step.merged-output-drift");
-        }
+        var mutationByDomain = IndexCanonicalDomainOutputs(
+            plan,
+            mutationOutputs.Outputs,
+            "qa04.production-step.merged-output-drift");
+        var mergedOutputs = MergeCanonicalDomainOutputs(
+            plan,
+            basisState.Header.Step,
+            runtimeByDomain,
+            mutationByDomain);
         EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-domain-output-merge", diagnosticStarted);
 
         diagnosticStarted = Stopwatch.GetTimestamp();
@@ -367,6 +331,100 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             BasisState = basisState,
             PartitionBatch = partitionBatch,
         };
+    }
+
+    private static DomainCandidateOutputV1[] IndexCanonicalDomainOutputs(
+        StandardDomainExecutionPlanV1 plan,
+        IReadOnlyList<DomainCandidateOutputV1> outputs,
+        string driftCode)
+    {
+        if (plan.Entries.Count != CanonicalDomainCount || outputs.Count != CanonicalDomainCount)
+            throw new InvalidDataException(driftCode);
+
+        var indexed = new DomainCandidateOutputV1[CanonicalDomainCount];
+        for (var outputIndex = 0; outputIndex < outputs.Count; outputIndex++)
+        {
+            var output = outputs[outputIndex]
+                ?? throw new InvalidDataException(driftCode);
+            var domainIndex = FindCanonicalDomainIndex(plan, output.DomainToken);
+            if (domainIndex < 0 || indexed[domainIndex] is not null)
+                throw new InvalidDataException(driftCode);
+
+            indexed[domainIndex] = output;
+        }
+
+        for (var domainIndex = 0; domainIndex < indexed.Length; domainIndex++)
+        {
+            if (indexed[domainIndex] is null)
+                throw new InvalidDataException(driftCode);
+        }
+
+        return indexed;
+    }
+
+    private static int FindCanonicalDomainIndex(
+        StandardDomainExecutionPlanV1 plan,
+        StableToken domainToken)
+    {
+        for (var domainIndex = 0; domainIndex < plan.Entries.Count; domainIndex++)
+        {
+            if (plan.Entries[domainIndex].DomainToken == domainToken)
+                return domainIndex;
+        }
+
+        return -1;
+    }
+
+    private static void ValidateRuntimeOutputs(
+        IReadOnlyList<DomainCandidateOutputV1> runtimeByDomain,
+        ulong basisStep)
+    {
+        for (var domainIndex = 0; domainIndex < runtimeByDomain.Count; domainIndex++)
+        {
+            var output = runtimeByDomain[domainIndex];
+            if (output.BasisStep != basisStep)
+                throw new InvalidDataException("qa04.production-step.runtime-output-coverage-drift");
+            if (output.LocalPartitionCandidates.Count != 0)
+                throw new InvalidDataException("qa04.production-step.runtime-local-candidate-overlap");
+        }
+    }
+
+    private static DomainCandidateOutputV1[] MergeCanonicalDomainOutputs(
+        StandardDomainExecutionPlanV1 plan,
+        ulong basisStep,
+        IReadOnlyList<DomainCandidateOutputV1> runtimeByDomain,
+        IReadOnlyList<DomainCandidateOutputV1> mutationByDomain)
+    {
+        if (plan.Entries.Count != CanonicalDomainCount ||
+            runtimeByDomain.Count != CanonicalDomainCount ||
+            mutationByDomain.Count != CanonicalDomainCount)
+        {
+            throw new InvalidDataException("qa04.production-step.merged-output-drift");
+        }
+
+        var mergedOutputs = new DomainCandidateOutputV1[CanonicalDomainCount];
+        var localPartitionCandidateCount = 0;
+        for (var domainIndex = 0; domainIndex < CanonicalDomainCount; domainIndex++)
+        {
+            var entry = plan.Entries[domainIndex];
+            var runtime = runtimeByDomain[domainIndex];
+            var mutation = mutationByDomain[domainIndex];
+            if (runtime.DomainToken != entry.DomainToken || mutation.DomainToken != entry.DomainToken)
+                throw new InvalidDataException("qa04.production-step.merged-output-drift");
+
+            localPartitionCandidateCount = checked(
+                localPartitionCandidateCount + mutation.LocalPartitionCandidates.Count);
+            mergedOutputs[domainIndex] = new DomainCandidateOutputV1(
+                entry.DomainToken,
+                basisStep,
+                intents: runtime.Intents,
+                localPartitionCandidates: mutation.LocalPartitionCandidates);
+        }
+
+        if (localPartitionCandidateCount != 6)
+            throw new InvalidDataException("qa04.production-step.merged-output-drift");
+
+        return mergedOutputs;
     }
 
     private static void EmitDiagnosticPhase(
