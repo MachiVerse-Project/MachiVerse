@@ -14,14 +14,14 @@ internal static class Qa04CanonicalOperationPrevalidatedPartitionSmoke
     {
         var bindings = Qa04ReferenceLoadV1.OperationsForStep(0)
             .GroupBy(static descriptor => descriptor.FamilyToken.Value, StringComparer.Ordinal)
-            .Select(static group => group.First())
+            .SelectMany(static group => group.Take(2))
             .Select(static descriptor => Qa04CanonicalOperationBindingV1.Bind(
                 descriptor,
                 schedulingPolicyGeneration: 1))
             .OrderBy(static binding => binding.OrderKey)
             .ToArray();
-        Require(bindings.Length == 6,
-            "Gate4 prevalidated partition smoke requires one binding from every canonical family.");
+        Require(bindings.Length == 12,
+            "Gate4 prevalidated partition smoke requires two bindings from every canonical family.");
 
         var effectiveStep = bindings[0].ScheduledOperation.EffectiveStep;
         Require(effectiveStep > 0 &&
@@ -42,7 +42,8 @@ internal static class Qa04CanonicalOperationPrevalidatedPartitionSmoke
             references);
         Require(mutation.AppliedOperationIds.Count == bindings.Length &&
                 mutation.Changes.Count == bindings.Length &&
-                mutation.AppliedCountByFamily.Count == 6,
+                mutation.AppliedCountByFamily.Count == 6 &&
+                mutation.AppliedCountByFamily.Values.All(static count => count == 2),
             "Gate4 prevalidated partition smoke mutation coverage drifted.");
 
         const int workerCount = 4;
