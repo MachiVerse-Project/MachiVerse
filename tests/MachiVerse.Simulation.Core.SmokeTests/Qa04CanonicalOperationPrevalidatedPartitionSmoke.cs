@@ -3,13 +3,6 @@ using MachiVerse.Simulation.Core.Performance;
 
 internal static class Qa04CanonicalOperationPrevalidatedPartitionSmoke
 {
-    private const string InfrastructureFamily = "infrastructure-service-delivery";
-    private const string ResidentFamily = "participation-control-resident-action";
-    private const string PhysicalFamily = "physical-item-movement-work";
-    private const string MarketFamily = "society-market-payment-contract";
-    private const string GovernanceFamily = "governance-security";
-    private const string EnvironmentFamily = "environment-spatial-admin-synthetic";
-
     internal static void Run()
     {
         var bindings = Qa04ReferenceLoadV1.OperationsForStep(0)
@@ -79,15 +72,29 @@ internal static class Qa04CanonicalOperationPrevalidatedPartitionSmoke
             ?? throw new InvalidOperationException(
                 "Gate4 prevalidated partition builder Build method missing.");
 
+        var preparationType = typeof(Qa04ProductionAuthoritativeStepPreparationV1);
+        var partitionFamilySlots = preparationType.GetField(
+                "CanonicalPartitionFamilySlotByIndex",
+                BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as int[]
+            ?? throw new InvalidOperationException(
+                "Gate4 production prevalidated partition family-slot mapping missing.");
+        Require(partitionFamilySlots.Length == Qa04ReferenceLoadV1.OperationFamilies.Count,
+            "Gate4 production prevalidated partition family-slot mapping coverage drifted.");
+        var canonicalFamilyIndexByToken = Qa04ReferenceLoadV1.OperationFamilies
+            .Select(static (family, index) => (Token: family.FamilyToken.Value, Index: index))
+            .ToDictionary(static pair => pair.Token, static pair => pair.Index, StringComparer.Ordinal);
+
         var changesByOperation = mutation.Changes.ToDictionary(static change => change.OperationId);
         foreach (var binding in bindings)
         {
             var source = binding.SourceDescriptor;
             Require(changesByOperation.TryGetValue(source.OperationId, out var change),
                 "Gate4 prevalidated partition smoke change lookup drifted.");
+            Require(canonicalFamilyIndexByToken.TryGetValue(source.FamilyToken.Value, out var canonicalFamilyIndex),
+                "Gate4 prevalidated partition smoke canonical family lookup drifted.");
             add.Invoke(
                 builder,
-                [FamilyIndex(source.FamilyToken.Value), binding, change!]);
+                [partitionFamilySlots[canonicalFamilyIndex], binding, change!]);
         }
 
         var prevalidatedInput = build.Invoke(builder, parameters: null)
@@ -116,19 +123,6 @@ internal static class Qa04CanonicalOperationPrevalidatedPartitionSmoke
 
         RequireSamePartitionBatch(defensive, prevalidated);
     }
-
-    private static int FamilyIndex(string familyToken)
-        => familyToken switch
-        {
-            InfrastructureFamily => 0,
-            ResidentFamily => 1,
-            PhysicalFamily => 2,
-            MarketFamily => 3,
-            GovernanceFamily => 4,
-            EnvironmentFamily => 5,
-            _ => throw new InvalidOperationException(
-                $"Gate4 prevalidated partition smoke unknown family: {familyToken}"),
-        };
 
     private static void RequireSamePartitionBatch(
         Qa04CanonicalOperationPartitionCandidateBatchV1 expected,
