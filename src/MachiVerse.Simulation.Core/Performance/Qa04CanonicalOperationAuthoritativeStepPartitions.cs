@@ -160,7 +160,7 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             Array.AsReadOnly(bound));
     }
 
-    public static async Task<Qa04CanonicalOperationPartitionCandidateBatchV1> BindParallelAsync(
+    public static Task<Qa04CanonicalOperationPartitionCandidateBatchV1> BindParallelAsync(
         WorldStateV1 basisState,
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
         Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
@@ -169,8 +169,72 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(basisState);
         ArgumentNullException.ThrowIfNull(orderedBindings);
+        ValidateParallelInputs(basisState, mutationResult, references, workerCount);
+
+        var bindingsByFamily = ValidateAndGroupBindings(
+            orderedBindings,
+            mutationResult,
+            basisState.Header.Step);
+        var changesByPartition = GroupChanges(mutationResult.Changes);
+        return BindParallelCoreAsync(
+            basisState,
+            mutationResult,
+            references,
+            workerCount,
+            bindingsByFamily,
+            changesByPartition,
+            digestCache,
+            cancellationToken);
+    }
+
+    internal static Task<Qa04CanonicalOperationPartitionCandidateBatchV1> BindParallelPrevalidatedAsync(
+        WorldStateV1 basisState,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+        IDomainRecordSchemaResolverV1 references,
+        int workerCount,
+        PrevalidatedInput prevalidatedInput,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(prevalidatedInput);
+        ValidateParallelInputs(basisState, mutationResult, references, workerCount);
+        if (prevalidatedInput.OperationCount != mutationResult.AppliedOperationIds.Count ||
+            prevalidatedInput.OperationCount != mutationResult.Changes.Count)
+        {
+            throw new InvalidDataException("qa04.full-step.authoritative-partition-operation-count-drift");
+        }
+
+        return BindParallelCoreAsync(
+            basisState,
+            mutationResult,
+            references,
+            workerCount,
+            new BindingGroups(
+                prevalidatedInput.InfrastructureBindings,
+                prevalidatedInput.ResidentBindings,
+                prevalidatedInput.PhysicalBindings,
+                prevalidatedInput.MarketBindings,
+                prevalidatedInput.GovernanceBindings,
+                prevalidatedInput.EnvironmentBindings),
+            new ChangeGroups(
+                prevalidatedInput.InfrastructureChanges,
+                prevalidatedInput.ResidentChanges,
+                prevalidatedInput.PhysicalChanges,
+                prevalidatedInput.MarketChanges,
+                prevalidatedInput.GovernanceChanges,
+                prevalidatedInput.EnvironmentChanges),
+            digestCache,
+            cancellationToken);
+    }
+
+    private static void ValidateParallelInputs(
+        WorldStateV1 basisState,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+        IDomainRecordSchemaResolverV1 references,
+        int workerCount)
+    {
+        ArgumentNullException.ThrowIfNull(basisState);
         ArgumentNullException.ThrowIfNull(mutationResult);
         ArgumentNullException.ThrowIfNull(mutationResult.State);
         ArgumentNullException.ThrowIfNull(references);
@@ -184,14 +248,20 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
             throw new InvalidDataException("qa04.full-step.authoritative-partition-step-overflow");
         if (mutationResult.EffectiveStep != basisState.Header.Step)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-effective-step-drift");
+    }
 
+    private static async Task<Qa04CanonicalOperationPartitionCandidateBatchV1> BindParallelCoreAsync(
+        WorldStateV1 basisState,
+        Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+        IDomainRecordSchemaResolverV1 references,
+        int workerCount,
+        BindingGroups bindingsByFamily,
+        ChangeGroups changesByPartition,
+        Qa04ProductionStep2CanonicalDigestCacheV1? digestCache,
+        CancellationToken cancellationToken)
+    {
         var targetStep = checked(basisState.Header.Step + 1UL);
-        var bindingsByFamily = ValidateAndGroupBindings(
-            orderedBindings,
-            mutationResult,
-            basisState.Header.Step);
         var state = mutationResult.State;
-        var changesByPartition = GroupChanges(mutationResult.Changes);
 
         var batch = await DeterministicBatchExecutor.RunCpuBoundAsync(
             FamilyOrder,
@@ -650,6 +720,142 @@ public static class Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1
         if (basisHeader.Revision == ulong.MaxValue)
             throw new InvalidDataException("qa04.full-step.authoritative-partition-revision-overflow");
         return basisHeader.Revision + 1UL;
+    }
+
+    private static string PartitionForFamilySlot(int familyIndex)
+        => familyIndex switch
+        {
+            0 => InfrastructureServiceQueuePayloadV1.PartitionId,
+            1 => ResidentBehaviorStatePayloadV1.PartitionId,
+            2 => PhysicalPresencePayloadV1.PartitionId,
+            3 => SocietyMarketTransactionRecordSchemaV2.PartitionId,
+            4 => GovernanceSecurityIncidentPayloadV1.PartitionId,
+            5 => EnvironmentHazardPayloadV1.PartitionId,
+            _ => throw new InvalidDataException("qa04.production-step.family-contract-drift"),
+        };
+
+    internal sealed class PrevalidatedInputBuilder
+    {
+        private readonly int _expectedOperationCount;
+        private readonly List<Qa04CanonicalOperationBindingResultV1>[] _bindings;
+        private readonly List<Qa04CanonicalOperationMutationChangeV1>[] _changes;
+
+        internal PrevalidatedInputBuilder(int operationCount)
+        {
+            if (operationCount <= 0)
+                throw new ArgumentOutOfRangeException(nameof(operationCount));
+
+            _expectedOperationCount = operationCount;
+            var familyCapacity = checked((operationCount + FamilyCount - 1) / FamilyCount);
+            _bindings = new List<Qa04CanonicalOperationBindingResultV1>[FamilyCount];
+            _changes = new List<Qa04CanonicalOperationMutationChangeV1>[FamilyCount];
+            for (var familyIndex = 0; familyIndex < FamilyCount; familyIndex++)
+            {
+                _bindings[familyIndex] = new List<Qa04CanonicalOperationBindingResultV1>(familyCapacity);
+                _changes[familyIndex] = new List<Qa04CanonicalOperationMutationChangeV1>(familyCapacity);
+            }
+        }
+
+        internal void Add(
+            int familyIndex,
+            Qa04CanonicalOperationBindingResultV1 binding,
+            Qa04CanonicalOperationMutationChangeV1 change)
+        {
+            ArgumentNullException.ThrowIfNull(binding);
+            ArgumentNullException.ThrowIfNull(change);
+            if ((uint)familyIndex >= FamilyCount)
+                throw new InvalidDataException("qa04.production-step.family-contract-drift");
+
+            var source = binding.SourceDescriptor
+                ?? throw new InvalidDataException("qa04.production-step.operation-order-drift");
+            if (!string.Equals(source.FamilyToken.Value, FamilyOrder[familyIndex], StringComparison.Ordinal) ||
+                change.OperationId != source.OperationId ||
+                !string.Equals(change.PartitionId.Value, PartitionForFamilySlot(familyIndex), StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("qa04.production-step.partition-prevalidation-drift");
+            }
+
+            _bindings[familyIndex].Add(binding);
+            _changes[familyIndex].Add(change);
+        }
+
+        internal PrevalidatedInput Build()
+        {
+            var operationCount = 0;
+            for (var familyIndex = 0; familyIndex < FamilyCount; familyIndex++)
+            {
+                if (_bindings[familyIndex].Count == 0 ||
+                    _bindings[familyIndex].Count != _changes[familyIndex].Count)
+                {
+                    throw new InvalidDataException("qa04.production-step.family-coverage-drift");
+                }
+                operationCount = checked(operationCount + _bindings[familyIndex].Count);
+            }
+            if (operationCount != _expectedOperationCount)
+                throw new InvalidDataException("qa04.production-step.workload-count-drift");
+
+            return new PrevalidatedInput(
+                operationCount,
+                _bindings[0],
+                _bindings[1],
+                _bindings[2],
+                _bindings[3],
+                _bindings[4],
+                _bindings[5],
+                _changes[0],
+                _changes[1],
+                _changes[2],
+                _changes[3],
+                _changes[4],
+                _changes[5]);
+        }
+    }
+
+    internal sealed class PrevalidatedInput
+    {
+        internal PrevalidatedInput(
+            int operationCount,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> infrastructureBindings,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> residentBindings,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> physicalBindings,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> marketBindings,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> governanceBindings,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> environmentBindings,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> infrastructureChanges,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> residentChanges,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> physicalChanges,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> marketChanges,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> governanceChanges,
+            IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> environmentChanges)
+        {
+            OperationCount = operationCount;
+            InfrastructureBindings = infrastructureBindings;
+            ResidentBindings = residentBindings;
+            PhysicalBindings = physicalBindings;
+            MarketBindings = marketBindings;
+            GovernanceBindings = governanceBindings;
+            EnvironmentBindings = environmentBindings;
+            InfrastructureChanges = infrastructureChanges;
+            ResidentChanges = residentChanges;
+            PhysicalChanges = physicalChanges;
+            MarketChanges = marketChanges;
+            GovernanceChanges = governanceChanges;
+            EnvironmentChanges = environmentChanges;
+        }
+
+        internal int OperationCount { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationBindingResultV1> InfrastructureBindings { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationBindingResultV1> ResidentBindings { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationBindingResultV1> PhysicalBindings { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationBindingResultV1> MarketBindings { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationBindingResultV1> GovernanceBindings { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationBindingResultV1> EnvironmentBindings { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> InfrastructureChanges { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> ResidentChanges { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> PhysicalChanges { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> MarketChanges { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> GovernanceChanges { get; }
+        internal IReadOnlyList<Qa04CanonicalOperationMutationChangeV1> EnvironmentChanges { get; }
     }
 
     private readonly struct BindingGroups
