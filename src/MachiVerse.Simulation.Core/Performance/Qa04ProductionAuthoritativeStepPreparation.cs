@@ -23,6 +23,19 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         Qa04ReferenceLoadV1.OperationFamilies
             .Select(static (family, index) => (Token: family.FamilyToken.Value, Index: index))
             .ToDictionary(static pair => pair.Token, static pair => pair.Index, StringComparer.Ordinal);
+    private static readonly int[] CanonicalPartitionFamilySlotByIndex =
+        Qa04ReferenceLoadV1.OperationFamilies
+            .Select(static family => family.FamilyToken.Value switch
+            {
+                "infrastructure-service-delivery" => 0,
+                "participation-control-resident-action" => 1,
+                "physical-item-movement-work" => 2,
+                "society-market-payment-contract" => 3,
+                "governance-security" => 4,
+                "environment-spatial-admin-synthetic" => 5,
+                _ => throw new InvalidDataException("qa04.production-step.family-contract-drift"),
+            })
+            .ToArray();
 
     public static Qa04CanonicalOperationStepPreparationResultV1 Prepare(
         OpaqueId128 candidateId,
@@ -508,8 +521,11 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         var seenOrdinals = new bool[expectedDescriptors.Count];
         var seenOperationIds = new HashSet<OpaqueId128>(orderedBindings.Count);
         Span<ulong> familyCounts = stackalloc ulong[6];
-        if (CanonicalFamilyIndexByToken.Count != familyCounts.Length)
+        if (CanonicalFamilyIndexByToken.Count != familyCounts.Length ||
+            CanonicalPartitionFamilySlotByIndex.Length != familyCounts.Length)
+        {
             throw new InvalidDataException("qa04.production-step.family-contract-drift");
+        }
 
         var partitionInputBuilder = buildPartitionInput
             ? new Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.PrevalidatedInputBuilder(orderedBindings.Count)
@@ -564,7 +580,7 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             familyCounts[familyIndex] = checked(familyCounts[familyIndex] + 1UL);
 
             partitionInputBuilder?.Add(
-                familyIndex,
+                CanonicalPartitionFamilySlotByIndex[familyIndex],
                 binding,
                 mutationResult.Changes[index]);
         }
