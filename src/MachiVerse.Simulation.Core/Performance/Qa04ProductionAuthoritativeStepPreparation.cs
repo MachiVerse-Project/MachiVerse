@@ -252,7 +252,8 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         }
         if (orderedBindings.Count != expectedOperationCount ||
             frozenInput.ScheduledOperations.Count != expectedOperationCount ||
-            mutationResult.AppliedOperationIds.Count != expectedOperationCount)
+            mutationResult.AppliedOperationIds.Count != expectedOperationCount ||
+            mutationResult.Changes.Count != expectedOperationCount)
         {
             throw new InvalidDataException("qa04.production-step.workload-count-drift");
         }
@@ -264,7 +265,7 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             throw new InvalidDataException("qa04.production-step.basis-drift");
         }
 
-        ValidateCanonicalWorkloadAlignment(
+        var prevalidatedPartitionInput = ValidateCanonicalWorkloadAlignmentAndBuildPartitionInput(
             injectionStep,
             basisState.Header.Step,
             expectedDescriptors,
@@ -287,12 +288,12 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-alignment", diagnosticStarted);
 
         diagnosticStarted = Stopwatch.GetTimestamp();
-        var partitionBatch = await Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.BindParallelAsync(
+        var partitionBatch = await Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.BindParallelPrevalidatedAsync(
             basisState,
-            orderedBindings,
             mutationResult,
             references,
             workerCount,
+            prevalidatedPartitionInput,
             digestCache,
             cancellationToken).ConfigureAwait(false);
         EmitDiagnosticPhase(injectionStep, workerCount, "step-preparation-partition-bind", diagnosticStarted);
@@ -401,16 +402,61 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
         IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
         FrozenStepInputV1 frozenInput,
         Qa04CanonicalOperationMutationBatchResultV1 mutationResult)
+        => _ = ValidateCanonicalWorkloadAlignmentCore(
+            injectionStep,
+            basisStep,
+            expectedDescriptors,
+            orderedBindings,
+            frozenInput,
+            mutationResult,
+            buildPartitionInput: false);
+
+    private static Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.PrevalidatedInput
+        ValidateCanonicalWorkloadAlignmentAndBuildPartitionInput(
+            ulong injectionStep,
+            ulong basisStep,
+            IReadOnlyList<Qa04OperationDescriptorV1> expectedDescriptors,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+            FrozenStepInputV1 frozenInput,
+            Qa04CanonicalOperationMutationBatchResultV1 mutationResult)
+        => ValidateCanonicalWorkloadAlignmentCore(
+                injectionStep,
+                basisStep,
+                expectedDescriptors,
+                orderedBindings,
+                frozenInput,
+                mutationResult,
+                buildPartitionInput: true)
+            ?? throw new InvalidDataException("qa04.production-step.partition-prevalidation-missing");
+
+    private static Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.PrevalidatedInput?
+        ValidateCanonicalWorkloadAlignmentCore(
+            ulong injectionStep,
+            ulong basisStep,
+            IReadOnlyList<Qa04OperationDescriptorV1> expectedDescriptors,
+            IReadOnlyList<Qa04CanonicalOperationBindingResultV1> orderedBindings,
+            FrozenStepInputV1 frozenInput,
+            Qa04CanonicalOperationMutationBatchResultV1 mutationResult,
+            bool buildPartitionInput)
     {
         if (expectedDescriptors.Count != orderedBindings.Count ||
             frozenInput.ScheduledOperations.Count != orderedBindings.Count ||
-            mutationResult.AppliedOperationIds.Count != orderedBindings.Count)
+            mutationResult.AppliedOperationIds.Count != orderedBindings.Count ||
+            mutationResult.Changes.Count != orderedBindings.Count)
+        {
             throw new InvalidDataException("qa04.production-step.workload-count-drift");
+        }
 
         var seenOrdinals = new bool[expectedDescriptors.Count];
+        var seenOperationIds = new HashSet<OpaqueId128>(orderedBindings.Count);
         Span<ulong> familyCounts = stackalloc ulong[6];
         if (CanonicalFamilyIndexByToken.Count != familyCounts.Length)
             throw new InvalidDataException("qa04.production-step.family-contract-drift");
+
+        var partitionInputBuilder = buildPartitionInput
+            ? new Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.PrevalidatedInputBuilder(orderedBindings.Count)
+            : null;
+        SameStepOrderKey? previousOrderKey = null;
 
         for (var index = 0; index < orderedBindings.Count; index++)
         {
@@ -418,6 +464,9 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
                 ?? throw new InvalidDataException("qa04.production-step.operation-order-drift");
             var source = binding.SourceDescriptor
                 ?? throw new InvalidDataException("qa04.production-step.operation-order-drift");
+            if (binding.ScheduledOperation is null || binding.OrderKey is null)
+                throw new InvalidDataException("qa04.production-step.operation-order-drift");
+
             var ordinal = source.FamilyOrdinal;
             if (ordinal >= checked((ulong)expectedDescriptors.Count))
                 throw new InvalidDataException("qa04.production-step.operation-order-drift");
@@ -431,13 +480,18 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             if (expected.InjectionStep != injectionStep ||
                 expected.FamilyOrdinal != ordinal ||
                 source.InjectionStep != injectionStep ||
+                source.OperationId.IsZero ||
                 source.OperationId != expected.OperationId ||
                 source.FamilyToken != expected.FamilyToken ||
                 !source.PayloadDigest.AsSpan().SequenceEqual(expected.PayloadDigest) ||
-                binding.ScheduledOperation.EffectiveStep != basisStep)
+                binding.ScheduledOperation.EffectiveStep != basisStep ||
+                !binding.OrderKey.CanonicallyEquals(binding.ScheduledOperation.OrderKey) ||
+                !seenOperationIds.Add(source.OperationId) ||
+                (previousOrderKey is not null && previousOrderKey.CompareTo(binding.OrderKey) >= 0))
             {
                 throw new InvalidDataException("qa04.production-step.operation-order-drift");
             }
+            previousOrderKey = binding.OrderKey;
 
             var frozen = frozenInput.ScheduledOperations[index];
             if (frozen.OperationId != source.OperationId ||
@@ -450,6 +504,11 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             if (!CanonicalFamilyIndexByToken.TryGetValue(expected.FamilyToken.Value, out var familyIndex))
                 throw new InvalidDataException("qa04.production-step.family-coverage-drift");
             familyCounts[familyIndex] = checked(familyCounts[familyIndex] + 1UL);
+
+            partitionInputBuilder?.Add(
+                familyIndex,
+                binding,
+                mutationResult.Changes[index]);
         }
 
         if (mutationResult.AppliedCountByFamily.Count != CanonicalFamilyIndexByToken.Count)
@@ -459,7 +518,11 @@ public static class Qa04ProductionAuthoritativeStepPreparationV1
             var token = Qa04ReferenceLoadV1.OperationFamilies[familyIndex].FamilyToken.Value;
             if (!mutationResult.AppliedCountByFamily.TryGetValue(token, out var actual) ||
                 actual != familyCounts[familyIndex])
+            {
                 throw new InvalidDataException("qa04.production-step.family-coverage-drift");
+            }
         }
+
+        return partitionInputBuilder?.Build();
     }
 }
