@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using Microsoft.Data.Sqlite;
@@ -48,6 +49,7 @@ public sealed partial class SqlitePersistenceStore
             _ = new StableToken(terminal.ResultCode);
         }
 
+        Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "before-db-begin");
         using var transaction = _connection.BeginTransaction();
         try
         {
@@ -68,10 +70,12 @@ public sealed partial class SqlitePersistenceStore
 
             await InsertHistoryRecordAsync(history, transaction, cancellationToken);
 
-            foreach (var terminal in orderedTerminalOperations)
-            {
-                await CommitTerminalOperationAsync(terminal, effectiveStep, history.Sequence, transaction, cancellationToken);
-            }
+            await CommitTerminalOperationsBatchedAsync(
+                orderedTerminalOperations,
+                effectiveStep,
+                history.Sequence,
+                transaction,
+                cancellationToken).ConfigureAwait(false);
 
             await using (var meta = _connection.CreateCommand())
             {
@@ -96,7 +100,13 @@ WHERE singleton=1;
                     throw new InvalidDataException("persistence.meta-update-failed");
             }
 
+            Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "mid-write");
+            Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "before-fsync-or-commit");
+            var commitStarted = Stopwatch.GetTimestamp();
             transaction.Commit();
+            ObserveSuccessfulCommit(Stopwatch.GetElapsedTime(commitStarted));
+            Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "immediately-after-commit");
+            Qa04PersistenceCrashInjectionV1.Hit("transition-commit", "before-response-or-publication");
             return new DurableTransitionResult(resultingStep, history.Sequence);
         }
         catch
@@ -147,22 +157,88 @@ WHERE singleton=1;
         return new TransitionHead(U64Be.Decode((byte[])reader[0]), continuity);
     }
 
-    private async Task CommitTerminalOperationAsync(
-        TerminalOperationCommit terminal,
+    private async Task CommitTerminalOperationsBatchedAsync(
+        IReadOnlyList<TerminalOperationCommit> terminals,
         ulong effectiveStep,
         ulong terminalSequence,
         SqliteTransaction transaction,
         CancellationToken cancellationToken)
     {
-        await using (var state = _connection.CreateCommand())
+        if (terminals.Count == 0)
+            return;
+
+        await using (var create = _connection.CreateCommand())
         {
-            state.Transaction = transaction;
-            state.CommandText = "SELECT lifecycle, effective_step FROM operation_state WHERE operation_id=$operation_id;";
-            state.Parameters.AddWithValue("$operation_id", terminal.OperationId.ToBytes());
-            await using var reader = await state.ExecuteReaderAsync(cancellationToken);
+            create.Transaction = transaction;
+            create.CommandText = """
+CREATE TEMP TABLE IF NOT EXISTS qa04_terminal_commit_batch (
+    operation_id BLOB PRIMARY KEY NOT NULL,
+    terminal_status INTEGER NOT NULL,
+    result_code TEXT NOT NULL,
+    rich_result_payload BLOB NULL
+) WITHOUT ROWID;
+DELETE FROM qa04_terminal_commit_batch;
+""";
+            await create.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        // Keep well below SQLite's variable limit while replacing thousands of per-row commands
+        // with bounded multi-row inserts. This chunk size is an implementation safety bound, not
+        // an operational tuning input and does not affect authority or canonical ordering.
+        const int rowsPerInsert = 400;
+        for (var offset = 0; offset < terminals.Count; offset += rowsPerInsert)
+        {
+            var count = Math.Min(rowsPerInsert, terminals.Count - offset);
+            await using var insert = _connection.CreateCommand();
+            insert.Transaction = transaction;
+            var sql = new System.Text.StringBuilder(
+                "INSERT INTO qa04_terminal_commit_batch(operation_id,terminal_status,result_code,rich_result_payload) VALUES ");
+            for (var index = 0; index < count; index++)
+            {
+                if (index != 0)
+                    sql.Append(',');
+                sql.Append("($id").Append(index)
+                    .Append(",$status").Append(index)
+                    .Append(",$code").Append(index)
+                    .Append(",$payload").Append(index).Append(')');
+
+                var terminal = terminals[offset + index];
+                insert.Parameters.AddWithValue("$id" + index, terminal.OperationId.ToBytes());
+                insert.Parameters.AddWithValue("$status" + index, terminal.TerminalStatus);
+                insert.Parameters.AddWithValue("$code" + index, terminal.ResultCode);
+                insert.Parameters.AddWithValue(
+                    "$payload" + index,
+                    (object?)terminal.RichResultPayload ?? DBNull.Value);
+            }
+            insert.CommandText = sql.ToString();
+            if (await insert.ExecuteNonQueryAsync(cancellationToken) != count)
+                throw new InvalidDataException("persistence.transition-terminal-stage-count-drift");
+        }
+
+        await using (var validate = _connection.CreateCommand())
+        {
+            validate.Transaction = transaction;
+            validate.CommandText = """
+SELECT
+    SUM(CASE WHEN o.operation_id IS NULL THEN 1 ELSE 0 END),
+    SUM(CASE WHEN o.operation_id IS NOT NULL
+              AND (o.lifecycle <> $scheduled_lifecycle
+                   OR o.effective_step IS NULL
+                   OR o.effective_step <> $effective_step)
+             THEN 1 ELSE 0 END)
+FROM qa04_terminal_commit_batch AS t
+LEFT JOIN operation_state AS o ON o.operation_id = t.operation_id;
+""";
+            validate.Parameters.AddWithValue("$scheduled_lifecycle", ScheduledLifecycle);
+            validate.Parameters.AddWithValue("$effective_step", U64Be.Encode(effectiveStep));
+            await using var reader = await validate.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidDataException("persistence.transition-terminal-validation-missing");
+            var missing = reader.IsDBNull(0) ? 0L : reader.GetInt64(0);
+            var invalid = reader.IsDBNull(1) ? 0L : reader.GetInt64(1);
+            if (missing != 0)
                 throw new InvalidDataException("persistence.transition-operation-missing");
-            if (reader.GetInt32(0) != ScheduledLifecycle || reader.IsDBNull(1) || U64Be.Decode((byte[])reader[1]) != effectiveStep)
+            if (invalid != 0)
                 throw new InvalidDataException("persistence.transition-operation-not-scheduled-for-step");
         }
 
@@ -171,30 +247,38 @@ WHERE singleton=1;
             update.Transaction = transaction;
             update.CommandText = """
 UPDATE operation_state
-SET lifecycle=$lifecycle,
+SET lifecycle=$terminal_lifecycle,
     terminal_sequence=$terminal_sequence,
-    terminal_status=$terminal_status,
-    result_code=$result_code,
-    rich_result_payload=$rich_result_payload
-WHERE operation_id=$operation_id;
+    terminal_status=(
+        SELECT t.terminal_status
+        FROM qa04_terminal_commit_batch AS t
+        WHERE t.operation_id=operation_state.operation_id),
+    result_code=(
+        SELECT t.result_code
+        FROM qa04_terminal_commit_batch AS t
+        WHERE t.operation_id=operation_state.operation_id),
+    rich_result_payload=(
+        SELECT t.rich_result_payload
+        FROM qa04_terminal_commit_batch AS t
+        WHERE t.operation_id=operation_state.operation_id)
+WHERE operation_id IN (SELECT operation_id FROM qa04_terminal_commit_batch);
 """;
-            update.Parameters.AddWithValue("$lifecycle", TerminalLifecycle);
+            update.Parameters.AddWithValue("$terminal_lifecycle", TerminalLifecycle);
             update.Parameters.AddWithValue("$terminal_sequence", U64Be.Encode(terminalSequence));
-            update.Parameters.AddWithValue("$terminal_status", terminal.TerminalStatus);
-            update.Parameters.AddWithValue("$result_code", terminal.ResultCode);
-            update.Parameters.AddWithValue("$rich_result_payload", (object?)terminal.RichResultPayload ?? DBNull.Value);
-            update.Parameters.AddWithValue("$operation_id", terminal.OperationId.ToBytes());
-            if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+            if (await update.ExecuteNonQueryAsync(cancellationToken) != terminals.Count)
                 throw new InvalidDataException("persistence.transition-operation-update-failed");
         }
 
         await using (var remove = _connection.CreateCommand())
         {
             remove.Transaction = transaction;
-            remove.CommandText = "DELETE FROM scheduled_operation WHERE operation_id=$operation_id;";
-            remove.Parameters.AddWithValue("$operation_id", terminal.OperationId.ToBytes());
-            if (await remove.ExecuteNonQueryAsync(cancellationToken) != 1)
+            remove.CommandText = """
+DELETE FROM scheduled_operation
+WHERE operation_id IN (SELECT operation_id FROM qa04_terminal_commit_batch);
+""";
+            if (await remove.ExecuteNonQueryAsync(cancellationToken) != terminals.Count)
                 throw new InvalidDataException("persistence.transition-scheduled-row-missing");
         }
     }
+
 }

@@ -8,10 +8,19 @@ public sealed record SnapshotSectionSemanticVerificationV1(
     ulong LogicalItemCount,
     byte[] LogicalContentDigest);
 
+public sealed record SnapshotSectionSemanticVerificationContextV1(
+    IDomainRecordSchemaResolverV1? DomainReferences);
+
 public sealed record SnapshotSectionSemanticVerifierV1(
     string SectionId,
     SchemaRefV1 SectionSchema,
-    Func<IReadOnlyList<SnapshotSectionFragmentMaterialV1>, SnapshotSectionSemanticVerificationV1> Verify);
+    Func<IReadOnlyList<SnapshotSectionFragmentMaterialV1>, SnapshotSectionSemanticVerificationV1> Verify)
+{
+    public Func<
+        IReadOnlyList<SnapshotSectionFragmentMaterialV1>,
+        SnapshotSectionSemanticVerificationContextV1,
+        SnapshotSectionSemanticVerificationV1>? VerifyWithContext { get; init; }
+}
 
 public sealed class CanonicalSnapshotSemanticVerifierRegistryV1
 {
@@ -41,11 +50,18 @@ public sealed class CanonicalSnapshotSemanticVerifierRegistryV1
         _verifiers = map;
     }
 
-    public void VerifyAll(IReadOnlyList<CanonicalSnapshotSectionMaterialV1> sections)
+    public bool RequiresDomainReferenceContext
+        => _verifiers.Values.Any(static verifier => verifier.VerifyWithContext is not null);
+
+    public void VerifyAll(
+        IReadOnlyList<CanonicalSnapshotSectionMaterialV1> sections,
+        SnapshotSectionSemanticVerificationContextV1? context = null)
     {
         ArgumentNullException.ThrowIfNull(sections);
         if (sections.Count != SnapshotManifestValidation.StandardRequiredSectionCount)
             throw new InvalidDataException("persistence.snapshot.section-count-mismatch");
+        if (RequiresDomainReferenceContext && context?.DomainReferences is null)
+            throw new InvalidDataException("persistence.snapshot.domain-reference-context-missing");
 
         foreach (var section in sections)
         {
@@ -54,7 +70,9 @@ public sealed class CanonicalSnapshotSemanticVerifierRegistryV1
             if (verifier.SectionSchema != section.SectionSchema)
                 throw new InvalidDataException($"persistence.snapshot.semantic-verifier-schema-mismatch:{section.SectionId}");
 
-            var verified = verifier.Verify(section.Fragments)
+            var verified = (context is not null && verifier.VerifyWithContext is not null
+                ? verifier.VerifyWithContext(section.Fragments, context)
+                : verifier.Verify(section.Fragments))
                 ?? throw new InvalidDataException($"persistence.snapshot.semantic-verifier-null-result:{section.SectionId}");
             if (verified.LogicalContentDigest is null || verified.LogicalContentDigest.Length != 32)
                 throw new InvalidDataException($"persistence.snapshot.semantic-verifier-digest-invalid:{section.SectionId}");
@@ -225,7 +243,11 @@ public static class CanonicalSnapshotStagingValidatorV1
         CanonicalSnapshotSemanticVerifierRegistryV1 semanticVerifiers,
         WorldStateV1? frozenState = null,
         IEnumerable<ISnapshotChunkCompressionDecoderV1>? compressionDecoders = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RunningSnapshotCutV1? expectedCut = null,
+        ReadOnlyMemory<byte> expectedSnapshotDigest = default,
+        ReadOnlyMemory<byte> expectedPhysicalManifestDigest = default,
+        RequiredAddonSnapshotMetadataCodecRegistryV1? addonCodecs = null)
     {
         ArgumentNullException.ThrowIfNull(physical);
         ArgumentNullException.ThrowIfNull(expectedSections);
@@ -236,22 +258,35 @@ public static class CanonicalSnapshotStagingValidatorV1
             throw new InvalidDataException("persistence.snapshot-chunks-missing");
 
         var expected = CanonicalSnapshotSectionValidationV1.ValidateStandard(expectedSections, frozenState);
-        var files = Directory.GetFiles(physical.StagingChunksDirectory)
-            .OrderBy(static path => Path.GetFileName(path), StringComparer.Ordinal)
-            .ToArray();
-        if (files.Length == 0)
-            throw new InvalidDataException("persistence.snapshot.no-physical-chunks");
+        var manifest = await SnapshotPhysicalManifestStagingValidationV1.ValidateAsync(
+            physical,
+            addonCodecs,
+            cancellationToken).ConfigureAwait(false);
+        SnapshotPhysicalManifestStagingValidationV1.RequireExpectedAuthority(
+            manifest,
+            expected,
+            frozenState,
+            expectedCut,
+            expectedSnapshotDigest,
+            expectedPhysicalManifestDigest);
 
         var fragments = new List<SnapshotSectionFragmentMaterialV1>();
-        for (var i = 0; i < files.Length; i++)
+        for (var i = 0; i < manifest.Chunks.Count; i++)
         {
-            var expectedName = Path.GetFileName(SnapshotChunkFile.RelativePath((uint)i));
-            if (!string.Equals(Path.GetFileName(files[i]), expectedName, StringComparison.Ordinal))
-                throw new InvalidDataException("persistence.snapshot.chunk-index-gap");
+            cancellationToken.ThrowIfCancellationRequested();
+            var descriptor = manifest.Chunks[i];
+            var path = Path.Combine(
+                physical.StagingDirectory,
+                descriptor.RelativePath.Replace('/', Path.DirectorySeparatorChar));
             var decoded = await CanonicalSnapshotChunkFileV1.ReadValidatedAsync(
-                files[i],
+                path,
                 compressionDecoders,
                 cancellationToken).ConfigureAwait(false);
+            if (decoded.Payload.Fragments.Count == 0)
+                throw new InvalidDataException($"persistence.snapshot.manifest-chunk-empty:{descriptor.ChunkIndex}");
+            if (!string.Equals(decoded.Payload.Fragments[0].SectionId, descriptor.FirstSectionId, StringComparison.Ordinal) ||
+                !string.Equals(decoded.Payload.Fragments[^1].SectionId, descriptor.LastSectionId, StringComparison.Ordinal))
+                throw new InvalidDataException($"persistence.snapshot.manifest-chunk-section-range-mismatch:{descriptor.ChunkIndex}");
             fragments.AddRange(decoded.Payload.Fragments);
         }
 
@@ -274,7 +309,17 @@ public static class CanonicalSnapshotStagingValidatorV1
             throw new InvalidDataException("persistence.snapshot.required-section-set-mismatch");
 
         var validated = CanonicalSnapshotSectionValidationV1.ValidateStandard(reassembled, frozenState);
-        semanticVerifiers.VerifyAll(validated);
+        if (semanticVerifiers.RequiresDomainReferenceContext)
+        {
+            var recoveredReferences = DomainSnapshotReferenceResolverV1.FromRecoveredSections(validated);
+            semanticVerifiers.VerifyAll(
+                validated,
+                new SnapshotSectionSemanticVerificationContextV1(recoveredReferences));
+        }
+        else
+        {
+            semanticVerifiers.VerifyAll(validated);
+        }
     }
 
     private static void ValidateGlobalFragmentOrder(IReadOnlyList<SnapshotSectionFragmentMaterialV1> fragments)
@@ -333,7 +378,8 @@ public static class RunningSnapshotCanonicalDrainExtensionsV1
         IEnumerable<CanonicalSnapshotSectionMaterialV1> expectedSections,
         CanonicalSnapshotSemanticVerifierRegistryV1 semanticVerifiers,
         IEnumerable<ISnapshotChunkCompressionDecoderV1>? compressionDecoders = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RequiredAddonSnapshotMetadataCodecRegistryV1? addonCodecs = null)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(cut);
@@ -351,7 +397,11 @@ public static class RunningSnapshotCanonicalDrainExtensionsV1
                 semanticVerifiers,
                 cut.FrozenState,
                 compressionDecoders,
-                token),
+                token,
+                cut,
+                snapshotDigest,
+                physicalManifestDigest,
+                addonCodecs),
             cancellationToken);
     }
 }

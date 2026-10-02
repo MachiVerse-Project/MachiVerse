@@ -1,0 +1,35 @@
+name: INT-03 full Terrain preflight validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.TerrainPreflightFullProductionSmoke/**'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04TerrainCanonicalReleasePreflightSmoke.cs'
+      - '.github/workflows/int03-terrain-preflight-full-production-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-terrain-preflight-full-production-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  terrain-preflight-full-production:
+    name: Full 500,000-descriptor Terrain preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build full Terrain release preflight probe
+        run: dotnet build tests/MachiVerse.Simulation.Core.TerrainPreflightFullProductionSmoke/MachiVerse.Simulation.Core.TerrainPreflightFullProductionSmoke.csproj --configuration Release
+      - name: Prove full canonical Terrain release preflight
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.TerrainPreflightFullProductionSmoke/MachiVerse.Simulation.Core.TerrainPreflightFullProductionSmoke.csproj --configuration Release --no-build

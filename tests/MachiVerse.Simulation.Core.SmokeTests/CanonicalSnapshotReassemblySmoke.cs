@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
 using MachiVerse.Simulation.Core.WorldState;
@@ -14,12 +15,16 @@ internal static class CanonicalSnapshotReassemblySmoke
             var fixture = BuildFixture(OpaqueId128.Parse("00000000000000000000000000000091"));
             var paths = PersistenceLayout.Resolve(root, fixture.State.Header.WorldId, 1);
             PersistenceLayout.EnsureGenerationDirectories(paths);
+            await VerifyProductionManifestDrainAsync(paths, fixture);
             await VerifyCrossChunkReassemblyAsync(paths, fixture);
             VerifyMissingVerifierRejected(fixture);
             await VerifySemanticTamperRejectedAsync(paths, fixture);
             await VerifyStoredTamperRejectedAsync(paths, fixture);
             await VerifyLogicalDigestTamperRejectedAsync(paths, fixture);
             await VerifyMissingCompressionDecoderRejectedAsync(paths, fixture);
+            await VerifyPhysicalManifestDigestTamperRejectedAsync(paths, fixture);
+            await VerifyManifestChunkHeaderMismatchRejectedAsync(paths, fixture);
+            await VerifyManifestChunkSectionRangeMismatchRejectedAsync(paths, fixture);
         }
         finally
         {
@@ -27,18 +32,69 @@ internal static class CanonicalSnapshotReassemblySmoke
         }
     }
 
+    private static async Task VerifyProductionManifestDrainAsync(WorldPersistencePaths paths, Fixture fixture)
+    {
+        var physical = SnapshotPhysicalStaging.Prepare(paths, Id(0x9a));
+        var historyDigest = SHA256.HashData("snapshot-production-history"u8);
+        var continuity = SHA256.HashData("snapshot-production-continuity"u8);
+        var cut = new RunningSnapshotCutV1(
+            fixture.State,
+            physical.SnapshotId,
+            new HistoryAnchor(1, historyDigest),
+            continuity,
+            [],
+            []);
+        var zstd = new ZstdSnapshotChunkCompressionCodecV1();
+        var staged = await CanonicalSnapshotProductionManifestDrainV1.StageRunningCutAsync(
+            cut,
+            physical,
+            fixture.Materials,
+            fixture.Config,
+            fixture.WorldSeed,
+            zstdCodec: zstd);
+
+        Require(File.Exists(physical.StagingManifestPath),
+            "Production Snapshot drain must durably write manifest.pb.");
+        Require(staged.SnapshotDigest.Length == 32 && staged.PhysicalManifestDigest.Length == 32,
+            "Production Snapshot drain must return both authoritative manifest digests.");
+        Require(staged.Manifest.Logical.SnapshotId == cut.SnapshotId &&
+                staged.Manifest.Logical.HistoryAnchorSequence == cut.HistoryAnchor.Sequence &&
+                staged.Manifest.Logical.HistoryAnchorDigest.SequenceEqual(cut.HistoryAnchor.Digest) &&
+                staged.Manifest.Logical.StateContinuityToken.SequenceEqual(cut.StateContinuityToken),
+            "Production manifest must bind the exact frozen running cut.");
+
+        await CanonicalSnapshotStagingValidatorV1.ValidateAsync(
+            physical,
+            fixture.Materials,
+            fixture.Verifiers,
+            fixture.State,
+            CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders(zstd),
+            expectedCut: cut,
+            expectedSnapshotDigest: staged.SnapshotDigest,
+            expectedPhysicalManifestDigest: staged.PhysicalManifestDigest);
+    }
+
     private static async Task VerifyCrossChunkReassemblyAsync(WorldPersistencePaths paths, Fixture fixture)
     {
         var physical = SnapshotPhysicalStaging.Prepare(paths, Id(0x92));
         var all = fixture.Materials.SelectMany(static section => section.Fragments).ToArray();
         Require(fixture.Materials[0].Fragments.Count == 2, "Fixture must split the first section.");
-        await CanonicalSnapshotChunkFileV1.WriteUncompressedAsync(
+
+        var payload0 = new SnapshotChunkFragmentPayloadV1(new[] { all[0] });
+        var header0 = await CanonicalSnapshotChunkFileV1.WriteUncompressedAsync(
             Path.Combine(physical.StagingChunksDirectory, "00000000.mvchunk"),
-            new SnapshotChunkFragmentPayloadV1(new[] { all[0] }));
-        await CanonicalSnapshotChunkFileV1.WriteUncompressedAsync(
+            payload0);
+        var payload1 = new SnapshotChunkFragmentPayloadV1(Array.AsReadOnly(all[1..]));
+        var header1 = await CanonicalSnapshotChunkFileV1.WriteUncompressedAsync(
             Path.Combine(physical.StagingChunksDirectory, "00000001.mvchunk"),
-            new SnapshotChunkFragmentPayloadV1(Array.AsReadOnly(all[1..])));
-        await SnapshotPhysicalStaging.WriteManifestDurablyAsync(physical, new byte[] { 0x01 });
+            payload1);
+        var descriptors = new[]
+        {
+            Descriptor(0, header0, payload0),
+            Descriptor(1, header1, payload1),
+        };
+        await WriteManifestAsync(physical, fixture, descriptors);
+
         await CanonicalSnapshotStagingValidatorV1.ValidateAsync(
             physical, fixture.Materials, fixture.Verifiers, fixture.State);
     }
@@ -62,8 +118,8 @@ internal static class CanonicalSnapshotReassemblySmoke
                     : fragment).ToArray()
             }
             : section).ToArray();
-        await CanonicalSnapshotPhysicalDrainV1.StageUncompressedAsync(physical, tampered, fixture.State);
-        await SnapshotPhysicalStaging.WriteManifestDurablyAsync(physical, new byte[] { 0x02 });
+        var descriptors = await CanonicalSnapshotPhysicalDrainV1.StageUncompressedAsync(physical, tampered, fixture.State);
+        await WriteManifestAsync(physical, fixture, descriptors);
         await RequireRejectedAsync(
             () => CanonicalSnapshotStagingValidatorV1.ValidateAsync(physical, fixture.Materials, fixture.Verifiers, fixture.State),
             "persistence.snapshot.section-semantic-digest-mismatch:",
@@ -73,8 +129,8 @@ internal static class CanonicalSnapshotReassemblySmoke
     private static async Task VerifyStoredTamperRejectedAsync(WorldPersistencePaths paths, Fixture fixture)
     {
         var physical = SnapshotPhysicalStaging.Prepare(paths, Id(0x94));
-        await CanonicalSnapshotPhysicalDrainV1.StageUncompressedAsync(physical, fixture.Materials, fixture.State);
-        await SnapshotPhysicalStaging.WriteManifestDurablyAsync(physical, new byte[] { 0x03 });
+        var descriptors = await CanonicalSnapshotPhysicalDrainV1.StageUncompressedAsync(physical, fixture.Materials, fixture.State);
+        await WriteManifestAsync(physical, fixture, descriptors);
         var path = Path.Combine(physical.StagingChunksDirectory, "00000000.mvchunk");
         await using (var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
@@ -99,10 +155,10 @@ internal static class CanonicalSnapshotReassemblySmoke
         var rawHash = SHA256.HashData(encoded);
         Require(!rawHash.SequenceEqual(SnapshotChunkLogicalPayloadDigestV1.Compute(chunk)),
             "Raw protobuf hash must differ from semantic chunk digest fixture.");
-        await SnapshotChunkFile.WriteAsync(
+        var header = await SnapshotChunkFile.WriteAsync(
             Path.Combine(physical.StagingChunksDirectory, "00000000.mvchunk"),
             encoded, (ulong)encoded.Length, rawHash, SnapshotCompression.None);
-        await SnapshotPhysicalStaging.WriteManifestDurablyAsync(physical, new byte[] { 0x04 });
+        await WriteManifestAsync(physical, fixture, new[] { Descriptor(0, header, chunk) });
         await RequireRejectedAsync(
             () => CanonicalSnapshotStagingValidatorV1.ValidateAsync(physical, fixture.Materials, fixture.Verifiers, fixture.State),
             "persistence.snapshot.logical-payload-digest-mismatch",
@@ -114,14 +170,123 @@ internal static class CanonicalSnapshotReassemblySmoke
         var physical = SnapshotPhysicalStaging.Prepare(paths, Id(0x96));
         var chunk = SnapshotChunkPackerV1.PackStandard(fixture.Materials, fixture.State)[0];
         var encoded = SnapshotChunkPayloadWireCodecV1.Encode(chunk);
-        await SnapshotChunkFile.WriteAsync(
+        var header = await SnapshotChunkFile.WriteAsync(
             Path.Combine(physical.StagingChunksDirectory, "00000000.mvchunk"),
             encoded, checked((ulong)encoded.Length + 1), SnapshotChunkLogicalPayloadDigestV1.Compute(chunk), SnapshotCompression.Zstd);
-        await SnapshotPhysicalStaging.WriteManifestDurablyAsync(physical, new byte[] { 0x05 });
+        await WriteManifestAsync(physical, fixture, new[] { Descriptor(0, header, chunk) });
         await RequireRejectedAsync(
             () => CanonicalSnapshotStagingValidatorV1.ValidateAsync(physical, fixture.Materials, fixture.Verifiers, fixture.State),
             "persistence.snapshot.compression-codec-unavailable:zstd",
             "Missing Zstd decoder must fail closed.");
+    }
+
+    private static async Task VerifyPhysicalManifestDigestTamperRejectedAsync(WorldPersistencePaths paths, Fixture fixture)
+    {
+        var physical = SnapshotPhysicalStaging.Prepare(paths, Id(0x97));
+        var descriptors = await CanonicalSnapshotPhysicalDrainV1.StageUncompressedAsync(physical, fixture.Materials, fixture.State);
+        await WriteManifestAsync(physical, fixture, descriptors);
+        var bytes = await File.ReadAllBytesAsync(physical.StagingManifestPath);
+        bytes[^1] ^= 0x01;
+        await File.WriteAllBytesAsync(physical.StagingManifestPath, bytes);
+        await RequireRejectedAsync(
+            () => CanonicalSnapshotStagingValidatorV1.ValidateAsync(physical, fixture.Materials, fixture.Verifiers, fixture.State),
+            "persistence.snapshot.physical-manifest-digest-mismatch",
+            "Physical manifest self-digest tamper must be rejected before chunk reassembly.");
+    }
+
+    private static async Task VerifyManifestChunkHeaderMismatchRejectedAsync(WorldPersistencePaths paths, Fixture fixture)
+    {
+        var physical = SnapshotPhysicalStaging.Prepare(paths, Id(0x98));
+        var descriptors = (await CanonicalSnapshotPhysicalDrainV1.StageUncompressedAsync(physical, fixture.Materials, fixture.State)).ToArray();
+        var alteredDigest = descriptors[0].StoredPayloadDigest.ToArray();
+        alteredDigest[0] ^= 0x80;
+        descriptors[0] = descriptors[0] with { StoredPayloadDigest = alteredDigest };
+        await WriteManifestAsync(physical, fixture, descriptors);
+        await RequireRejectedAsync(
+            () => CanonicalSnapshotStagingValidatorV1.ValidateAsync(physical, fixture.Materials, fixture.Verifiers, fixture.State),
+            "persistence.snapshot.manifest-chunk-header-mismatch:",
+            "Manifest chunk descriptor must match the actual MVCHNK01 header.");
+    }
+
+    private static async Task VerifyManifestChunkSectionRangeMismatchRejectedAsync(WorldPersistencePaths paths, Fixture fixture)
+    {
+        var physical = SnapshotPhysicalStaging.Prepare(paths, Id(0x99));
+        var firstOnly = new SnapshotChunkFragmentPayloadV1(new[] { fixture.Materials[0].Fragments[0] });
+        var header = await CanonicalSnapshotChunkFileV1.WriteUncompressedAsync(
+            Path.Combine(physical.StagingChunksDirectory, "00000000.mvchunk"),
+            firstOnly);
+        var descriptor = new PhysicalSnapshotChunkDescriptor(
+            0,
+            StandardSnapshotSectionSetV1.SectionIds[0],
+            StandardSnapshotSectionSetV1.SectionIds[^1],
+            header.UncompressedLength,
+            header.StoredLength,
+            header.Compression,
+            header.LogicalPayloadDigest.ToArray(),
+            header.StoredPayloadDigest.ToArray(),
+            SnapshotChunkFile.RelativePath(0));
+        await WriteManifestAsync(physical, fixture, new[] { descriptor });
+        await RequireRejectedAsync(
+            () => CanonicalSnapshotStagingValidatorV1.ValidateAsync(physical, fixture.Materials, fixture.Verifiers, fixture.State),
+            "persistence.snapshot.manifest-chunk-section-range-mismatch:",
+            "Manifest section range must match decoded chunk fragment range.");
+    }
+
+    private static async Task<PhysicalSnapshotManifestMaterialV1> WriteManifestAsync(
+        SnapshotPhysicalPaths physical,
+        Fixture fixture,
+        IReadOnlyList<PhysicalSnapshotChunkDescriptor> descriptors)
+    {
+        var logical = BuildLogicalManifest(physical, fixture);
+        var manifest = PhysicalSnapshotManifestWireCodecV1.WithComputedPhysicalDigest(logical, descriptors);
+        await SnapshotPhysicalStaging.WriteManifestDurablyAsync(
+            physical,
+            PhysicalSnapshotManifestWireCodecV1.Encode(manifest));
+        return manifest;
+    }
+
+    private static LogicalSnapshotManifest BuildLogicalManifest(SnapshotPhysicalPaths physical, Fixture fixture)
+    {
+        var requiredDomains = StandardDomainPartitionRegistry.Entries
+            .Select(static entry => entry.OwnerDomain.Value)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static value => value, StringComparer.Ordinal)
+            .ToArray();
+        var draft = new LogicalSnapshotManifest(
+            PersistenceSchemaMajor: 1,
+            PersistenceSchemaMinor: 0,
+            WorldId: fixture.State.Header.WorldId,
+            SnapshotId: physical.SnapshotId,
+            SnapshotStep: fixture.State.Header.Step,
+            HistoryAnchorSequence: 1,
+            HistoryAnchorDigest: SHA256.HashData("snapshot-reassembly-history"u8),
+            StateContinuityToken: SHA256.HashData("snapshot-reassembly-continuity"u8),
+            WorldSeed: fixture.WorldSeed.ToBytes(),
+            SimulationConfigGeneration: fixture.State.Header.ConfigGeneration,
+            SimulationConfigDigest: fixture.State.Diagnostic.ConfigDigest.ToArray(),
+            MasterGeneration: fixture.State.Header.MasterGeneration,
+            RequiredDomains: Array.AsReadOnly(requiredDomains),
+            Sections: CanonicalSnapshotSectionValidationV1.ToLogicalSections(fixture.Materials, fixture.State),
+            SnapshotDigest: new byte[32]);
+        return LogicalSnapshotManifestWireCodecV1.WithComputedSnapshotDigest(draft);
+    }
+
+    private static PhysicalSnapshotChunkDescriptor Descriptor(
+        uint index,
+        SnapshotChunkHeader header,
+        SnapshotChunkFragmentPayloadV1 payload)
+    {
+        if (payload.Fragments.Count == 0) throw new InvalidOperationException("Fixture chunk must contain fragments.");
+        return new PhysicalSnapshotChunkDescriptor(
+            index,
+            payload.Fragments[0].SectionId,
+            payload.Fragments[^1].SectionId,
+            header.UncompressedLength,
+            header.StoredLength,
+            header.Compression,
+            header.LogicalPayloadDigest.ToArray(),
+            header.StoredPayloadDigest.ToArray(),
+            SnapshotChunkFile.RelativePath(index));
     }
 
     private static Fixture BuildFixture(OpaqueId128 worldId)
@@ -143,7 +308,14 @@ internal static class CanonicalSnapshotReassemblySmoke
             plans.Add(id, new Plan(schema, count, OwnerDigest(fragments), fragments));
         }
 
-        var configDigest = SHA256.HashData("snapshot-reassembly-config"u8);
+        var config = new CoreConfigCoordinator().LoadStartup(
+            """
+            [meta]
+            format = "machiverse-config"
+            schema_version = "1.0"
+            component = "simulation-core"
+            """);
+        var worldSeed = new WorldSeed256(SHA256.HashData("snapshot-reassembly-world-seed-material"u8));
         var partitions = StandardDomainPartitionRegistry.Entries.Select(identity =>
         {
             var plan = plans[identity.PartitionId.Value];
@@ -151,13 +323,19 @@ internal static class CanonicalSnapshotReassemblySmoke
                 identity, 1, 11, DetailLevelV1.D0Entity, plan.Count, plan.Digest));
         });
         var state = new WorldStateV1(
-            new WorldStateHeaderV1(worldId, 11, SHA256.HashData("snapshot-reassembly-seed"u8), 1, 1, 1),
+            new WorldStateHeaderV1(
+                worldId,
+                11,
+                SHA256.HashData(worldSeed.ToBytes()),
+                config.Generation,
+                1,
+                1),
             new OrderedPartitionDirectoryV1(partitions),
             WorldStateV1.EmptySubstate("core.scheduler-state"),
             WorldStateV1.EmptySubstate("core.operation-state"),
             WorldStateV1.EmptySubstate("core.detail-state"),
             WorldStateV1.EmptySubstate("core.domain-registry-state"),
-            configDigest);
+            config.Digest);
         var materials = StandardSnapshotSectionSetV1.SectionIds.Select(id =>
         {
             var plan = plans[id];
@@ -169,7 +347,13 @@ internal static class CanonicalSnapshotReassemblySmoke
             fragments => new SnapshotSectionSemanticVerificationV1(
                 fragments.Aggregate(0UL, static (sum, fragment) => checked(sum + fragment.ItemCount)),
                 OwnerDigest(fragments)))).ToArray();
-        return new Fixture(state, Array.AsReadOnly(materials), Array.AsReadOnly(entries), new CanonicalSnapshotSemanticVerifierRegistryV1(entries));
+        return new Fixture(
+            state,
+            config,
+            worldSeed,
+            Array.AsReadOnly(materials),
+            Array.AsReadOnly(entries),
+            new CanonicalSnapshotSemanticVerifierRegistryV1(entries));
     }
 
     private static byte[] OwnerDigest(IEnumerable<SnapshotSectionFragmentMaterialV1> fragments)
@@ -202,6 +386,8 @@ internal static class CanonicalSnapshotReassemblySmoke
     private sealed record Plan(SchemaRefV1 Schema, ulong Count, byte[] Digest, SnapshotSectionFragmentMaterialV1[] Fragments);
     private sealed record Fixture(
         WorldStateV1 State,
+        EffectiveCoreConfig Config,
+        WorldSeed256 WorldSeed,
         IReadOnlyList<CanonicalSnapshotSectionMaterialV1> Materials,
         IReadOnlyList<SnapshotSectionSemanticVerifierV1> VerifierEntries,
         CanonicalSnapshotSemanticVerifierRegistryV1 Verifiers);

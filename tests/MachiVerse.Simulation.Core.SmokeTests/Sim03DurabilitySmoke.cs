@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.Persistence;
+using MachiVerse.Simulation.Core.Runtime;
 
 public static class Sim03DurabilitySmoke
 {
@@ -74,7 +75,35 @@ public static class Sim03DurabilitySmoke
             beforeTransition.ContinuityToken,
             transitionRecord.RecordDigest);
 
-        var transition = await store.PersistTransitionCommitAsync(
+        var transactionKind = CrossDomainTransactionKindRegistryV1.Get("transaction.birth");
+        var resident = StandardDomainExecutionPlanV1.Create().Entries.Single(entry => entry.DomainToken.Value == "resident");
+        var transactionParticipant = new PersistentTransactionParticipantV1(
+            resident.DomainToken,
+            resident.OwnedPartitions[0],
+            [OpaqueId128.Parse("00000000000000000000000000000041")],
+            required: true,
+            TransactionParticipantOutcomeV1.Ready,
+            SHA256.HashData("sim03-cross-domain-effect"u8));
+        var transactionInvariant = new InvariantResultV1(
+            CrossDomainTransactionInvariantRegistryV1.GetRequiredInvariantIds(transactionKind).Single(),
+            InvariantSeverityV1.CommitBlocking,
+            InvariantOutcomeV1.Pass,
+            Array.Empty<CausalityRefV1>(),
+            null);
+        var transactionState = new CrossDomainTransactionStateV1(
+            OpaqueId128.Parse("00000000000000000000000000000040"),
+            transactionKind,
+            TransactionLifecycleV1.Active,
+            createdStep: 1,
+            updatedStep: 1,
+            terminalStep: null,
+            new CausalityRefV1(CausalityRefKindV1.Operation, operationId.ToBytes(), 0),
+            [OpaqueId128.Parse("00000000000000000000000000000042")],
+            [transactionParticipant],
+            [transactionInvariant]);
+        var transactionWire = new byte[] { 0x54, 0x58, 0x01 };
+
+        var transition = await store.PersistTransitionCommitWithCrossDomainTransactionsAsync(
             effectiveStep: 0,
             resultingStep: 1,
             resultingStateContinuityToken: resultingContinuity,
@@ -88,10 +117,21 @@ public static class Sim03DurabilitySmoke
                     TerminalStatus: 1,
                     ResultCode: "operation.ok",
                     RichResultPayload: [11, 12])
+            ],
+            crossDomainTransactions:
+            [
+                new CrossDomainTransactionStateCommitV1(transactionState, transactionWire)
             ]);
 
         if (transition.ResultingStep != 1 || transition.HistorySequence != 4)
             throw new InvalidOperationException("Transition durability transaction result mismatch.");
+
+        var durableTransaction = await store.ReadCrossDomainTransactionStateAsync(transactionState.TransactionId);
+        if (durableTransaction is null || durableTransaction.Lifecycle != TransactionLifecycleV1.Active ||
+            durableTransaction.CreatedStep != 1 || durableTransaction.UpdatedStep != 1 ||
+            durableTransaction.TerminalStep is not null || !durableTransaction.StateWire.SequenceEqual(transactionWire) ||
+            !durableTransaction.StateDigest.SequenceEqual(transactionState.CanonicalDigest()))
+            throw new InvalidOperationException("CrossDomainTransaction authority must commit atomically with transition history.");
 
         var recoveryHead = await store.ReadRecoveryHeadAsync();
         if (recoveryHead.FinalizedStep != 1 || !recoveryHead.ContinuityToken.SequenceEqual(resultingContinuity))

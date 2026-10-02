@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -51,8 +52,12 @@ public static class Qa04ReferenceLoadV1
     public const ulong BurstEverySteps = 900;
     public const ulong BurstOperations = 50_000;
     public const ulong DetailTransitionEverySteps = 300;
+    public const ulong CanonicalInitialRecordCount = 6_760_000;
 
     private static readonly StableToken PerformanceDomain = new("performance");
+    private static readonly StableToken ParticipationDomain = new("participation");
+    private static readonly StableToken ParticipationControlModeClass = new("participation.control_mode");
+    private static readonly StableToken ParticipationControlModeCreationKind = new("perf.control-mode");
     private static readonly StableToken PositionPurpose = new("perf.reference.position.v1");
     private static readonly StableToken ActivityPurpose = new("perf.reference.activity.v1");
 
@@ -62,6 +67,7 @@ public static class Qa04ReferenceLoadV1
     public static readonly IReadOnlyList<Qa04ReferenceClassV1> RecordClasses = Array.AsReadOnly(new[]
     {
         new Qa04ReferenceClassV1(new StableToken("resident.persistent-identity"), 1_000_000),
+        new Qa04ReferenceClassV1(ParticipationControlModeClass, 1_000_000),
         new Qa04ReferenceClassV1(new StableToken("physical.d0-presence"), 500_000),
         new Qa04ReferenceClassV1(new StableToken("environment.d0-cell-cohort"), 1_000_000),
         new Qa04ReferenceClassV1(new StableToken("environment.d1-aggregate"), 250_000),
@@ -70,6 +76,23 @@ public static class Qa04ReferenceLoadV1
         new Qa04ReferenceClassV1(new StableToken("spatial.hot-terrain-brick"), 500_000),
         new Qa04ReferenceClassV1(new StableToken("transaction.active-cross-domain"), 10_000),
     });
+
+    private const string HotOperationReferenceOrdinalLimitEnvironmentVariable =
+        "MACHIVERSE_QA04_HOT_REFERENCE_CACHE_ORDINAL_LIMIT";
+    private static readonly StableToken ResidentClass = new("resident.persistent-identity");
+    private static readonly StableToken PhysicalClass = new("physical.d0-presence");
+    private static readonly IReadOnlyDictionary<string, Qa04ReferenceClassV1> RecordClassByToken =
+        RecordClasses.ToDictionary(static item => item.ClassToken.Value, StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, StableToken> PerformanceCreationKindByClass =
+        RecordClasses
+            .Where(static item => item.ClassToken != ParticipationControlModeClass)
+            .ToDictionary(
+                static item => item.ClassToken.Value,
+                static item => new StableToken($"perf/{item.ClassToken.Value}"),
+                StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<ulong, Qa04ReferenceRecordV1> HotResidentRecords = new();
+    private static readonly ConcurrentDictionary<ulong, Qa04ReferenceRecordV1> HotPhysicalRecords = new();
+    private static readonly ulong HotOperationReferenceOrdinalLimit = ResolveHotOperationReferenceOrdinalLimit();
 
     public static readonly IReadOnlyList<Qa04ActivityClassV1> ResidentActivityMix = Array.AsReadOnly(new[]
     {
@@ -99,6 +122,10 @@ public static class Qa04ReferenceLoadV1
             throw new InvalidDataException("qa04.reference.duplicate-record-class");
         if (RecordClasses.Single(x => x.ClassToken.Value == "resident.persistent-identity").Count != 1_000_000)
             throw new InvalidDataException("qa04.reference.resident-count-drift");
+        if (RecordClasses.Single(x => x.ClassToken == ParticipationControlModeClass).Count != 1_000_000)
+            throw new InvalidDataException("qa04.reference.participation-control-mode-count-drift");
+        if (RecordClasses.Aggregate(0UL, static (sum, item) => checked(sum + item.Count)) != CanonicalInitialRecordCount)
+            throw new InvalidDataException("qa04.reference.canonical-record-total-drift");
         if (ResidentActivityMix.Sum(static x => (int)x.Percent) != 100)
             throw new InvalidDataException("qa04.reference.activity-mix-total");
         if (OperationFamilies.Sum(static x => (int)x.SharePermille) != 1_000)
@@ -138,20 +165,45 @@ public static class Qa04ReferenceLoadV1
 
     public static Qa04ReferenceRecordV1 Record(StableToken classToken, ulong ordinal)
     {
-        var definition = RecordClasses.SingleOrDefault(x => x.ClassToken == classToken)
-            ?? throw new KeyNotFoundException($"Unknown QA-04 reference record class: {classToken.Value}");
+        if (!RecordClassByToken.TryGetValue(classToken.Value, out var definition) ||
+            definition.ClassToken != classToken)
+        {
+            throw new KeyNotFoundException($"Unknown QA-04 reference record class: {classToken.Value}");
+        }
         RequireOrdinal(ordinal, definition.Count, classToken.Value);
-        var id = DerivedIdentity.DeriveEntityId(
-            WorldId,
-            creationStep: 0,
-            PerformanceDomain,
-            OpaqueId128.Zero,
-            new StableToken($"perf/{classToken.Value}"),
-            ordinal);
+
+        if (ordinal < HotOperationReferenceOrdinalLimit)
+        {
+            if (classToken == ResidentClass)
+                return HotResidentRecords.GetOrAdd(ordinal, static value => CreateRecord(ResidentClass, value));
+            if (classToken == PhysicalClass)
+                return HotPhysicalRecords.GetOrAdd(ordinal, static value => CreateRecord(PhysicalClass, value));
+        }
+
+        return CreateRecord(classToken, ordinal);
+    }
+
+    private static Qa04ReferenceRecordV1 CreateRecord(StableToken classToken, ulong ordinal)
+    {
+        var id = classToken == ParticipationControlModeClass
+            ? DerivedIdentity.DeriveEntityId(
+                WorldId,
+                creationStep: 0,
+                ParticipationDomain,
+                OpaqueId128.Zero,
+                ParticipationControlModeCreationKind,
+                ordinal)
+            : DerivedIdentity.DeriveEntityId(
+                WorldId,
+                creationStep: 0,
+                PerformanceDomain,
+                OpaqueId128.Zero,
+                PerformanceCreationKindByClass[classToken.Value],
+                ordinal);
 
         var detail = classToken.Value switch
         {
-            "resident.persistent-identity" => ResidentDetailLevel(ordinal),
+            "resident.persistent-identity" or "participation.control_mode" => ResidentDetailLevel(ordinal),
             "physical.d0-presence" or "environment.d0-cell-cohort" or "spatial.hot-terrain-brick" => DetailLevelV1.D0Entity,
             "environment.d1-aggregate" => DetailLevelV1.D1LocalAggregate,
             _ => DetailLevelV1.D2RegionalAggregate,
@@ -160,6 +212,30 @@ public static class Qa04ReferenceLoadV1
         byte? dense = IsDenseD0(detail, ordinal) ? DenseRegionIndex(id) : null;
         var tile = dense is { } denseIndex ? DenseRegionTile(denseIndex, id) : baseTile;
         return new Qa04ReferenceRecordV1(classToken, ordinal, id, detail, tile, dense);
+    }
+
+    private static ulong ResolveHotOperationReferenceOrdinalLimit()
+    {
+        var configured = Environment.GetEnvironmentVariable(HotOperationReferenceOrdinalLimitEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(configured))
+            return checked(SteadyOperationsPerStep + BurstOperations);
+
+        if (!ulong.TryParse(
+                configured,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var limit))
+        {
+            throw new InvalidDataException("qa04.reference.hot-cache-ordinal-limit-invalid");
+        }
+
+        var maxCacheable = Math.Max(
+            RecordClassByToken[ResidentClass.Value].Count,
+            RecordClassByToken[PhysicalClass.Value].Count);
+        if (limit > maxCacheable)
+            throw new InvalidDataException("qa04.reference.hot-cache-ordinal-limit-out-of-range");
+
+        return limit;
     }
 
     public static ushort RegionalTileIndex(OpaqueId128 subjectId)
@@ -233,22 +309,23 @@ public static class Qa04ReferenceLoadV1
 
     private static Qa04OperationDescriptorV1 Operation(ulong step, StableToken family, ulong ordinal)
     {
-        var payload = HashSuite.DomainHash("mv.perf-reference-operation-payload.v1", writer =>
-        {
-            writer.WriteMapStart(4);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(BenchmarkProfileId);
-            writer.WriteUnsigned(1); writer.WriteUnsigned(step);
-            writer.WriteUnsigned(2); writer.WriteAsciiText(family.Value);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(ordinal);
-        });
-        var id = NonZeroTrunc128("mv.perf-reference-operation-id.v1", writer =>
-        {
-            writer.WriteMapStart(4);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(BenchmarkProfileId);
-            writer.WriteUnsigned(1); writer.WriteUnsigned(step);
-            writer.WriteUnsigned(2); writer.WriteAsciiText(family.Value);
-            writer.WriteUnsigned(3); writer.WriteUnsigned(ordinal);
-        });
+        var writer = new MvDcborWriter();
+        writer.WriteMapStart(4);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(BenchmarkProfileId);
+        writer.WriteUnsigned(1); writer.WriteUnsigned(step);
+        writer.WriteUnsigned(2); writer.WriteAsciiText(family.Value);
+        writer.WriteUnsigned(3); writer.WriteUnsigned(ordinal);
+        var canonicalValue = writer.ToArray();
+
+        var payload = HashSuite.DomainHashCanonicalValue(
+            "mv.perf-reference-operation-payload.v1",
+            canonicalValue);
+        var id = HashSuite.Trunc128(HashSuite.DomainHashCanonicalValue(
+            "mv.perf-reference-operation-id.v1",
+            canonicalValue));
+        if (id.IsZero)
+            throw new InvalidDataException("qa04.reference.derived-id-zero");
+
         return new Qa04OperationDescriptorV1(step, family, ordinal, id, payload);
     }
 

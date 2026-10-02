@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 internal sealed class Qa04AdapterRequest
 {
@@ -13,7 +14,7 @@ internal sealed class Qa04AdapterRequest
     public JsonElement Profile { get; set; }
 }
 
-internal sealed class Qa04AdapterResponse
+internal sealed class Qa04AdapterResponse : IJsonOnDeserialized
 {
     public string SchemaVersion { get; set; } = "";
     public string ResponseKind { get; set; } = "";
@@ -22,9 +23,116 @@ internal sealed class Qa04AdapterResponse
     public string SourceCommit { get; set; } = "";
     public string Qa04ManifestSha256 { get; set; } = "";
     public string ProfileId { get; set; } = "";
+    public bool? ReferenceWorldMaterialized { get; set; }
+    public bool? ReleaseEvidenceCapable { get; set; }
+    public string[]? BlockingFailureCodes { get; set; }
     public bool Passed { get; set; }
     public string[] FailureCodes { get; set; } = [];
     public JsonElement Report { get; set; }
+
+    public void OnDeserialized()
+    {
+        if (ReferenceWorldMaterialized is null || ReleaseEvidenceCapable is null)
+            throw new InvalidDataException("QA-04 adapter response is missing explicit release-readiness fields.");
+        var blockers = BlockingFailureCodes
+            ?? throw new InvalidDataException("QA-04 adapter response is missing blockingFailureCodes.");
+        if (blockers.Any(string.IsNullOrWhiteSpace) ||
+            blockers.Distinct(StringComparer.Ordinal).Count() != blockers.Length)
+            throw new InvalidDataException("QA-04 adapter blockingFailureCodes contain empty or duplicated values.");
+        if (ReleaseEvidenceCapable == true && ReferenceWorldMaterialized != true)
+            throw new InvalidDataException("QA-04 adapter cannot be release-evidence-capable before the reference world is materialized.");
+        if (ReleaseEvidenceCapable == true && blockers.Length != 0)
+            throw new InvalidDataException("QA-04 adapter cannot be release-evidence-capable while blocking failures remain.");
+
+        if (!string.Equals(ExecutionClass, "release", StringComparison.Ordinal))
+            return;
+        if (ReferenceWorldMaterialized != true)
+            throw new InvalidDataException("qa04.release.reference-world-not-materialized");
+
+        // Release execution is the mechanism that creates the missing Gate-4 evidence. The adapter
+        // therefore remains explicitly not release-evidence-capable while benchmark/persistence/
+        // publication/soak evidence is still being collected. Final readiness is evaluated only
+        // after the complete evidence fragment has been assembled and accepted.
+    }
+
+    internal static void VerifyReleaseReadinessContract()
+    {
+        new Qa04AdapterResponse
+        {
+            ExecutionClass = "contract-smoke",
+            ReferenceWorldMaterialized = false,
+            ReleaseEvidenceCapable = false,
+            BlockingFailureCodes = ["qa04.fixture.synthetic-not-release-capable"],
+        }.OnDeserialized();
+
+        new Qa04AdapterResponse
+        {
+            ExecutionClass = "release",
+            ReferenceWorldMaterialized = true,
+            ReleaseEvidenceCapable = false,
+            BlockingFailureCodes = [],
+        }.OnDeserialized();
+
+        new Qa04AdapterResponse
+        {
+            ExecutionClass = "release",
+            ReferenceWorldMaterialized = true,
+            ReleaseEvidenceCapable = true,
+            BlockingFailureCodes = [],
+        }.OnDeserialized();
+
+        var unreadyRejected = false;
+        try
+        {
+            new Qa04AdapterResponse
+            {
+                ExecutionClass = "release",
+                ReferenceWorldMaterialized = false,
+                ReleaseEvidenceCapable = false,
+                BlockingFailureCodes = ["qa04.target.reference-world-not-materialized"],
+            }.OnDeserialized();
+        }
+        catch (InvalidDataException ex) when (ex.Message == "qa04.release.reference-world-not-materialized")
+        {
+            unreadyRejected = true;
+        }
+        if (!unreadyRejected)
+            throw new InvalidDataException("QA-04 release-readiness self-test failed to reject an unmaterialized reference world.");
+
+        var contradictoryReadyRejected = false;
+        try
+        {
+            new Qa04AdapterResponse
+            {
+                ExecutionClass = "release",
+                ReferenceWorldMaterialized = true,
+                ReleaseEvidenceCapable = true,
+                BlockingFailureCodes = ["qa04.fixture.blocker"],
+            }.OnDeserialized();
+        }
+        catch (InvalidDataException ex) when (ex.Message.Contains("blocking failures", StringComparison.Ordinal))
+        {
+            contradictoryReadyRejected = true;
+        }
+        if (!contradictoryReadyRejected)
+            throw new InvalidDataException("QA-04 release-readiness self-test failed to reject contradictory final readiness.");
+
+        var missingRejected = false;
+        try
+        {
+            new Qa04AdapterResponse
+            {
+                ExecutionClass = "contract-smoke",
+                BlockingFailureCodes = [],
+            }.OnDeserialized();
+        }
+        catch (InvalidDataException ex) when (ex.Message.Contains("release-readiness fields", StringComparison.Ordinal))
+        {
+            missingRejected = true;
+        }
+        if (!missingRejected)
+            throw new InvalidDataException("QA-04 release-readiness self-test failed to reject missing readiness fields.");
+    }
 }
 
 internal sealed class BenchmarkRunDescriptor
@@ -36,6 +144,82 @@ internal sealed class BenchmarkRunDescriptor
     public int WarmupSteps { get; set; }
     public int MeasurementSteps { get; set; }
     public string WorldSeed { get; set; } = "";
+}
+
+
+internal sealed class Gate4Step2DeterminismPlan
+{
+    public string SchemaVersion { get; set; } = "";
+    public string ProfileId { get; set; } = "";
+    public int[] WorkerCounts { get; set; } = [];
+    public int ProcessRunsPerWorker { get; set; }
+    public int TransitionCount { get; set; }
+    public ulong ExpectedTerminalOperationCount { get; set; }
+    public int RequiredTurnoverCount { get; set; }
+    public int RequiredDetailDecisionCount { get; set; }
+    public int RequiredBurstStepCount { get; set; }
+    public int PersistenceInsertBatchSize { get; set; }
+    public int ProgressIntervalTransitions { get; set; }
+    public int HeartbeatIntervalSeconds { get; set; }
+    public string SnapshotRecoveryEvidence { get; set; } = "";
+    public string LongDurationEvidence { get; set; } = "";
+}
+
+internal sealed class Gate4Step2CoreRunResult
+{
+    public string SchemaVersion { get; set; } = "";
+    public string ProfileId { get; set; } = "";
+    public int WorkerCount { get; set; }
+    public int TransitionCount { get; set; }
+    public ulong TerminalOperationCount { get; set; }
+    public ulong FinalizedStep { get; set; }
+    public int TurnoverCount { get; set; }
+    public int DetailDecisionCount { get; set; }
+    public int BurstStepCount { get; set; }
+    public string FinalStateDigest { get; set; } = "";
+    public Gate4Step2CoreDeterminismEvidence? DeterminismEvidence { get; set; }
+    public ulong FinalHistorySequence { get; set; }
+    public string FinalHistoryDigest { get; set; } = "";
+    public string FinalContinuityToken { get; set; } = "";
+    public string CandidateIdSequenceDigest { get; set; } = "";
+    public int AcceptedOperationLoss { get; set; }
+    public bool HiddenSolverIterationReduction { get; set; }
+    public long PersistenceMetricObserverFailureCount { get; set; }
+    public bool Passed { get; set; }
+    public string[] FailureCodes { get; set; } = [];
+}
+
+internal sealed class Gate4Step2CoreDeterminismEvidence
+{
+    public string FinalStateDigest { get; set; } = "";
+    public string TransitionCommittedDigest { get; set; } = "";
+    public string OperationTerminalSemanticDigest { get; set; } = "";
+    public string ConfigHistoryDigest { get; set; } = "";
+    public string PromotionDeferralOrderDigest { get; set; } = "";
+}
+
+internal sealed class Gate4Step2ActualRunEvidenceRow
+{
+    public string RunId { get; set; } = "";
+    public int WorkerCount { get; set; }
+    public int RunOrdinal { get; set; }
+    public int TransitionCount { get; set; }
+    public ulong TerminalOperationCount { get; set; }
+    public ulong FinalizedStep { get; set; }
+    public int TurnoverCount { get; set; }
+    public int DetailDecisionCount { get; set; }
+    public int BurstStepCount { get; set; }
+    public int AcceptedOperationLoss { get; set; }
+    public bool HiddenSolverIterationReduction { get; set; }
+    public long PersistenceMetricObserverFailureCount { get; set; }
+    public string CandidateIdSequenceDigest { get; set; } = "";
+    public string FinalHistoryDigest { get; set; } = "";
+    public string FinalContinuityToken { get; set; } = "";
+    public string FinalStateDigest { get; set; } = "";
+    public string TransitionCommittedDigest { get; set; } = "";
+    public string OperationTerminalSemanticDigest { get; set; } = "";
+    public string ConfigHistoryDigest { get; set; } = "";
+    public string PromotionDeferralOrderDigest { get; set; } = "";
 }
 
 internal sealed class EvidenceFragment
@@ -114,6 +298,12 @@ internal sealed class BenchmarkRunObservation
     public string RunId { get; set; } = "";
     public int WorkerCount { get; set; }
     public int RunOrdinal { get; set; }
+    public bool CpuParallelismMeasured { get; set; }
+    public int ConfiguredWorkerCount { get; set; }
+    public int EffectiveWorkerCount { get; set; }
+    public int MaxObservedCpuConcurrency { get; set; }
+    public bool WorkerBudgetApplied { get; set; }
+    public bool ParallelExecutionObserved { get; set; }
     public double StepP95Ms { get; set; }
     public double StepP99Ms { get; set; }
     public double Mean60sStepMs { get; set; }
