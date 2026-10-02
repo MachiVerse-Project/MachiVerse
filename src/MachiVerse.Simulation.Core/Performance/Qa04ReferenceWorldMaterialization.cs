@@ -55,6 +55,7 @@ public static class Qa04ReferenceWorldMaterializerV1
 
     private static readonly StableToken ResidentReferenceClass = new("resident.persistent-identity");
     private static readonly EmptyReferenceResolver ReferenceResolver = new();
+    private static readonly OpaqueId128[] CanonicalResidentRecordIdsByOrdinal = BuildCanonicalResidentRecordIds();
 
     public static void ValidateCanonicalContract()
     {
@@ -62,10 +63,16 @@ public static class Qa04ReferenceWorldMaterializerV1
         var expectedCount = Qa04ReferenceLoadV1.RecordClasses
             .Single(entry => entry.ClassToken == ResidentReferenceClass)
             .Count;
-        if (expectedCount != CanonicalResidentCount)
+        if (expectedCount != CanonicalResidentCount ||
+            CanonicalResidentRecordIdsByOrdinal.Length != checked((int)CanonicalResidentCount))
             throw new InvalidDataException("qa04.materialization.resident-count-drift");
 
-        var sample = CreatePayload(Qa04ReferenceLoadV1.Record(ResidentReferenceClass, 0).RecordId);
+        var lastOrdinal = CanonicalResidentCount - 1;
+        if (CanonicalResidentRecordId(0) != Qa04ReferenceLoadV1.Record(ResidentReferenceClass, 0).RecordId ||
+            CanonicalResidentRecordId(lastOrdinal) != Qa04ReferenceLoadV1.Record(ResidentReferenceClass, lastOrdinal).RecordId)
+            throw new InvalidDataException("qa04.materialization.resident-id-authority-drift");
+
+        var sample = CreatePayload(CanonicalResidentRecordId(0));
         ValidatePayload(sample);
         if (sample.Lifecycle != InitialResidentLifecycle ||
             sample.BirthStep is not null || sample.DeathStep is not null ||
@@ -119,18 +126,33 @@ public static class Qa04ReferenceWorldMaterializerV1
 
     public static DomainRecordEnvelopeV1<ResidentIdentityLifecyclePayloadV1> CreateResidentRecord(ulong ordinal)
     {
+        if (ordinal >= CanonicalResidentCount) throw new ArgumentOutOfRangeException(nameof(ordinal));
         var identity = StandardDomainPartitionRegistry.Get(ResidentIdentityLifecyclePayloadV1.PartitionId);
-        var descriptor = Qa04ReferenceLoadV1.Record(ResidentReferenceClass, ordinal);
-        var payload = CreatePayload(descriptor.RecordId);
+        var recordId = CanonicalResidentRecordId(ordinal);
+        var payload = CreatePayload(recordId);
         return new DomainRecordEnvelopeV1<ResidentIdentityLifecyclePayloadV1>(
-            descriptor.RecordId,
+            recordId,
             identity.RecordSchema,
             revision: 1,
             createdStep: 0,
             retiredStep: null,
-            detailLevel: descriptor.DetailLevel,
+            detailLevel: Qa04ReferenceLoadV1.ResidentDetailLevel(ordinal),
             lineageRef: null,
             payload);
+    }
+
+    internal static OpaqueId128 CanonicalResidentRecordId(ulong ordinal)
+    {
+        if (ordinal >= CanonicalResidentCount) throw new ArgumentOutOfRangeException(nameof(ordinal));
+        return CanonicalResidentRecordIdsByOrdinal[checked((int)ordinal)];
+    }
+
+    private static OpaqueId128[] BuildCanonicalResidentRecordIds()
+    {
+        var ids = new OpaqueId128[checked((int)CanonicalResidentCount)];
+        for (var ordinal = 0; ordinal < ids.Length; ordinal++)
+            ids[ordinal] = Qa04ReferenceLoadV1.Record(ResidentReferenceClass, checked((ulong)ordinal)).RecordId;
+        return ids;
     }
 
     private static IEnumerable<DomainRecordEnvelopeV1<ResidentIdentityLifecyclePayloadV1>> CreateRecords(
@@ -139,15 +161,15 @@ public static class Qa04ReferenceWorldMaterializerV1
     {
         for (ulong ordinal = 0; ordinal < count; ordinal++)
         {
-            var descriptor = Qa04ReferenceLoadV1.Record(ResidentReferenceClass, ordinal);
-            var payload = CreatePayload(descriptor.RecordId);
+            var recordId = CanonicalResidentRecordId(ordinal);
+            var payload = CreatePayload(recordId);
             yield return new DomainRecordEnvelopeV1<ResidentIdentityLifecyclePayloadV1>(
-                descriptor.RecordId,
+                recordId,
                 identity.RecordSchema,
                 revision: 1,
                 createdStep: 0,
                 retiredStep: null,
-                detailLevel: descriptor.DetailLevel,
+                detailLevel: Qa04ReferenceLoadV1.ResidentDetailLevel(ordinal),
                 lineageRef: null,
                 payload);
         }
