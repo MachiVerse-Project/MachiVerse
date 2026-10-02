@@ -8,6 +8,7 @@ internal static class Qa04PerformanceMeasurementInitializer
     {
         VerifyNearestRankConvention();
         VerifyCanonicalPassingFixture();
+        VerifyAlpha11DeadlineBoundaries();
         VerifyFailClosedSampleCoverage();
         VerifyMonotonicStepClock();
     }
@@ -44,6 +45,10 @@ internal static class Qa04PerformanceMeasurementInitializer
         Require(snapshot.StepSampleCount == 18_000, "QA-04 canonical measurement Step count drifted.");
         Require(snapshot.MaxRolling60SecondMeanMilliseconds is { } rolling && Math.Abs(rolling - 20d) < 0.0001,
             "QA-04 trailing 60-second mean convention drifted.");
+        Require(Math.Abs(snapshot.StepDeadlineMilliseconds - 100d) < 0.000001,
+            "QA-04 Alpha 1.1 Step deadline drifted.");
+        Require(snapshot.StepDeadlineMissCount == 0 && Math.Abs(snapshot.StepDeadlineMissRatio) < 0.000000001,
+            "QA-04 canonical passing fixture unexpectedly missed the 10Hz deadline.");
 
         var acceptance = Qa04PerformanceThresholdsV1.EvaluateCompleteMeasurement(
             snapshot,
@@ -52,6 +57,80 @@ internal static class Qa04PerformanceMeasurementInitializer
             persistenceMetricObserverFailureCount: 0);
         Require(acceptance.Passed && acceptance.FailureCodes.Count == 0,
             "QA-04 canonical passing measurement fixture must pass.");
+    }
+
+    private static void VerifyAlpha11DeadlineBoundaries()
+    {
+        var exactBudget = CreateCompleteFixture(deadlineMissCount: 0, normalDurationMilliseconds: 100d);
+        Require(exactBudget.StepDuration?.P99 == TimeSpan.FromMilliseconds(100),
+            "QA-04 exact 100ms p99 boundary drifted.");
+        Require(exactBudget.StepDeadlineMissCount == 0,
+            "QA-04 exactly 100ms must not count as a deadline miss.");
+        RequirePasses(exactBudget, "QA-04 exactly 100ms p99 must pass Alpha 1.1 acceptance.");
+
+        var onePercentMissCount = Qa04PerformanceThresholdsV1.ExpectedMeasurementStepCount / 100;
+        var exactOnePercent = CreateCompleteFixture(
+            deadlineMissCount: onePercentMissCount,
+            normalDurationMilliseconds: 100d,
+            missedDurationMilliseconds: 101d);
+        Require(exactOnePercent.StepDeadlineMissCount == onePercentMissCount,
+            "QA-04 exact 1% deadline miss count drifted.");
+        Require(Math.Abs(exactOnePercent.StepDeadlineMissRatio - 0.01d) < 0.000000001,
+            "QA-04 exact 1% deadline miss ratio drifted.");
+        Require(exactOnePercent.StepDuration?.P99 == TimeSpan.FromMilliseconds(100),
+            "QA-04 nearest-rank p99 at the exact 1% miss boundary drifted.");
+        RequirePasses(exactOnePercent, "QA-04 exact 1% deadline miss ratio must pass Alpha 1.1 acceptance.");
+
+        var overOnePercent = CreateCompleteFixture(
+            deadlineMissCount: onePercentMissCount + 1,
+            normalDurationMilliseconds: 100d,
+            missedDurationMilliseconds: 101d);
+        var rejection = Qa04PerformanceThresholdsV1.EvaluateCompleteMeasurement(
+            overOnePercent,
+            acceptedOperationLossCount: 0,
+            hiddenSolverIterationReductionCount: 0,
+            persistenceMetricObserverFailureCount: 0);
+        Require(!rejection.Passed, "QA-04 deadline miss ratio above 1% must fail Alpha 1.1 acceptance.");
+        Require(rejection.FailureCodes.Contains("qa04.performance.step-deadline-miss-ratio", StringComparer.Ordinal),
+            "QA-04 >1% deadline miss failure code must be retained.");
+        Require(rejection.FailureCodes.Contains("qa04.performance.step-p99", StringComparer.Ordinal),
+            "QA-04 p99 above 100ms must fail Alpha 1.1 acceptance.");
+    }
+
+    private static Qa04PerformanceMeasurementSnapshotV1 CreateCompleteFixture(
+        int deadlineMissCount,
+        double normalDurationMilliseconds,
+        double missedDurationMilliseconds = 101d)
+    {
+        var expected = Qa04PerformanceThresholdsV1.ExpectedMeasurementStepCount;
+        if (deadlineMissCount is < 0 || deadlineMissCount > expected)
+            throw new ArgumentOutOfRangeException(nameof(deadlineMissCount));
+
+        var collector = new Qa04BenchmarkMetricCollectorV1();
+        var elapsed = TimeSpan.Zero;
+        var normalCount = expected - deadlineMissCount;
+        for (var index = 0; index < expected; index++)
+        {
+            elapsed += TimeSpan.FromMilliseconds(100);
+            var duration = index < normalCount
+                ? TimeSpan.FromMilliseconds(normalDurationMilliseconds)
+                : TimeSpan.FromMilliseconds(missedDurationMilliseconds);
+            collector.RecordStepDuration(elapsed, duration);
+            collector.RecordSuccessfulCommit(TimeSpan.FromMilliseconds(1));
+        }
+        collector.RecordSnapshotCowBarrier(TimeSpan.FromMilliseconds(1));
+        collector.RecordCoreWorkingSetBytes(1);
+        return collector.Snapshot();
+    }
+
+    private static void RequirePasses(Qa04PerformanceMeasurementSnapshotV1 snapshot, string message)
+    {
+        var acceptance = Qa04PerformanceThresholdsV1.EvaluateCompleteMeasurement(
+            snapshot,
+            acceptedOperationLossCount: 0,
+            hiddenSolverIterationReductionCount: 0,
+            persistenceMetricObserverFailureCount: 0);
+        Require(acceptance.Passed && acceptance.FailureCodes.Count == 0, message);
     }
 
     private static void VerifyFailClosedSampleCoverage()
