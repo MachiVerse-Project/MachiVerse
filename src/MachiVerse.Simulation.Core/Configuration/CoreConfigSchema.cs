@@ -40,7 +40,7 @@ public static class CoreConfigSchema
         void Enum(string path, string value, string[] allowed, ConfigImpact impact = ConfigImpact.Simulation, ConfigMutability mutability = ConfigMutability.RuntimeSafe)
             => fields.Add(path, new ConfigFieldSpec(value, impact, mutability, v => v is string s && allowed.Contains(s, StringComparer.Ordinal)));
 
-        UInt("simulation.step-rate.numerator", 30, 1, 240, ConfigImpact.Simulation);
+        UInt("simulation.step-rate.numerator", 10, 1, 240, ConfigImpact.Simulation);
         UInt("simulation.step-rate.denominator", 1, 1, 1000, ConfigImpact.Simulation);
         UInt("runtime.worker-count", 4, 1, 4096);
         UInt("runtime.domain-timeout-ms", 30000, 100, 300000);
