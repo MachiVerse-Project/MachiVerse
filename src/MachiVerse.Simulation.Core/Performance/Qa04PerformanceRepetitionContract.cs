@@ -141,14 +141,16 @@ public static class Qa04PerformanceRepetitionContractV1
         Qa04PerformanceMeasurementSnapshotV1 measurement,
         ICollection<string> failures)
     {
+        var step = measurement.StepDuration;
         if (measurement.StepSampleCount != Qa04PerformanceThresholdsV1.ExpectedMeasurementStepCount ||
-            measurement.StepDuration?.SampleCount != Qa04PerformanceThresholdsV1.ExpectedMeasurementStepCount)
+            step is null ||
+            step.SampleCount != Qa04PerformanceThresholdsV1.ExpectedMeasurementStepCount)
         {
             failures.Add("qa04.repetition.incomplete-step-measurement");
             return;
         }
 
-        if (measurement.StepDuration.P99 > Qa04PerformanceThresholdsV1.StepP99Max)
+        if (step.P99 > Qa04PerformanceThresholdsV1.StepP99Max)
             failures.Add("qa04.performance.step-p99");
         if (Math.Abs(measurement.StepDeadlineMilliseconds - Qa04PerformanceThresholdsV1.StepDeadline.TotalMilliseconds) > 0.000001d)
             failures.Add("qa04.repetition.step-deadline-contract");
