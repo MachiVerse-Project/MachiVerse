@@ -111,12 +111,13 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
             detailLevel: DetailLevelV1.D2RegionalAggregate,
             static payload => payload.CanonicalDigest());
 
+        var residentIdentity = StandardDomainPartitionRegistry.Get(ResidentIdentityLifecyclePayloadV1.PartitionId);
         for (ulong ordinal = 0; ordinal < CanonicalPhysicalCount; ordinal++)
         {
-            var resident = Qa04ReferenceWorldMaterializerV1.CreateResidentRecord(ordinal);
+            var residentId = Qa04ReferenceWorldMaterializerV1.CanonicalResidentRecordId(ordinal);
             references.Add(
-                new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, resident.RecordId),
-                resident.RecordSchema);
+                new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, residentId),
+                residentIdentity.RecordSchema);
         }
 
         var terrainBindings = new Qa04PhysicalTerrainRootBindingV1[CanonicalTileFrameCount];
@@ -213,7 +214,7 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
         if (physicalOrdinal >= CanonicalPhysicalCount) throw new ArgumentOutOfRangeException(nameof(physicalOrdinal));
 
         var descriptor = Qa04ReferenceLoadV1.Record(PhysicalReferenceClass, physicalOrdinal);
-        var resident = Qa04ReferenceWorldMaterializerV1.CreateResidentRecord(physicalOrdinal);
+        var residentId = Qa04ReferenceWorldMaterializerV1.CanonicalResidentRecordId(physicalOrdinal);
         var (u, v) = Qa04ReferenceLoadV1.PositionWithinTile(descriptor.RecordId, step: 0);
         var row = descriptor.RegionalTileIndex / Qa04ReferenceLoadV1.RegionalTileColumns;
         var column = descriptor.RegionalTileIndex % Qa04ReferenceLoadV1.RegionalTileColumns;
@@ -223,7 +224,7 @@ public static class Qa04PhysicalD0FullReferenceWorldCanonicalAuthorityV1
         var z = Qa04TerrainCanonicalContentSourceV1.HeightMm(x, y);
 
         return new Qa04PhysicalPresenceGenesisBindingV1(
-            new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, resident.RecordId),
+            new PartitionRecordRefV1(ResidentIdentityLifecyclePayloadV1.PartitionId, residentId),
             Qa04PhysicalD0PropertyAssetSupportCanonicalAuthorityV1.TileFrameRef(descriptor.RegionalTileIndex),
             new Vec3Int64V1(x, y, z),
             IdentityOrientation,
