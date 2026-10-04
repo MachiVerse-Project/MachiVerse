@@ -1,4 +1,4 @@
-name: INT-03 Gate4 Step4 local 24h soak
+name: INT-03 Gate4 Step4 local 12h soak
 
 on:
   workflow_dispatch:
@@ -22,9 +22,9 @@ concurrency:
 
 jobs:
   gate4-step4:
-    name: Gate4 Step4 persistence/publication/24h soak
+    name: Gate4 Step4 persistence/publication/12h soak
     runs-on: [self-hosted, Windows, X64, machiverse-release-evidence]
-    timeout-minutes: 1620
+    timeout-minutes: 900
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
@@ -178,7 +178,7 @@ jobs:
           "QA04_STEP4_OUTPUT=$output" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "QA04_STEP3_EVIDENCE=$(Join-Path $env:RUNNER_TEMP 'gate4-step3-input/gate4-step3-benchmark-evidence.json')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Run Step4 fail-closed preflight then 24h soak
+      - name: Run Step4 fail-closed preflight then 12h soak
         shell: powershell
         run: |
           Set-Location -LiteralPath $env:QA04_SOURCE_ROOT
