@@ -17,9 +17,9 @@ concurrency:
 
 jobs:
   gate4-step3:
-    name: Gate4 Step3 canonical benchmark
+    name: Gate4 Step3 Alpha 1.1 10Hz acceptance
     runs-on: [self-hosted, Windows, X64, machiverse-release-evidence]
-    timeout-minutes: 420
+    timeout-minutes: 720
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
@@ -27,13 +27,7 @@ jobs:
       DISPATCH_REF_NAME: ${{ github.ref_name }}
       DEFAULT_BRANCH_NAME: ${{ github.event.repository.default_branch }}
       MACHIVERSE_GATE4_STEP3_PERSISTENCE_INSERT_BATCH_SIZE: "400"
-      MACHIVERSE_GATE4_STEP3_PHASE_LOG_INTERVAL_TRANSITIONS: "10"
-      MACHIVERSE_QA04_DETAILED_PHASE_DIAGNOSTICS: "1"
-      QA04_STEP3_TARGET_SECONDS: "21600"
-      QA04_STEP3_MAX_SECONDS: "25200"
-      QA04_STEP3_PRECHECK_TRANSITIONS: "30"
-      QA04_STEP3_PRECHECK_INTERVAL_TRANSITIONS: "10"
-      QA04_STEP3_PRECHECK_TIMEOUT_SECONDS: "900"
+      MACHIVERSE_GATE4_STEP3_PHASE_LOG_INTERVAL_TRANSITIONS: "50"
     steps:
       - name: Require default-branch workflow authority
         shell: powershell
@@ -104,8 +98,7 @@ jobs:
           $sourceRoot = $roots[0].FullName
           Set-Content -LiteralPath (Join-Path $sourceRoot ".machiverse-source-commit") -Value $env:CANDIDATE_SHA -Encoding ascii
 
-          $requiredRootPaths = @("AGENTS.md", "global.json", "src", "tools")
-          foreach ($required in $requiredRootPaths) {
+          foreach ($required in @("AGENTS.md", "global.json", "src", "tools", "tests")) {
             if (-not (Test-Path (Join-Path $sourceRoot $required))) {
               throw "Candidate source materialization is missing required root path: $required"
             }
@@ -117,9 +110,6 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          if ([string]::IsNullOrWhiteSpace($env:QA04_SOURCE_ROOT)) {
-            throw "QA04_SOURCE_ROOT is not available."
-          }
           $marker = Join-Path $env:QA04_SOURCE_ROOT ".machiverse-source-commit"
           if (-not (Test-Path $marker)) {
             throw "Candidate source marker is missing."
@@ -129,6 +119,30 @@ jobs:
             throw "Materialized candidate $actual does not match requested candidate $env:CANDIDATE_SHA."
           }
 
+      - name: Require applied Alpha 1.1 candidate contract
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = $env:QA04_SOURCE_ROOT
+          $manifestPath = Join-Path $root 'tests/performance-fixtures/v1/harness-manifest.json'
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          $acceptance = Get-Content -LiteralPath (Join-Path $root 'tests/release-acceptance-fixtures/v1/acceptance-manifest.json') -Raw | ConvertFrom-Json
+          $policy = Get-Content -LiteralPath (Join-Path $root 'config/qa04-alpha11.json') -Raw | ConvertFrom-Json
+          $plan = Get-Content -LiteralPath (Join-Path $root 'tests/performance-fixtures/v1/gate4-step2-determinism-plan.json') -Raw | ConvertFrom-Json
+          $digest = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($manifest.soakProfile.testCaseId -ne 'performance.soak.12h' -or $manifest.soakProfile.durationHours -ne 12 -or $manifest.soakProfile.gatewayReconnectFailoverIntervalMinutes -le 0) {
+            throw 'Candidate must implement the canonical 12h soak contract before using this workflow timeout.'
+          }
+          if ($acceptance.qa04ManifestSha256 -ne $digest -or $plan.longDurationEvidence -ne 'gate4-step4-12h-soak') {
+            throw 'Candidate manifest/acceptance/Step2 ownership bindings do not match.'
+          }
+          if ($policy.stepRateNumerator -ne 10 -or $policy.stepRateDenominator -ne 1 -or $policy.acceptanceProfile -ne 'qa04.alpha11.10hz.v1') {
+            throw 'Candidate does not implement the standard Alpha 1.1 10Hz acceptance profile.'
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $root 'docs/design/phase4-alpha11-runtime-release-profile.md'))) {
+            throw 'Candidate is missing the integrated normative Alpha 1.1 profile.'
+          }
+
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         env:
@@ -136,12 +150,32 @@ jobs:
         with:
           dotnet-version: 10.0.400
 
-      - name: Record runner environment
+      - name: Record Alpha 1.1 runner topology
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           $output = Join-Path $env:RUNNER_TEMP "gate4-step3"
           New-Item -ItemType Directory -Force -Path $output | Out-Null
+
+          $processors = @(Get-CimInstance Win32_Processor)
+          $physicalCores = [int](($processors | Measure-Object -Property NumberOfCores -Sum).Sum)
+          $logicalProcessors = [int](($processors | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
+          $process = Get-Process -Id $PID
+          $affinity = [BitConverter]::ToUInt64([BitConverter]::GetBytes($process.ProcessorAffinity.ToInt64()), 0)
+          $affinityBits = 0
+          $mask = $affinity
+          while ($mask -ne 0) {
+            $affinityBits += [int]($mask -band 1)
+            $mask = $mask -shr 1
+          }
+
+          if ($physicalCores -lt 8) {
+            throw "Alpha 1.1 Step3 release host requires at least 8 physical CPU cores; observed $physicalCores."
+          }
+          if ($logicalProcessors -lt 16 -or [Environment]::ProcessorCount -lt 16 -or $affinityBits -lt 16) {
+            throw "Alpha 1.1 Step3 workers=16 profile requires at least 16 process-visible logical processors."
+          }
+
           $record = [ordered]@{
             schemaVersion = "1.0"
             sourceCommit = $env:CANDIDATE_SHA
@@ -149,10 +183,21 @@ jobs:
             osDescription = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
             osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
             processArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
-            processorCount = [Environment]::ProcessorCount
+            physicalCoreCount = $physicalCores
+            logicalProcessorCount = $logicalProcessors
+            processVisibleLogicalProcessorCount = [Environment]::ProcessorCount
+            processorAffinityMaskHex = ("0x{0:x}" -f $affinity)
+            processorAffinityLogicalProcessorCount = $affinityBits
+            alpha11ExecutionProfiles = @(
+              [ordered]@{ workerCount = 8; role = "8-wide execution profile" },
+              [ordered]@{ workerCount = 16; role = "16-wide execution profile" }
+            )
+            targetTickRateHz = 10.0
+            stepDeadlineMilliseconds = 100.0
+            deadlineMissRatioMax = 0.01
             dotnetSdk = (dotnet --version).Trim()
           }
-          $record | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $output "runner-environment.json")
+          $record | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $output "runner-environment.json")
           "QA04_STEP3_OUTPUT=$output" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build exact candidate
@@ -166,11 +211,15 @@ jobs:
           dotnet publish src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release --output $coreOut
           dotnet publish tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release --output $adapterOut
           dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runner build failed.' }
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- verify
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate release contract verification failed.' }
+          dotnet run --project tests/MachiVerse.Qa04RuntimeTarget.ScheduleTests --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate soak schedule boundary verification failed.' }
           dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release -- materialize $plan
 
-          $suffix = ".exe"
-          $core = Join-Path $coreOut ("MachiVerse.Simulation.Core" + $suffix)
-          $adapter = Join-Path $adapterOut ("MachiVerse.Qa04RuntimeTarget" + $suffix)
+          $core = Join-Path $coreOut "MachiVerse.Simulation.Core.exe"
+          $adapter = Join-Path $adapterOut "MachiVerse.Qa04RuntimeTarget.exe"
           if (-not (Test-Path $core)) { throw "Simulation Core executable not found: $core" }
           if (-not (Test-Path $adapter)) { throw "QA-04 runtime adapter not found: $adapter" }
 
@@ -178,196 +227,25 @@ jobs:
           "QA04_RUNTIME_ADAPTER=$adapter" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "QA04_PLAN=$plan" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Run Step3 performance precheck
+      - name: Run Alpha 1.1 canonical Step3 release acceptance
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           Set-Location -LiteralPath $env:QA04_SOURCE_ROOT
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- run-step3 release $env:CANDIDATE_SHA $env:QA04_RUNTIME_ADAPTER $env:QA04_PLAN $env:QA04_STEP3_OUTPUT
 
-          $manifestPath = Join-Path $env:QA04_SOURCE_ROOT "tests/performance-fixtures/v1/harness-manifest.json"
-          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-          $workerCounts = @($manifest.workerCounts)
-          $runsPerWorker = [int]$manifest.processRunsPerWorker
-          $canonicalTransitions = [int]$manifest.warmupSteps + [int]$manifest.measurementSteps
-          $steadyOperations = [double]$manifest.referenceLoad.operationLoad.steadyPerStep
-
-          $precheckTransitions = [int]$env:QA04_STEP3_PRECHECK_TRANSITIONS
-          $progressInterval = [int]$env:QA04_STEP3_PRECHECK_INTERVAL_TRANSITIONS
-          $precheckTimeoutSeconds = [int]$env:QA04_STEP3_PRECHECK_TIMEOUT_SECONDS
-          $targetSeconds = [double]$env:QA04_STEP3_TARGET_SECONDS
-          $maxSeconds = [double]$env:QA04_STEP3_MAX_SECONDS
-          $batchSize = [int]$env:MACHIVERSE_GATE4_STEP3_PERSISTENCE_INSERT_BATCH_SIZE
-
-          if ($workerCounts.Count -eq 0 -or $runsPerWorker -le 0 -or $canonicalTransitions -le 0 -or $steadyOperations -le 0) {
-            throw "Canonical Step3 manifest shape is invalid for performance precheck."
-          }
-          if ($precheckTransitions -le 0 -or $progressInterval -le 0 -or $precheckTransitions -lt $progressInterval -or
-              $precheckTransitions % $progressInterval -ne 0 -or $precheckTimeoutSeconds -le 0 -or
-              $targetSeconds -le 0 -or $maxSeconds -lt $targetSeconds -or $batchSize -le 0) {
-            throw "Step3 performance precheck configuration is invalid."
-          }
-
-          $precheckOutput = Join-Path $env:QA04_STEP3_OUTPUT "precheck"
-          New-Item -ItemType Directory -Force -Path $precheckOutput | Out-Null
-          $rows = @()
-          $estimatedMatrixSeconds = 0.0
-          foreach ($workersRaw in $workerCounts) {
-            $workers = [int]$workersRaw
-            $root = Join-Path $env:RUNNER_TEMP ("qa04-step3-precheck-w" + $workers)
-            $requestPath = Join-Path $precheckOutput ("workers-" + $workers + ".request.jsonl")
-            $stdoutPath = Join-Path $precheckOutput ("workers-" + $workers + ".stdout.log")
-            $stderrPath = Join-Path $precheckOutput ("workers-" + $workers + ".stderr.log")
-            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath $requestPath,$stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
-
-            $request = [ordered]@{
-              schemaVersion = "1.0"
-              command = "production-step2-determinism-run"
-              workerCount = $workers
-              transitionCount = $precheckTransitions
-              persistenceInsertBatchSize = $batchSize
-              progressIntervalTransitions = $progressInterval
-              persistenceRoot = $root
-            } | ConvertTo-Json -Compress
-            $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
-            $requestBytes = $utf8NoBom.GetBytes($request + "`n")
-            if ($requestBytes.Length -eq 0 -or $requestBytes[0] -ne 0x7B) {
-              throw "Step3 performance precheck request must start with JSON object byte 0x7B for workers=$workers."
-            }
-            [System.IO.File]::WriteAllBytes($requestPath, $requestBytes)
-
-            Write-Host "GATE4_STEP3_PRECHECK_START workers=$workers transitions=$precheckTransitions interval=$progressInterval request_bytes=$($requestBytes.Length)"
-            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $startInfo.FileName = $env:ComSpec
-            $startInfo.Arguments = '/d /s /c ""{0}" qa04-target < "{1}""' -f $env:MACHIVERSE_QA04_CORE_EXECUTABLE, $requestPath
-            $startInfo.UseShellExecute = $false
-            $startInfo.CreateNoWindow = $true
-            $startInfo.RedirectStandardInput = $false
-            $startInfo.RedirectStandardOutput = $true
-            $startInfo.RedirectStandardError = $true
-
-            $process = New-Object System.Diagnostics.Process
-            $process.StartInfo = $startInfo
-            if (-not $process.Start()) {
-              throw "Step3 performance precheck process failed to start for workers=$workers."
-            }
-            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-            $stderrTask = $process.StandardError.ReadToEndAsync()
-
-            if (-not $process.WaitForExit($precheckTimeoutSeconds * 1000)) {
-              try { $process.Kill() } catch {}
-              $process.WaitForExit()
-              $stdout = $stdoutTask.GetAwaiter().GetResult()
-              $stderr = $stderrTask.GetAwaiter().GetResult()
-              Set-Content -LiteralPath $stdoutPath -Value $stdout -Encoding utf8
-              Set-Content -LiteralPath $stderrPath -Value $stderr -Encoding utf8
-              throw "Step3 performance precheck timed out for workers=$workers after $precheckTimeoutSeconds seconds."
-            }
-
-            $process.WaitForExit()
-            $stdout = $stdoutTask.GetAwaiter().GetResult()
-            $stderr = $stderrTask.GetAwaiter().GetResult()
-            Set-Content -LiteralPath $stdoutPath -Value $stdout -Encoding utf8
-            Set-Content -LiteralPath $stderrPath -Value $stderr -Encoding utf8
-            $exitCode = $process.ExitCode
-            $process.Dispose()
-
-            $progressLines = @($stderr -split [Environment]::NewLine | Where-Object { $_ -match '^QA04_PROGRESS ' })
-            foreach ($progressTelemetryLine in $progressLines) {
-              Write-Host $progressTelemetryLine
-            }
-            $phaseLines = @($stderr -split [Environment]::NewLine | Where-Object { $_ -match '^QA04_PHASE ' })
-            foreach ($phaseLine in $phaseLines) {
-              Write-Host $phaseLine
-            }
-
-            if ($exitCode -ne 0) {
-              $tail = @($stderr -split [Environment]::NewLine | Select-Object -Last 40) -join [Environment]::NewLine
-              throw "Step3 performance precheck failed for workers=$workers exit=${exitCode}: $tail"
-            }
-
-            $progressLine = Get-Content -LiteralPath $stderrPath | Where-Object { $_ -match '^QA04_PROGRESS phase=actual-run ' } | Select-Object -Last 1
-            if ([string]::IsNullOrWhiteSpace($progressLine) -or $progressLine -notmatch 'interval_ops_per_second=([0-9]+(?:\.[0-9]+)?)') {
-              throw "Step3 performance precheck did not emit interval throughput for workers=$workers."
-            }
-
-            $rate = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
-            if ($rate -le 0) { throw "Step3 performance precheck throughput must be positive for workers=$workers." }
-
-            if ($progressLine -notmatch 'total_elapsed_seconds=([0-9]+(?:\.[0-9]+)?)') {
-              throw "Step3 performance precheck did not emit total elapsed time for workers=$workers."
-            }
-            $totalElapsedSeconds = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
-            if ($progressLine -notmatch 'actual_elapsed_seconds=([0-9]+(?:\.[0-9]+)?)') {
-              throw "Step3 performance precheck did not emit actual elapsed time for workers=$workers."
-            }
-            $actualElapsedSeconds = [double]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
-            if ($totalElapsedSeconds -lt $actualElapsedSeconds -or $actualElapsedSeconds -le 0) {
-              throw "Step3 performance precheck elapsed-time relationship is invalid for workers=$workers."
-            }
-
-            $startupSecondsPerRun = $totalElapsedSeconds - $actualElapsedSeconds
-            $steadyStepSeconds = $steadyOperations / $rate
-            $transitionSecondsPerRun = $steadyStepSeconds * $canonicalTransitions
-            $workerEstimateSeconds = ($startupSecondsPerRun + $transitionSecondsPerRun) * $runsPerWorker
-            $estimatedMatrixSeconds += $workerEstimateSeconds
-            $rows += [pscustomobject]@{
-              workers = $workers
-              intervalOpsPerSecond = [math]::Round($rate, 3)
-              estimatedSteadyStepMs = [math]::Round($steadyStepSeconds * 1000.0, 3)
-              startupSecondsPerRun = [math]::Round($startupSecondsPerRun, 1)
-              estimatedTransitionSecondsPerRun = [math]::Round($transitionSecondsPerRun, 1)
-              estimatedWorkerGroupSeconds = [math]::Round($workerEstimateSeconds, 1)
-            }
-            Write-Host ("GATE4_STEP3_PRECHECK workers={0} interval_ops_per_second={1:F1} estimated_step_ms={2:F1} startup_seconds_per_run={3:F1} estimated_worker_group_seconds={4:F1}" -f $workers, $rate, ($steadyStepSeconds * 1000.0), $startupSecondsPerRun, $workerEstimateSeconds)
-
-            $partialReport = [ordered]@{
-              schemaVersion = "1.0"
-              sourceCommit = $env:CANDIDATE_SHA
-              precheckTransitions = $precheckTransitions
-              progressIntervalTransitions = $progressInterval
-              canonicalTransitionsPerRun = $canonicalTransitions
-              runsPerWorker = $runsPerWorker
-              targetSeconds = $targetSeconds
-              maxSeconds = $maxSeconds
-              estimatedMatrixSecondsLowerBound = [math]::Round($estimatedMatrixSeconds, 1)
-              estimatedMatrixHoursLowerBound = [math]::Round($estimatedMatrixSeconds / 3600.0, 3)
-              rows = $rows
-            }
-            $reportPath = Join-Path $env:QA04_STEP3_OUTPUT "step3-performance-precheck.json"
-            $partialReport | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding utf8
-
-          }
-
-          $report = [ordered]@{
-            schemaVersion = "1.0"
-            sourceCommit = $env:CANDIDATE_SHA
-            precheckTransitions = $precheckTransitions
-            progressIntervalTransitions = $progressInterval
-            canonicalTransitionsPerRun = $canonicalTransitions
-            runsPerWorker = $runsPerWorker
-            targetSeconds = $targetSeconds
-            maxSeconds = $maxSeconds
-            estimatedMatrixSeconds = [math]::Round($estimatedMatrixSeconds, 1)
-            estimatedMatrixHours = [math]::Round($estimatedMatrixSeconds / 3600.0, 3)
-            rows = $rows
-          }
-          $reportPath = Join-Path $env:QA04_STEP3_OUTPUT "step3-performance-precheck.json"
-          $report | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding utf8
-
-          Write-Host ("GATE4_STEP3_PRECHECK_SUMMARY estimated_matrix_hours={0:F2} target_hours={1:F2} max_hours={2:F2}" -f ($estimatedMatrixSeconds / 3600.0), ($targetSeconds / 3600.0), ($maxSeconds / 3600.0))
-          if ($estimatedMatrixSeconds -gt $maxSeconds) {
-            throw "Estimated Step3 matrix runtime exceeds the configured hard upper bound; canonical benchmark will not start."
-          }
-          if ($estimatedMatrixSeconds -gt $targetSeconds) {
-            Write-Warning "Estimated Step3 matrix runtime exceeds the 6-hour target but remains within the configured hard upper bound."
-          }
-
-      - name: Run canonical Step3 release benchmark
+      - name: Validate Alpha 1.1 Step3 evidence envelope
         shell: powershell
         run: |
-          Set-Location -LiteralPath $env:QA04_SOURCE_ROOT
-          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release --no-build -- run-step3 release $env:CANDIDATE_SHA $env:QA04_RUNTIME_ADAPTER $env:QA04_PLAN $env:QA04_STEP3_OUTPUT
+          $ErrorActionPreference = "Stop"
+          $evidencePath = Join-Path $env:QA04_STEP3_OUTPUT "gate4-step3-benchmark-evidence.json"
+          if (-not (Test-Path $evidencePath)) {
+            throw "Gate4 Step3 evidence file is missing."
+          }
+          $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json
+          if (-not $evidence.passed -or $evidence.sourceCommit -ne $env:CANDIDATE_SHA) {
+            throw "Gate4 Step3 Alpha 1.1 evidence is not a PASS for the exact candidate."
+          }
 
       - name: Upload Step3 evidence
         if: always()
