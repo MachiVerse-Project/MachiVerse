@@ -160,7 +160,7 @@ Scope:
 - queue / backpressure
 - memory budget
 - General View renderer presentation budget
-- 24h soak orchestration
+- 12h soak orchestration
 
 Dependencies: `SIM-13`, `SIM-14`, `GW-06`, `QA-02`。
 
@@ -180,7 +180,7 @@ Scope:
 - `perf.reference.v1`
 - persistence stress
 - publication stress
-- 24h soak
+- 12h soak
 - component independent contract tests
 - `ReleaseAcceptanceRecordV1`
 

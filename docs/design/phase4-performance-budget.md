@@ -32,7 +32,9 @@ OS/Runtime:
   supported 64-bit .NET runtime
 ```
 
-`runtime.worker-count` standard defaultは4だが、1/4/8/16 workerでdeterministic result一致を要求する。
+`runtime.worker-count` standard defaultは4だが、1/4/8/16 workerでdeterministic result一致を要求する。1/4/8/16はPhase 4/Alpha 1.1の標準受入matrixであり、Core runtime capabilityの上限ではない。production CPU work executorは16を超えるworker budgetを同一実装で利用可能とし、Domain数を並列度上限にしてはならない。
+
+より多コアのhostでは、independent work itemをcanonical unitへ分割し、parallel compute後にcanonical reduce/commit barrierへ戻すことでCPU parallelismを拡張する。worker数増加によってSameStepOrder、authority commit順、StateDiagnostic、Operation terminal semantic resultを変更してはならない。
 
 Reference node未満でも起動禁止とは限らない。performance acceptance profileを満たさないdeploymentとしてwarningを出せる。
 
@@ -585,6 +587,8 @@ P4-06 completionにはreference benchmark harnessで少なくとも次を確認�
 
 - 30Hz p95 Step target
 - worker count 1/4/8/16 result digest一致
+- production CPU workがworker budgetを16またはDomain数へsilent clampしないこと
+- 16超worker budgetでも同一semantic outputを維持できるexecutor contract
 - 100k D0 resident scenario
 - 500k physical presence scenario
 - memory guard内

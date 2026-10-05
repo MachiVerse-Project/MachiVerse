@@ -26,7 +26,7 @@ Benchmark WorldIdはprofile/seedからdeterministicにderiveし、実ユーザ�
 
 ## 3. Config baseline
 
-`phase4-config-standard-examples.md` Simulation Core defaultを使用する。
+`phase4-config-standard-examples.md` Simulation Core schema `1.0` defaultをbaselineとして使用する。Alpha 1.1 release executionではschema default自体を変更せず、`phase4-alpha11-runtime-release-profile.md` に従ってStepRate `10/1`を明示選択する。
 
 差分:
 
@@ -36,6 +36,8 @@ observability.log-level = warn
 ```
 
 SIMULATION Configはworker count run間で完全一致する。
+
+この1/4/8/16は`perf.reference.v1`のcanonical acceptance matrixであり、runtime capability上限ではない。16超のworker budgetは別途executor/runtime contract testで検証し、同一production code pathが32/64+へ拡張できることを確認する。
 
 ## 4. Initial world population
 
@@ -236,6 +238,21 @@ Reference node:
 
 Worker 1/4/8 are scaling/determinism data and need not each achieve 30Hz, unless separately claimed by product profile。
 
+### 16.1 Alpha 1.1 release acceptance overlay
+
+上記30Hz-oriented performance valuesはPhase 4 reference/historyとして保持する。Alpha 1.1 formal Gate 4 Step 3では同じcanonical workload identity `perf.reference.v1`を維持したまま、release blockerを次へ更新する。
+
+- standard runtime StepRate: `10/1` steps/sec（10 tick/s）。
+- release execution worker profile: 8 / 16、各3 independent process runs。
+- p99 authoritative Step processing time <=100ms。
+- deadline miss ratio <=1%。
+- pacing/waitはprocessing latencyへ含めない。
+- accepted Operation loss = 0。
+- hidden solver iteration reduction禁止。
+- production CPU worker evidence、determinism、durability、COMMIT-before-publicationを維持する。
+
+旧p95 33.333ms / p99 50ms / 60-second mean 30msはAlpha 1.1ではtelemetryでありrelease blockerではない。
+
 ## 17. Determinism pass criteria
 
 All worker counts 1/4/8/16:
@@ -249,6 +266,8 @@ promotion deferral order identical
 ```
 
 Wall-clock metric/trace/log sequence need not match。
+
+Step3 evidenceでは`worker_count`が単なるmetadataではなくproduction CPU workへ適用されたことを、`effective_cpu_worker_count`および`max_observed_cpu_parallelism`で確認する。work item数またはdependencyによりrequested値へ到達不能なStepはあり得るが、16または8 Domainへ固定されたhidden ceilingはfailとする。
 
 ## 18. Persistence stress subprofile
 
@@ -291,6 +310,8 @@ PerformanceBenchmarkReportV1 {
   hardware_profile_digest,
   config_digest,
   worker_count,
+  effective_cpu_worker_count,
+  max_observed_cpu_parallelism,
   run_ordinal,
   step_count,
   step_p50_ms,

@@ -73,9 +73,10 @@ General View上のAdministratorとAdmin Viewは別のauth/authz domainです。
 
 権威あるWorld Timeは整数ベースのSimulation Stepです。
 
-- standard frequencyは30Hz。
-- 外部Configから変更可能。
-- Coreが30Hzへ追いつかなくてもprocessing delayだけを理由にStepをskipしない。
+- Config schema `1.0` のStepRate defaultは互換性のため `30/1` steps/secを維持する。
+- Alpha 1.1 standard runtime profileはCore Configで `10/1` steps/sec（10 tick/s）を明示選択する。
+- StepRateは外部Configから変更可能。
+- Coreがactive StepRateへ追いつかなくてもprocessing delayだけを理由にStepをskipしない。
 - network arrival timeをそのままOperation application timeにしない。
 - Gateway/Masterがcandidate application timeを形成し、Coreがfinal valid Stepを決定する。
 
@@ -119,7 +120,7 @@ Three.jsはGeneral Viewのrendering技術であり、Core world modelを置き�
 ## World-scale detail
 
 - defaultでは世界規模で可能な限り個体・物品・建物等の存在、persistent ID、重要stateを保持する方向とする。
-- 全世界を一律30Hzでhigh-detail updateすることは要求しない。
+- 全世界をactive StepRateで一律high-detail updateすることは要求しない。
 - remote / low-importance対象ではupdate frequency・detailを下げられる。
 - Entity identityと重要因果を失わずdetail promotion/demotion、aggregation、archiveを行う。
 

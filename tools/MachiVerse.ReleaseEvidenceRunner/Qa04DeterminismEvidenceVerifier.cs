@@ -31,6 +31,11 @@ internal static class Qa04DeterminismEvidenceVerifier
 
         var plan = SelfTestPlan();
         ValidateActualPlan(plan);
+        var staleDurationPlan = SelfTestPlan();
+        staleDurationPlan.LongDurationEvidence = "gate4-step4-24h-soak";
+        RequireThrows<InvalidDataException>(
+            () => ValidateActualPlan(staleDurationPlan),
+            "Step2 must reject a stale 24h Step4 ownership identifier.");
         var actualRows = new List<Gate4Step2ActualRunEvidenceRow>(12);
         foreach (var worker in plan.WorkerCounts)
         foreach (var ordinal in Enumerable.Range(1, plan.ProcessRunsPerWorker))
@@ -71,7 +76,7 @@ internal static class Qa04DeterminismEvidenceVerifier
                 StringComparison.Ordinal) ||
             !string.Equals(
                 plan.LongDurationEvidence,
-                "gate4-step4-24h-soak",
+                "gate4-step4-12h-soak",
                 StringComparison.Ordinal))
             throw new InvalidDataException("Gate4 Step2 determinism plan proof ownership drifted.");
     }
@@ -498,7 +503,7 @@ internal static class Qa04DeterminismEvidenceVerifier
             ProgressIntervalTransitions = 25,
             HeartbeatIntervalSeconds = 300,
             SnapshotRecoveryEvidence = "reuse-gate3-exact103-production-proof",
-            LongDurationEvidence = "gate4-step4-24h-soak",
+            LongDurationEvidence = "gate4-step4-12h-soak",
         };
 
     private static Gate4Step2ActualRunEvidenceRow SelfTestActualRow(

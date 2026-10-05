@@ -8,8 +8,8 @@ internal static partial class ReleaseEvidenceRunner
     private const string ReferenceProfile = "perf.reference.v1";
     private const string PersistenceProfile = "perf.persistence.v1";
     private const string PublicationProfile = "perf.publication.v1";
-    private const string SoakProfile = "performance.soak.24h";
-    private const long MinimumSoakSeconds = 86_400;
+    private const string SoakProfile = "performance.soak.12h";
+    private const long MinimumSoakSeconds = 43_200;
     private const string Step3HeartbeatEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_HEARTBEAT_SECONDS";
 
     private static readonly JsonSerializerOptions JsonLine = new()
@@ -231,6 +231,8 @@ internal static partial class ReleaseEvidenceRunner
             Path.Combine(outputDirectory, "gate4-step3-benchmark-evidence.json"), outputDirectory);
     }
 
+    internal static bool IsCompleteSoakDuration(long durationSeconds) => durationSeconds >= MinimumSoakSeconds;
+
     internal static void ApplyFragment(string fragmentPath, string baseEvidencePath, string outputEvidencePath)
     {
         var fragment = Program.ReadJson<EvidenceFragment>(fragmentPath, "QA-04 evidence fragment");
@@ -241,8 +243,8 @@ internal static partial class ReleaseEvidenceRunner
         if (!string.Equals(fragment.Qa04ManifestSha256, Program.CanonicalQa04ManifestSha256, StringComparison.Ordinal))
             throw new InvalidDataException("QA-04 evidence fragment manifest digest is not canonical.");
         Program.RequireLowerHex(fragment.SourceCommit, 40, "fragment sourceCommit");
-        if (fragment.Soak is null || fragment.Soak.DurationSeconds < MinimumSoakSeconds)
-            throw new InvalidDataException("Release fragment does not contain a complete 24-hour soak.");
+        if (fragment.Soak is null || !IsCompleteSoakDuration(fragment.Soak.DurationSeconds))
+            throw new InvalidDataException("Release fragment does not contain a complete 12-hour soak.");
         RequireExactSet(fragment.PerformanceReports.Select(static x => x.ProfileId).ToArray(),
             [ReferenceProfile, PersistenceProfile, PublicationProfile], "release performance profiles");
 

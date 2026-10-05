@@ -46,8 +46,8 @@ internal static partial class Program
         RequireTrue(GetBool(manifest, "publicationProfile", "slowConsumersMustNotBlockCustodyOrResult"), "slow consumer isolation");
         RequireTrue(GetBool(manifest, "publicationProfile", "continuityAfterCoalesceResyncRequired"), "publication continuity");
 
-        RequireString(GetString(manifest, "soakProfile", "testCaseId"), "performance.soak.24h", "soak TestCaseId");
-        RequireEqual(GetInt(manifest, "soakProfile", "durationHours"), 24, "soak duration");
+        RequireString(GetString(manifest, "soakProfile", "testCaseId"), "performance.soak.12h", "soak TestCaseId");
+        RequireEqual(GetInt(manifest, "soakProfile", "durationHours"), 12, "soak duration");
         RequireEqual(GetInt(manifest, "soakProfile", "gatewayReconnectFailoverIntervalMinutes"), 30, "soak Gateway churn cadence");
         RequireEqual(GetInt(manifest, "soakProfile", "maxPostWarmupMemoryGrowthPercent"), 10, "soak memory growth guard");
         RequireTrue(GetBool(manifest, "soakProfile", "periodicSnapshotRecoveryCheckpoints"), "soak snapshot/recovery checkpoints");

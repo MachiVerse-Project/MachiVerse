@@ -175,14 +175,14 @@ internal static partial class ReleaseEvidenceRunner
                 sourceCommit,
                 "publication",
                 publicationEvidence.FailureCodes);
-            Console.Error.WriteLine("Gate4 Step4 preflight stopped before 24h soak: perf.publication.v1 did not PASS.");
+            Console.Error.WriteLine("Gate4 Step4 preflight stopped before 12h soak: perf.publication.v1 did not PASS.");
             return 2;
         }
 
         var soakRequest = NewRequest(
             "soak-run",
             executionClass,
-            "performance.soak.24h",
+            "performance.soak.12h",
             sourceCommit,
             SoakProfile,
             soakPlan,
@@ -192,7 +192,7 @@ internal static partial class ReleaseEvidenceRunner
         var soakArtifact = WriteResponseArtifact(
             outputDirectory,
             reportsDirectory,
-            "performance.soak.24h",
+            "performance.soak.12h",
             soakInvocation.Response);
         var soakEvidence = EvaluateSoak(
             soakInvocation.Response,

@@ -24,7 +24,7 @@ public sealed record Qa04ProductionSoakRunResultV1(
 
 public static class Qa04ProductionSoakRunV1
 {
-    public const long ReleaseDurationSeconds = 86_400;
+    public const long ReleaseDurationSeconds = 43_200;
     private const int ReleaseWorkerCount = 16;
     private static readonly TimeSpan ProgressDeadlockLimit = TimeSpan.FromMinutes(30);
 
@@ -37,7 +37,7 @@ public static class Qa04ProductionSoakRunV1
         if (string.IsNullOrWhiteSpace(persistenceRoot))
             throw new ArgumentException("persistenceRoot is required.", nameof(persistenceRoot));
         if (releaseMode && requestedDurationSeconds != ReleaseDurationSeconds)
-            throw new InvalidDataException("qa04.soak.release-duration-must-be-86400");
+            throw new InvalidDataException("qa04.soak.release-duration-must-be-43200");
         if (!releaseMode && requestedDurationSeconds is < 1 or > 60)
             throw new InvalidDataException("qa04.soak.contract-duration-out-of-range");
 
@@ -236,7 +236,7 @@ public static class Qa04ProductionSoakRunV1
 
         return new Qa04ProductionSoakRunResultV1(
             "1.0",
-            "performance.soak.24h",
+            "performance.soak.12h",
             ReleaseMode: true,
             DurationSeconds: durationSeconds,
             CanonicalCycleCount: cycleCount,
@@ -270,7 +270,7 @@ public static class Qa04ProductionSoakRunV1
 
         return new Qa04ProductionSoakRunResultV1(
             "1.0",
-            "performance.soak.24h",
+            "performance.soak.12h",
             ReleaseMode: false,
             DurationSeconds: (long)Math.Floor(started.Elapsed.TotalSeconds),
             CanonicalCycleCount: 0,

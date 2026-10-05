@@ -137,7 +137,7 @@ internal static class Program
     private static Response Soak(Request request)
         => NewResponse(request, "soak-report-v1", new
         {
-            test_case_id = "performance.soak.24h",
+            test_case_id = "performance.soak.12h",
             duration_seconds = 1,
             parallel_verifier_digest_matched = true,
             max_post_warmup_memory_growth_percent = 0.0,
