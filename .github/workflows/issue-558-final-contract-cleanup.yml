@@ -1,0 +1,80 @@
+name: issue-558 final contract cleanup
+
+on:
+  push:
+    branches:
+      - fix/issue-558-step4-12h
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-558-step4-12h
+          fetch-depth: 0
+
+      - name: Align remaining QA-04 12h contract references
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          old_digest = '5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423'
+          new_digest = '4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06'
+
+          step1 = Path('.github/workflows/int03-gate4-step1-release-runtime-validation.yml')
+          text = step1.read_text(encoding='utf-8')
+          if text.count(old_digest) != 1:
+              raise SystemExit(f'Expected one legacy Gate4 Step1 QA-04 digest, found {text.count(old_digest)}')
+          step1.write_text(text.replace(old_digest, new_digest), encoding='utf-8')
+
+          readme = Path('tests/performance-fixtures/v1/README.md')
+          text = readme.read_text(encoding='utf-8')
+          if text.count('performance.soak.24h') != 1:
+              raise SystemExit(f'Expected one legacy soak ID in README, found {text.count("performance.soak.24h")}')
+          if text.count('24 wall-clock hour soak') != 1 or text.count('24h acceptance result') != 1:
+              raise SystemExit('README legacy 24h wording shape drifted')
+          text = text.replace('performance.soak.24h', 'performance.soak.12h')
+          text = text.replace('24 wall-clock hour soak', '12 wall-clock hour soak')
+          text = text.replace('24h acceptance result', '12h acceptance result')
+          readme.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Audit legacy soak contract references
+        shell: bash
+        run: |
+          set -euo pipefail
+          exclude_a=':!.github/workflows/issue-558-contract-audit.yml'
+          exclude_b=':!.github/workflows/issue-558-final-contract-cleanup.yml'
+          if git grep -n '5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423' -- ':!docs/**' "$exclude_a" "$exclude_b"; then
+            echo 'Legacy QA-04 manifest digest remains outside historical docs.' >&2
+            exit 1
+          fi
+          if git grep -n 'performance.soak.24h' -- ':!docs/**' "$exclude_a" "$exclude_b"; then
+            echo 'Legacy 24h soak profile remains outside historical docs.' >&2
+            exit 1
+          fi
+          if git grep -n '86_400' -- ':!docs/**' "$exclude_a" "$exclude_b"; then
+            echo 'Legacy 86_400 soak duration remains outside historical docs.' >&2
+            exit 1
+          fi
+          grep -q 'performance.soak.12h' tests/performance-fixtures/v1/README.md
+          grep -q '4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06' .github/workflows/int03-gate4-step1-release-runtime-validation.yml
+
+      - name: Commit cleanup and remove temporary audit workflows
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/issue-558-final-contract-cleanup.yml
+          git rm .github/workflows/issue-558-contract-audit.yml
+          git add .github/workflows/int03-gate4-step1-release-runtime-validation.yml tests/performance-fixtures/v1/README.md
+          git diff --cached --check
+          git commit -m "fix: #558 finish 12h soak contract alignment"
+          git push origin HEAD:fix/issue-558-step4-12h
