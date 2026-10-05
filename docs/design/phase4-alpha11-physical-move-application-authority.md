@@ -193,7 +193,7 @@ authoritativeStepLoopAvailable = true
 releaseEvidenceCapable = true
 ```
 
-It does not prove the full authoritative Step, exact-103 recovery/replay after full mutation, determinism matrix, benchmark release evidence, or 24h soak.
+It does not prove the full authoritative Step, exact-103 recovery/replay after full mutation, determinism matrix, benchmark release evidence, or 12h soak.
 
 ## 11. Non-generalization statement
 

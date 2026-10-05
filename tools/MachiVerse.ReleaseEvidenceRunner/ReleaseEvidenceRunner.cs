@@ -219,125 +219,16 @@ internal static partial class ReleaseEvidenceRunner
         string planDirectory,
         string outputDirectory)
     {
-        if (executionClass is not ("contract-smoke" or "release"))
-            throw new ArgumentException("executionClass must be contract-smoke or release.");
-        Program.RequireLowerHex(sourceCommit, 40, "sourceCommit");
-        if (!File.Exists(adapterExecutable))
-            throw new FileNotFoundException("QA-04 adapter executable was not found.", adapterExecutable);
-        if (!Directory.Exists(planDirectory))
-            throw new DirectoryNotFoundException($"QA-04 plan directory was not found: {planDirectory}");
-
-        var manifestPath = Path.Combine(repositoryRoot, "tests", "performance-fixtures", "v1", "harness-manifest.json");
-        if (!string.Equals(Program.Sha256File(manifestPath), Program.CanonicalQa04ManifestSha256, StringComparison.Ordinal))
-            throw new InvalidDataException("Current QA-04 manifest is not the canonical release profile.");
-        using var manifestDocument = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
-        var manifest = manifestDocument.RootElement;
-
-        var benchmarkSummary = RequirePlanJson(planDirectory, "benchmark-summary.json");
-        var persistenceProfile = RequirePlanJson(planDirectory, "persistence-profile.json");
-        var publicationProfile = RequirePlanJson(planDirectory, "publication-profile.json");
-        var soakPlan = RequirePlanJson(planDirectory, "soak-plan.json");
-        var runMatrixPath = Path.Combine(planDirectory, "reference-run-matrix.json");
-        if (!File.Exists(runMatrixPath)) throw new InvalidDataException("Missing materialized reference-run-matrix.json.");
-        var runs = Program.ReadJson<BenchmarkRunDescriptor[]>(runMatrixPath, "QA-04 run matrix");
-        ValidateRunMatrix(runs);
-
-        Directory.CreateDirectory(outputDirectory);
-        var reportsDirectory = Path.Combine(outputDirectory, "reports");
-        Directory.CreateDirectory(reportsDirectory);
-        var observations = new List<BenchmarkRunObservation>(runs.Length);
-
-        foreach (var run in runs.OrderBy(static x => x.RunId, StringComparer.Ordinal))
+        var step3 = await RunGate4Step3Alpha11Async(repositoryRoot, executionClass, sourceCommit,
+            adapterExecutable, planDirectory, outputDirectory);
+        if (step3 != 0)
         {
-            var request = NewRequest(
-                "benchmark-run", executionClass, run.RunId, sourceCommit, ReferenceProfile, benchmarkSummary, run);
-            var invocation = await InvokeAdapterAsync(adapterExecutable, request);
-            ValidateResponse(invocation.Response, request, "performance-benchmark-report-v1");
-            var artifact = WriteResponseArtifact(outputDirectory, reportsDirectory, run.RunId, invocation.Response);
-            observations.Add(ParseBenchmarkObservation(run, invocation.Response, artifact.Ref, artifact.Digest));
+            if (executionClass == "contract-smoke") WriteStep3BlockedSmokeFragment(sourceCommit, outputDirectory);
+            return step3;
         }
-
-        var referenceAggregate = EvaluateReferenceProfile(manifest, observations, executionClass, sourceCommit);
-        var aggregatePath = Path.Combine(reportsDirectory, "perf.reference.v1.aggregate.json");
-        var referenceDigest = Program.WriteJson(aggregatePath, referenceAggregate);
-        var referenceEvidence = new PerformanceReportEvidence
-        {
-            ProfileId = ReferenceProfile,
-            SourceCommit = sourceCommit,
-            ReportRef = RelativeRef(outputDirectory, aggregatePath),
-            ReportDigest = referenceDigest,
-            Passed = referenceAggregate.Passed,
-            FailureCodes = referenceAggregate.FailureCodes,
-        };
-
-        var persistenceRequest = NewRequest(
-            "persistence-stress", executionClass, "perf.persistence.v1", sourceCommit, PersistenceProfile, persistenceProfile, null);
-        var persistenceInvocation = await InvokeAdapterAsync(adapterExecutable, persistenceRequest);
-        ValidateResponse(persistenceInvocation.Response, persistenceRequest, "persistence-stress-report-v1");
-        var persistenceArtifact = WriteResponseArtifact(
-            outputDirectory, reportsDirectory, "perf.persistence.v1", persistenceInvocation.Response);
-        var persistenceEvidence = EvaluatePersistence(
-            persistenceInvocation.Response, sourceCommit, persistenceArtifact.Ref, persistenceArtifact.Digest);
-
-        var publicationRequest = NewRequest(
-            "publication-stress", executionClass, "perf.publication.v1", sourceCommit, PublicationProfile, publicationProfile, null);
-        var publicationInvocation = await InvokeAdapterAsync(adapterExecutable, publicationRequest);
-        ValidateResponse(publicationInvocation.Response, publicationRequest, "publication-stress-report-v1");
-        var publicationArtifact = WriteResponseArtifact(
-            outputDirectory, reportsDirectory, "perf.publication.v1", publicationInvocation.Response);
-        var publicationEvidence = EvaluatePublication(
-            publicationInvocation.Response, sourceCommit, publicationArtifact.Ref, publicationArtifact.Digest);
-
-        var soakRequest = NewRequest(
-            "soak-run", executionClass, "performance.soak.12h", sourceCommit, SoakProfile, soakPlan, null);
-        var soakInvocation = await InvokeAdapterAsync(adapterExecutable, soakRequest);
-        ValidateResponse(soakInvocation.Response, soakRequest, "soak-report-v1");
-        var soakArtifact = WriteResponseArtifact(
-            outputDirectory, reportsDirectory, "performance.soak.12h", soakInvocation.Response);
-        var soakEvidence = EvaluateSoak(
-            soakInvocation.Response, sourceCommit, soakArtifact.Ref, soakArtifact.Digest, soakInvocation.Elapsed, executionClass);
-
-        var observedFailures = new SortedSet<string>(StringComparer.Ordinal);
-        if (referenceAggregate.FailureCodes.Contains("state-digest-mismatch", StringComparer.Ordinal))
-            observedFailures.Add("determinism.divergence");
-        if (observations.Any(static x => x.AcceptedOperationLoss != 0))
-            observedFailures.Add("operation.accepted-loss");
-        if (!soakEvidence.ParallelVerifierDigestMatched)
-            observedFailures.Add("determinism.divergence");
-        if (soakEvidence.AcceptedOperationLoss != 0)
-            observedFailures.Add("operation.accepted-loss");
-        if (!soakEvidence.HistoryAuditChainValid)
-            observedFailures.Add("persistence.history-corruption-undetected");
-
-        var releaseEligible = IsReleaseExecutionEligible(executionClass, soakEvidence.DurationSeconds);
-        var fragment = new EvidenceFragment
-        {
-            SchemaVersion = SchemaVersion,
-            ExecutionClass = executionClass,
-            ReleaseEligible = releaseEligible,
-            SourceCommit = sourceCommit,
-            Qa04ManifestSha256 = Program.CanonicalQa04ManifestSha256,
-            PerformanceReports = [referenceEvidence, persistenceEvidence, publicationEvidence],
-            Soak = soakEvidence,
-            DeterminismDigestSummary = referenceAggregate.DeterminismDigestSummary,
-            ObservedFailureCodes = observedFailures.ToArray(),
-        };
-        var fragmentPath = Path.Combine(outputDirectory, "qa04-evidence-fragment.json");
-        Program.WriteJson(fragmentPath, fragment);
-
-        Console.WriteLine($"QA-04 evidence fragment: {fragmentPath}");
-        Console.WriteLine($"Execution class: {executionClass}");
-        Console.WriteLine($"Release eligible: {releaseEligible}");
-        Console.WriteLine($"Measured/reported soak evidence seconds: {soakEvidence.DurationSeconds}");
-        Console.WriteLine($"Reference profile: {(referenceEvidence.Passed ? "PASS" : "FAIL")}");
-        Console.WriteLine($"Persistence profile: {(persistenceEvidence.Passed ? "PASS" : "FAIL")}");
-        Console.WriteLine($"Publication profile: {(publicationEvidence.Passed ? "PASS" : "FAIL")}");
-        Console.WriteLine($"Soak profile: {(soakEvidence.Passed ? "PASS" : "FAIL")}");
-
-        var anyProfileFailed = !referenceEvidence.Passed || !persistenceEvidence.Passed
-            || !publicationEvidence.Passed || !soakEvidence.Passed;
-        if (string.Equals(executionClass, "release", StringComparison.Ordinal) && !releaseEligible) return 2;
-        return anyProfileFailed ? 2 : 0;
+        return await RunGate4Step4Async(repositoryRoot, executionClass, sourceCommit,
+            adapterExecutable, planDirectory,
+            Path.Combine(outputDirectory, "gate4-step3-benchmark-evidence.json"), outputDirectory);
     }
 
     internal static bool IsCompleteSoakDuration(long durationSeconds) => durationSeconds >= MinimumSoakSeconds;
@@ -528,6 +419,14 @@ internal static partial class ReleaseEvidenceRunner
 
         var reportFailures = ReadStringArray(report, "failure_codes");
         var combinedFailures = response.FailureCodes.Concat(reportFailures).Distinct(StringComparer.Ordinal).ToArray();
+        var successful = response.Passed && combinedFailures.Length == 0;
+        var metricFields = new[] { "acceptance_config_sha256", "step_deadline_ms", "step_deadline_miss_count", "step_deadline_miss_ratio",
+            "core_working_set_sample_count", "persistence_metric_observer_failure_count" };
+        var complete = metricFields.All(field => report.TryGetProperty(field, out _));
+        if (successful && !complete)
+            throw new InvalidDataException("Successful benchmark report is missing deadline/memory measurement evidence.");
+        // 未完成targetの欠損値はComplete=falseと共に保存し、実測PASSへ昇格しない。
+        JsonElement Metric(string field) => report.TryGetProperty(field, out var value) ? value : default;
         var snapshot = report.GetProperty("snapshot_summary");
         var cpu = report.GetProperty("domain_cpu_summary");
         foreach (var field in new[]
@@ -557,6 +456,16 @@ internal static partial class ReleaseEvidenceRunner
             MaxObservedCpuConcurrency = GetInt(cpu, "max_observed_concurrency"),
             WorkerBudgetApplied = GetBool(cpu, "worker_budget_applied"),
             ParallelExecutionObserved = GetBool(cpu, "parallel_execution_observed"),
+            MeasurementEvidenceComplete = complete,
+            AcceptanceConfigSha256 = successful || Metric("acceptance_config_sha256").ValueKind == JsonValueKind.String ? GetString(report, "acceptance_config_sha256") : "",
+            StepSampleCount = GetInt(report, "step_count"),
+            StepDeadlineMilliseconds = successful || Metric("step_deadline_ms").ValueKind == JsonValueKind.Number ? GetDouble(report, "step_deadline_ms") : 0,
+            StepDeadlineMissCount = successful || Metric("step_deadline_miss_count").ValueKind == JsonValueKind.Number ? GetInt(report, "step_deadline_miss_count") : 0,
+            StepDeadlineMissRatio = successful || Metric("step_deadline_miss_ratio").ValueKind == JsonValueKind.Number ? GetDouble(report, "step_deadline_miss_ratio") : 0,
+            CoreWorkingSetSampleCount = successful || Metric("core_working_set_sample_count").ValueKind == JsonValueKind.Number ? GetInt(report, "core_working_set_sample_count") : 0,
+            PersistenceMetricObserverFailureCount = successful || Metric("persistence_metric_observer_failure_count").ValueKind == JsonValueKind.Number ? GetLong(report, "persistence_metric_observer_failure_count") : 0,
+            Determinism = successful || report.TryGetProperty("determinism_evidence", out _)
+                ? Qa04DeterminismEvidenceVerifier.ParseSuccessfulEvidence(run, report) : null,
             StepP95Ms = GetDouble(report, "step_p95_ms"),
             StepP99Ms = GetDouble(report, "step_p99_ms"),
             Mean60sStepMs = GetDouble(report, "step_mean_60s_ms"),

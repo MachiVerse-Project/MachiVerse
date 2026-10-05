@@ -92,7 +92,7 @@ P4-06 reference budgetと既定値を照合した。
 承認:
 
 - StepRate 30/1
-- worker-count 4、range 1..16
+- worker-count 4、range 1..4096（標準受入matrixは1/4/8/16、実装能力は16固定上限を持たない）
 - D0〜D3 cadence defaults
 - detail hysteresis / minimum residence
 - promotion/demotion per-Step budget

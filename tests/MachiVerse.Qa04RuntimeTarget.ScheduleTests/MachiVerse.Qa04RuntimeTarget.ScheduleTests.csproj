@@ -7,6 +7,6 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="../../config/qa04-alpha11.json" Link="config/qa04-alpha11.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Compile Include="../../tools/MachiVerse.Qa04RuntimeTarget/Qa04SoakSchedule.cs" Link="Qa04SoakSchedule.cs" />
   </ItemGroup>
 </Project>

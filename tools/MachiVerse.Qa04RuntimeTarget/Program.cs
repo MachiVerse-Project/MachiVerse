@@ -382,6 +382,11 @@ internal static class Program
                     terminal_operation_count = production.TerminalOperationCount,
                     finalized_step = production.FinalizedStep,
                     step_count = measurement.StepSampleCount,
+                    acceptance_config_sha256 = measurement.AcceptanceConfigSha256,
+                    step_deadline_ms = measurement.StepDeadlineMilliseconds,
+                    step_deadline_miss_count = measurement.StepDeadlineMissCount,
+                    step_deadline_miss_ratio = measurement.StepDeadlineMissRatio,
+                    core_working_set_sample_count = measurement.CoreWorkingSetSampleCount,
                     step_p50_ms = Milliseconds(step?.P50),
                     step_p95_ms = Milliseconds(step?.P95),
                     step_p99_ms = Milliseconds(step?.P99),
@@ -816,7 +821,8 @@ internal static class Program
         if (gatewayExecutable is null)
             throw new InvalidDataException("release Gateway executable is required.");
         ValidateSoakProfile(request.Profile);
-        var requestedDurationSeconds = releaseMode ? 43_200L : 2L;
+        var schedule = Qa04SoakSchedule.FromProfile(request.Profile);
+        var requestedDurationSeconds = releaseMode ? schedule.DurationSeconds : 2L;
         var root = Path.Combine(
             Path.GetTempPath(),
             "machiverse-qa04-soak-" + Guid.NewGuid().ToString("N"));
@@ -884,7 +890,7 @@ internal static class Program
             }
 
             await RunGatewayCycleAsync().ConfigureAwait(false);
-            var nextGatewayCycle = TimeSpan.FromMinutes(30);
+            var nextGatewayCycle = schedule.GatewayCycleInterval;
             var nextHeartbeat = TimeSpan.FromMinutes(5);
 
             while (!exitTask.IsCompleted)
@@ -902,7 +908,7 @@ internal static class Program
                 if (releaseMode && elapsed.Elapsed >= nextGatewayCycle)
                 {
                     await RunGatewayCycleAsync().ConfigureAwait(false);
-                    nextGatewayCycle += TimeSpan.FromMinutes(30);
+                    nextGatewayCycle += schedule.GatewayCycleInterval;
                 }
                 if (releaseMode && elapsed.Elapsed >= nextHeartbeat)
                 {
@@ -941,7 +947,7 @@ internal static class Program
                 .OrderBy(static x => x, StringComparer.Ordinal)
                 .ToList();
 
-            var minimumGatewayCycles = releaseMode ? 48 : 1;
+            var minimumGatewayCycles = releaseMode ? schedule.MinimumGatewayCycles : 1;
             if (gatewayCycleCount < minimumGatewayCycles)
                 failures.Add("gateway-operational-cycle-count");
             if (!gatewayAuditValid || !core.HistoryChainValid)
@@ -954,7 +960,7 @@ internal static class Program
                 failures.Add("accepted-operation-loss");
             if (!core.NoUnrecoverableQueueDeadlock)
                 failures.Add("unrecoverable-queue-deadlock");
-            if (releaseMode && core.DurationSeconds < 43_200)
+            if (releaseMode && core.DurationSeconds < schedule.DurationSeconds)
                 failures.Add("soak-duration-short");
 
             failures = failures.Distinct(StringComparer.Ordinal).OrderBy(static x => x, StringComparer.Ordinal).ToList();
@@ -980,7 +986,7 @@ internal static class Program
                     parallel_verifier_checkpoint_count = core.ParallelVerifierCheckpointCount,
                     parallel_verifier_digest_matched = core.ParallelVerifierDigestMatched,
                     gateway_operational_cycle_count = gatewayCycleCount,
-                    gateway_reconnect_failover_interval_minutes = 30,
+                    gateway_reconnect_failover_interval_minutes = schedule.GatewayCycleInterval.TotalMinutes,
                     view_churn_and_slow_consumer_load = gatewayCycleCount > 0,
                     max_post_warmup_memory_growth_percent = core.MaxPostWarmupMemoryGrowthPercent,
                     accepted_operation_loss = core.AcceptedOperationLoss,
@@ -1159,7 +1165,7 @@ internal static class Program
         if (profile.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("performance.soak.12h profile must be an object.");
         if (profile.GetProperty("durationHours").GetInt32() != 12 ||
-            profile.GetProperty("gatewayReconnectFailoverIntervalMinutes").GetInt32() != 30 ||
+            profile.GetProperty("gatewayReconnectFailoverIntervalMinutes").GetInt32() <= 0 ||
             !profile.GetProperty("periodicSnapshotRecoveryCheckpoints").GetBoolean() ||
             !profile.GetProperty("viewChurnAndSlowConsumerLoad").GetBoolean() ||
             !profile.GetProperty("parallelVerifierDigestRequired").GetBoolean() ||
@@ -1599,6 +1605,10 @@ internal static class Program
 
     private sealed class MeasurementSnapshot
     {
+        public string AcceptanceConfigSha256 { get; set; } = "";
+        public double StepDeadlineMilliseconds { get; set; }
+        public int StepDeadlineMissCount { get; set; }
+        public double StepDeadlineMissRatio { get; set; }
         public int StepSampleCount { get; set; }
         public DurationSummary? StepDuration { get; set; }
         public double? MaxRolling60SecondMeanMilliseconds { get; set; }

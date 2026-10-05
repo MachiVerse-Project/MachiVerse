@@ -31,6 +31,11 @@ internal static class Qa04DeterminismEvidenceVerifier
 
         var plan = SelfTestPlan();
         ValidateActualPlan(plan);
+        var staleDurationPlan = SelfTestPlan();
+        staleDurationPlan.LongDurationEvidence = "gate4-step4-24h-soak";
+        RequireThrows<InvalidDataException>(
+            () => ValidateActualPlan(staleDurationPlan),
+            "Step2 must reject a stale 24h Step4 ownership identifier.");
         var actualRows = new List<Gate4Step2ActualRunEvidenceRow>(12);
         foreach (var worker in plan.WorkerCounts)
         foreach (var ordinal in Enumerable.Range(1, plan.ProcessRunsPerWorker))
@@ -71,7 +76,7 @@ internal static class Qa04DeterminismEvidenceVerifier
                 StringComparison.Ordinal) ||
             !string.Equals(
                 plan.LongDurationEvidence,
-                "gate4-step4-24h-soak",
+                "gate4-step4-12h-soak",
                 StringComparison.Ordinal))
             throw new InvalidDataException("Gate4 Step2 determinism plan proof ownership drifted.");
     }
@@ -283,7 +288,7 @@ internal static class Qa04DeterminismEvidenceVerifier
         BindSummary(outputDirectory, sourceCommit, rows, summary);
     }
 
-    private static EvidenceRow ParseSuccessfulEvidence(BenchmarkRunDescriptor run, JsonElement report)
+    internal static EvidenceRow ParseSuccessfulEvidence(BenchmarkRunDescriptor run, JsonElement report)
     {
         var evidence = report.TryGetProperty("determinism_evidence", out var found) &&
                        found.ValueKind == JsonValueKind.Object
@@ -304,10 +309,10 @@ internal static class Qa04DeterminismEvidenceVerifier
         return row;
     }
 
-    private static string ValidateAndSummarize(IReadOnlyCollection<EvidenceRow> rows)
+    internal static string ValidateAndSummarize(IReadOnlyCollection<EvidenceRow> rows, int expectedRunCount = 12)
     {
-        if (rows.Count != 12)
-            throw new InvalidDataException("QA-04 determinism evidence row count must be 12.");
+        if (rows.Count != expectedRunCount || rows.Count == 0)
+            throw new InvalidDataException($"QA-04 determinism evidence row count must be {expectedRunCount}.");
         if (rows.Select(static row => row.RunId).Distinct(StringComparer.Ordinal).Count() != rows.Count)
             throw new InvalidDataException("QA-04 determinism evidence contains duplicate run ids.");
 
@@ -498,7 +503,7 @@ internal static class Qa04DeterminismEvidenceVerifier
             ProgressIntervalTransitions = 25,
             HeartbeatIntervalSeconds = 300,
             SnapshotRecoveryEvidence = "reuse-gate3-exact103-production-proof",
-            LongDurationEvidence = "gate4-step4-24h-soak",
+            LongDurationEvidence = "gate4-step4-12h-soak",
         };
 
     private static Gate4Step2ActualRunEvidenceRow SelfTestActualRow(
@@ -554,7 +559,7 @@ internal static class Qa04DeterminismEvidenceVerifier
             PromotionDeferralOrderDigest = row.PromotionDeferralOrderDigest,
         };
 
-    private sealed record EvidenceRow(
+    internal sealed record EvidenceRow(
         string RunId,
         string FinalStateDigest,
         string TransitionCommittedDigest,

@@ -304,6 +304,15 @@ internal sealed class BenchmarkRunObservation
     public int MaxObservedCpuConcurrency { get; set; }
     public bool WorkerBudgetApplied { get; set; }
     public bool ParallelExecutionObserved { get; set; }
+    public string AcceptanceConfigSha256 { get; set; } = "";
+    public bool MeasurementEvidenceComplete { get; set; }
+    public int StepSampleCount { get; set; }
+    public double StepDeadlineMilliseconds { get; set; }
+    public int StepDeadlineMissCount { get; set; }
+    public double StepDeadlineMissRatio { get; set; }
+    public long PersistenceMetricObserverFailureCount { get; set; }
+    public int CoreWorkingSetSampleCount { get; set; }
+    public Qa04DeterminismEvidenceVerifier.EvidenceRow? Determinism { get; set; }
     public double StepP95Ms { get; set; }
     public double StepP99Ms { get; set; }
     public double Mean60sStepMs { get; set; }
