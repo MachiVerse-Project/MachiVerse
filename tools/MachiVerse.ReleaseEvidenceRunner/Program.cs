@@ -4,7 +4,7 @@ using System.Text.Json;
 
 internal static class Program
 {
-    internal const string CanonicalQa04ManifestSha256 = "4cdd020afb1e1beae8e88289dbe97f4b1862a58ffe5c5d00910230de2b555a06";
+    internal const string CanonicalQa04ManifestSha256 = "4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06";
 
     internal static readonly JsonSerializerOptions Json = new()
     {
