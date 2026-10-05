@@ -13,16 +13,22 @@ public static class Qa04ReferenceConfigAuthorityV1
 
     public const int CanonicalGateWorkerCount = 4;
 
-    public static EffectiveCoreConfig CreateCanonical(int workerCount = CanonicalGateWorkerCount)
+    public static EffectiveCoreConfig CreateCanonical(int workerCount = CanonicalGateWorkerCount, Qa04AcceptanceConfigV1? acceptanceConfig = null)
     {
         if (!AllowedWorkerCounts.Contains(workerCount))
             throw new ArgumentOutOfRangeException(nameof(workerCount), "QA-04 worker-count must be one of 1, 4, 8, or 16.");
 
+        var acceptance = acceptanceConfig ?? Qa04AcceptanceConfigV1.Current;
+        acceptance.Validate();
         var toml = $"""
 [meta]
 format = "machiverse-config"
 schema_version = "1.0"
 component = "simulation-core"
+
+[simulation.step-rate]
+numerator = {acceptance.StepRateNumerator}
+denominator = {acceptance.StepRateDenominator}
 
 [runtime]
 worker-count = {workerCount}

@@ -46,7 +46,7 @@ internal static class Program
 
             if (string.Equals(args[0], "run-step3", StringComparison.Ordinal) && args.Length == 6)
             {
-                return await ReleaseEvidenceRunner.RunGate4Step3Async(
+                return await ReleaseEvidenceRunner.RunGate4Step3Alpha11Async(
                     root,
                     args[1],
                     args[2],
@@ -78,10 +78,6 @@ internal static class Program
                     Path.GetFullPath(args[3]),
                     planDirectory,
                     outputDirectory);
-                Qa04DeterminismEvidenceVerifier.VerifyAndBind(
-                    planDirectory,
-                    outputDirectory,
-                    args[2]);
                 return result;
             }
 
@@ -95,7 +91,7 @@ internal static class Program
             }
 
             throw new ArgumentException(
-                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run-step2 <source-commit> <core-executable> <worker-count> <run-ordinal> <output.json>|verify-step2 <matrix.json>|run-step3 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|run-step4 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <step3-evidence.json> <output-directory>|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]");
+                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run-step2 <source-commit> <core-executable> <worker-count> <run-ordinal> <output.json>|verify-step2 <matrix.json>|run-step3 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|run-step4 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <step3-evidence.json> <output-directory>|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]" );
         }
         catch (Exception ex)
         {

@@ -382,6 +382,11 @@ internal static class Program
                     terminal_operation_count = production.TerminalOperationCount,
                     finalized_step = production.FinalizedStep,
                     step_count = measurement.StepSampleCount,
+                    acceptance_config_sha256 = measurement.AcceptanceConfigSha256,
+                    step_deadline_ms = measurement.StepDeadlineMilliseconds,
+                    step_deadline_miss_count = measurement.StepDeadlineMissCount,
+                    step_deadline_miss_ratio = measurement.StepDeadlineMissRatio,
+                    core_working_set_sample_count = measurement.CoreWorkingSetSampleCount,
                     step_p50_ms = Milliseconds(step?.P50),
                     step_p95_ms = Milliseconds(step?.P95),
                     step_p99_ms = Milliseconds(step?.P99),
@@ -1599,6 +1604,10 @@ internal static class Program
 
     private sealed class MeasurementSnapshot
     {
+        public string AcceptanceConfigSha256 { get; set; } = "";
+        public double StepDeadlineMilliseconds { get; set; }
+        public int StepDeadlineMissCount { get; set; }
+        public double StepDeadlineMissRatio { get; set; }
         public int StepSampleCount { get; set; }
         public DurationSummary? StepDuration { get; set; }
         public double? MaxRolling60SecondMeanMilliseconds { get; set; }

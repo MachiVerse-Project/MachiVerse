@@ -2,6 +2,37 @@ using System.Text.Json;
 
 internal static partial class ReleaseEvidenceRunner
 {
+    // 失敗したcontract-smokeでは後段を未実行として記録する。Step4 PASSを生成しない。
+    private static void WriteStep3BlockedSmokeFragment(string sourceCommit, string outputDirectory)
+    {
+        var step3 = Program.ReadJson<Gate4Step3BenchmarkEvidence>(
+            Path.Combine(outputDirectory, "gate4-step3-benchmark-evidence.json"), "failed contract-smoke Step3");
+        PerformanceReportEvidence Skipped(string profile)
+        {
+            var path = Path.Combine(outputDirectory, "reports", profile + ".step3-blocked.json");
+            var digest = Program.WriteJson(path, new
+            {
+                schemaVersion = SchemaVersion, sourceCommit, profileId = profile,
+                executionClass = "contract-smoke", executed = false, passed = false,
+                failureCodes = new[] { "step3-not-passed" },
+            });
+            return new() { ProfileId = profile, SourceCommit = sourceCommit, ReportRef = RelativeRef(outputDirectory, path),
+                ReportDigest = digest, Passed = false, FailureCodes = ["step3-not-passed"] };
+        }
+        var persistence = Skipped(PersistenceProfile);
+        var publication = Skipped(PublicationProfile);
+        var soak = Skipped(SoakProfile);
+        Program.WriteJson(Path.Combine(outputDirectory, "qa04-evidence-fragment.json"), new EvidenceFragment
+        {
+            SchemaVersion = SchemaVersion, ExecutionClass = "contract-smoke", ReleaseEligible = false,
+            SourceCommit = sourceCommit, Qa04ManifestSha256 = Program.CanonicalQa04ManifestSha256,
+            PerformanceReports = [step3.ReferenceProfile, persistence, publication],
+            Soak = new() { TestCaseId = SoakProfile, SourceCommit = sourceCommit, ReportRef = soak.ReportRef,
+                ReportDigest = soak.ReportDigest, Passed = false },
+            DeterminismDigestSummary = step3.DeterminismDigestSummary, ObservedFailureCodes = step3.FailureCodes,
+        });
+    }
+
     internal static async Task<int> RunGate4Step3Async(
         string repositoryRoot,
         string executionClass,
@@ -10,96 +41,8 @@ internal static partial class ReleaseEvidenceRunner
         string planDirectory,
         string outputDirectory)
     {
-        ValidateStageInputs(executionClass, sourceCommit, adapterExecutable, planDirectory);
-
-        var manifestPath = Path.Combine(repositoryRoot, "tests", "performance-fixtures", "v1", "harness-manifest.json");
-        if (!string.Equals(Program.Sha256File(manifestPath), Program.CanonicalQa04ManifestSha256, StringComparison.Ordinal))
-            throw new InvalidDataException("Current QA-04 manifest is not the canonical release profile.");
-
-        using var manifestDocument = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
-        var manifest = manifestDocument.RootElement;
-        var benchmarkSummary = RequirePlanJson(planDirectory, "benchmark-summary.json");
-        var runMatrixPath = Path.Combine(planDirectory, "reference-run-matrix.json");
-        if (!File.Exists(runMatrixPath))
-            throw new InvalidDataException("Missing materialized reference-run-matrix.json.");
-        var runs = Program.ReadJson<BenchmarkRunDescriptor[]>(runMatrixPath, "QA-04 run matrix");
-        ValidateRunMatrix(runs);
-
-        Directory.CreateDirectory(outputDirectory);
-        var reportsDirectory = Path.Combine(outputDirectory, "reports");
-        Directory.CreateDirectory(reportsDirectory);
-        var observations = new List<BenchmarkRunObservation>(runs.Length);
-        var orderedRuns = runs.OrderBy(static x => x.RunId, StringComparer.Ordinal).ToArray();
-        var heartbeatSeconds = Step3HeartbeatSeconds();
-
-        Console.Error.WriteLine(
-            $"GATE4_STEP3_MATRIX_START total_runs={orderedRuns.Length} heartbeat_seconds={heartbeatSeconds}");
-
-        var completedRuns = 0;
-        foreach (var run in orderedRuns)
-        {
-            var matrixOrdinal = completedRuns + 1;
-            Console.Error.WriteLine(
-                $"GATE4_STEP3_RUN_START matrix_run={matrixOrdinal}/{orderedRuns.Length} " +
-                $"run_id={run.RunId} workers={run.WorkerCount} repetition={run.RunOrdinal}");
-
-            var request = NewRequest(
-                "benchmark-run",
-                executionClass,
-                run.RunId,
-                sourceCommit,
-                ReferenceProfile,
-                benchmarkSummary,
-                run);
-            var invocation = await InvokeAdapterAsync(adapterExecutable, request);
-            ValidateResponse(invocation.Response, request, "performance-benchmark-report-v1");
-            var artifact = WriteResponseArtifact(outputDirectory, reportsDirectory, run.RunId, invocation.Response);
-            observations.Add(ParseBenchmarkObservation(run, invocation.Response, artifact.Ref, artifact.Digest));
-
-            completedRuns++;
-            Console.Error.WriteLine(
-                $"GATE4_STEP3_RUN_COMPLETE matrix_run={completedRuns}/{orderedRuns.Length} " +
-                $"run_id={run.RunId} workers={run.WorkerCount} repetition={run.RunOrdinal} " +
-                $"elapsed_seconds={invocation.Elapsed.TotalSeconds:F1}");
-            Console.Error.WriteLine(
-                $"GATE4_STEP3_MATRIX_PROGRESS completed={completedRuns}/{orderedRuns.Length}");
-        }
-
-        var aggregate = EvaluateReferenceProfile(manifest, observations, executionClass, sourceCommit);
-        var aggregatePath = Path.Combine(reportsDirectory, "perf.reference.v1.aggregate.json");
-        var aggregateDigest = Program.WriteJson(aggregatePath, aggregate);
-        var referenceEvidence = new PerformanceReportEvidence
-        {
-            ProfileId = ReferenceProfile,
-            SourceCommit = sourceCommit,
-            ReportRef = RelativeRef(outputDirectory, aggregatePath),
-            ReportDigest = aggregateDigest,
-            Passed = aggregate.Passed,
-            FailureCodes = aggregate.FailureCodes,
-        };
-
-        var evidence = new Gate4Step3BenchmarkEvidence
-        {
-            SchemaVersion = SchemaVersion,
-            ExecutionClass = executionClass,
-            SourceCommit = sourceCommit,
-            Qa04ManifestSha256 = Program.CanonicalQa04ManifestSha256,
-            BenchmarkProfileId = ReferenceProfile,
-            ReferenceProfile = referenceEvidence,
-            DeterminismDigestSummary = aggregate.DeterminismDigestSummary,
-            Passed = aggregate.Passed,
-            FailureCodes = aggregate.FailureCodes,
-        };
-        var evidencePath = Path.Combine(outputDirectory, "gate4-step3-benchmark-evidence.json");
-        Program.WriteJson(evidencePath, evidence);
-
-        Console.WriteLine($"Gate4 Step3 evidence: {evidencePath}");
-        Console.WriteLine($"Execution class: {executionClass}");
-        Console.WriteLine($"Source commit: {sourceCommit}");
-        Console.WriteLine($"Reference profile: {(aggregate.Passed ? "PASS" : "FAIL")}");
-        Console.WriteLine($"Determinism digest summary: {aggregate.DeterminismDigestSummary}");
-
-        return aggregate.Passed ? 0 : 2;
+        return await RunGate4Step3Alpha11Async(repositoryRoot, executionClass, sourceCommit,
+            adapterExecutable, planDirectory, outputDirectory);
     }
 
     internal static async Task<int> RunGate4Step4Async(
@@ -145,6 +88,18 @@ internal static partial class ReleaseEvidenceRunner
             step3.ReferenceProfile.ReportRef,
             "Gate4 Step3 reference aggregate");
         var step3AggregateTarget = Path.Combine(reportsDirectory, "perf.reference.v1.aggregate.json");
+        var step3Aggregate = Program.ReadJson<Alpha11BenchmarkAggregateArtifact>(step3AggregateSource, "Alpha 1.1 Step3 aggregate");
+        foreach (var run in step3Aggregate.Runs)
+        {
+            var rawSource = ResolveArtifactPath(step3Directory, run.ReportRef, run.RunId);
+            var rawTarget = Path.GetFullPath(Path.Combine(outputDirectory, run.ReportRef));
+            if (!string.Equals(rawSource, rawTarget, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(rawTarget)!);
+                File.Copy(rawSource, rawTarget, overwrite: true);
+            }
+            VerifyArtifactDigest(outputDirectory, run.ReportRef, run.ReportDigest, run.RunId);
+        }
         File.Copy(step3AggregateSource, step3AggregateTarget, overwrite: true);
         var copiedAggregateDigest = Program.Sha256File(step3AggregateTarget);
         if (!string.Equals(copiedAggregateDigest, step3.ReferenceProfile.ReportDigest, StringComparison.Ordinal))
@@ -333,6 +288,7 @@ internal static partial class ReleaseEvidenceRunner
             evidence.ReferenceProfile.ReportRef,
             evidence.ReferenceProfile.ReportDigest,
             "gate4-step3-reference");
+        ValidateAlpha11Step3Aggregate(evidence, evidenceDirectory, sourceCommit, executionClass);
     }
 
     private static string ResolveArtifactPath(string rootDirectory, string artifactRef, string name)
@@ -375,6 +331,8 @@ internal static partial class ReleaseEvidenceRunner
         public string ExecutionClass { get; set; } = "";
         public string SourceCommit { get; set; } = "";
         public string Qa04ManifestSha256 { get; set; } = "";
+        public string AcceptanceProfile { get; set; } = "";
+        public string AcceptanceConfigSha256 { get; set; } = "";
         public string BenchmarkProfileId { get; set; } = "";
         public PerformanceReportEvidence ReferenceProfile { get; set; } = new();
         public string DeterminismDigestSummary { get; set; } = "";

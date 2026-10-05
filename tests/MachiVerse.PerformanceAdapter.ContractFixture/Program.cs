@@ -43,6 +43,9 @@ internal static class Program
     private static Response Benchmark(Request request)
     {
         var run = request.Run ?? throw new InvalidDataException("benchmark-run requires run descriptor.");
+        var configBytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "config", "qa04-alpha11.json"));
+        using var configDocument = JsonDocument.Parse(configBytes);
+        var config = configDocument.RootElement;
         var finalStateDigest = new string('c', 64);
         return NewResponse(request, "performance-benchmark-report-v1", new
         {
@@ -53,7 +56,13 @@ internal static class Program
             config_digest = new string('b', 64),
             worker_count = run.WorkerCount,
             run_ordinal = run.RunOrdinal,
-            step_count = run.WarmupSteps + run.MeasurementSteps,
+            step_count = run.MeasurementSteps,
+            acceptance_config_sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(configBytes)).ToLowerInvariant(),
+            step_deadline_ms = 1000d * config.GetProperty("stepRateDenominator").GetInt32() / config.GetProperty("stepRateNumerator").GetInt32(),
+            step_deadline_miss_count = 0,
+            step_deadline_miss_ratio = 0d,
+            core_working_set_sample_count = run.MeasurementSteps,
+            persistence_metric_observer_failure_count = 0,
             step_p50_ms = 20.0,
             step_p95_ms = run.WorkerCount == 16 ? 33.0 : 25.0,
             step_p99_ms = 40.0,

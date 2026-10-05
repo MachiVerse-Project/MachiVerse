@@ -27,6 +27,7 @@ internal static class ReleaseEvidenceRunnerVerification
 
         Qa04AdapterResponse.VerifyReleaseReadinessContract();
         Qa04DeterminismEvidenceVerifier.VerifyContract();
+        ReleaseEvidenceRunner.VerifyAlpha11Contract();
 
         var soak = root.GetProperty("soakProfile");
         if (soak.GetProperty("durationHours").GetInt32() != 24)

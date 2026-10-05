@@ -1,0 +1,14 @@
+{
+  "acceptanceProfile": "qa04.alpha11.10hz.v1",
+  "stepRateNumerator": 10,
+  "stepRateDenominator": 1,
+  "deadlineMissRatioMax": 0.01,
+  "warmupSteps": 9000,
+  "measurementSteps": 18000,
+  "workerCounts": [8, 16],
+  "runsPerWorker": 3,
+  "rollingWindowSeconds": 60,
+  "healthyMeanMilliseconds": 80,
+  "coreSteadyTargetBytes": 23622320128,
+  "coreHardGuardBytes": 30064771072
+}

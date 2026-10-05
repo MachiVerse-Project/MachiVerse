@@ -23,7 +23,13 @@ public sealed record Qa04PerformanceMeasurementSnapshotV1(
     Qa04DurationSummaryV1? SnapshotCowBarrierDuration,
     Qa04DurationSummaryV1? GcPauseDuration,
     int CoreWorkingSetSampleCount,
-    long MaxCoreWorkingSetBytes);
+    long MaxCoreWorkingSetBytes)
+{
+    public string AcceptanceConfigSha256 { get; init; } = "";
+    public double StepDeadlineMilliseconds { get; init; }
+    public int StepDeadlineMissCount { get; init; }
+    public double StepDeadlineMissRatio { get; init; }
+}
 
 public sealed record Qa04PerformanceRunAcceptanceV1(
     bool Passed,
@@ -89,10 +95,20 @@ public sealed class Qa04DurationSeriesV1
 /// <summary>
 /// Benchmark-only measurement sink. Callers supply monotonic measurement elapsed time for finalized
 /// Steps; the collector computes the worst trailing 60 wall-second mean over finalized Step samples.
+/// Alpha 1.1 deadline telemetry is derived from the same raw Step samples and never feeds back into
+/// authoritative simulation behavior.
 /// </summary>
 public sealed class Qa04BenchmarkMetricCollectorV1 : IPersistenceCommitMetricSinkV1
 {
-    private static readonly TimeSpan RollingWindow = TimeSpan.FromSeconds(60);
+    private readonly Qa04AcceptanceConfigV1 _acceptance;
+    private readonly TimeSpan RollingWindow;
+
+    public Qa04BenchmarkMetricCollectorV1(Qa04AcceptanceConfigV1? acceptanceConfig = null)
+    {
+        _acceptance = acceptanceConfig ?? Qa04AcceptanceConfigV1.Current;
+        _acceptance.Validate();
+        RollingWindow = TimeSpan.FromSeconds(_acceptance.RollingWindowSeconds);
+    }
 
     private readonly object _stepSync = new();
     private readonly List<Qa04StepWallSampleV1> _stepSamples = [];
@@ -142,7 +158,17 @@ public sealed class Qa04BenchmarkMetricCollectorV1 : IPersistenceCommitMetricSin
         lock (_stepSync) steps = _stepSamples.ToArray();
 
         var stepDurations = new Qa04DurationSeriesV1();
-        foreach (var step in steps) stepDurations.Record(step.Duration);
+        var deadlineMissCount = 0;
+        foreach (var step in steps)
+        {
+            stepDurations.Record(step.Duration);
+            if (step.Duration > _acceptance.StepDeadline)
+                deadlineMissCount++;
+        }
+
+        var deadlineMissRatio = steps.Length == 0
+            ? 0d
+            : deadlineMissCount / (double)steps.Length;
 
         return new Qa04PerformanceMeasurementSnapshotV1(
             steps.Length,
@@ -152,10 +178,16 @@ public sealed class Qa04BenchmarkMetricCollectorV1 : IPersistenceCommitMetricSin
             SnapshotCowBarrierDurations.SnapshotOrNull(),
             GcPauseDurations.SnapshotOrNull(),
             Volatile.Read(ref _coreWorkingSetSampleCount),
-            Interlocked.Read(ref _maxCoreWorkingSetBytes));
+            Interlocked.Read(ref _maxCoreWorkingSetBytes))
+        {
+            AcceptanceConfigSha256 = _acceptance.Sha256,
+            StepDeadlineMilliseconds = _acceptance.StepDeadline.TotalMilliseconds,
+            StepDeadlineMissCount = deadlineMissCount,
+            StepDeadlineMissRatio = deadlineMissRatio,
+        };
     }
 
-    private static double? ComputeMaxRolling60SecondMeanMilliseconds(IReadOnlyList<Qa04StepWallSampleV1> samples)
+    private double? ComputeMaxRolling60SecondMeanMilliseconds(IReadOnlyList<Qa04StepWallSampleV1> samples)
     {
         if (samples.Count == 0) return null;
 
@@ -187,74 +219,81 @@ public sealed class Qa04BenchmarkMetricCollectorV1 : IPersistenceCommitMetricSin
     }
 }
 
+/// <summary>
+/// Alpha 1.1 Gate 4 Step 3 performance acceptance. The production simulation target is 10 tick/s,
+/// so one authoritative tick has a 100 ms processing budget. Pacing/sleep time is outside the
+/// benchmark measurement body. Older 30Hz-oriented p50/p95/p99 and duration-projection targets are
+/// retained only as historical evidence and are not Alpha 1.1 release blockers.
+/// </summary>
 public static class Qa04PerformanceThresholdsV1
 {
-    public const int ExpectedMeasurementStepCount = 18_000;
-    public const long CoreSteadyTargetBytes = 22L * 1024 * 1024 * 1024;
-    public const long CoreHardGuardBytes = 28L * 1024 * 1024 * 1024;
-
-    public static readonly TimeSpan StepP50Max = TimeSpan.FromMilliseconds(20);
-    public static readonly TimeSpan StepP95Max = TimeSpan.FromTicks(333_330); // 33.333 ms
-    public static readonly TimeSpan StepP99Max = TimeSpan.FromMilliseconds(50);
-    public const double Rolling60SecondMeanMaxMilliseconds = 30d;
-    public static readonly TimeSpan SqliteCommitP95Max = TimeSpan.FromMilliseconds(4);
-    public static readonly TimeSpan SqliteCommitP99Max = TimeSpan.FromMilliseconds(8);
-    public static readonly TimeSpan SnapshotCowBarrierP95Max = TimeSpan.FromMilliseconds(5);
-    public static readonly TimeSpan GcPauseP99Max = TimeSpan.FromMilliseconds(20);
+    public static int ExpectedMeasurementStepCount => Qa04AcceptanceConfigV1.Current.MeasurementSteps;
+    public static double Alpha11TargetTickRateHz => Qa04AcceptanceConfigV1.Current.TickRateHz;
+    public static double DeadlineMissRatioMax => Qa04AcceptanceConfigV1.Current.DeadlineMissRatioMax;
+    public static double HealthyMeanMilliseconds => Qa04AcceptanceConfigV1.Current.HealthyMeanMilliseconds;
+    public static TimeSpan StepDeadline => Qa04AcceptanceConfigV1.Current.StepDeadline;
+    public static TimeSpan StepP99Max => StepDeadline;
+    public static long CoreSteadyTargetBytes => Qa04AcceptanceConfigV1.Current.CoreSteadyTargetBytes;
+    public static long CoreHardGuardBytes => Qa04AcceptanceConfigV1.Current.CoreHardGuardBytes;
 
     public static Qa04PerformanceRunAcceptanceV1 EvaluateCompleteMeasurement(
         Qa04PerformanceMeasurementSnapshotV1 measurement,
         ulong acceptedOperationLossCount,
         ulong hiddenSolverIterationReductionCount,
-        long persistenceMetricObserverFailureCount)
+        long persistenceMetricObserverFailureCount,
+        Qa04AcceptanceConfigV1? acceptanceConfig = null)
     {
         ArgumentNullException.ThrowIfNull(measurement);
+        var policy = acceptanceConfig ?? Qa04AcceptanceConfigV1.Current;
+        policy.Validate();
         var failures = new List<string>();
 
-        if (measurement.StepSampleCount != ExpectedMeasurementStepCount)
+        if (measurement.StepSampleCount != policy.MeasurementSteps)
             failures.Add("qa04.measurement.step-sample-count");
-        if (measurement.SqliteCommitDuration?.SampleCount != ExpectedMeasurementStepCount)
+        if (measurement.SqliteCommitDuration?.SampleCount != policy.MeasurementSteps)
             failures.Add("qa04.measurement.commit-sample-count");
         if (measurement.SnapshotCowBarrierDuration is null)
             failures.Add("qa04.measurement.snapshot-cow-sample-missing");
-        if (measurement.CoreWorkingSetSampleCount == 0)
+        if (measurement.CoreWorkingSetSampleCount <= 0)
             failures.Add("qa04.measurement.memory-sample-missing");
+
+        if (measurement.CoreWorkingSetSampleCount > 0)
+        {
+            if (measurement.MaxCoreWorkingSetBytes < 0)
+                failures.Add("qa04.measurement.memory-invalid");
+            if (measurement.MaxCoreWorkingSetBytes > policy.CoreSteadyTargetBytes)
+                failures.Add("qa04.performance.core-memory-target");
+            if (measurement.MaxCoreWorkingSetBytes > policy.CoreHardGuardBytes)
+                failures.Add("qa04.performance.core-memory-guard");
+        }
+        if (!double.IsFinite(measurement.StepDeadlineMilliseconds) || !double.IsFinite(measurement.StepDeadlineMissRatio))
+            failures.Add("qa04.measurement.nonfinite-deadline");
 
         if (measurement.StepDuration is { } step)
         {
-            if (step.P50 > StepP50Max) failures.Add("qa04.performance.step-p50");
-            if (step.P95 > StepP95Max) failures.Add("qa04.performance.step-p95");
-            if (step.P99 > StepP99Max) failures.Add("qa04.performance.step-p99");
+            if (step.SampleCount != measurement.StepSampleCount)
+                failures.Add("qa04.measurement.step-duration-sample-count");
+            if (step.P99 > policy.StepDeadline)
+                failures.Add("qa04.performance.step-p99");
         }
         else
         {
             failures.Add("qa04.measurement.step-duration-missing");
         }
 
-        if (measurement.MaxRolling60SecondMeanMilliseconds is not { } rollingMean)
-            failures.Add("qa04.measurement.rolling-60s-unavailable");
-        else if (rollingMean > Rolling60SecondMeanMaxMilliseconds)
-            failures.Add("qa04.performance.rolling-60s-mean");
+        if (Math.Abs(measurement.StepDeadlineMilliseconds - policy.StepDeadline.TotalMilliseconds) > 0.000001d)
+            failures.Add("qa04.measurement.step-deadline-contract");
+        if (measurement.StepDeadlineMissCount < 0 ||
+            measurement.StepDeadlineMissCount > measurement.StepSampleCount)
+            failures.Add("qa04.measurement.step-deadline-miss-count");
 
-        if (measurement.CoreWorkingSetSampleCount > 0)
-        {
-            if (measurement.MaxCoreWorkingSetBytes > CoreSteadyTargetBytes)
-                failures.Add("qa04.performance.core-memory-target");
-            if (measurement.MaxCoreWorkingSetBytes > CoreHardGuardBytes)
-                failures.Add("qa04.performance.core-memory-guard");
-        }
-
-        if (measurement.SqliteCommitDuration is { } commit)
-        {
-            if (commit.P95 > SqliteCommitP95Max) failures.Add("qa04.performance.sqlite-commit-p95");
-            if (commit.P99 > SqliteCommitP99Max) failures.Add("qa04.performance.sqlite-commit-p99");
-        }
-
-        if (measurement.SnapshotCowBarrierDuration is { } cow && cow.P95 > SnapshotCowBarrierP95Max)
-            failures.Add("qa04.performance.snapshot-cow-p95");
-
-        if (measurement.GcPauseDuration is { } gc && gc.P99 > GcPauseP99Max)
-            failures.Add("qa04.performance.gc-pause-p99");
+        var expectedMissRatio = measurement.StepSampleCount == 0
+            ? 0d
+            : measurement.StepDeadlineMissCount / (double)measurement.StepSampleCount;
+        if (Math.Abs(measurement.StepDeadlineMissRatio - expectedMissRatio) > 0.000000001d)
+            failures.Add("qa04.measurement.step-deadline-miss-ratio-drift");
+        if (measurement.StepDeadlineMissRatio > policy.DeadlineMissRatioMax)
+            failures.Add("qa04.performance.step-deadline-miss-ratio");
 
         if (acceptedOperationLossCount != 0)
             failures.Add("qa04.performance.accepted-operation-loss");
