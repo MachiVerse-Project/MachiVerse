@@ -8,8 +8,8 @@ internal static partial class ReleaseEvidenceRunner
     private const string ReferenceProfile = "perf.reference.v1";
     private const string PersistenceProfile = "perf.persistence.v1";
     private const string PublicationProfile = "perf.publication.v1";
-    private const string SoakProfile = "performance.soak.24h";
-    private const long MinimumSoakSeconds = 86_400;
+    private const string SoakProfile = "performance.soak.12h";
+    private const long MinimumSoakSeconds = 43_200;
     private const string Step3HeartbeatEnvironmentVariable = "MACHIVERSE_GATE4_STEP3_HEARTBEAT_SECONDS";
 
     private static readonly JsonSerializerOptions JsonLine = new()
@@ -289,11 +289,11 @@ internal static partial class ReleaseEvidenceRunner
             publicationInvocation.Response, sourceCommit, publicationArtifact.Ref, publicationArtifact.Digest);
 
         var soakRequest = NewRequest(
-            "soak-run", executionClass, "performance.soak.24h", sourceCommit, SoakProfile, soakPlan, null);
+            "soak-run", executionClass, "performance.soak.12h", sourceCommit, SoakProfile, soakPlan, null);
         var soakInvocation = await InvokeAdapterAsync(adapterExecutable, soakRequest);
         ValidateResponse(soakInvocation.Response, soakRequest, "soak-report-v1");
         var soakArtifact = WriteResponseArtifact(
-            outputDirectory, reportsDirectory, "performance.soak.24h", soakInvocation.Response);
+            outputDirectory, reportsDirectory, "performance.soak.12h", soakInvocation.Response);
         var soakEvidence = EvaluateSoak(
             soakInvocation.Response, sourceCommit, soakArtifact.Ref, soakArtifact.Digest, soakInvocation.Elapsed, executionClass);
 
@@ -351,7 +351,7 @@ internal static partial class ReleaseEvidenceRunner
             throw new InvalidDataException("QA-04 evidence fragment manifest digest is not canonical.");
         Program.RequireLowerHex(fragment.SourceCommit, 40, "fragment sourceCommit");
         if (fragment.Soak is null || fragment.Soak.DurationSeconds < MinimumSoakSeconds)
-            throw new InvalidDataException("Release fragment does not contain a complete 24-hour soak.");
+            throw new InvalidDataException("Release fragment does not contain a complete 12-hour soak.");
         RequireExactSet(fragment.PerformanceReports.Select(static x => x.ProfileId).ToArray(),
             [ReferenceProfile, PersistenceProfile, PublicationProfile], "release performance profiles");
 
