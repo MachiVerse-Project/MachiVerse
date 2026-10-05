@@ -1,0 +1,90 @@
+name: issue-558 core soak migration
+
+on:
+  push:
+    branches:
+      - fix/issue-558-step4-12h
+
+permissions:
+  contents: write
+
+jobs:
+  migrate-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-558-step4-12h
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Migrate Simulation Core and RuntimeTarget soak duration to 12h
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          soak = Path('src/MachiVerse.Simulation.Core/Performance/Qa04ProductionSoakRun.cs')
+          text = soak.read_text(encoding='utf-8')
+          replacements = [
+              ('public const long ReleaseDurationSeconds = 86_400;',
+               'public const long ReleaseDurationSeconds = 43_200;', 1),
+              ('qa04.soak.release-duration-must-be-86400',
+               'qa04.soak.release-duration-must-be-43200', 1),
+              ('performance.soak.24h', 'performance.soak.12h', 2),
+          ]
+          for old, new, expected in replacements:
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'Expected {expected} occurrence(s) of {old!r} in {soak}, found {count}')
+              text = text.replace(old, new)
+          for forbidden in ('performance.soak.24h', '86_400', 'release-duration-must-be-86400'):
+              if forbidden in text:
+                  raise SystemExit(f'Legacy soak contract remains in {soak}: {forbidden}')
+          soak.write_text(text, encoding='utf-8')
+
+          runtime = Path('tools/MachiVerse.Qa04RuntimeTarget/Program.cs')
+          text = runtime.read_text(encoding='utf-8')
+          old = 'if (releaseMode && core.DurationSeconds < 86_400)'
+          new = 'if (releaseMode && core.DurationSeconds < 43_200)'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected one remaining RuntimeTarget 86400 gate, found {count}')
+          text = text.replace(old, new)
+          if '86_400' in text:
+              raise SystemExit('Legacy 86_400 remains in RuntimeTarget')
+          runtime.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Build affected production components
+        shell: bash
+        run: |
+          dotnet build src/MachiVerse.Simulation.Core/MachiVerse.Simulation.Core.csproj --configuration Release
+          dotnet build tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release
+
+      - name: Assert final production soak contract
+        shell: bash
+        run: |
+          grep -q 'ReleaseDurationSeconds = 43_200' src/MachiVerse.Simulation.Core/Performance/Qa04ProductionSoakRun.cs
+          test "$(grep -c 'performance.soak.12h' src/MachiVerse.Simulation.Core/Performance/Qa04ProductionSoakRun.cs)" -eq 2
+          grep -q 'core.DurationSeconds < 43_200' tools/MachiVerse.Qa04RuntimeTarget/Program.cs
+          ! grep -R -n -E 'performance\.soak\.24h|86_400|release-duration-must-be-86400' \
+            src/MachiVerse.Simulation.Core/Performance/Qa04ProductionSoakRun.cs \
+            tools/MachiVerse.Qa04RuntimeTarget/Program.cs
+
+      - name: Commit verified migration and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/issue-558-core-soak-migration.yml
+          git add src/MachiVerse.Simulation.Core/Performance/Qa04ProductionSoakRun.cs \
+                  tools/MachiVerse.Qa04RuntimeTarget/Program.cs
+          git diff --cached --check
+          git commit -m "fix: #558 enforce 12h production soak duration"
+          git push origin HEAD:fix/issue-558-step4-12h
