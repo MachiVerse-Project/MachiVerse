@@ -76,7 +76,7 @@ jobs:
               'executionClass':'contract-smoke',
               'requestId':'gate4.step1.production-connection',
               'sourceCommit':'${{ github.event.pull_request.head.sha || github.sha }}',
-              'qa04ManifestSha256':'5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423',
+              'qa04ManifestSha256':'4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06',
               'profileId':'perf.reference.v1',
               'run':{
                   'runId':'gate4.step1.production-connection',
