@@ -1,0 +1,91 @@
+name: issue-558 runtime target migration
+
+on:
+  push:
+    branches:
+      - fix/issue-558-step4-12h
+  pull_request:
+    branches:
+      - perf/issue-548-alpha11-10hz-gate
+
+permissions:
+  contents: write
+
+jobs:
+  migrate-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-558-step4-12h
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.400
+
+      - name: Migrate QA-04 runtime target to 12h contract
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/MachiVerse.Qa04RuntimeTarget/Program.cs')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  'private const string CanonicalManifestSha256 = "5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423";',
+                  'private const string CanonicalManifestSha256 = "4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06";',
+                  1,
+              ),
+              ('performance.soak.24h', 'performance.soak.12h', 3),
+              ('releaseMode ? 86_400L : 2L', 'releaseMode ? 43_200L : 2L', 1),
+              ('profile.GetProperty("durationHours").GetInt32() != 24 ||', 'profile.GetProperty("durationHours").GetInt32() != 12 ||', 1),
+          ]
+
+          for old, new, expected in replacements:
+              actual = text.count(old)
+              if actual != expected:
+                  raise SystemExit(f'Expected {expected} occurrence(s) of {old!r}, found {actual}')
+              text = text.replace(old, new)
+
+          forbidden = [
+              'performance.soak.24h',
+              'releaseMode ? 86_400L : 2L',
+              'durationHours").GetInt32() != 24 ||',
+              '5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423',
+          ]
+          for value in forbidden:
+              if value in text:
+                  raise SystemExit(f'Residual legacy Step4 contract value remains: {value}')
+
+          path.write_text(text, encoding='utf-8')
+
+          alpha11 = Path('tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunner.Alpha11Step3.cs')
+          alpha_text = alpha11.read_text(encoding='utf-8')
+          old = 'public string SchemaVersion { get; set; } = SchemaVersion;'
+          new = 'public string SchemaVersion { get; set; } = ReleaseEvidenceRunner.SchemaVersion;'
+          if alpha_text.count(old) != 1:
+              raise SystemExit('Unexpected Alpha11BenchmarkAggregateArtifact SchemaVersion initializer shape')
+          alpha11.write_text(alpha_text.replace(old, new), encoding='utf-8')
+          PY
+
+      - name: Verify 12h contract and build affected tools
+        shell: bash
+        run: |
+          dotnet build tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release
+          dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
+          dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release --no-build -- verify
+
+      - name: Commit verified migration and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/issue-558-runtime-target-migration.yml
+          git add tools/MachiVerse.Qa04RuntimeTarget/Program.cs tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunner.Alpha11Step3.cs
+          git diff --cached --check
+          git commit -m "fix: #558 complete 12h soak contract migration"
+          git push origin HEAD:fix/issue-558-step4-12h
