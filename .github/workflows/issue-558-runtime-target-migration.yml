@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/issue-558-step4-12h
+  pull_request:
+    branches:
+      - perf/issue-548-alpha11-10hz-gate
 
 permissions:
   contents: write
