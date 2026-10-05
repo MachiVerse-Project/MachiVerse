@@ -1,0 +1,50 @@
+name: issue-554 Step3 compile fix validation
+
+on:
+  push:
+    branches:
+      - perf/issue-548-alpha11-10hz-gate
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/issue-548-alpha11-10hz-gate
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.400
+      - name: Apply minimal compile fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunner.Alpha11Step3.cs')
+          text = path.read_text(encoding='utf-8')
+          old = 'public string SchemaVersion { get; set; } = SchemaVersion;'
+          new = 'public string SchemaVersion { get; set; } = ReleaseEvidenceRunner.SchemaVersion;'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one compile-fix target, found {count}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          git diff --check
+      - name: Build ReleaseEvidenceRunner
+        run: dotnet build tools/MachiVerse.ReleaseEvidenceRunner/MachiVerse.ReleaseEvidenceRunner.csproj --configuration Release
+      - name: Commit source fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunner.Alpha11Step3.cs
+          git diff --cached --check
+          git commit -m "fix: #548 qualify Step3 aggregate schema version"
+          git push origin HEAD:perf/issue-548-alpha11-10hz-gate
