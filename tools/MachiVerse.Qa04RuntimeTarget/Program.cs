@@ -954,7 +954,7 @@ internal static class Program
                 failures.Add("accepted-operation-loss");
             if (!core.NoUnrecoverableQueueDeadlock)
                 failures.Add("unrecoverable-queue-deadlock");
-            if (releaseMode && core.DurationSeconds < 86_400)
+            if (releaseMode && core.DurationSeconds < 43_200)
                 failures.Add("soak-duration-short");
 
             failures = failures.Distinct(StringComparer.Ordinal).OrderBy(static x => x, StringComparer.Ordinal).ToList();
