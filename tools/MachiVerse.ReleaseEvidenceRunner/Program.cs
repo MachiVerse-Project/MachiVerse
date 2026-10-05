@@ -78,10 +78,6 @@ internal static class Program
                     Path.GetFullPath(args[3]),
                     planDirectory,
                     outputDirectory);
-                Qa04DeterminismEvidenceVerifier.VerifyAndBind(
-                    planDirectory,
-                    outputDirectory,
-                    args[2]);
                 return result;
             }
 

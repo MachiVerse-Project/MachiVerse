@@ -9,6 +9,8 @@ static void Require(bool condition, string message)
     if (!condition) throw new InvalidOperationException(message);
 }
 
+await Qa04Alpha11ReviewRegressionInitializer.VerifyExistingWorldAsync();
+
 var worldId = OpaqueId128.Parse("00000000000000000000000000000001");
 var creatorId = OpaqueId128.Parse("00000000000000000000000000000002");
 var domain = new StableToken("sim.resident");

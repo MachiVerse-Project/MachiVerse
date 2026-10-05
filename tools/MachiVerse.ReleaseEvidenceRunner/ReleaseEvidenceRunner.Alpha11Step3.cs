@@ -4,10 +4,12 @@ using System.Text.Json;
 
 internal static partial class ReleaseEvidenceRunner
 {
-    private const double Alpha11TargetTickRateHz = 10d;
-    private const double Alpha11StepDeadlineMilliseconds = 100d;
-    private const double Alpha11DeadlineMissRatioMax = 0.01d;
-    private static readonly int[] Alpha11WorkerProfiles = [8, 16];
+    private static double Alpha11TargetTickRateHz => Alpha11AcceptanceConfig.Current.TickRateHz;
+    private static double Alpha11StepDeadlineMilliseconds => Alpha11AcceptanceConfig.Current.DeadlineMilliseconds;
+    private static double Alpha11DeadlineMissRatioMax => Alpha11AcceptanceConfig.Current.DeadlineMissRatioMax;
+    private static int[] Alpha11WorkerProfiles => Alpha11AcceptanceConfig.Current.WorkerCounts;
+    private static int Alpha11RunsPerWorker => Alpha11AcceptanceConfig.Current.RunsPerWorker;
+    private static int Alpha11RunCount => Alpha11AcceptanceConfig.Current.RunCount;
 
     /// <summary>
     /// Alpha 1.1 Gate 4 Step 3 runner. The historical reference plan still contains workers
@@ -97,6 +99,8 @@ internal static partial class ReleaseEvidenceRunner
             ExecutionClass = executionClass,
             SourceCommit = sourceCommit,
             Qa04ManifestSha256 = Program.CanonicalQa04ManifestSha256,
+            AcceptanceProfile = Alpha11AcceptanceConfig.Current.AcceptanceProfile,
+            AcceptanceConfigSha256 = Alpha11AcceptanceConfig.Current.Sha256,
             BenchmarkProfileId = ReferenceProfile,
             ReferenceProfile = referenceEvidence,
             DeterminismDigestSummary = aggregate.DeterminismDigestSummary,
@@ -127,13 +131,13 @@ internal static partial class ReleaseEvidenceRunner
             .ThenBy(static run => run.RunOrdinal)
             .ToArray();
 
-        if (selected.Length != Alpha11WorkerProfiles.Length * 3)
-            throw new InvalidDataException($"Alpha 1.1 Step3 matrix must contain 6 selected descriptors, found {selected.Length}.");
+        if (selected.Length != Alpha11RunCount)
+            throw new InvalidDataException($"Alpha 1.1 Step3 matrix must contain {Alpha11RunCount} selected descriptors, found {selected.Length}.");
 
         foreach (var worker in Alpha11WorkerProfiles)
         {
             var workerRuns = selected.Where(run => run.WorkerCount == worker).ToArray();
-            if (workerRuns.Length != 3 || !workerRuns.Select(static run => run.RunOrdinal).SequenceEqual([1, 2, 3]))
+            if (workerRuns.Length != Alpha11RunsPerWorker || !workerRuns.Select(static run => run.RunOrdinal).SequenceEqual(Enumerable.Range(1, Alpha11RunsPerWorker)))
                 throw new InvalidDataException($"Alpha 1.1 Step3 worker {worker} repetition matrix is incomplete.");
         }
 
@@ -141,7 +145,7 @@ internal static partial class ReleaseEvidenceRunner
         {
             if (!string.Equals(run.BenchmarkProfileId, ReferenceProfile, StringComparison.Ordinal))
                 throw new InvalidDataException($"Unexpected benchmark profile in run {run.RunId}: {run.BenchmarkProfileId}.");
-            if (run.WarmupSteps != 9000 || run.MeasurementSteps != 18000)
+            if (run.WarmupSteps != Alpha11AcceptanceConfig.Current.WarmupSteps || run.MeasurementSteps != Alpha11AcceptanceConfig.Current.MeasurementSteps)
                 throw new InvalidDataException($"Run {run.RunId} does not preserve canonical warmup/measurement Steps.");
         }
 
@@ -155,7 +159,7 @@ internal static partial class ReleaseEvidenceRunner
         Alpha11HostEvidence host)
     {
         var failures = new SortedSet<string>(StringComparer.Ordinal);
-        if (observations.Count != 6)
+        if (observations.Count != Alpha11RunCount)
             failures.Add("alpha11-reference-run-count");
 
         foreach (var worker in Alpha11WorkerProfiles)
@@ -164,9 +168,13 @@ internal static partial class ReleaseEvidenceRunner
                 .Where(run => run.WorkerCount == worker)
                 .OrderBy(static run => run.RunOrdinal)
                 .ToArray();
-            if (profileRuns.Length != 3 || !profileRuns.Select(static run => run.RunOrdinal).SequenceEqual([1, 2, 3]))
+            if (profileRuns.Length != Alpha11RunsPerWorker || !profileRuns.Select(static run => run.RunOrdinal).SequenceEqual(Enumerable.Range(1, Alpha11RunsPerWorker)))
                 failures.Add($"alpha11-worker-{worker}-run-matrix");
         }
+
+        if (observations.Select(static x => x.RunId).Distinct(StringComparer.Ordinal).Count() != observations.Count ||
+            observations.Any(x => !Alpha11WorkerProfiles.Contains(x.WorkerCount)))
+            failures.Add("alpha11-reference-run-matrix");
 
         foreach (var observation in observations)
         {
@@ -175,7 +183,28 @@ internal static partial class ReleaseEvidenceRunner
             foreach (var code in observation.TargetFailureCodes)
                 failures.Add($"target:{code}");
 
-            if (observation.StepP99Ms > Alpha11StepDeadlineMilliseconds)
+            if (!string.Equals(observation.AcceptanceConfigSha256, Alpha11AcceptanceConfig.Current.Sha256, StringComparison.Ordinal))
+                failures.Add("acceptance-config-mismatch");
+            if (observation.StepSampleCount != Alpha11AcceptanceConfig.Current.MeasurementSteps)
+                failures.Add("step-sample-count");
+            if (!double.IsFinite(observation.StepDeadlineMilliseconds) || observation.StepDeadlineMilliseconds != Alpha11StepDeadlineMilliseconds)
+                failures.Add("step-deadline-contract");
+            if (observation.StepDeadlineMissCount < 0 || observation.StepDeadlineMissCount > observation.StepSampleCount)
+                failures.Add("step-deadline-miss-count");
+            if (!double.IsFinite(observation.StepDeadlineMissRatio) || observation.StepSampleCount <= 0 ||
+                observation.StepDeadlineMissRatio != observation.StepDeadlineMissCount / (double)observation.StepSampleCount)
+                failures.Add("step-deadline-miss-ratio-drift");
+            if (observation.StepDeadlineMissRatio > Alpha11DeadlineMissRatioMax)
+                failures.Add("step-deadline-miss-ratio");
+            if (observation.CoreWorkingSetSampleCount <= 0 || observation.MaxMemoryBytes < 0)
+                failures.Add("memory-sample-invalid");
+            if (observation.MaxMemoryBytes > Alpha11AcceptanceConfig.Current.CoreSteadyTargetBytes)
+                failures.Add("memory-target");
+            if (observation.MaxMemoryBytes > Alpha11AcceptanceConfig.Current.CoreHardGuardBytes)
+                failures.Add("memory-guard");
+            if (observation.PersistenceMetricObserverFailureCount != 0)
+                failures.Add("persistence-observer-failure");
+            if (!double.IsFinite(observation.StepP99Ms) || observation.StepP99Ms < 0 || observation.StepP99Ms > Alpha11StepDeadlineMilliseconds)
                 failures.Add("step-p99");
             if (observation.AcceptedOperationLoss != 0)
                 failures.Add("accepted-operation-loss");
@@ -201,7 +230,7 @@ internal static partial class ReleaseEvidenceRunner
         }
 
         if (string.Equals(executionClass, "release", StringComparison.Ordinal) &&
-            host.ProcessVisibleLogicalProcessorCount < 16)
+            host.ProcessVisibleLogicalProcessorCount < Alpha11WorkerProfiles.Max())
             failures.Add("cpu-profile-logical-processor-capacity");
 
         var stateDigests = observations
@@ -213,11 +242,11 @@ internal static partial class ReleaseEvidenceRunner
         foreach (var digest in stateDigests)
             Program.RequireLowerHex(digest, 64, "final_state_digest");
 
-        var determinismMaterial = string.Join("\n", observations
-            .OrderBy(static x => x.WorkerCount)
-            .ThenBy(static x => x.RunOrdinal)
-            .Select(static x => $"{x.RunId}\0{x.FinalStateDigest}"));
-        var determinismDigest = Program.Sha256Hex(Encoding.UTF8.GetBytes(determinismMaterial));
+        var digestRows = observations.Select(static x => x.Determinism
+            ?? throw new InvalidDataException("Alpha 1.1 run is missing the Step2 determinism digest set.")).ToArray();
+        if (observations.Any(x => x.Determinism!.RunId != x.RunId || x.Determinism.FinalStateDigest != x.FinalStateDigest))
+            throw new InvalidDataException("Alpha 1.1 determinism evidence run/State identity drifted.");
+        var determinismDigest = Qa04DeterminismEvidenceVerifier.ValidateAndSummarize(digestRows, Alpha11RunCount);
 
         var profiles = Alpha11WorkerProfiles.Select(worker =>
         {
@@ -228,8 +257,15 @@ internal static partial class ReleaseEvidenceRunner
                 RunCount = profileRuns.Length,
                 WorstRunP99Milliseconds = profileRuns.Select(static run => run.StepP99Ms).DefaultIfEmpty(double.PositiveInfinity).Max(),
                 TargetDeadlineMissRatioMax = Alpha11DeadlineMissRatioMax,
-                DeadlineMissRatioVerifiedByTarget = profileRuns.Length == 3 && profileRuns.All(static run => run.TargetPassed),
-                AllRunsPassed = profileRuns.Length == 3 && profileRuns.All(static run => run.TargetPassed),
+                WorstDeadlineMissRatio = profileRuns.Select(static run => run.StepDeadlineMissRatio).DefaultIfEmpty(double.PositiveInfinity).Max(),
+                DeadlineMissRatioVerifiedByTarget = profileRuns.Length == Alpha11RunsPerWorker && profileRuns.All(run =>
+                    run.StepSampleCount == Alpha11AcceptanceConfig.Current.MeasurementSteps &&
+                    run.StepDeadlineMilliseconds == Alpha11StepDeadlineMilliseconds &&
+                    run.StepDeadlineMissCount >= 0 && run.StepDeadlineMissCount <= run.StepSampleCount &&
+                    double.IsFinite(run.StepDeadlineMissRatio) &&
+                    run.StepDeadlineMissRatio == run.StepDeadlineMissCount / (double)run.StepSampleCount &&
+                    run.StepDeadlineMissRatio <= Alpha11DeadlineMissRatioMax),
+                AllRunsPassed = profileRuns.Length == Alpha11RunsPerWorker && profileRuns.All(static run => run.TargetPassed),
             };
         }).ToArray();
 
@@ -238,6 +274,8 @@ internal static partial class ReleaseEvidenceRunner
             ExecutionClass = executionClass,
             SourceCommit = sourceCommit,
             Qa04ManifestSha256 = Program.CanonicalQa04ManifestSha256,
+            AcceptanceProfile = Alpha11AcceptanceConfig.Current.AcceptanceProfile,
+            AcceptanceConfigSha256 = Alpha11AcceptanceConfig.Current.Sha256,
             TargetTickRateHz = Alpha11TargetTickRateHz,
             StepDeadlineMilliseconds = Alpha11StepDeadlineMilliseconds,
             DeadlineMissRatioMax = Alpha11DeadlineMissRatioMax,
@@ -250,6 +288,48 @@ internal static partial class ReleaseEvidenceRunner
             Passed = failures.Count == 0,
             FailureCodes = failures.ToArray(),
         };
+    }
+
+    private static void ValidateAlpha11Step3Aggregate(
+        Gate4Step3BenchmarkEvidence evidence, string evidenceDirectory, string sourceCommit, string executionClass)
+    {
+        var policy = Alpha11AcceptanceConfig.Current;
+        if (evidence.AcceptanceProfile != policy.AcceptanceProfile || evidence.AcceptanceConfigSha256 != policy.Sha256)
+            throw new InvalidDataException("Gate4 Step3 acceptance profile/Config mismatch; stale evidence is rejected.");
+        var path = ResolveArtifactPath(evidenceDirectory, evidence.ReferenceProfile.ReportRef, "Alpha 1.1 aggregate");
+        var aggregate = Program.ReadJson<Alpha11BenchmarkAggregateArtifact>(path, "Alpha 1.1 aggregate");
+        if (aggregate.AcceptanceProfile != policy.AcceptanceProfile || aggregate.AcceptanceConfigSha256 != policy.Sha256 ||
+            aggregate.SchemaVersion != SchemaVersion || aggregate.ProfileId != ReferenceProfile ||
+            aggregate.SourceCommit != sourceCommit || aggregate.ExecutionClass != executionClass ||
+            aggregate.Qa04ManifestSha256 != Program.CanonicalQa04ManifestSha256 ||
+            aggregate.TargetTickRateHz != policy.TickRateHz || aggregate.StepDeadlineMilliseconds != policy.DeadlineMilliseconds ||
+            aggregate.DeadlineMissRatioMax != policy.DeadlineMissRatioMax || !aggregate.PacingWaitExcludedFromProcessingLatency ||
+            !aggregate.Passed || aggregate.FailureCodes.Length != 0 || evidence.ReferenceProfile.FailureCodes.Length != 0)
+            throw new InvalidDataException("Gate4 Step3 Alpha 1.1 aggregate contract mismatch.");
+
+        // PASSフラグだけを信用せず、digestで束縛された個別レポートから再検証する。
+        var observations = new List<BenchmarkRunObservation>();
+        foreach (var run in aggregate.Runs)
+        {
+            VerifyArtifactDigest(evidenceDirectory, run.ReportRef, run.ReportDigest, run.RunId);
+            var response = Program.ReadJson<Qa04AdapterResponse>(
+                ResolveArtifactPath(evidenceDirectory, run.ReportRef, run.RunId), run.RunId);
+            var descriptor = new BenchmarkRunDescriptor
+            {
+                RunId = run.RunId, WorkerCount = run.WorkerCount, RunOrdinal = run.RunOrdinal,
+                BenchmarkProfileId = ReferenceProfile, WarmupSteps = policy.WarmupSteps, MeasurementSteps = policy.MeasurementSteps,
+            };
+            ValidateResponse(response, NewRequest("benchmark-run", executionClass, run.RunId, sourceCommit,
+                ReferenceProfile, JsonSerializer.SerializeToElement(new { }), descriptor), "performance-benchmark-report-v1");
+            var parsed = ParseBenchmarkObservation(descriptor, response, run.ReportRef, run.ReportDigest);
+            if (JsonSerializer.Serialize(parsed, Program.Json) != JsonSerializer.Serialize(run, Program.Json))
+                throw new InvalidDataException($"Gate4 Step3 aggregate observation differs from its raw report: {run.RunId}.");
+            observations.Add(parsed);
+        }
+        var verified = EvaluateAlpha11ReferenceProfile(observations, executionClass, sourceCommit, aggregate.Host);
+        if (!verified.Passed || verified.DeterminismDigestSummary != evidence.DeterminismDigestSummary ||
+            JsonSerializer.Serialize(verified, Program.Json) != JsonSerializer.Serialize(aggregate, Program.Json))
+            throw new InvalidDataException("Gate4 Step3 Alpha 1.1 aggregate failed independent revalidation.");
     }
 
     private static Alpha11HostEvidence CaptureAlpha11HostEvidence(string executionClass)
@@ -305,6 +385,8 @@ internal static partial class ReleaseEvidenceRunner
         public string ExecutionClass { get; set; } = "";
         public string SourceCommit { get; set; } = "";
         public string Qa04ManifestSha256 { get; set; } = "";
+        public string AcceptanceProfile { get; set; } = "";
+        public string AcceptanceConfigSha256 { get; set; } = "";
         public double TargetTickRateHz { get; set; }
         public double StepDeadlineMilliseconds { get; set; }
         public double DeadlineMissRatioMax { get; set; }
@@ -323,6 +405,7 @@ internal static partial class ReleaseEvidenceRunner
         public int WorkerCount { get; set; }
         public int RunCount { get; set; }
         public double WorstRunP99Milliseconds { get; set; }
+        public double WorstDeadlineMissRatio { get; set; }
         public double TargetDeadlineMissRatioMax { get; set; }
         public bool DeadlineMissRatioVerifiedByTarget { get; set; }
         public bool AllRunsPassed { get; set; }

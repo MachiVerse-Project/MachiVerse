@@ -33,10 +33,10 @@ public sealed record Qa04PerformanceRepetitionEvaluationV1(
 /// </summary>
 public static class Qa04PerformanceRepetitionContractV1
 {
-    public const int RequiredRunsPerWorker = 3;
+    public static int RequiredRunsPerWorker => Qa04AcceptanceConfigV1.Current.RunsPerWorker;
 
     public static IReadOnlyList<int> CanonicalWorkerCounts { get; } =
-        Array.AsReadOnly(new[] { 8, 16 });
+        Array.AsReadOnly(Qa04AcceptanceConfigV1.Current.WorkerCounts);
 
     public static Qa04PerformanceRepetitionEvaluationV1 Evaluate(
         IReadOnlyCollection<Qa04MeasuredProcessRunV1> runs)
@@ -60,7 +60,7 @@ public static class Qa04PerformanceRepetitionContractV1
                 failures.Add("qa04.repetition.worker-count");
                 continue;
             }
-            if (run.RunOrdinal is < 1 or > RequiredRunsPerWorker)
+            if (run.RunOrdinal < 1 || run.RunOrdinal > RequiredRunsPerWorker)
             {
                 failures.Add("qa04.repetition.run-ordinal");
                 continue;
@@ -115,7 +115,7 @@ public static class Qa04PerformanceRepetitionContractV1
             .ToArray();
 
         var medianP95 = worker16P95.Length == RequiredRunsPerWorker
-            ? worker16P95[1]
+            ? worker16P95[worker16P95.Length / 2]
             : TimeSpan.Zero;
 
         var worker8 = ProfileSummary(byKey.Values, 8);
@@ -150,6 +150,16 @@ public static class Qa04PerformanceRepetitionContractV1
             return;
         }
 
+        if (!double.IsFinite(measurement.StepDeadlineMissRatio) || !double.IsFinite(measurement.StepDeadlineMilliseconds))
+            failures.Add("qa04.repetition.nonfinite-deadline");
+        if (measurement.CoreWorkingSetSampleCount <= 0)
+            failures.Add("qa04.measurement.memory-sample-missing");
+        if (measurement.MaxCoreWorkingSetBytes < 0)
+            failures.Add("qa04.measurement.memory-invalid");
+        if (measurement.MaxCoreWorkingSetBytes > Qa04PerformanceThresholdsV1.CoreSteadyTargetBytes)
+            failures.Add("qa04.performance.core-memory-target");
+        if (measurement.MaxCoreWorkingSetBytes > Qa04PerformanceThresholdsV1.CoreHardGuardBytes)
+            failures.Add("qa04.performance.core-memory-guard");
         if (step.P99 > Qa04PerformanceThresholdsV1.StepP99Max)
             failures.Add("qa04.performance.step-p99");
         if (Math.Abs(measurement.StepDeadlineMilliseconds - Qa04PerformanceThresholdsV1.StepDeadline.TotalMilliseconds) > 0.000001d)
@@ -185,20 +195,23 @@ public static class Qa04PerformanceRepetitionContractV1
         Qa04DeterminismEvidenceV1 evidence,
         ICollection<string> failures)
     {
-        if (evidence.FinalStateDigest is not { Length: 32 })
+        if (!ValidDigest(evidence.FinalStateDigest))
             failures.Add("qa04.determinism.final-state-digest-size");
-        if (evidence.TransitionCommittedDigest is not { Length: 32 })
+        if (!ValidDigest(evidence.TransitionCommittedDigest))
             failures.Add("qa04.determinism.transition-committed-digest-size");
-        if (evidence.OperationTerminalSemanticDigest is not { Length: 32 })
+        if (!ValidDigest(evidence.OperationTerminalSemanticDigest))
             failures.Add("qa04.determinism.operation-terminal-semantic-digest-size");
-        if (evidence.ConfigHistoryDigest is not { Length: 32 })
+        if (!ValidDigest(evidence.ConfigHistoryDigest))
             failures.Add("qa04.determinism.config-history-digest-size");
-        if (evidence.PromotionDeferralOrderDigest is not { Length: 32 })
+        if (!ValidDigest(evidence.PromotionDeferralOrderDigest))
             failures.Add("qa04.determinism.promotion-deferral-order-digest-size");
     }
 
     private static bool DigestEqual(byte[]? left, byte[]? right)
         => left is { Length: 32 } && right is { Length: 32 } && left.AsSpan().SequenceEqual(right);
+
+    private static bool ValidDigest(byte[]? value)
+        => value is { Length: 32 } && value.Any(static b => b != 0);
 
     private sealed record ProfileMeasurementSummary(
         int RunCount,
