@@ -1,0 +1,29 @@
+name: issue-558 legacy contract audit
+
+on:
+  push:
+    branches:
+      - fix/issue-558-step4-12h
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-558-step4-12h
+      - name: Report legacy 24h contract references outside docs
+        shell: bash
+        run: |
+          set -u
+          echo '=== OLD_MANIFEST_DIGEST ==='
+          git grep -n '5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423' -- ':!docs/**' ':!.github/workflows/issue-558-contract-audit.yml' || true
+          echo '=== OLD_SOAK_ID ==='
+          git grep -n 'performance.soak.24h' -- ':!docs/**' ':!.github/workflows/issue-558-contract-audit.yml' || true
+          echo '=== OLD_86400_UNDERSCORE ==='
+          git grep -n '86_400' -- ':!docs/**' ':!.github/workflows/issue-558-contract-audit.yml' || true
+          echo '=== OLD_86400_PLAIN ==='
+          git grep -n '86400' -- ':!docs/**' ':!.github/workflows/issue-558-contract-audit.yml' || true
