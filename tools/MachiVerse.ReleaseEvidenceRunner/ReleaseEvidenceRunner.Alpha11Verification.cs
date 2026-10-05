@@ -13,6 +13,7 @@ internal static partial class ReleaseEvidenceRunner
             {
                 x.StepP99Ms = policy.DeadlineMilliseconds;
                 x.StepSampleCount = policy.MeasurementSteps;
+                x.MeasurementEvidenceComplete = true;
                 x.StepDeadlineMilliseconds = policy.DeadlineMilliseconds;
                 x.AcceptanceConfigSha256 = policy.Sha256;
                 x.CoreWorkingSetSampleCount = policy.MeasurementSteps;
@@ -62,6 +63,12 @@ internal static partial class ReleaseEvidenceRunner
             var missing = report.DeepClone().AsObject();
             missing.Remove(field);
             RequireInvalid(() => ParseBenchmarkObservation(descriptor, Response(valid[0], JsonSerializer.SerializeToElement(missing)), "report.json", new string('b', 64)));
+            if (field != "acceptance_config_sha256")
+            {
+                var wrongType = report.DeepClone().AsObject();
+                wrongType[field] = "unmeasured";
+                RequireInvalid(() => ParseBenchmarkObservation(descriptor, Response(valid[0], JsonSerializer.SerializeToElement(wrongType)), "report.json", new string('b', 64)));
+            }
         }
         foreach (var field in new[] { "final_state_digest", "transition_committed_digest", "operation_terminal_semantic_digest", "config_history_digest", "promotion_deferral_order_digest" })
         {
@@ -118,6 +125,31 @@ internal static partial class ReleaseEvidenceRunner
             aggregate.Runs = aggregate.Runs.Concat(aggregate.Runs).ToArray();
             evidence.ReferenceProfile.ReportDigest = Program.WriteJson(aggregatePath, aggregate);
             RequireInvalid(() => ValidateStep3Evidence(evidence, source, "contract-smoke", evidencePath));
+
+            var incomplete = PassingRuns();
+            for (var i = 0; i < incomplete.Length; i++)
+            {
+                var missing = JsonNode.Parse(Report(incomplete[i]).GetRawText())!.AsObject();
+                foreach (var field in new[] { "step_deadline_ms", "step_deadline_miss_count", "step_deadline_miss_ratio", "acceptance_config_sha256", "core_working_set_sample_count", "determinism_evidence" })
+                    missing.Remove(field);
+                var failed = Response(incomplete[i], JsonSerializer.SerializeToElement(missing));
+                failed.Passed = false;
+                failed.FailureCodes = ["target-incomplete"];
+                incomplete[i] = ParseBenchmarkObservation(Descriptor(incomplete[i]), failed, "unmeasured.json", new string('a', 64));
+            }
+            var diagnostic = Evaluate(incomplete);
+            if (diagnostic.Passed || diagnostic.Runs.Any(static x => x.MeasurementEvidenceComplete) || diagnostic.DeterminismDigestSummary != "")
+                throw new InvalidDataException("Incomplete target must retain unmeasured FAIL diagnostics.");
+            evidence.Passed = false;
+            evidence.ReferenceProfile.Passed = false;
+            evidence.FailureCodes = diagnostic.FailureCodes;
+            evidence.DeterminismDigestSummary = "";
+            Program.WriteJson(Path.Combine(directory, "gate4-step3-benchmark-evidence.json"), evidence);
+            WriteStep3BlockedSmokeFragment(source, directory);
+            var fragment = Program.ReadJson<EvidenceFragment>(Path.Combine(directory, "qa04-evidence-fragment.json"), "blocked smoke fragment");
+            if (fragment.ReleaseEligible || fragment.PerformanceReports.Length != 3 || fragment.PerformanceReports.Any(static x => x.Passed) ||
+                fragment.Soak is not { Passed: false, DurationSeconds: 0 })
+                throw new InvalidDataException("Blocked smoke cannot become Step4/release evidence.");
         }
         finally { Directory.Delete(directory, recursive: true); }
         Console.WriteLine("Alpha 1.1 deadline/digest/memory/stale-evidence regressions PASS");
@@ -159,7 +191,7 @@ internal static partial class ReleaseEvidenceRunner
     private static void RequireInvalid(Action action)
     {
         try { action(); }
-        catch (Exception ex) when (ex is InvalidDataException or KeyNotFoundException) { return; }
+        catch (Exception ex) when (ex is InvalidDataException or KeyNotFoundException or InvalidOperationException) { return; }
         throw new InvalidDataException("Alpha 1.1 invalid evidence was accepted.");
     }
 }

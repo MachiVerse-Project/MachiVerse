@@ -221,7 +221,11 @@ internal static partial class ReleaseEvidenceRunner
     {
         var step3 = await RunGate4Step3Alpha11Async(repositoryRoot, executionClass, sourceCommit,
             adapterExecutable, planDirectory, outputDirectory);
-        if (step3 != 0) return step3;
+        if (step3 != 0)
+        {
+            if (executionClass == "contract-smoke") WriteStep3BlockedSmokeFragment(sourceCommit, outputDirectory);
+            return step3;
+        }
         return await RunGate4Step4Async(repositoryRoot, executionClass, sourceCommit,
             adapterExecutable, planDirectory,
             Path.Combine(outputDirectory, "gate4-step3-benchmark-evidence.json"), outputDirectory);
@@ -413,6 +417,14 @@ internal static partial class ReleaseEvidenceRunner
 
         var reportFailures = ReadStringArray(report, "failure_codes");
         var combinedFailures = response.FailureCodes.Concat(reportFailures).Distinct(StringComparer.Ordinal).ToArray();
+        var successful = response.Passed && combinedFailures.Length == 0;
+        var metricFields = new[] { "acceptance_config_sha256", "step_deadline_ms", "step_deadline_miss_count", "step_deadline_miss_ratio",
+            "core_working_set_sample_count", "persistence_metric_observer_failure_count" };
+        var complete = metricFields.All(field => report.TryGetProperty(field, out _));
+        if (successful && !complete)
+            throw new InvalidDataException("Successful benchmark report is missing deadline/memory measurement evidence.");
+        // 未完成targetの欠損値はComplete=falseと共に保存し、実測PASSへ昇格しない。
+        JsonElement Metric(string field) => report.TryGetProperty(field, out var value) ? value : default;
         var snapshot = report.GetProperty("snapshot_summary");
         var cpu = report.GetProperty("domain_cpu_summary");
         foreach (var field in new[]
@@ -442,14 +454,16 @@ internal static partial class ReleaseEvidenceRunner
             MaxObservedCpuConcurrency = GetInt(cpu, "max_observed_concurrency"),
             WorkerBudgetApplied = GetBool(cpu, "worker_budget_applied"),
             ParallelExecutionObserved = GetBool(cpu, "parallel_execution_observed"),
-            AcceptanceConfigSha256 = GetString(report, "acceptance_config_sha256"),
+            MeasurementEvidenceComplete = complete,
+            AcceptanceConfigSha256 = successful || Metric("acceptance_config_sha256").ValueKind == JsonValueKind.String ? GetString(report, "acceptance_config_sha256") : "",
             StepSampleCount = GetInt(report, "step_count"),
-            StepDeadlineMilliseconds = GetDouble(report, "step_deadline_ms"),
-            StepDeadlineMissCount = GetInt(report, "step_deadline_miss_count"),
-            StepDeadlineMissRatio = GetDouble(report, "step_deadline_miss_ratio"),
-            CoreWorkingSetSampleCount = GetInt(report, "core_working_set_sample_count"),
-            PersistenceMetricObserverFailureCount = GetLong(report, "persistence_metric_observer_failure_count"),
-            Determinism = Qa04DeterminismEvidenceVerifier.ParseSuccessfulEvidence(run, report),
+            StepDeadlineMilliseconds = successful || Metric("step_deadline_ms").ValueKind == JsonValueKind.Number ? GetDouble(report, "step_deadline_ms") : 0,
+            StepDeadlineMissCount = successful || Metric("step_deadline_miss_count").ValueKind == JsonValueKind.Number ? GetInt(report, "step_deadline_miss_count") : 0,
+            StepDeadlineMissRatio = successful || Metric("step_deadline_miss_ratio").ValueKind == JsonValueKind.Number ? GetDouble(report, "step_deadline_miss_ratio") : 0,
+            CoreWorkingSetSampleCount = successful || Metric("core_working_set_sample_count").ValueKind == JsonValueKind.Number ? GetInt(report, "core_working_set_sample_count") : 0,
+            PersistenceMetricObserverFailureCount = successful || Metric("persistence_metric_observer_failure_count").ValueKind == JsonValueKind.Number ? GetLong(report, "persistence_metric_observer_failure_count") : 0,
+            Determinism = successful || report.TryGetProperty("determinism_evidence", out _)
+                ? Qa04DeterminismEvidenceVerifier.ParseSuccessfulEvidence(run, report) : null,
             StepP95Ms = GetDouble(report, "step_p95_ms"),
             StepP99Ms = GetDouble(report, "step_p99_ms"),
             Mean60sStepMs = GetDouble(report, "step_mean_60s_ms"),

@@ -178,6 +178,7 @@ internal static partial class ReleaseEvidenceRunner
 
         foreach (var observation in observations)
         {
+            if (!observation.MeasurementEvidenceComplete) failures.Add("measurement-evidence-incomplete");
             if (!observation.TargetPassed)
                 failures.Add("target-report-failed");
             foreach (var code in observation.TargetFailureCodes)
@@ -242,11 +243,12 @@ internal static partial class ReleaseEvidenceRunner
         foreach (var digest in stateDigests)
             Program.RequireLowerHex(digest, 64, "final_state_digest");
 
-        var digestRows = observations.Select(static x => x.Determinism
-            ?? throw new InvalidDataException("Alpha 1.1 run is missing the Step2 determinism digest set.")).ToArray();
-        if (observations.Any(x => x.Determinism!.RunId != x.RunId || x.Determinism.FinalStateDigest != x.FinalStateDigest))
+        var digestRows = observations.Where(static x => x.Determinism is not null).Select(static x => x.Determinism!).ToArray();
+        if (observations.Any(x => x.Determinism is { } d && (d.RunId != x.RunId || d.FinalStateDigest != x.FinalStateDigest)))
             throw new InvalidDataException("Alpha 1.1 determinism evidence run/State identity drifted.");
-        var determinismDigest = Qa04DeterminismEvidenceVerifier.ValidateAndSummarize(digestRows, Alpha11RunCount);
+        if (digestRows.Length != Alpha11RunCount) failures.Add("determinism-evidence-incomplete");
+        var determinismDigest = digestRows.Length == Alpha11RunCount
+            ? Qa04DeterminismEvidenceVerifier.ValidateAndSummarize(digestRows, Alpha11RunCount) : "";
 
         var profiles = Alpha11WorkerProfiles.Select(worker =>
         {

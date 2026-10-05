@@ -2,6 +2,37 @@ using System.Text.Json;
 
 internal static partial class ReleaseEvidenceRunner
 {
+    // 失敗したcontract-smokeでは後段を未実行として記録する。Step4 PASSを生成しない。
+    private static void WriteStep3BlockedSmokeFragment(string sourceCommit, string outputDirectory)
+    {
+        var step3 = Program.ReadJson<Gate4Step3BenchmarkEvidence>(
+            Path.Combine(outputDirectory, "gate4-step3-benchmark-evidence.json"), "failed contract-smoke Step3");
+        PerformanceReportEvidence Skipped(string profile)
+        {
+            var path = Path.Combine(outputDirectory, "reports", profile + ".step3-blocked.json");
+            var digest = Program.WriteJson(path, new
+            {
+                schemaVersion = SchemaVersion, sourceCommit, profileId = profile,
+                executionClass = "contract-smoke", executed = false, passed = false,
+                failureCodes = new[] { "step3-not-passed" },
+            });
+            return new() { ProfileId = profile, SourceCommit = sourceCommit, ReportRef = RelativeRef(outputDirectory, path),
+                ReportDigest = digest, Passed = false, FailureCodes = ["step3-not-passed"] };
+        }
+        var persistence = Skipped(PersistenceProfile);
+        var publication = Skipped(PublicationProfile);
+        var soak = Skipped(SoakProfile);
+        Program.WriteJson(Path.Combine(outputDirectory, "qa04-evidence-fragment.json"), new EvidenceFragment
+        {
+            SchemaVersion = SchemaVersion, ExecutionClass = "contract-smoke", ReleaseEligible = false,
+            SourceCommit = sourceCommit, Qa04ManifestSha256 = Program.CanonicalQa04ManifestSha256,
+            PerformanceReports = [step3.ReferenceProfile, persistence, publication],
+            Soak = new() { TestCaseId = SoakProfile, SourceCommit = sourceCommit, ReportRef = soak.ReportRef,
+                ReportDigest = soak.ReportDigest, Passed = false },
+            DeterminismDigestSummary = step3.DeterminismDigestSummary, ObservedFailureCodes = step3.FailureCodes,
+        });
+    }
+
     internal static async Task<int> RunGate4Step3Async(
         string repositoryRoot,
         string executionClass,

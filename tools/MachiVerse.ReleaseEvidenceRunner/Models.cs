@@ -305,6 +305,7 @@ internal sealed class BenchmarkRunObservation
     public bool WorkerBudgetApplied { get; set; }
     public bool ParallelExecutionObserved { get; set; }
     public string AcceptanceConfigSha256 { get; set; } = "";
+    public bool MeasurementEvidenceComplete { get; set; }
     public int StepSampleCount { get; set; }
     public double StepDeadlineMilliseconds { get; set; }
     public int StepDeadlineMissCount { get; set; }
