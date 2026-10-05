@@ -2,6 +2,10 @@
 
 Status: INT-03 implementation / P4-08 release gate
 
+## Alpha 1.1の適用確認
+
+12hは承認済みのAlpha 1.1規範要件であり、本書の12h収集手順は**対応実装の統合後に有効**となる。文書のみのcheckoutではmanifest・評価器・Runnerが旧24h契約を使用し得る。#554の10Hz評価、#559の12h manifest・全consumer、#555のworkflowを統合し、同一candidateで`verify`とmanifest digest一致を確認するまで12hの正式証跡収集を開始しない。旧24h実装へ12h証跡を渡しても合格にはならない。
+
 ## Purpose
 
 `tools/MachiVerse.ReleaseAcceptance` is the repository-level evaluator for the Phase 4 `ReleaseAcceptanceRecordV1` contract.
@@ -9,9 +13,9 @@ Status: INT-03 implementation / P4-08 release gate
 It deliberately separates two things:
 
 1. **contract validation** — short CI can build the evaluator, run negative/self tests, and prove that missing or invalid evidence fails closed;
-2. **release evidence collection** — the release candidate must provide real same-commit suite artifacts, full `perf.reference.v1`, `perf.persistence.v1`, `perf.publication.v1`, and the real `performance.soak.24h` result.
+2. **release evidence collection** — the release candidate must provide real same-commit suite artifacts, full `perf.reference.v1`, `perf.persistence.v1`, `perf.publication.v1`, and the real `performance.soak.12h` result.
 
-A PR workflow is never a substitute for 24 wall-clock hours of soak evidence.
+A PR workflow is never a substitute for the required 12 wall-clock hours of soak evidence.
 
 ## Source contracts
 
@@ -20,6 +24,7 @@ The evaluator follows:
 - `docs/design/phase4-test-acceptance.md`
 - `docs/design/phase4-test-acceptance-addendum.md`
 - `docs/design/phase4-performance-benchmark-profile.md`
+- `docs/design/phase4-alpha11-runtime-release-profile.md`
 - `tests/performance-fixtures/v1/harness-manifest.json`
 - `tests/release-acceptance-fixtures/v1/acceptance-manifest.json`
 
@@ -68,7 +73,7 @@ The release evidence document carries:
 - test-suite version and passed TestCaseIds;
 - per-suite status, artifact reference, and artifact digest;
 - performance profile report reference and report digest;
-- 24-hour soak report reference and report digest;
+- 12-hour soak report reference and report digest;
 - determinism digest summary;
 - waivers and observed failure codes.
 
@@ -102,9 +107,9 @@ Each performance entry must identify the exact candidate commit, immutable repor
 
 The QA-04 repository workflow only validates the profile/adapter contracts. It does not generate release performance evidence.
 
-## 24-hour soak evidence
+## 12-hour soak evidence
 
-`performance.soak.24h` must report at least `86400` wall-clock seconds and satisfy all pinned guards:
+`performance.soak.12h` must report at least `43200` wall-clock seconds and satisfy all pinned guards:
 
 - parallel verifier digest matches;
 - post-warmup memory growth does not exceed 10%;
@@ -112,7 +117,7 @@ The QA-04 repository workflow only validates the profile/adapter contracts. It d
 - history/audit chains remain valid;
 - no unrecoverable queue deadlock occurs.
 
-The soak evidence must also bind the exact candidate commit and immutable report digest. A shorter run is always `INCOMPLETE` even when every observed metric is otherwise healthy.
+The soak evidence must also bind the exact candidate commit and immutable report digest. A run shorter than 43,200 seconds is always `INCOMPLETE` even when every observed metric is otherwise healthy. Runs longer than 12 hours, including 24-hour endurance runs, are optional extended evidence rather than an Alpha 1.1 hard requirement.
 
 ## Waivers
 

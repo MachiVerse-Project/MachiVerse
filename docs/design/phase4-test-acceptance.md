@@ -459,29 +459,34 @@ Operational timings/logs need not equal。
 
 ## 32. Performance acceptance
 
-Use `phase4-performance-benchmark-profile.md`。
+Use `phase4-performance-benchmark-profile.md` and the Alpha 1.1 override in `phase4-alpha11-runtime-release-profile.md`。
 
-Release performance profile requires:
+Alpha 1.1 release performance profile requires:
 
-- 16-worker p95 Step <=33.333ms reference node。
-- p99 <=50ms。
-- Core memory never >28GiB guard。
-- SQLite commit p95 <=4ms/p99<=8ms。
-- Snapshot COW barrier p95 <=5ms。
+- standard runtime StepRate = 10/1 steps/sec（10 tick/s）。
+- worker 8 / 16, three independent process runs each。
+- p99 authoritative Step processing time <=100ms。
+- deadline miss ratio <=1%。
+- pacing/wait excluded from authoritative processing latency。
+- production CPU worker budget evidence valid。
+- Core memory / persistence / Snapshot / publication guards remain valid through the target reports and QA-04 subprofiles。
 - no accepted Operation loss。
-- publication limits/slow-client isolation pass。
+- no hidden solver iteration reduction。
+- deterministic final-state evidence一致。
+
+Historical 30Hz-oriented p95/p99/rolling-mean values remain reference telemetry but are not Alpha 1.1 release blockers。
 
 Performance failure does not authorize semantic shortcut; release profile fails。
 
 ## 33. Soak test
 
 ```text
-TestCaseId = performance.soak.24h
+TestCaseId = performance.soak.12h
 ```
 
 Reference:
 
-- 24 wall-clock hours continuous standard simulation load。
+- 12 wall-clock hours（43,200 seconds minimum）continuous Alpha 1.1 standard simulation load。
 - periodic snapshot/recovery checkpoint validation。
 - synthetic Gateway reconnect/failover every 30 min operational schedule。
 - View churn/slow consumer load。
@@ -573,7 +578,7 @@ Per change category:
 | persistence | crash matrix + replay + migration |
 | performance-sensitive | benchmark reduced + memory regression |
 | security/auth | security + audit + protocol |
-| release candidate | all suites + full perf.reference.v1 + 24h soak |
+| release candidate | all suites + Alpha 1.1 Step3 perf.reference.v1 + 12h soak |
 
 ## 39. Release acceptance record
 

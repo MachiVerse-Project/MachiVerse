@@ -8,7 +8,7 @@ Parent: `phase4-performance-benchmark-profile.md`
 
 本書は、`perf.reference.v1` の初期reference worldについて、承認済みauthorityとproduction proofに基づくmaterialization完了状態を固定するcheckpointである。
 
-本checkpointはQA-04 release gate全体の完了を意味しない。特に、authoritative full Step loop、exact-103 production evidence、worker 1/4/8/16のdeterminism反復、persistence/publication stress、24時間soakは別gateとして残る。
+本checkpointはQA-04 release gate全体の完了を意味しない。特に、authoritative full Step loop、exact-103 production evidence、worker 1/4/8/16のdeterminism反復、persistence/publication stress、12時間soakは別gateとして残る。
 
 reference-world materialization完了条件は、次のすべてを満たすことである。
 

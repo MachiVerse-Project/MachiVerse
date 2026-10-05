@@ -26,7 +26,7 @@ Benchmark WorldIdはprofile/seedからdeterministicにderiveし、実ユーザ�
 
 ## 3. Config baseline
 
-`phase4-config-standard-examples.md` Simulation Core defaultを使用する。
+`phase4-config-standard-examples.md` Simulation Core schema `1.0` defaultをbaselineとして使用する。Alpha 1.1 release executionではschema default自体を変更せず、`phase4-alpha11-runtime-release-profile.md` に従ってStepRate `10/1`を明示選択する。
 
 差分:
 
@@ -240,6 +240,21 @@ Reference node:
 - no hidden solver iteration reduction.
 
 Worker 1/4/8 are scaling/determinism data and need not each achieve 30Hz, unless separately claimed by product profile。
+
+### 16.1 Alpha 1.1 release acceptance overlay
+
+上記30Hz-oriented performance valuesはPhase 4 reference/historyとして保持する。Alpha 1.1 formal Gate 4 Step 3では同じcanonical workload identity `perf.reference.v1`を維持したまま、release blockerを次へ更新する。
+
+- standard runtime StepRate: `10/1` steps/sec（10 tick/s）。
+- release execution worker profile: 8 / 16、各3 independent process runs。
+- p99 authoritative Step processing time <=100ms。
+- deadline miss ratio <=1%。
+- pacing/waitはprocessing latencyへ含めない。
+- accepted Operation loss = 0。
+- hidden solver iteration reduction禁止。
+- production CPU worker evidence、determinism、durability、COMMIT-before-publicationを維持する。
+
+旧p95 33.333ms / p99 50ms / 60-second mean 30msはAlpha 1.1ではtelemetryでありrelease blockerではない。
 
 ## 17. Determinism pass criteria
 
