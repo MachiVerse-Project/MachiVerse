@@ -233,6 +233,67 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             nextChunked,
             "Gate2 canonical chunk incremental digest drift");
 
+        var snapshotHeader = nextChunked.Partitions.Single(item =>
+            item.Material.ResultingHeader.PartitionId.Value ==
+                SocietyMarketTransactionRecordSchemaV2.PartitionId).Material.ResultingHeader;
+        // Exercise the trusted preparation fast path used by the real production loop.
+        var preparedFactory = typeof(SocietyMarketTransactionSnapshotAuthorityV2).GetMethod(
+            "FromPreparedHeader", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("Production Market prepared authority factory missing.");
+        var snapshotAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(
+            null, [nextMutation.State.MarketTransaction, snapshotHeader])!;
+        var snapshotProvider = new SocietyMarketTransactionSnapshotSectionProviderV2();
+        var snapshotSection = snapshotProvider.Create(snapshotAuthority, references);
+        var recoveredSnapshot = snapshotProvider.CreateSemanticVerifier(snapshotHeader, references)
+            .Verify(snapshotSection.Fragments);
+        Require(recoveredSnapshot.LogicalContentDigest.AsSpan().SequenceEqual(snapshotHeader.CanonicalDigest),
+            "Production Market RecordIdPrefixV2 snapshot recovery must preserve its canonical digest.");
+
+        var corruptDigest = snapshotHeader.CanonicalDigest.ToArray();
+        corruptDigest[0] ^= 1;
+        var corruptHeader = new PartitionStateHeaderV1(
+            nextMutation.State.MarketTransaction.State.Identity,
+            snapshotHeader.Revision, snapshotHeader.BasisStep, snapshotHeader.DetailLevel,
+            snapshotHeader.ItemCount, corruptDigest, snapshotHeader.DigestAlgorithm);
+        var corruptPrepared = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(
+            null, [nextMutation.State.MarketTransaction, corruptHeader])!;
+        ExpectInvalid(() => snapshotProvider.Create(corruptPrepared, references),
+            "persistence.snapshot.society-market-v2-header-material");
+
+        // A matching State header must not authorize a different RecordSet for serialization.
+        var serializedRecords = nextMutation.State.MarketTransaction.RecordSet.RecordsCanonical.ToArray();
+        var orderIndex = Array.FindIndex(serializedRecords, static record => record.Payload is SocietyMarketOrderPayloadV2);
+        var originalOrder = serializedRecords[orderIndex];
+        var originalPayload = (SocietyMarketOrderPayloadV2)originalOrder.Payload;
+        serializedRecords[orderIndex] = new SocietyMarketTransactionRecordMaterialV2(
+            originalOrder.RecordId, originalOrder.Revision, originalOrder.CreatedStep, originalOrder.RetiredStep,
+            originalOrder.DetailLevel, originalOrder.LineageRef,
+            new SocietyMarketOrderPayloadV2(originalPayload.MarketRef, originalPayload.OwnerRef,
+                originalPayload.InstrumentToken, originalPayload.Side, checked(originalPayload.LimitPriceMicrounit + 1),
+                originalPayload.Quantity, originalPayload.RemainingQuantity, originalPayload.EligibleStep, originalPayload.Status));
+        var materialFactory = typeof(SocietyMarketTransactionPartitionStateV2).GetMethod(
+            "FromCanonicalMaterial", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("Market canonical material factory missing.");
+        var divergentMaterial = (SocietyMarketTransactionPartitionStateV2)materialFactory.Invoke(null,
+            [serializedRecords, nextMutation.State.MarketTransaction.State.RecordsCanonical.ToArray()])!;
+        var divergentPrepared = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(
+            null, [divergentMaterial, snapshotHeader])!;
+        ExpectInvalid(() => snapshotProvider.Create(divergentPrepared, references),
+            "persistence.snapshot.society-market-v2-record-material");
+
+        serializedRecords[orderIndex] = new SocietyMarketTransactionRecordMaterialV2(
+            originalOrder.RecordId, originalOrder.Revision, originalOrder.CreatedStep, originalOrder.RetiredStep,
+            originalOrder.DetailLevel, originalOrder.LineageRef,
+            new SocietyMarketOrderPayloadV2(originalPayload.MarketRef, originalPayload.OwnerRef,
+                originalPayload.InstrumentToken, originalPayload.Side, originalPayload.LimitPriceMicrounit,
+                originalPayload.Quantity, originalPayload.RemainingQuantity, originalPayload.EligibleStep, originalPayload.Status));
+        var equivalentMaterial = (SocietyMarketTransactionPartitionStateV2)materialFactory.Invoke(null,
+            [serializedRecords, nextMutation.State.MarketTransaction.State.RecordsCanonical.ToArray()])!;
+        var equivalentPrepared = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(
+            null, [equivalentMaterial, snapshotHeader])!;
+        var equivalentSection = snapshotProvider.Create(equivalentPrepared, references);
+        _ = snapshotProvider.CreateSemanticVerifier(snapshotHeader, references).Verify(equivalentSection.Fragments);
+
         foreach (var workerCount in new[] { 1, 4, 8, 16 })
         {
             var parallel = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.BindParallelAsync(

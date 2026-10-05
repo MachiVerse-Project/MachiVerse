@@ -21,7 +21,9 @@ public sealed class SocietyMarketTransactionSnapshotSectionProviderV2 : IDomainP
         ArgumentNullException.ThrowIfNull(authority);
         if (authority is not SocietyMarketTransactionSnapshotAuthorityV2 market)
             throw new InvalidDataException("persistence.snapshot.society-market-v2-provider-authority-type");
-        market.VerifyBoundAuthority();
+        // The hot-path prepared header is a cache result. Rehash the frozen material before
+        // writing it, so a stale cache cannot first surface after the expensive durable drain.
+        market.VerifySnapshotMaterial();
         var records = market.Partition.RecordSet.RecordsCanonical;
         SocietyMarketTransactionReferenceClosureV2.Validate(records);
         foreach (var record in records)

@@ -604,6 +604,7 @@ public static class Qa04ProductionReferenceRunV1
         if (!coreOwnerMaterial.HasOperationAuthorityV2)
             throw new InvalidDataException("qa04.production-run.snapshot-operation-v2-missing");
 
+        Console.Error.WriteLine($"QA04_SNAPSHOT phase=section-materialization step={cut.SnapshotStep}");
         var providers = StandardDomainSnapshotOwnerCompositionV1.CreateAllProviders();
         var sections = StandardSnapshotStreamingOwnerCompositionV1.CreateAll103WithTerrainV2(
             coreOwnerMaterial,
@@ -628,6 +629,7 @@ public static class Qa04ProductionReferenceRunV1
         var physical = SnapshotPhysicalStaging.Prepare(world, cut.SnapshotId);
         var config = Qa04ReferenceConfigAuthorityV1.CreateCanonical();
         var zstd = new ZstdSnapshotChunkCompressionCodecV1();
+        Console.Error.WriteLine($"QA04_SNAPSHOT phase=physical-drain step={cut.SnapshotStep}");
         var staged = await CanonicalSnapshotProductionManifestDrainV1.StageRunningCutStreamingAsync(
             cut,
             physical,
@@ -639,6 +641,7 @@ public static class Qa04ProductionReferenceRunV1
         if (staged.Manifest.Logical.Sections.Count != 103 || staged.Chunks.Count == 0)
             throw new InvalidDataException("qa04.production-run.snapshot-staged-material-incomplete");
 
+        Console.Error.WriteLine($"QA04_SNAPSHOT phase=commit step={cut.SnapshotStep}");
         var committed = await coordinator.CommitDrainedAsync(
             cut,
             store,
@@ -674,6 +677,7 @@ public static class Qa04ProductionReferenceRunV1
             staged.PhysicalManifestDigest.ToArray());
 
         var decoders = CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders(zstd);
+        Console.Error.WriteLine($"QA04_SNAPSHOT phase=durable-recovery step={cut.SnapshotStep}");
         var durable = await CanonicalSnapshotDurableRecoveryV1.RecoverNewestAsync(
             store,
             world,
@@ -687,6 +691,7 @@ public static class Qa04ProductionReferenceRunV1
             !CryptographicOperations.FixedTimeEquals(durable.Catalog.PhysicalManifestDigest, staged.PhysicalManifestDigest))
             throw new InvalidDataException("qa04.production-run.snapshot-durable-recovery-drift");
 
+        Console.Error.WriteLine($"QA04_SNAPSHOT phase=semantic-rehash step={cut.SnapshotStep}");
         var semantic = await CanonicalSnapshotSemanticRecoveryV1.RecoverAndRehashAsync(
             durable,
             world,
@@ -701,6 +706,7 @@ public static class Qa04ProductionReferenceRunV1
             semantic.StateDigest.Length != 32)
             throw new InvalidDataException("qa04.production-run.snapshot-semantic-recovery-drift");
 
+        Console.Error.WriteLine($"QA04_SNAPSHOT phase=complete step={cut.SnapshotStep}");
         return persisted with
         {
             RecoveredStateDigest = semantic.StateDigest.ToArray(),
