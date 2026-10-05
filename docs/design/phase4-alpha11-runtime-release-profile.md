@@ -1,86 +1,85 @@
-# Alpha 1.1 runtime / release profile amendment
+# Alpha 1.1 ランタイム・リリースプロファイル補遺
 
-Status: **Approved normative amendment for Alpha 1.1 release profile**
-Tracking: Issue #556
-Related implementation: #548 / #554 / #555 / #558 / #559
+状態: **Alpha 1.1の承認済み規範要件**。実装への適用完了とは区別する。
+追跡: #556。実装: #548 / #554 / #558 / #559。Workflow: #555。
 
-## 1. Scope and precedence
+## 1. 適用範囲と優先順位
 
-This amendment defines the current Alpha 1.1 runtime and Gate 4 release-evidence profile. It does not rewrite historical Phase 1–4 decisions or change Config schema `1.0` defaults in-place.
+本補遺はAlpha 1.1のランタイムとGate 4のリリース証跡要件を定める。Alpha 1.1では、旧Phase 4文書にある30Hz性能条件・必須24h soakより本補遺を優先する。過去の意思決定・完了レビューは履歴として保持し、Config schema `1.0`の既定値は変更しない。
 
-Within the Alpha 1.1 release-profile scope, this document overrides older Phase 4 text that describes 30Hz performance acceptance or a mandatory 24-hour soak. Historical completion/review documents remain records of the contract that existed when they were written.
+### 実行前条件
 
-## 2. StepRate authority
+文書のみを統合したcheckoutでは、以下の変更は**未適用**である。旧実装のまま正式10Hz Step3や12h Step4を開始してはならない。
 
-The authoritative time axis remains integer `SimulationStep`. `StepRate` remains owned by Simulation Core Config and remains `SIMULATION + RUNTIME_SAFE` with explicit effective Step, ConfigGeneration, ConfigDigest, and replay/history authority.
+- #554の10Hz Config、実測deadline miss判定、5 digest検証、`run-step3` / `run-step4`をcandidateへ統合する。
+- #559の12h manifest・全consumer・Step2計画識別子・Gateway周期契約をcandidateへ統合する。
+- #555の対応workflowをdefault-branch authorityへ統合する。
+- 同一candidate checkoutでConfig、manifestと全consumerのdigest、CLI、評価器、workflowの整合を検証する。
 
-Config schema `1.0` defaults remain unchanged for compatibility:
+承認済み規範を先に`documentation`→`develop`へ統合し、その後で実装側を追従させる。実行手順は上記の適用確認後にのみ有効となる。PRの統合・通常CI成功は正式Step3/Step4 PASSを意味しない。
+
+## 2. StepRateの正本
+
+時間軸の正本は整数`SimulationStep`である。`StepRate`はSimulation Core Config所有の`SIMULATION + RUNTIME_SAFE`設定であり、effective Step、ConfigGeneration、ConfigDigest、replay/historyの契約を維持する。
+
+互換性のためschema `1.0`の既定値は次のままとする。
 
 ```text
 simulation.step-rate.numerator = 30
 simulation.step-rate.denominator = 1
 ```
 
-Alpha 1.1 standard runtime does **not** redefine that schema default. The Alpha 1.1 runtime profile explicitly selects:
+Alpha 1.1標準ランタイムはschema既定値を再定義せず、外部Configで次を明示する。
 
 ```text
 simulation.step-rate.numerator = 10
 simulation.step-rate.denominator = 1
 ```
 
-Therefore `30/1` is the schema default while `10/1` is the Alpha 1.1 standard runtime/release profile value.
+#554適用前の同梱Configは10Hzへ変更済みとは扱わない。適用後は新規標準worldを10Hzで作成し、既存30Hz worldは永続化済みConfigを保持して起動する。起動時にConfig履歴を黙って移行しない。未知のdigestは拒否し、明示的な変更には既存のdurable Config変更契約を用いる。
 
-## 3. Gate 4 Step 3 — Alpha 1.1 10 tick/s acceptance
+## 3. Gate 4 Step 3 — 10 tick/s性能条件
 
-The canonical workload identity remains `perf.reference.v1`; changing the release threshold does not authorize workload reduction or semantic shortcuts.
+正本workloadは`perf.reference.v1`を維持する。閾値変更をworkload削減・意味論省略の許可として扱わない。Core所有の外部`config/qa04-alpha11.json`を測定・Adapter・Runnerの共通正本とし、Config SHA-256を証跡へ保持する。
 
-Alpha 1.1 formal Step 3:
+Alpha 1.1標準条件:
 
-- target runtime rate: **10 tick/s**;
-- authoritative processing budget: **100 ms/tick**;
-- hard latency boundary: **p99 authoritative Step processing time <= 100 ms**;
-- hard deadline boundary: **deadline miss ratio <= 1%**;
-- pacing/wait time is excluded from authoritative processing latency;
-- release execution profiles: worker count **8** and **16**, three independent runs each;
-- requested worker budget must be proven to reach production CPU execution rather than remaining metadata;
-- accepted Operation loss must be zero;
-- hidden solver-iteration reduction is forbidden;
-- determinism/durability/COMMIT-before-publication requirements remain unchanged.
+- target runtime rate: **10 tick/s**、処理deadline: **100 ms/tick**（StepRateから導出）
+- p99 authoritative Step処理時間 **<=100ms**、deadline miss ratio **<=1%**
+- pacing/waitは処理latencyから除外する
+- worker **8 / 16**、各3独立run。worker数とphysical core数を混同せず、topology・affinity・production CPU実行を記録する
+- accepted Operation loss = **0**、hidden solver iteration reduction = **false**
+- 5種類すべてのdeterminism digestを欠損・不正形式・全ゼロ・不一致に対してfail-closedで検証する
+- working-setの絶対上限を維持し、標準22GiB target / 28GiB hard guardを外部Configから取得する
+- determinism、durability、COMMIT-before-publicationを維持する
 
-The historical 30Hz-oriented p95 `33.333 ms`, p99 `50 ms`, and 60-second mean `30 ms` values may remain as historical/reference telemetry, but they are not Alpha 1.1 release blockers.
+deadline、許容miss率、測定件数、反復数、worker profile、メモリ上限は外部Configの値を正本とする。旧30Hzのp95 `33.333ms`、p99 `50ms`、60秒mean `30ms`は履歴・telemetryとして残せるが、Alpha 1.1 release blockerにはしない。#554適用前の評価器がこの新条件を実装済みとは扱わない。
 
-## 4. Gate 4 Step 4 — 12-hour endurance acceptance
+## 4. Gate 4 Step 4 — 12h耐久条件
 
-Alpha 1.1 hard endurance TestCaseId is:
+Alpha 1.1の必須TestCaseIdは`performance.soak.12h`、最低時間は**43,200 wall-clock seconds**である。Adapter報告時間とRunnerが測ったmonotonic経過時間の両方を検証し、小さい方を正本とする。旧24h実装を12h workflowで起動してはならない。
 
-```text
-performance.soak.12h
-```
+時間短縮以外の品質条件は緩和しない。
 
-Release evidence requires at least **43,200 wall-clock seconds**. Both adapter-reported duration and monotonic process elapsed time are checked; the smaller duration is authoritative for release eligibility.
+- Step3正式PASSと同一candidate commit・runtime Config
+- 10 tick/s production pacing、memory bounded / plateau
+- parallel verifier digest一致、post-warmup memory growth guard
+- accepted Operation loss = 0、history/audit chain有効
+- 回復不能なqueue deadlockなし、persistence/publication preflight PASS
+- Snapshot / recovery continuity、runtime stability
 
-The duration reduction is the only intentional relaxation. The following remain mandatory:
+24h以上は任意のextended endurance evidenceであり、Alpha 1.1の必須条件にはしない。
 
-- parallel verifier digest match;
-- post-warmup memory growth guard;
-- accepted Operation loss = 0;
-- history/audit chain validity;
-- no unrecoverable queue deadlock;
-- persistence/publication preflight PASS;
-- same release-candidate commit as the preceding Step 3 evidence.
+## 5. 証跡のfail-closed境界
 
-A run longer than 12 hours, including 24-hour endurance validation, may be retained as optional extended evidence but is not required for Alpha 1.1 hard release acceptance.
+短い`contract-smoke`、synthetic、reduced、preflight、通常CIをrelease evidenceへ昇格しない。`releaseEvidenceCapable=true`は正式Step3 PASSと完全な12h Step4証跡を検証した後にのみ判定する。旧Step3証跡はacceptance profile・Config digest・個別レポートの再検証によって拒否する。
 
-## 5. Fail-closed evidence boundary
+## 6. QA-04 manifestの同期条件
 
-Short `contract-smoke` or synthetic CI runs never become release evidence. `releaseEvidenceCapable=true` requires formal release execution and complete 12-hour duration evidence. A PR CI run is not a substitute for the wall-clock endurance run.
-
-## 6. Canonical QA-04 binding
-
-The Alpha 1.1 12-hour QA-04 manifest SHA-256 is:
+#559で移行する12h manifestの予定SHA-256:
 
 ```text
 4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06
 ```
 
-Current release tooling and validation workflows must bind this digest consistently.
+文書のみのcheckoutでは上記を実在するcanonical digestとして扱わない。実行時はcheckoutのmanifest実体のSHA-256と、PerformanceHarness、RuntimeTarget、ReleaseEvidenceRunner、ReleaseAcceptance、workflowのbindingがすべて一致することを確認する。今後manifestが変更された場合も、実体と全consumerを同時に更新・検証する。

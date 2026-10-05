@@ -2,6 +2,10 @@
 
 Status: INT-03 implementation / P4-08 release gate
 
+## Alpha 1.1の適用確認
+
+12hは承認済みのAlpha 1.1規範要件であり、本書の12h収集手順は**対応実装の統合後に有効**となる。文書のみのcheckoutではmanifest・評価器・Runnerが旧24h契約を使用し得る。#554の10Hz評価、#559の12h manifest・全consumer、#555のworkflowを統合し、同一candidateで`verify`とmanifest digest一致を確認するまで12hの正式証跡収集を開始しない。旧24h実装へ12h証跡を渡しても合格にはならない。
+
 ## Purpose
 
 `tools/MachiVerse.ReleaseAcceptance` is the repository-level evaluator for the Phase 4 `ReleaseAcceptanceRecordV1` contract.

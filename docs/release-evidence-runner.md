@@ -2,13 +2,19 @@
 
 Status: implementation under #236 / parent #234
 
+## Alpha 1.1の適用確認
+
+本書の10Hz・12h・staged flowは承認済み要件に対応する**統合後の手順**である。文書のみを統合したcheckoutでは未適用であり、`run-step3` / `run-step4`が存在するとは扱わない。#554のCLI・実測評価、#559の12h manifest・全consumer、#555のworkflow authorityが揃い、同一candidateのbuild / verifyで整合を確認するまで正式release実行を開始しない。統合前に利用できる旧CLIは`verify`、`run contract-smoke ...`、`apply`であり、旧`run release`をAlpha 1.1正式判定として使用しない。
+
+以下の12h manifest digestは移行予定値である。実行時にはcheckoutのmanifest実体と全consumerのbindingを検証する。単に本書にある値をrequestへ転記してはならない。
+
 ## Purpose
 
 `tools/MachiVerse.ReleaseEvidenceRunner` bridges the QA-04 external JSONL target-adapter contract and the fail-closed `MachiVerse.ReleaseAcceptance` evaluator.
 
 It does not load Simulation Core, Gateway, View, or Administration View production assemblies. The assembled runtime is driven by an external target adapter process. This preserves the Phase 4 rule that repository QA/release tooling must not depend on component internal types.
 
-The runner supports the staged Alpha 1.1 release path plus bounded contract validation:
+統合・適用確認後のRunnerは次のコマンドを提供する。stagedコマンドは実装統合前には実行できない。
 
 ```bash
 dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- verify
@@ -26,7 +32,7 @@ dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Rele
   apply <qa04-evidence-fragment.json> <base-evidence.json> <output-evidence.json>
 ```
 
-Formal Alpha 1.1 Gate 4 uses `run-step3` followed by `run-step4` on the same candidate commit. The monolithic `run` path remains available for contract/compatibility use but does not replace the staged release authority.
+正式Alpha 1.1 Gate 4では、同一candidateで`run-step3`の正式PASS後に`run-step4`を実行する。統合後の一括`run`も同じAlpha 1.1 Step3評価・検証済みStep4経路を使い、旧12-run/30Hz評価へ戻らない。
 
 ## Canonical plan
 
