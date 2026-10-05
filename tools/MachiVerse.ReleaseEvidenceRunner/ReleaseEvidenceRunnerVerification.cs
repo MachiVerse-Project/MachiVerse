@@ -41,6 +41,10 @@ internal static class ReleaseEvidenceRunnerVerification
             "performance.soak.12h", "release soak testCaseId");
         if (releaseManifest.RootElement.GetProperty("soak").GetProperty("minimumDurationSeconds").GetInt64() != 43_200)
             throw new InvalidDataException("Release acceptance soak minimum must remain exactly 43200 seconds.");
+        if (ReleaseEvidenceRunner.IsCompleteSoakDuration(43_199))
+            throw new InvalidDataException("Release soak duration boundary accepted 43199 seconds.");
+        if (!ReleaseEvidenceRunner.IsCompleteSoakDuration(43_200))
+            throw new InvalidDataException("Release soak duration boundary rejected 43200 seconds.");
 
         Console.WriteLine("INT-03 release evidence runner contract verification PASS");
         Console.WriteLine($"QA-04 manifest SHA-256: {digest}");

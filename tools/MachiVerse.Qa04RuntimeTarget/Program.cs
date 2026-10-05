@@ -6,7 +6,7 @@ using System.Text.Json;
 
 internal static class Program
 {
-    private const string CanonicalManifestSha256 = "4cdd020afb1e1beae8e88289dbe97f4b1862a58ffe5c5d00910230de2b555a06";
+    private const string CanonicalManifestSha256 = "4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06";
     private const string CanonicalWorldSeedHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
     private const string ReferenceProfile = "perf.reference.v1";
     private const string PersistenceProfile = "perf.persistence.v1";

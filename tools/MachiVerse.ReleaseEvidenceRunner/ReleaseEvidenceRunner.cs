@@ -340,6 +340,8 @@ internal static partial class ReleaseEvidenceRunner
         return anyProfileFailed ? 2 : 0;
     }
 
+    internal static bool IsCompleteSoakDuration(long durationSeconds) => durationSeconds >= MinimumSoakSeconds;
+
     internal static void ApplyFragment(string fragmentPath, string baseEvidencePath, string outputEvidencePath)
     {
         var fragment = Program.ReadJson<EvidenceFragment>(fragmentPath, "QA-04 evidence fragment");
@@ -350,7 +352,7 @@ internal static partial class ReleaseEvidenceRunner
         if (!string.Equals(fragment.Qa04ManifestSha256, Program.CanonicalQa04ManifestSha256, StringComparison.Ordinal))
             throw new InvalidDataException("QA-04 evidence fragment manifest digest is not canonical.");
         Program.RequireLowerHex(fragment.SourceCommit, 40, "fragment sourceCommit");
-        if (fragment.Soak is null || fragment.Soak.DurationSeconds < MinimumSoakSeconds)
+        if (fragment.Soak is null || !IsCompleteSoakDuration(fragment.Soak.DurationSeconds))
             throw new InvalidDataException("Release fragment does not contain a complete 12-hour soak.");
         RequireExactSet(fragment.PerformanceReports.Select(static x => x.ProfileId).ToArray(),
             [ReferenceProfile, PersistenceProfile, PublicationProfile], "release performance profiles");
