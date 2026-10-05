@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0",
   "testSuiteVersion": "p4-08.v1",
-  "qa04ManifestSha256": "4cdd020afb1e1beae8e88289dbe97f4b1862a58ffe5c5d00910230de2b555a06",
+  "qa04ManifestSha256": "4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06",
   "requiredSuiteIds": [
     "simulation-core.standard",
     "gateway.standard",
