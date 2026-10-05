@@ -18,7 +18,11 @@ jobs:
           ref: docs/alpha11-10hz-step-rate
           fetch-depth: 0
       - name: Align current Alpha 1.1 canonical documentation
-        run: python3 scripts/issue-556-doc-update.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/issue-556-doc-update.py
+          sed -i 's/[[:space:]]\+$//' docs/design/phase4-alpha11-runtime-release-profile.md
       - name: Verify Alpha 1.1 canonical contract
         shell: bash
         run: |
