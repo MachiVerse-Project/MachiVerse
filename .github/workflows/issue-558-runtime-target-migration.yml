@@ -62,6 +62,14 @@ jobs:
                   raise SystemExit(f'Residual legacy Step4 contract value remains: {value}')
 
           path.write_text(text, encoding='utf-8')
+
+          alpha11 = Path('tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunner.Alpha11Step3.cs')
+          alpha_text = alpha11.read_text(encoding='utf-8')
+          old = 'public string SchemaVersion { get; set; } = SchemaVersion;'
+          new = 'public string SchemaVersion { get; set; } = ReleaseEvidenceRunner.SchemaVersion;'
+          if alpha_text.count(old) != 1:
+              raise SystemExit('Unexpected Alpha11BenchmarkAggregateArtifact SchemaVersion initializer shape')
+          alpha11.write_text(alpha_text.replace(old, new), encoding='utf-8')
           PY
 
       - name: Verify 12h contract and build affected tools
@@ -77,7 +85,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/issue-558-runtime-target-migration.yml
-          git add tools/MachiVerse.Qa04RuntimeTarget/Program.cs
+          git add tools/MachiVerse.Qa04RuntimeTarget/Program.cs tools/MachiVerse.ReleaseEvidenceRunner/ReleaseEvidenceRunner.Alpha11Step3.cs
           git diff --cached --check
-          git commit -m "fix: #558 align QA-04 runtime target with 12h soak"
+          git commit -m "fix: #558 complete 12h soak contract migration"
           git push origin HEAD:fix/issue-558-step4-12h
