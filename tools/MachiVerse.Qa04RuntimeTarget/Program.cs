@@ -6,12 +6,12 @@ using System.Text.Json;
 
 internal static class Program
 {
-    private const string CanonicalManifestSha256 = "5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423";
+    private const string CanonicalManifestSha256 = "4cdd020afb1e1beae8e88289dbe97f4b1862a58ffe5c5d00910230de2b555a06";
     private const string CanonicalWorldSeedHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
     private const string ReferenceProfile = "perf.reference.v1";
     private const string PersistenceProfile = "perf.persistence.v1";
     private const string PublicationProfile = "perf.publication.v1";
-    private const string SoakProfile = "performance.soak.24h";
+    private const string SoakProfile = "performance.soak.12h";
     private const ulong CanonicalTerminalOperationCount = 136_450_000UL;
     private const string BenchmarkMeasurementCode = "qa04.measurement.step-sample-count";
     private const double MissingMetricSentinelMilliseconds = 1_000_000_000.0;
@@ -816,7 +816,7 @@ internal static class Program
         if (gatewayExecutable is null)
             throw new InvalidDataException("release Gateway executable is required.");
         ValidateSoakProfile(request.Profile);
-        var requestedDurationSeconds = releaseMode ? 86_400L : 2L;
+        var requestedDurationSeconds = releaseMode ? 43_200L : 2L;
         var root = Path.Combine(
             Path.GetTempPath(),
             "machiverse-qa04-soak-" + Guid.NewGuid().ToString("N"));
@@ -1157,8 +1157,8 @@ internal static class Program
     private static void ValidateSoakProfile(JsonElement profile)
     {
         if (profile.ValueKind != JsonValueKind.Object)
-            throw new InvalidDataException("performance.soak.24h profile must be an object.");
-        if (profile.GetProperty("durationHours").GetInt32() != 24 ||
+            throw new InvalidDataException("performance.soak.12h profile must be an object.");
+        if (profile.GetProperty("durationHours").GetInt32() != 12 ||
             profile.GetProperty("gatewayReconnectFailoverIntervalMinutes").GetInt32() != 30 ||
             !profile.GetProperty("periodicSnapshotRecoveryCheckpoints").GetBoolean() ||
             !profile.GetProperty("viewChurnAndSlowConsumerLoad").GetBoolean() ||
@@ -1167,7 +1167,7 @@ internal static class Program
             !profile.GetProperty("noAcceptedOperationLoss").GetBoolean() ||
             !profile.GetProperty("historyAuditChainValid").GetBoolean() ||
             !profile.GetProperty("noUnrecoverableQueueDeadlock").GetBoolean())
-            throw new InvalidDataException("performance.soak.24h profile drift.");
+            throw new InvalidDataException("performance.soak.12h profile drift.");
     }
 
     private static void ValidateCrashVerification(

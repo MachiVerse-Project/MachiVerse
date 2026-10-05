@@ -300,7 +300,7 @@ internal static partial class ReleaseEvidenceRunner
 
     private sealed class Alpha11BenchmarkAggregateArtifact
     {
-        public string SchemaVersion { get; set; } = SchemaVersion;
+        public string SchemaVersion { get; set; } = ReleaseEvidenceRunner.SchemaVersion;
         public string ProfileId { get; set; } = ReferenceProfile;
         public string ExecutionClass { get; set; } = "";
         public string SourceCommit { get; set; } = "";
