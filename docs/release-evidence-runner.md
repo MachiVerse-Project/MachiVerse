@@ -2,16 +2,28 @@
 
 Status: implementation under #236 / parent #234
 
+## Alpha 1.1の適用確認
+
+本書の10Hz・12h・staged flowは承認済み要件に対応する**統合後の手順**である。文書のみを統合したcheckoutでは未適用であり、`run-step3` / `run-step4`が存在するとは扱わない。#554のCLI・実測評価、#559の12h manifest・全consumer、#555のworkflow authorityが揃い、同一candidateのbuild / verifyで整合を確認するまで正式release実行を開始しない。統合前に利用できる旧CLIは`verify`、`run contract-smoke ...`、`apply`であり、旧`run release`をAlpha 1.1正式判定として使用しない。
+
+以下の12h manifest digestは移行予定値である。実行時にはcheckoutのmanifest実体と全consumerのbindingを検証する。単に本書にある値をrequestへ転記してはならない。
+
 ## Purpose
 
 `tools/MachiVerse.ReleaseEvidenceRunner` bridges the QA-04 external JSONL target-adapter contract and the fail-closed `MachiVerse.ReleaseAcceptance` evaluator.
 
 It does not load Simulation Core, Gateway, View, or Administration View production assemblies. The assembled runtime is driven by an external target adapter process. This preserves the Phase 4 rule that repository QA/release tooling must not depend on component internal types.
 
-The runner has three commands:
+統合・適用確認後のRunnerは次のコマンドを提供する。stagedコマンドは実装統合前には実行できない。
 
 ```bash
 dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- verify
+
+dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- \
+  run-step3 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>
+
+dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- \
+  run-step4 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <step3-evidence.json> <output-directory>
 
 dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- \
   run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>
@@ -19,6 +31,8 @@ dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Rele
 dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- \
   apply <qa04-evidence-fragment.json> <base-evidence.json> <output-evidence.json>
 ```
+
+正式Alpha 1.1 Gate 4では、同一candidateで`run-step3`の正式PASS後に`run-step4`を実行する。統合後の一括`run`も同じAlpha 1.1 Step3評価・検証済みStep4経路を使い、旧12-run/30Hz評価へ戻らない。
 
 ## Canonical plan
 
@@ -31,7 +45,7 @@ dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release
 
 The evidence runner requires the canonical QA-04 manifest SHA-256:
 
-`5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423`
+`4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06`
 
 It consumes the materialized benchmark matrix, persistence profile, publication profile, soak plan, and benchmark summary. The reference benchmark matrix must remain 1/4/8/16 workers × 3 process runs with 9000 warmup + 18000 measurement Steps.
 
@@ -72,7 +86,7 @@ The QA-04 canonical `PerformanceBenchmarkReportV1` fields remain required. For f
 - `accepted_operation_loss`
 - `hidden_solver_iteration_reduction`
 
-The runner calculates the canonical acceptance boundaries itself, including worker-16 median p95, p99, 60-second mean, memory guard, SQLite p95/p99, snapshot COW p95, accepted Operation loss, hidden solver reduction, and final-state digest equality across all 12 runs. A target-provided `passed=true` cannot override a runner-detected failure.
+For formal Alpha 1.1 Step 3, `run-step3` selects worker 8 and 16 from the canonical matrix, three runs each, and applies the 10 tick/s release gate: p99 authoritative processing <=100ms and deadline miss ratio <=1%. Pacing/wait time is excluded from processing latency. Accepted Operation loss, hidden solver reduction, production CPU worker evidence, and deterministic digest checks remain fail-closed. Historical 30Hz-oriented p95/p99/rolling-mean values remain telemetry rather than Alpha 1.1 release blockers. A target-provided `passed=true` cannot override a runner-detected failure.
 
 ## Persistence and publication reports
 
@@ -80,16 +94,16 @@ The runner calculates the canonical acceptance boundaries itself, including work
 
 `perf.publication.v1` must preserve the canonical 1 Gateway / 100 View / 10 slow-consumer profile and confirm slow-consumer isolation plus continuity after coalesce/resync.
 
-## 24-hour soak anti-shortcut rule
+## 12-hour soak anti-shortcut rule
 
-`performance.soak.24h` has two independent duration checks in `release` mode:
+`performance.soak.12h` has two independent duration checks in `release` mode:
 
-1. the adapter report must claim at least 86400 seconds;
-2. the adapter process itself must remain running for at least 86400 monotonic elapsed seconds as measured by the evidence runner.
+1. the adapter report must claim at least 43200 seconds;
+2. the adapter process itself must remain running for at least 43200 monotonic elapsed seconds as measured by the evidence runner.
 
-The evidence duration is the smaller of reported and measured duration. Therefore an adapter cannot satisfy the release gate by immediately returning a fabricated `duration_seconds = 86400` report.
+The evidence duration is the smaller of reported and measured duration. Therefore an adapter cannot satisfy the release gate by immediately returning a fabricated `duration_seconds = 43200` report.
 
-The adapter process is expected to remain alive while it orchestrates the assembled runtime for the continuous soak. Run this on a dedicated release host whose process/job lifetime permits a continuous 24-hour execution; ordinary PR CI is only for contract validation.
+The adapter process is expected to remain alive while it orchestrates the assembled runtime for the continuous soak. Run this on a dedicated release host whose process/job lifetime permits a continuous 12-hour execution; ordinary PR CI is only for contract validation. A longer 24-hour run may be retained as optional extended endurance evidence.
 
 ## Artifact integrity
 
@@ -121,8 +135,12 @@ dotnet run --project tools/MachiVerse.PerformanceHarness --configuration Release
   materialize artifacts/qa04-plan
 
 dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- \
-  run release "$candidate" /path/to/real-assembled-runtime-adapter \
-  artifacts/qa04-plan artifacts/qa04-release
+  run-step3 release "$candidate" /path/to/real-assembled-runtime-adapter \
+  artifacts/qa04-plan artifacts/gate4-step3
+
+dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- \
+  run-step4 release "$candidate" /path/to/real-assembled-runtime-adapter \
+  artifacts/qa04-plan artifacts/gate4-step3/gate4-step3-benchmark-evidence.json artifacts/qa04-release
 
 dotnet run --project tools/MachiVerse.ReleaseEvidenceRunner --configuration Release -- \
   apply artifacts/qa04-release/qa04-evidence-fragment.json \

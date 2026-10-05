@@ -47,7 +47,9 @@ jobs:
           assert fragment['executionClass'] == 'contract-smoke', fragment
           assert fragment['releaseEligible'] is False, fragment
           assert len(fragment['performanceReports']) == 3, fragment
-          assert fragment['soak']['durationSeconds'] < 86400, fragment
+          with open('tests/performance-fixtures/v1/harness-manifest.json', encoding='utf-8') as handle:
+              duration_seconds = json.load(handle)['soakProfile']['durationHours'] * 3600
+          assert fragment['soak']['durationSeconds'] < duration_seconds, fragment
           PY
       - name: Prove contract-smoke cannot be applied as release evidence
         shell: bash
