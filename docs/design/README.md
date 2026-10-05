@@ -124,6 +124,7 @@ Status: Complete
 ### Alpha 1.1 normative amendments
 
 - `phase4-alpha11-society-governance-reference-authority.md` — `perf.reference.v1` Society/Governance benchmark genesisのToken vocabulary / actual Ref mapping / payload Step authority（#295）
+- `phase4-alpha11-runtime-release-profile.md` — Alpha 1.1 standard runtime `10/1`、Gate 4 Step 3 100ms/<=1% miss、Step 4 `performance.soak.12h` の現行release authority（#556）
 
 Phase 4はIssue #16で管理し、Phase 1〜3の意味契約を、実装者が追加のarchitecture判断をほぼ必要としないdata structure / protocol / Config / persistence / algorithm / performance / observability / test / platform / implementation work packageへ具体化した。
 
@@ -141,7 +142,7 @@ Phase 4 completion判定は `phase4-completion-review.md`、詳細設計全体�
 - Core↔Gateway / Gateway↔Gateway production mutual TLS
 - SQLite WAL/FULL + 103 required Snapshot sections
 - fixed-point/integer deterministic algorithm profile
-- 30Hz reference performance profile
+- Config schema `1.0` StepRate default `30/1` + Alpha 1.1 standard runtime/release profile `10/1`
 - OpenTelemetry-compatible observability + append-only audit
 - P4-08 release acceptance suite + protocol/mTLS addendum
 - .NET 10 LTS / C# 14 / Blazor WebAssembly / Three.js `WebGPURenderer` profile（WebGPU preferred / WebGL2 backend fallback）

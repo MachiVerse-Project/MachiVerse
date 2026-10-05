@@ -44,7 +44,8 @@ Config pathはprocess launch/deploymentからowner component自身が解決す�
 
 ### 4.1 Simulation Core
 
-- シミュレーション計算頻度の標準値は **30Hz**。
+- Config schema `1.0` のStepRate defaultは互換性のため **30/1 steps/sec** を維持する。
+- Alpha 1.1 standard runtime profileはschema defaultを書き換えず、Core Configで **10/1 steps/sec（10 tick/s）** を明示選択する。
 - 権威ある時間軸は整数ベースのSimulation Step。
 - StepRateはCore Configから変更可能で、simulation-affecting runtime changeとしてexplicit effective Stepを持つ。
 - Coreはマルチスレッド実行を前提とし、使用可能スレッド数は **1〜16**。

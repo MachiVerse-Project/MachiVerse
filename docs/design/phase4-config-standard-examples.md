@@ -123,6 +123,18 @@ metric-export-interval-ms = 1000
 state-digest-every-steps = 1
 ```
 
+### 2.1 Alpha 1.1 standard runtime profile override
+
+上のTOMLはConfig schema `1.0` のdefault completion例であり、StepRate default `30/1` は互換性のため変更しない。Alpha 1.1 standard runtime / release profileでは、同じschemaに対して次を明示設定する。
+
+```toml
+[simulation.step-rate]
+numerator = 10
+denominator = 1
+```
+
+これはschema defaultの変更ではない。runtimeで切り替える場合もSimulation-affecting Config changeとしてexplicit effective StepとConfig historyへ記録する。
+
 ## 3. Gateway
 
 ```toml

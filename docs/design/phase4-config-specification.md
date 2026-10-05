@@ -123,6 +123,8 @@ Cross constraints:
 - rate changeごとに`RateGeneration`を+1。
 - rate generation wrap前にworld migration required。
 
+Schema `1.0` の上表default `30/1` は互換性のため維持する。Alpha 1.1 standard runtime profileはdefault変更やschema migrationではなく、explicit Configとして `10/1` steps/sec（10 tick/s）を選択する。runtime apply時の `SIMULATION + RUNTIME_SAFE`、effective Step、ConfigGeneration / ConfigDigest / history契約は従来どおり適用する。
+
 ### 6.2 Worker/runtime
 
 | key | type | default | range | impact | mutability |
