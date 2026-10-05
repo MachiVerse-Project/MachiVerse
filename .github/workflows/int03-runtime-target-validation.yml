@@ -258,7 +258,7 @@ jobs:
           core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
           adapter="$GITHUB_WORKSPACE/tools/MachiVerse.Qa04RuntimeTarget/bin/Release/net10.0/MachiVerse.Qa04RuntimeTarget"
           export MACHIVERSE_QA04_CORE_EXECUTABLE="$core"
-          request='{"schemaVersion":"1.0","requestKind":"benchmark-run","executionClass":"contract-smoke","requestId":"qa04.runtime.boundary","sourceCommit":"1111111111111111111111111111111111111111","qa04ManifestSha256":"5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423","profileId":"perf.reference.v1","run":{"runId":"qa04.runtime.boundary","benchmarkProfileId":"perf.reference.v1","workerCount":4,"runOrdinal":1,"warmupSteps":9000,"measurementSteps":18000,"worldSeed":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"},"profile":{}}'
+          request='{"schemaVersion":"1.0","requestKind":"benchmark-run","executionClass":"contract-smoke","requestId":"qa04.runtime.boundary","sourceCommit":"1111111111111111111111111111111111111111","qa04ManifestSha256":"4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06","profileId":"perf.reference.v1","run":{"runId":"qa04.runtime.boundary","benchmarkProfileId":"perf.reference.v1","workerCount":4,"runOrdinal":1,"warmupSteps":9000,"measurementSteps":18000,"worldSeed":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"},"profile":{}}'
           printf '%s\n' "$request" | "$adapter" > "$RUNNER_TEMP/runtime-adapter-response.json"
           python3 - "$RUNNER_TEMP/runtime-adapter-response.json" <<'PY'
           import json, sys
