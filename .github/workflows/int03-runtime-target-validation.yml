@@ -9,6 +9,7 @@ on:
       - 'src/MachiVerse.Simulation.Core/**'
       - 'tests/MachiVerse.Simulation.Core.SmokeTests/**'
       - 'tools/MachiVerse.Qa04RuntimeTarget/**'
+      - 'tests/MachiVerse.Qa04RuntimeTarget.ScheduleTests/**'
       - '.github/workflows/int03-runtime-target-validation.yml'
 
 permissions:
@@ -35,6 +36,14 @@ jobs:
           dotnet build tools/MachiVerse.Qa04RuntimeTarget/MachiVerse.Qa04RuntimeTarget.csproj --configuration Release
       - name: Run Simulation Core smoke tests
         run: dotnet run --project tests/MachiVerse.Simulation.Core.SmokeTests --configuration Release
+      - name: Verify externally configured soak cycle boundaries
+        shell: bash
+        run: |
+          if [[ -f tests/MachiVerse.Qa04RuntimeTarget.ScheduleTests/MachiVerse.Qa04RuntimeTarget.ScheduleTests.csproj ]]; then
+            dotnet run --project tests/MachiVerse.Qa04RuntimeTarget.ScheduleTests --configuration Release
+          else
+            echo 'Schedule tests are candidate-side; not yet integrated into this checkout.'
+          fi
       - name: Probe assembled Simulation Core process target
         shell: bash
         run: |
@@ -200,7 +209,9 @@ jobs:
           core="$GITHUB_WORKSPACE/src/MachiVerse.Simulation.Core/bin/Release/net10.0/MachiVerse.Simulation.Core"
           adapter="$GITHUB_WORKSPACE/tools/MachiVerse.Qa04RuntimeTarget/bin/Release/net10.0/MachiVerse.Qa04RuntimeTarget"
           export MACHIVERSE_QA04_CORE_EXECUTABLE="$core"
-          request='{"schemaVersion":"1.0","requestKind":"benchmark-run","executionClass":"release","requestId":"qa04.runtime.boundary","sourceCommit":"1111111111111111111111111111111111111111","qa04ManifestSha256":"5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423","profileId":"perf.reference.v1","run":{"runId":"qa04.runtime.boundary","benchmarkProfileId":"perf.reference.v1","workerCount":4,"runOrdinal":1,"warmupSteps":9000,"measurementSteps":18000,"worldSeed":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"},"profile":{}}'
+          manifest_sha=$(sha256sum tests/performance-fixtures/v1/harness-manifest.json | cut -d ' ' -f 1)
+          request='{"schemaVersion":"1.0","requestKind":"benchmark-run","executionClass":"release","requestId":"qa04.runtime.boundary","sourceCommit":"1111111111111111111111111111111111111111","qa04ManifestSha256":"QA04_MANIFEST_SHA256","profileId":"perf.reference.v1","run":{"runId":"qa04.runtime.boundary","benchmarkProfileId":"perf.reference.v1","workerCount":4,"runOrdinal":1,"warmupSteps":9000,"measurementSteps":18000,"worldSeed":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"},"profile":{}}'
+          request=${request/QA04_MANIFEST_SHA256/$manifest_sha}
           printf '%s\n' "$request" | "$adapter" > "$RUNNER_TEMP/runtime-adapter-response.json"
           python3 - "$RUNNER_TEMP/runtime-adapter-response.json" <<'PY'
           import json, sys
