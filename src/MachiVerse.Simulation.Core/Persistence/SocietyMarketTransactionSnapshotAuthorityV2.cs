@@ -66,9 +66,15 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
     }
 
     public void VerifyBoundAuthority()
+        => VerifyBoundAuthorityCore(allowPreparedHeader: true);
+
+    internal void VerifySnapshotMaterial()
+        => VerifyBoundAuthorityCore(allowPreparedHeader: false);
+
+    private void VerifyBoundAuthorityCore(bool allowPreparedHeader)
     {
         RequireStructuralBinding();
-        if (_preparedHeaderVerified)
+        if (allowPreparedHeader && _preparedHeaderVerified)
             return;
 
         if (ActualItemCount != checked((ulong)RecordIdsCanonical.Count))
@@ -114,7 +120,14 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
             recomputed.ItemCount != Header.ItemCount ||
             recomputed.DigestAlgorithm != Header.DigestAlgorithm ||
             !CryptographicOperations.FixedTimeEquals(recomputed.CanonicalDigest, Header.CanonicalDigest))
+        {
+            Console.Error.WriteLine(
+                $"QA04_SNAPSHOT_DIGEST_MISMATCH partition={PartitionId.Value} " +
+                $"algorithm={Header.DigestAlgorithm} step={Header.BasisStep} revision={Header.Revision} " +
+                $"items={Header.ItemCount} expected={Convert.ToHexString(Header.CanonicalDigest)} " +
+                $"actual={Convert.ToHexString(recomputed.CanonicalDigest)}");
             throw new InvalidDataException("persistence.snapshot.society-market-v2-header-material");
+        }
     }
 
     private void RequireStructuralBinding()

@@ -233,6 +233,33 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             nextChunked,
             "Gate2 canonical chunk incremental digest drift");
 
+        var snapshotHeader = nextChunked.Partitions.Single(item =>
+            item.Material.ResultingHeader.PartitionId.Value ==
+                SocietyMarketTransactionRecordSchemaV2.PartitionId).Material.ResultingHeader;
+        // Exercise the trusted preparation fast path used by the real production loop.
+        var preparedFactory = typeof(SocietyMarketTransactionSnapshotAuthorityV2).GetMethod(
+            "FromPreparedHeader", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("Production Market prepared authority factory missing.");
+        var snapshotAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(
+            null, [nextMutation.State.MarketTransaction, snapshotHeader])!;
+        var snapshotProvider = new SocietyMarketTransactionSnapshotSectionProviderV2();
+        var snapshotSection = snapshotProvider.Create(snapshotAuthority, references);
+        var recoveredSnapshot = snapshotProvider.CreateSemanticVerifier(snapshotHeader, references)
+            .Verify(snapshotSection.Fragments);
+        Require(recoveredSnapshot.LogicalContentDigest.AsSpan().SequenceEqual(snapshotHeader.CanonicalDigest),
+            "Production Market RecordIdPrefixV2 snapshot recovery must preserve its canonical digest.");
+
+        var corruptDigest = snapshotHeader.CanonicalDigest.ToArray();
+        corruptDigest[0] ^= 1;
+        var corruptHeader = new PartitionStateHeaderV1(
+            nextMutation.State.MarketTransaction.State.Identity,
+            snapshotHeader.Revision, snapshotHeader.BasisStep, snapshotHeader.DetailLevel,
+            snapshotHeader.ItemCount, corruptDigest, snapshotHeader.DigestAlgorithm);
+        var corruptPrepared = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(
+            null, [nextMutation.State.MarketTransaction, corruptHeader])!;
+        ExpectInvalid(() => snapshotProvider.Create(corruptPrepared, references),
+            "persistence.snapshot.society-market-v2-header-material");
+
         foreach (var workerCount in new[] { 1, 4, 8, 16 })
         {
             var parallel = Qa04CanonicalOperationAuthoritativeStepPartitionBinderV1.BindParallelAsync(
