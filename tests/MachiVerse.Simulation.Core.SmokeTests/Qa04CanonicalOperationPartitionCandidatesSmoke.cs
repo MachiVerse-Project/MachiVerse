@@ -270,6 +270,11 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         var payloadCache = (System.Collections.IEnumerable)typeof(Qa04ProductionStep2CanonicalDigestCacheV1)
             .GetField("_market", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
             .GetValue(canonicalChunkCache)!;
+        var recordCache = (System.Collections.IEnumerable)typeof(Qa04ProductionStep2CanonicalDigestCacheV1)
+            .GetField("_marketRecords", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(canonicalChunkCache)!;
+        Require(!recordCache.Cast<object>().Any(),
+            "The prefix chunk path must not retain a duplicate per-record encoding table.");
         var retainedBefore = payloadCache.Cast<object>().Count();
         var encodedOnce = canonicalChunkCache.MarketRecord(freshOrder);
         Require(payloadCache.Cast<object>().Count() == retainedBefore,
