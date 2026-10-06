@@ -161,7 +161,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
                    RecordIdPrefixPartitionDigestV2.PrefixOf(normalized[end].RecordId) == prefix)
                 end++;
             _slices.TryGetValue(prefix, out var existing);
-            _slices[prefix] = MergeSlice(state.Identity, prefix, existing, normalized, start, end);
+            _slices[prefix] = MergeSlice(state.Identity, basisStep, prefix, existing, normalized, start, end);
             previousPrefix = prefix;
             start = end;
         }
@@ -244,6 +244,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Slice MergeSlice(
         DomainPartitionIdentityV1 identity,
+        ulong basisStep,
         ushort prefix,
         Slice? existing,
         IReadOnlyList<Update> updates,
@@ -300,23 +301,23 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             return new Entry(updateCurrent.RecordId, updateCurrent.Encoded);
         }
 
-        var existingIndex = 0;
-        var updateIndex = updateStart;
-        var resultCount = 0;
-        var byteCount = 0;
-        OpaqueId128? previous = null;
-
-        while ((existing is not null && existingIndex < existing.Count) || updateIndex < updateEnd)
+        // Derive allocation sizes from the delta, then merge exactly once. The old count pass
+        // checked ordering before allocations, but the materialization pass published its keys
+        // and bytes without checking them. Validate the actual material that will be committed.
+        var resultCount = existing?.Count ?? 0;
+        var byteCount = existing?.EncodedLength ?? 0;
+        for (var index = updateStart; index < updateEnd; index++)
         {
-            var entry = NextMergedEntry(existing, updates, updateEnd, ref existingIndex, ref updateIndex);
-            if (RecordIdPrefixPartitionDigestV2.PrefixOf(entry.RecordId) != prefix)
-                throw new InvalidDataException("qa04.prefix-digest-cache.slice-prefix-drift");
-            if (previous is { } prior && prior.CompareTo(entry.RecordId) >= 0)
-                throw new InvalidDataException("qa04.prefix-digest-cache.slice-order-drift");
-            previous = entry.RecordId;
-
-            resultCount = checked(resultCount + 1);
-            byteCount = checked(byteCount + entry.Encoded.Length);
+            var update = updates[index];
+            if (update.IsCreate)
+                resultCount = checked(resultCount + 1);
+            else
+            {
+                if (existing is null || !existing.TryFind(update.RecordId, out var replacedIndex))
+                    throw new InvalidDataException("qa04.prefix-digest-cache.revision-target-missing");
+                byteCount = checked(byteCount - existing.GetEncodedLength(replacedIndex));
+            }
+            byteCount = checked(byteCount + update.Encoded.Length);
         }
 
         if (resultCount == 0 || byteCount == 0)
@@ -326,13 +327,21 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         var offsets = new int[resultCount + 1];
         var encoded = new byte[byteCount];
 
-        existingIndex = 0;
-        updateIndex = updateStart;
+        var existingIndex = 0;
+        var updateIndex = updateStart;
         var resultIndex = 0;
         var byteOffset = 0;
         while ((existing is not null && existingIndex < existing.Count) || updateIndex < updateEnd)
         {
+            var sourceExistingIndex = existingIndex;
+            var sourceUpdateIndex = updateIndex;
             var entry = NextMergedEntry(existing, updates, updateEnd, ref existingIndex, ref updateIndex);
+            if (RecordIdPrefixPartitionDigestV2.PrefixOf(entry.RecordId) != prefix)
+                throw new InvalidDataException($"qa04.prefix-digest-cache.slice-prefix-drift partition={identity.PartitionId.Value} step={basisStep} prefix={prefix} record={entry.RecordId} existing_index={sourceExistingIndex} update_index={sourceUpdateIndex}");
+            if (resultIndex > 0 && keys[resultIndex - 1].CompareTo(entry.RecordId) >= 0)
+                throw new InvalidDataException($"qa04.prefix-digest-cache.slice-order-drift partition={identity.PartitionId.Value} step={basisStep} prefix={prefix} previous={keys[resultIndex - 1]} current={entry.RecordId} result_index={resultIndex} existing_index={sourceExistingIndex} update_index={sourceUpdateIndex} existing_count={existing?.Count ?? 0} update_start={updateStart} update_end={updateEnd}");
+            if (resultIndex >= resultCount || entry.Encoded.Length > encoded.Length - byteOffset)
+                throw new InvalidDataException("qa04.prefix-digest-cache.merge-materialization-drift");
             keys[resultIndex] = entry.RecordId;
             offsets[resultIndex] = byteOffset;
             entry.Encoded.Span.CopyTo(encoded.AsSpan(byteOffset));
@@ -394,7 +403,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             if (RecordIdPrefixPartitionDigestV2.PrefixOf(entry.RecordId) != prefix)
                 throw new InvalidDataException("qa04.prefix-digest-cache.slice-prefix-drift");
             if (previous is { } prior && prior.CompareTo(entry.RecordId) >= 0)
-                throw new InvalidDataException("qa04.prefix-digest-cache.slice-order-drift");
+                throw new InvalidDataException($"qa04.prefix-digest-cache.slice-order-drift phase=rebuild partition={identity.PartitionId.Value} prefix={prefix} previous={prior} current={entry.RecordId} result_index={index}");
             previous = entry.RecordId;
 
             keys[index] = entry.RecordId;
@@ -513,6 +522,8 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
 
         public ushort Prefix { get; }
         public int Count => _keys.Length;
+        public int EncodedLength => _encoded.Length;
+        public int GetEncodedLength(int index) => _offsets[index + 1] - _offsets[index];
         public OpaqueId128 FirstRecordId => _keys[0];
         public OpaqueId128 LastRecordId => _keys[^1];
         public PartitionDigestSliceV2 Commitment { get; }

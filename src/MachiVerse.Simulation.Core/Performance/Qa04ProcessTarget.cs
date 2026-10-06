@@ -110,6 +110,7 @@ public static class Qa04ProcessTargetV1
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync($"QA-04 process target FAILED: {ex.Message}").ConfigureAwait(false);
+            await Console.Error.WriteLineAsync(ex.ToString()).ConfigureAwait(false);
             return 1;
         }
     }
