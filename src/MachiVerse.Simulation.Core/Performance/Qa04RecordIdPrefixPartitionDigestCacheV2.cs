@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -143,40 +144,27 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
             return;
         }
 
-        var updates = new List<Update>();
-        ushort? currentPrefix = null;
-
-        void ApplyCurrentPrefix()
+        // Keep the normalized batch as one explicit managed owner throughout the merge. Avoid a
+        // capturing local function carrying mutable prefix/list/state fields across allocating
+        // calls: this is the optimized ApplyChanges frame in the Windows release crash (#548).
+        // The exact fault is not reproduced; this removes that code shape without disabling JIT,
+        // changing worker concurrency, or changing any canonical digest bytes.
+        var start = 0;
+        ushort? previousPrefix = null;
+        while (start < normalized.Count)
         {
-            if (currentPrefix is null || updates.Count == 0)
-                return;
-
-            _slices.TryGetValue(currentPrefix.Value, out var existing);
-            var replacement = MergeSlice(
-                state.Identity,
-                currentPrefix.Value,
-                existing,
-                updates);
-            _slices[currentPrefix.Value] = replacement;
-            updates.Clear();
-        }
-
-        foreach (var update in normalized)
-        {
-            var prefix = RecordIdPrefixPartitionDigestV2.PrefixOf(update.RecordId);
-            if (currentPrefix is { } previousPrefix && prefix < previousPrefix)
+            var prefix = RecordIdPrefixPartitionDigestV2.PrefixOf(normalized[start].RecordId);
+            if (previousPrefix is { } prior && prefix <= prior)
                 throw new InvalidDataException("qa04.prefix-digest-cache.normalized-prefix-order-drift");
-
-            if (currentPrefix != prefix)
-            {
-                ApplyCurrentPrefix();
-                currentPrefix = prefix;
-            }
-
-            updates.Add(update);
+            var end = start + 1;
+            while (end < normalized.Count &&
+                   RecordIdPrefixPartitionDigestV2.PrefixOf(normalized[end].RecordId) == prefix)
+                end++;
+            _slices.TryGetValue(prefix, out var existing);
+            _slices[prefix] = MergeSlice(state.Identity, prefix, existing, normalized, start, end);
+            previousPrefix = prefix;
+            start = end;
         }
-
-        ApplyCurrentPrefix();
 
         _itemCount = expectedCount;
         _lastState = state;
@@ -189,6 +177,8 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         // this method when the partition root is generated.
     }
 
+    // Retain a diagnostic frame on a fatal CLR failure in the release process.
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private List<Update> NormalizeChanges(
         DomainPartitionStateV1<TPayload> state,
         ulong basisStep,
@@ -251,26 +241,30 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         return normalized;
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static Slice MergeSlice(
         DomainPartitionIdentityV1 identity,
         ushort prefix,
         Slice? existing,
-        IReadOnlyList<Update> updates)
+        IReadOnlyList<Update> updates,
+        int updateStart,
+        int updateEnd)
     {
         ArgumentNullException.ThrowIfNull(identity);
         ArgumentNullException.ThrowIfNull(updates);
-        if (updates.Count == 0)
-            throw new ArgumentException("Updates cannot be empty.", nameof(updates));
+        if (updateStart < 0 || updateStart >= updateEnd || updateEnd > updates.Count)
+            throw new ArgumentOutOfRangeException(nameof(updateStart));
 
         static Entry NextMergedEntry(
             Slice? currentSlice,
             IReadOnlyList<Update> currentUpdates,
+            int currentUpdateEnd,
             ref int existingIndex,
             ref int updateIndex)
         {
             if (currentSlice is null || existingIndex == currentSlice.Count)
             {
-                if (updateIndex >= currentUpdates.Count)
+                if (updateIndex >= currentUpdateEnd)
                     throw new InvalidDataException("qa04.prefix-digest-cache.merge-exhausted");
                 var update = currentUpdates[updateIndex++];
                 if (!update.IsCreate)
@@ -278,7 +272,7 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
                 return new Entry(update.RecordId, update.Encoded);
             }
 
-            if (updateIndex == currentUpdates.Count)
+            if (updateIndex == currentUpdateEnd)
                 return currentSlice.GetEntry(existingIndex++);
 
             var current = currentSlice.GetEntry(existingIndex);
@@ -307,14 +301,14 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         }
 
         var existingIndex = 0;
-        var updateIndex = 0;
+        var updateIndex = updateStart;
         var resultCount = 0;
         var byteCount = 0;
         OpaqueId128? previous = null;
 
-        while ((existing is not null && existingIndex < existing.Count) || updateIndex < updates.Count)
+        while ((existing is not null && existingIndex < existing.Count) || updateIndex < updateEnd)
         {
-            var entry = NextMergedEntry(existing, updates, ref existingIndex, ref updateIndex);
+            var entry = NextMergedEntry(existing, updates, updateEnd, ref existingIndex, ref updateIndex);
             if (RecordIdPrefixPartitionDigestV2.PrefixOf(entry.RecordId) != prefix)
                 throw new InvalidDataException("qa04.prefix-digest-cache.slice-prefix-drift");
             if (previous is { } prior && prior.CompareTo(entry.RecordId) >= 0)
@@ -333,12 +327,12 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
         var encoded = new byte[byteCount];
 
         existingIndex = 0;
-        updateIndex = 0;
+        updateIndex = updateStart;
         var resultIndex = 0;
         var byteOffset = 0;
-        while ((existing is not null && existingIndex < existing.Count) || updateIndex < updates.Count)
+        while ((existing is not null && existingIndex < existing.Count) || updateIndex < updateEnd)
         {
-            var entry = NextMergedEntry(existing, updates, ref existingIndex, ref updateIndex);
+            var entry = NextMergedEntry(existing, updates, updateEnd, ref existingIndex, ref updateIndex);
             keys[resultIndex] = entry.RecordId;
             offsets[resultIndex] = byteOffset;
             entry.Encoded.Span.CopyTo(encoded.AsSpan(byteOffset));
