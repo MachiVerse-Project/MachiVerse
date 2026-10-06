@@ -414,6 +414,12 @@ public static class Qa04ProductionReferenceRunV1
                 frozenDomainAuthorities?.CanonicalAuthorities.Count != StandardDomainPartitionRegistry.StandardPartitionCount)
                 throw new InvalidDataException("qa04.production-run.snapshot-freeze-incomplete");
 
+            // Preserve measured Step diagnostics even when subsequent snapshot recovery fails.
+            // This is not release evidence; the final report still requires recovery and takes
+            // its complete metric snapshot at the existing point below.
+            var diagnosticMeasurement = measurement.Snapshot();
+            Console.Error.WriteLine(FormattableString.Invariant(
+                $"QA04_MEASUREMENT status=diagnostic-only workers={workerCount} samples={diagnosticMeasurement.StepSampleCount} p99_ms={diagnosticMeasurement.StepDuration?.P99.TotalMilliseconds:F3} deadline_ms={diagnosticMeasurement.StepDeadlineMilliseconds:F3} deadline_misses={diagnosticMeasurement.StepDeadlineMissCount} deadline_miss_ratio={diagnosticMeasurement.StepDeadlineMissRatio:F9}"));
             Volatile.Write(ref progressPhase, "snapshot-recovery");
             var snapshot = await DrainCommitAndRecoverSnapshotAsync(
                 snapshotCoordinator,
