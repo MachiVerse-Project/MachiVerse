@@ -156,9 +156,14 @@ internal static partial class ReleaseEvidenceRunner
         IReadOnlyList<BenchmarkRunObservation> observations,
         string executionClass,
         string sourceCommit,
-        Alpha11HostEvidence host)
+        Alpha11HostEvidence host,
+        JsonElement? persistenceCriteria = null)
     {
         var failures = new SortedSet<string>(StringComparer.Ordinal);
+        var criteria = persistenceCriteria ?? ReadAlpha11PersistenceCriteria();
+        var sqliteP95Limit = RequirePositiveCriterion(criteria, "sqliteCommitP95Ms");
+        var sqliteP99Limit = RequirePositiveCriterion(criteria, "sqliteCommitP99Ms");
+        var snapshotP95Limit = RequirePositiveCriterion(criteria, "snapshotCowBarrierP95Ms");
         if (observations.Count != Alpha11RunCount)
             failures.Add("alpha11-reference-run-count");
 
@@ -205,6 +210,12 @@ internal static partial class ReleaseEvidenceRunner
                 failures.Add("memory-guard");
             if (observation.PersistenceMetricObserverFailureCount != 0)
                 failures.Add("persistence-observer-failure");
+            if (!double.IsFinite(observation.SqliteCommitP95Ms) || observation.SqliteCommitP95Ms < 0 || observation.SqliteCommitP95Ms > sqliteP95Limit)
+                failures.Add("sqlite-commit-p95");
+            if (!double.IsFinite(observation.SqliteCommitP99Ms) || observation.SqliteCommitP99Ms < 0 || observation.SqliteCommitP99Ms > sqliteP99Limit)
+                failures.Add("sqlite-commit-p99");
+            if (!double.IsFinite(observation.SnapshotCowBarrierP95Ms) || observation.SnapshotCowBarrierP95Ms < 0 || observation.SnapshotCowBarrierP95Ms > snapshotP95Limit)
+                failures.Add("snapshot-cow-p95");
             if (!double.IsFinite(observation.StepP99Ms) || observation.StepP99Ms < 0 || observation.StepP99Ms > Alpha11StepDeadlineMilliseconds)
                 failures.Add("step-p99");
             if (observation.AcceptedOperationLoss != 0)
@@ -290,6 +301,23 @@ internal static partial class ReleaseEvidenceRunner
             Passed = failures.Count == 0,
             FailureCodes = failures.ToArray(),
         };
+    }
+
+    private static JsonElement ReadAlpha11PersistenceCriteria()
+    {
+        var root = Program.FindRepositoryRoot(Directory.GetCurrentDirectory());
+        var path = Path.Combine(root, "tests", "performance-fixtures", "v1", "harness-manifest.json");
+        if (Program.Sha256File(path) != Program.CanonicalQa04ManifestSha256)
+            throw new InvalidDataException("QA-04 persistence criteria manifest digest mismatch.");
+        return Program.ReadJsonElement(path).GetProperty("passCriteria");
+    }
+
+    private static double RequirePositiveCriterion(JsonElement criteria, string name)
+    {
+        var value = GetDouble(criteria, name);
+        if (!double.IsFinite(value) || value <= 0)
+            throw new InvalidDataException($"QA-04 persistence criterion is invalid: {name}.");
+        return value;
     }
 
     private static void ValidateAlpha11Step3Aggregate(

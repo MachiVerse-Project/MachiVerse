@@ -437,11 +437,12 @@ public static class Qa04ProductionReferenceRunV1
 
             Volatile.Write(ref progressPhase, "final-verification");
             var measurementSnapshot = measurement.Snapshot();
-            var performance = Qa04PerformanceThresholdsV1.EvaluateCompleteMeasurement(
+            var performance = Qa04PerformanceTelemetryAcceptanceV1.EvaluateCompleteMeasurement(
                 measurementSnapshot,
                 acceptedOperationLossCount: 0,
                 hiddenSolverIterationReductionCount: 0,
-                persistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount);
+                persistenceMetricObserverFailureCount: store.CommitMetricObserverFailureCount,
+                gcTelemetry: measurement.GcPauseTelemetry);
             var expectedFamilyWorkers = Math.Min(workerCount, 6);
             var workerBudgetApplied =
                 effectiveCpuWorkerCount == workerCount &&

@@ -6,6 +6,7 @@ internal static partial class ReleaseEvidenceRunner
     internal static void VerifyAlpha11Contract()
     {
         var policy = Alpha11AcceptanceConfig.Current;
+        var persistenceCriteria = ReadAlpha11PersistenceCriteria();
         var source = new string('1', 40);
         var host = new Alpha11HostEvidence { ProcessVisibleLogicalProcessorCount = policy.WorkerCounts.Max() };
         BenchmarkRunObservation[] PassingRuns() => BuildSyntheticObservations()
@@ -18,6 +19,9 @@ internal static partial class ReleaseEvidenceRunner
                 x.AcceptanceConfigSha256 = policy.Sha256;
                 x.CoreWorkingSetSampleCount = policy.MeasurementSteps;
                 x.MaxMemoryBytes = policy.CoreSteadyTargetBytes;
+                x.SqliteCommitP95Ms = GetDouble(persistenceCriteria, "sqliteCommitP95Ms");
+                x.SqliteCommitP99Ms = GetDouble(persistenceCriteria, "sqliteCommitP99Ms");
+                x.SnapshotCowBarrierP95Ms = GetDouble(persistenceCriteria, "snapshotCowBarrierP95Ms");
                 x.Determinism = new(x.RunId, x.FinalStateDigest, new string('b', 64), new string('c', 64), new string('d', 64), new string('e', 64));
                 return x;
             }).ToArray();
@@ -52,6 +56,21 @@ internal static partial class ReleaseEvidenceRunner
         RequireReject(x => x.MaxMemoryBytes = 40L << 30, "memory-guard");
         RequireReject(x => x.CoreWorkingSetSampleCount = 0, "memory-sample-invalid");
         RequireReject(x => x.PersistenceMetricObserverFailureCount = 1, "persistence-observer-failure");
+        foreach (var invalid in new[] { -1d, double.NaN, double.PositiveInfinity })
+        {
+            RequireReject(x => x.SqliteCommitP95Ms = invalid, "sqlite-commit-p95");
+            RequireReject(x => x.SqliteCommitP99Ms = invalid, "sqlite-commit-p99");
+            RequireReject(x => x.SnapshotCowBarrierP95Ms = invalid, "snapshot-cow-p95");
+        }
+        RequireReject(x => x.SqliteCommitP95Ms++, "sqlite-commit-p95");
+        RequireReject(x => x.SqliteCommitP99Ms++, "sqlite-commit-p99");
+        RequireReject(x => x.SnapshotCowBarrierP95Ms++, "snapshot-cow-p95");
+        var changedCriteria = JsonNode.Parse(persistenceCriteria.GetRawText())!.AsObject();
+        changedCriteria["sqliteCommitP95Ms"] = GetDouble(persistenceCriteria, "sqliteCommitP95Ms") / 2;
+        var externallyRejected = EvaluateAlpha11ReferenceProfile(PassingRuns(), "contract-smoke", source, host,
+            JsonSerializer.SerializeToElement(changedCriteria));
+        if (externallyRejected.Passed || !externallyRejected.FailureCodes.Contains("sqlite-commit-p95"))
+            throw new InvalidDataException("External persistence criteria must drive Alpha 1.1 acceptance.");
         RequireReject(x => x.AcceptedOperationLoss = 1, "accepted-operation-loss");
         RequireReject(x => x.HiddenSolverIterationReduction = true, "hidden-solver-reduction");
 
@@ -118,6 +137,20 @@ internal static partial class ReleaseEvidenceRunner
             evidence.ReferenceProfile.ReportDigest = Program.WriteJson(aggregatePath, aggregate);
             RequireInvalid(() => ValidateStep3Evidence(evidence, source, "contract-smoke", evidencePath));
             aggregate.AcceptanceProfile = policy.AcceptanceProfile;
+            foreach (var metric in new[] { "sqliteCommitP95Ms", "sqliteCommitP99Ms", "snapshotCowBarrierP95Ms" })
+            {
+                var row = aggregate.Runs[0];
+                if (metric == "sqliteCommitP95Ms") row.SqliteCommitP95Ms++;
+                else if (metric == "sqliteCommitP99Ms") row.SqliteCommitP99Ms++;
+                else row.SnapshotCowBarrierP95Ms++;
+                row.ReportDigest = Program.WriteJson(Path.Combine(directory, row.ReportRef), Response(row, Report(row)));
+                evidence.ReferenceProfile.ReportDigest = Program.WriteJson(aggregatePath, aggregate);
+                RequireInvalid(() => ValidateStep3Evidence(evidence, source, "contract-smoke", evidencePath));
+                if (metric == "sqliteCommitP95Ms") row.SqliteCommitP95Ms--;
+                else if (metric == "sqliteCommitP99Ms") row.SqliteCommitP99Ms--;
+                else row.SnapshotCowBarrierP95Ms--;
+                row.ReportDigest = Program.WriteJson(Path.Combine(directory, row.ReportRef), Response(row, Report(row)));
+            }
             aggregate.Runs[0].StepDeadlineMissRatio = 0.001;
             evidence.ReferenceProfile.ReportDigest = Program.WriteJson(aggregatePath, aggregate);
             RequireInvalid(() => ValidateStep3Evidence(evidence, source, "contract-smoke", evidencePath));

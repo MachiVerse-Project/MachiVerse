@@ -46,6 +46,16 @@ internal static class Qa04Alpha11ReviewRegressionInitializer
             summary, null, 1, policy.CoreSteadyTargetBytes) { StepDeadlineMilliseconds = policy.StepDeadline.TotalMilliseconds };
         Require(Qa04PerformanceThresholdsV1.EvaluateCompleteMeasurement(complete, 0, 0, 0).Passed,
             "Exact working-set target boundary must pass.");
+        var completeGc = new Qa04GcPauseTelemetrySnapshotV1(0, 10, 10, 0);
+        Require(Qa04PerformanceTelemetryAcceptanceV1.EvaluateCompleteMeasurement(complete, 0, 0, 0, completeGc).Passed,
+            "Complete production measurement with no post-baseline GC must pass.");
+        var gapGc = completeGc with { HighestCompletedGcIndexObserved = 12, UnresolvedStartedGcIndexCount = 1 };
+        var gapResult = Qa04PerformanceTelemetryAcceptanceV1.EvaluateCompleteMeasurement(complete, 0, 0, 0, gapGc);
+        Require(!gapResult.Passed && gapResult.FailureCodes.Contains("qa04.measurement.gc-index-gap"),
+            "Otherwise passing production metrics must fail when GC telemetry is incomplete.");
+        var missingPause = completeGc with { PauseSampleCount = 1 };
+        Require(!Qa04PerformanceTelemetryAcceptanceV1.EvaluateCompleteMeasurement(complete, 0, 0, 0, missingPause).Passed,
+            "Missing observed GC pauses must fail production acceptance.");
         foreach (var bytes in new[] { policy.CoreSteadyTargetBytes + 1, policy.CoreHardGuardBytes, policy.CoreHardGuardBytes + 1, 40L << 30 })
         {
             var result = Qa04PerformanceThresholdsV1.EvaluateCompleteMeasurement(complete with { MaxCoreWorkingSetBytes = bytes }, 0, 0, 0);

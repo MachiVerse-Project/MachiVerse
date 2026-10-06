@@ -131,7 +131,7 @@ internal static class Program
             throw new InvalidDataException($"{name} cannot be all zero.");
     }
 
-    private static string FindRepositoryRoot(string start)
+    internal static string FindRepositoryRoot(string start)
     {
         var current = new DirectoryInfo(start);
         while (current is not null)
