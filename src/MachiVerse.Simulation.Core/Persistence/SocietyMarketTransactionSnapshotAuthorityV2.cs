@@ -112,6 +112,18 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
         }
 
         var observedSliceIndex = 0;
+        InvalidDataException SliceMismatch(PartitionDigestSliceV2? expected, PartitionDigestSliceV2? actual)
+        {
+            var prefix = expected is null ? actual!.Prefix : actual is null ? expected.Prefix :
+                Math.Min(expected.Prefix, actual.Prefix);
+            return new InvalidDataException(
+                $"persistence.snapshot.society-market-v2-slice-material partition={PartitionId.Value} " +
+                $"step={Header.BasisStep} prefix={prefix} " +
+                $"expected_prefix={expected?.Prefix} actual_prefix={actual?.Prefix} " +
+                $"expected_items={expected?.RecordCount ?? 0} actual_items={actual?.RecordCount ?? 0} " +
+                $"expected={(expected is null ? "missing" : Convert.ToHexString(expected.ContentDigest))} " +
+                $"actual={(actual is null ? "missing" : Convert.ToHexString(actual.ContentDigest))}");
+        }
         void ObserveSlice(PartitionDigestSliceV2 actual)
         {
             if (_snapshotCommitments is null) return;
@@ -120,14 +132,7 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
             if (expected is null || expected.Prefix != actual.Prefix ||
                 expected.RecordCount != actual.RecordCount ||
                 !CryptographicOperations.FixedTimeEquals(expected.ContentDigest, actual.ContentDigest))
-            {
-                throw new InvalidDataException(
-                    $"persistence.snapshot.society-market-v2-slice-material partition={PartitionId.Value} " +
-                    $"step={Header.BasisStep} prefix={actual.Prefix} " +
-                    $"expected_prefix={expected?.Prefix} expected_items={expected?.RecordCount} actual_items={actual.RecordCount} " +
-                    $"expected={(expected is null ? "missing" : Convert.ToHexString(expected.ContentDigest))} " +
-                    $"actual={Convert.ToHexString(actual.ContentDigest)}");
-            }
+                throw SliceMismatch(expected, actual);
             observedSliceIndex++;
         }
 
@@ -154,7 +159,7 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
                 "persistence.snapshot.society-market-v2-digest-algorithm"),
         };
         if (_snapshotCommitments is not null && observedSliceIndex != _snapshotCommitments.Count)
-            throw new InvalidDataException("persistence.snapshot.society-market-v2-slice-count");
+            throw SliceMismatch(_snapshotCommitments[observedSliceIndex], null);
         if (recomputed.PartitionId != Header.PartitionId ||
             recomputed.OwnerDomain != Header.OwnerDomain ||
             recomputed.Schema != Header.Schema ||

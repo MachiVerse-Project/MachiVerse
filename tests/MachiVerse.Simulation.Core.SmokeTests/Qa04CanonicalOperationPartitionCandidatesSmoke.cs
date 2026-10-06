@@ -365,6 +365,39 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
         var frozenAgain = snapshotProvider.Create(snapshotAuthority, references);
         _ = snapshotProvider.CreateSemanticVerifier(snapshotHeader, references).Verify(frozenAgain.Fragments);
 
+        var movedRecords = nextMutation.State.MarketTransaction.RecordSet.RecordsCanonical.ToArray();
+        var missingFirst = movedRecords[0];
+        movedRecords[0] = new SocietyMarketTransactionRecordMaterialV2(new OpaqueId128(UInt128.MaxValue),
+            missingFirst.Revision, missingFirst.CreatedStep, missingFirst.RetiredStep,
+            missingFirst.DetailLevel, missingFirst.LineageRef, missingFirst.Payload);
+        var missingFirstAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(null,
+            [new SocietyMarketTransactionPartitionStateV2(movedRecords), snapshotHeader])!;
+        missingFirstAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)attachCommitments.Invoke(missingFirstAuthority, [captured])!;
+        ExpectPrefixFailure(missingFirstAuthority, RecordIdPrefixPartitionDigestV2.PrefixOf(missingFirst.RecordId), false);
+
+        // Fault injection of an expected-only tail: it must retain the same detailed provenance
+        // as a mismatch encountered while the independent raw stream is still producing slices.
+        var capturedArray = ((System.Collections.IEnumerable)captured).Cast<object>().ToArray();
+        var tailArray = Array.CreateInstance(capturedArray[0].GetType(), capturedArray.Length + 1);
+        for (var index = 0; index < capturedArray.Length; index++) tailArray.SetValue(capturedArray[index], index);
+        tailArray.SetValue(Activator.CreateInstance(capturedArray[0].GetType(),
+            (ushort)(RecordIdPrefixPartitionDigestV2.PrefixCount - 1), 1UL, new byte[32]), capturedArray.Length);
+        var missingTailAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)attachCommitments.Invoke(snapshotAuthority, [captured])!;
+        typeof(SocietyMarketTransactionSnapshotAuthorityV2).GetField("_snapshotCommitments",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.SetValue(missingTailAuthority, tailArray);
+        ExpectPrefixFailure(missingTailAuthority, (ushort)(RecordIdPrefixPartitionDigestV2.PrefixCount - 1), true);
+
+        void ExpectPrefixFailure(SocietyMarketTransactionSnapshotAuthorityV2 authority, ushort prefix, bool missingActual)
+        {
+            try { snapshotProvider.Create(authority, references); }
+            catch (InvalidDataException failure) when (failure.Message.StartsWith(
+                "persistence.snapshot.society-market-v2-slice-material", StringComparison.Ordinal) &&
+                failure.Message.Contains($"step={snapshotHeader.BasisStep} prefix={prefix} ", StringComparison.Ordinal) &&
+                (!missingActual || failure.Message.Contains("actual_items=0", StringComparison.Ordinal) &&
+                    failure.Message.Contains("actual=missing", StringComparison.Ordinal))) { return; }
+            throw new InvalidOperationException("Missing prefix was accepted or diagnosed at the wrong position.");
+        }
+
         serializedRecords[orderIndex] = new SocietyMarketTransactionRecordMaterialV2(
             originalOrder.RecordId, originalOrder.Revision, originalOrder.CreatedStep, originalOrder.RetiredStep,
             originalOrder.DetailLevel, originalOrder.LineageRef,
