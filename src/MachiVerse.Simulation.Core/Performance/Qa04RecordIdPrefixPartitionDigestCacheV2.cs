@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -24,6 +25,29 @@ internal sealed class Qa04RecordIdPrefixPartitionDigestCacheV2<TPayload>
     public Qa04RecordIdPrefixPartitionDigestCacheV2(
         Func<DomainRecordEnvelopeV1<TPayload>, byte[]> encoder)
         => _encoder = encoder ?? throw new ArgumentNullException(nameof(encoder));
+
+    internal IReadOnlyList<PartitionDigestSliceV2> CaptureSnapshotCommitments(
+        DomainPartitionStateV1<TPayload> state,
+        PartitionStateHeaderV1 header)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(header);
+        if (!_initialized || !ReferenceEquals(state, _lastState) ||
+            header.BasisStep != _lastBasisStep || state.Identity != _identity ||
+            header.DigestAlgorithm != PartitionCanonicalDigestAlgorithmV1.RecordIdPrefixV2)
+            throw new InvalidDataException("qa04.prefix-digest-cache.snapshot-basis-drift");
+        // Retain only immutable commitments from this cut, not the live directory or its record
+        // buffers. Later Steps must neither change these diagnostics nor retain another full cache.
+        var captured = _slices.Values.Select(static slice => new PartitionDigestSliceV2(
+            slice.Commitment.Prefix, slice.Commitment.RecordCount, slice.Commitment.ContentDigest)).ToArray();
+        var recomputed = RecordIdPrefixPartitionDigestV2.CreateHeaderFromPrevalidatedSlices(
+            state.Identity, header.Revision, header.BasisStep, header.DetailLevel, state.ItemCount, captured);
+        if (header.PartitionId != recomputed.PartitionId || header.OwnerDomain != recomputed.OwnerDomain ||
+            header.Schema != recomputed.Schema || header.ItemCount != recomputed.ItemCount ||
+            !CryptographicOperations.FixedTimeEquals(header.CanonicalDigest, recomputed.CanonicalDigest))
+            throw new InvalidDataException("qa04.prefix-digest-cache.snapshot-header-drift");
+        return Array.AsReadOnly(captured);
+    }
 
     public PartitionStateHeaderV1 CreateHeader(
         DomainPartitionStateV1<TPayload> state,

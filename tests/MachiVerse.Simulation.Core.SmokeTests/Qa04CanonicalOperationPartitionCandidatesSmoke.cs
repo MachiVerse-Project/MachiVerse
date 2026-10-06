@@ -242,12 +242,50 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             ?? throw new InvalidOperationException("Production Market prepared authority factory missing.");
         var snapshotAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(
             null, [nextMutation.State.MarketTransaction, snapshotHeader])!;
+        var marketCache = typeof(Qa04ProductionStep2CanonicalDigestCacheV1).GetProperty(
+            "MarketChunks", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(canonicalChunkCache)!;
+        var captureCommitments = marketCache.GetType().GetMethod("CaptureSnapshotCommitments",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var attachCommitments = typeof(SocietyMarketTransactionSnapshotAuthorityV2).GetMethod(
+            "WithSnapshotCommitments", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var captured = captureCommitments.Invoke(marketCache, [nextMutation.State.MarketTransaction.State, snapshotHeader])!;
+        snapshotAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)attachCommitments.Invoke(snapshotAuthority, [captured])!;
         var snapshotProvider = new SocietyMarketTransactionSnapshotSectionProviderV2();
         var snapshotSection = snapshotProvider.Create(snapshotAuthority, references);
         var recoveredSnapshot = snapshotProvider.CreateSemanticVerifier(snapshotHeader, references)
             .Verify(snapshotSection.Fragments);
         Require(recoveredSnapshot.LogicalContentDigest.AsSpan().SequenceEqual(snapshotHeader.CanonicalDigest),
             "Production Market RecordIdPrefixV2 snapshot recovery must preserve its canonical digest.");
+
+        var runtimeOrder = nextMutation.State.MarketTransaction.State.RecordsCanonical.First(record =>
+            record.CreatedStep > 0 && record.Payload is SocietyMarketOrderPayloadV2);
+        var runtimePayload = (SocietyMarketOrderPayloadV2)runtimeOrder.Payload;
+        var freshPayload = new SocietyMarketOrderPayloadV2(runtimePayload.MarketRef, runtimePayload.OwnerRef,
+            runtimePayload.InstrumentToken, runtimePayload.Side, runtimePayload.LimitPriceMicrounit,
+            runtimePayload.Quantity, runtimePayload.RemainingQuantity, runtimePayload.EligibleStep, runtimePayload.Status);
+        var freshOrder = new DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>(runtimeOrder.RecordId,
+            runtimeOrder.RecordSchema, runtimeOrder.Revision, runtimeOrder.CreatedStep, runtimeOrder.RetiredStep,
+            runtimeOrder.DetailLevel, runtimeOrder.LineageRef, freshPayload);
+        var payloadCache = (System.Collections.IEnumerable)typeof(Qa04ProductionStep2CanonicalDigestCacheV1)
+            .GetField("_market", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(canonicalChunkCache)!;
+        var recordCache = (System.Collections.IEnumerable)typeof(Qa04ProductionStep2CanonicalDigestCacheV1)
+            .GetField("_marketRecords", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(canonicalChunkCache)!;
+        Require(!recordCache.Cast<object>().Any(),
+            "The prefix chunk path must not retain a duplicate per-record encoding table.");
+        var retainedBefore = payloadCache.Cast<object>().Count();
+        var encodedOnce = canonicalChunkCache.MarketRecord(freshOrder);
+        Require(payloadCache.Cast<object>().Count() == retainedBefore,
+            "One-use runtime Market digests must not be retained in the payload cache.");
+        var encodeMarket = typeof(PartitionStateHeaderV1).GetMethod("EncodeCanonicalRecord",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .MakeGenericMethod(typeof(SocietyMarketTransactionRecordPayloadV2));
+        var rawEncoded = (byte[])encodeMarket.Invoke(null,
+            [freshOrder, SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(freshPayload, references)])!;
+        Require(encodedOnce.AsSpan().SequenceEqual(rawEncoded),
+            "Bypassing one-use payload caching must preserve every canonical record byte.");
 
         var corruptDigest = snapshotHeader.CanonicalDigest.ToArray();
         corruptDigest[0] ^= 1;
@@ -259,6 +297,17 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             null, [nextMutation.State.MarketTransaction, corruptHeader])!;
         ExpectInvalid(() => snapshotProvider.Create(corruptPrepared, references),
             "persistence.snapshot.society-market-v2-header-material");
+        ExpectReflectionInvalid(() => captureCommitments.Invoke(marketCache,
+            [nextMutation.State.MarketTransaction.State, corruptHeader]),
+            "qa04.prefix-digest-cache.snapshot-header-drift");
+        ExpectReflectionInvalid(() => attachCommitments.Invoke(corruptPrepared, [captured]),
+            "persistence.snapshot.society-market-v2-commitment-root");
+        var staleHeader = new PartitionStateHeaderV1(nextMutation.State.MarketTransaction.State.Identity,
+            snapshotHeader.Revision, snapshotHeader.BasisStep - 1, snapshotHeader.DetailLevel,
+            snapshotHeader.ItemCount, snapshotHeader.CanonicalDigest, snapshotHeader.DigestAlgorithm);
+        ExpectReflectionInvalid(() => captureCommitments.Invoke(marketCache,
+            [nextMutation.State.MarketTransaction.State, staleHeader]),
+            "qa04.prefix-digest-cache.snapshot-basis-drift");
 
         // A matching State header must not authorize a different RecordSet for serialization.
         var serializedRecords = nextMutation.State.MarketTransaction.RecordSet.RecordsCanonical.ToArray();
@@ -280,6 +329,74 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             null, [divergentMaterial, snapshotHeader])!;
         ExpectInvalid(() => snapshotProvider.Create(divergentPrepared, references),
             "persistence.snapshot.society-market-v2-record-material");
+
+        // Both State and RecordSet agree with each other, but differ from the frozen cut. The
+        // retained cut must identify the actual corrupt prefix and refuse snapshot publication.
+        var wrongPartition = new SocietyMarketTransactionPartitionStateV2(serializedRecords);
+        var wrongPrepared = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(
+            null, [wrongPartition, snapshotHeader])!;
+        wrongPrepared = (SocietyMarketTransactionSnapshotAuthorityV2)attachCommitments.Invoke(wrongPrepared, [captured])!;
+        try
+        {
+            snapshotProvider.Create(wrongPrepared, references);
+            throw new InvalidOperationException("Wrong frozen Market material was accepted.");
+        }
+        catch (InvalidDataException failure)
+        {
+            Require(failure.Message.StartsWith("persistence.snapshot.society-market-v2-slice-material", StringComparison.Ordinal) &&
+                failure.Message.Contains($"step={snapshotHeader.BasisStep} prefix={RecordIdPrefixPartitionDigestV2.PrefixOf(originalOrder.RecordId)} ", StringComparison.Ordinal),
+                "Frozen Market mismatch must identify the exact cut and first corrupt prefix.");
+        }
+
+        // Advance the live cache after capture, then recover the older cut once more. Neither
+        // changing the directory nor replacing its commitments may mutate frozen evidence.
+        var futureBinding = Qa04CanonicalOperationBindingV1.Bind(Qa04ReferenceLoadV1.OperationsForStep(3)
+            .First(descriptor => descriptor.FamilyToken.Value == "society-market-payment-contract"), 1);
+        var futureMarket = Qa04MarketOrderApplicationV1.Apply(futureBinding, nextMutation.State.MarketTransaction, references);
+        var futureRecord = futureMarket.CreatedOrder;
+        var futureChange = new Qa04CanonicalOperationMutationChangeV1(futureBinding.SourceDescriptor.FamilyToken,
+            futureBinding.Operation.OperationKind, futureBinding.SourceDescriptor.OperationId,
+            futureBinding.Operation.ImmutablePayloadDigest.ToByteArray(), futureBinding.OrderKey,
+            futureMarket.MarketState.State.Identity.PartitionId, futureRecord.RecordId, futureRecord.RecordSchema,
+            futureRecord.Revision, futureRecord.CreatedStep, futureRecord.DetailLevel, new StableToken("create"));
+        marketCache.GetType().GetMethod("CreateHeader")!.Invoke(marketCache,
+            [futureMarket.MarketState.State, snapshotHeader.Revision + 1, snapshotHeader.BasisStep + 1,
+                snapshotHeader.DetailLevel, new[] { futureChange }]);
+        var frozenAgain = snapshotProvider.Create(snapshotAuthority, references);
+        _ = snapshotProvider.CreateSemanticVerifier(snapshotHeader, references).Verify(frozenAgain.Fragments);
+
+        var movedRecords = nextMutation.State.MarketTransaction.RecordSet.RecordsCanonical.ToArray();
+        var missingFirst = movedRecords[0];
+        movedRecords[0] = new SocietyMarketTransactionRecordMaterialV2(new OpaqueId128(UInt128.MaxValue),
+            missingFirst.Revision, missingFirst.CreatedStep, missingFirst.RetiredStep,
+            missingFirst.DetailLevel, missingFirst.LineageRef, missingFirst.Payload);
+        var missingFirstAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)preparedFactory.Invoke(null,
+            [new SocietyMarketTransactionPartitionStateV2(movedRecords), snapshotHeader])!;
+        missingFirstAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)attachCommitments.Invoke(missingFirstAuthority, [captured])!;
+        ExpectPrefixFailure(missingFirstAuthority, RecordIdPrefixPartitionDigestV2.PrefixOf(missingFirst.RecordId), false);
+
+        // Fault injection of an expected-only tail: it must retain the same detailed provenance
+        // as a mismatch encountered while the independent raw stream is still producing slices.
+        var capturedArray = ((System.Collections.IEnumerable)captured).Cast<object>().ToArray();
+        var tailArray = Array.CreateInstance(capturedArray[0].GetType(), capturedArray.Length + 1);
+        for (var index = 0; index < capturedArray.Length; index++) tailArray.SetValue(capturedArray[index], index);
+        tailArray.SetValue(Activator.CreateInstance(capturedArray[0].GetType(),
+            (ushort)(RecordIdPrefixPartitionDigestV2.PrefixCount - 1), 1UL, new byte[32]), capturedArray.Length);
+        var missingTailAuthority = (SocietyMarketTransactionSnapshotAuthorityV2)attachCommitments.Invoke(snapshotAuthority, [captured])!;
+        typeof(SocietyMarketTransactionSnapshotAuthorityV2).GetField("_snapshotCommitments",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.SetValue(missingTailAuthority, tailArray);
+        ExpectPrefixFailure(missingTailAuthority, (ushort)(RecordIdPrefixPartitionDigestV2.PrefixCount - 1), true);
+
+        void ExpectPrefixFailure(SocietyMarketTransactionSnapshotAuthorityV2 authority, ushort prefix, bool missingActual)
+        {
+            try { snapshotProvider.Create(authority, references); }
+            catch (InvalidDataException failure) when (failure.Message.StartsWith(
+                "persistence.snapshot.society-market-v2-slice-material", StringComparison.Ordinal) &&
+                failure.Message.Contains($"step={snapshotHeader.BasisStep} prefix={prefix} ", StringComparison.Ordinal) &&
+                (!missingActual || failure.Message.Contains("actual_items=0", StringComparison.Ordinal) &&
+                    failure.Message.Contains("actual=missing", StringComparison.Ordinal))) { return; }
+            throw new InvalidOperationException("Missing prefix was accepted or diagnosed at the wrong position.");
+        }
 
         serializedRecords[orderIndex] = new SocietyMarketTransactionRecordMaterialV2(
             originalOrder.RecordId, originalOrder.Revision, originalOrder.CreatedStep, originalOrder.RetiredStep,
@@ -587,6 +704,14 @@ internal static class Qa04CanonicalOperationPartitionCandidatesSmoke
             if (expectedMessage is not null && ex.Message != expectedMessage)
                 throw new InvalidOperationException($"Unexpected Gate2 partition-candidate rejection: {ex.Message}");
         }
+    }
+
+    private static void ExpectReflectionInvalid(Action action, string expectedMessage)
+    {
+        try { action(); }
+        catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException is InvalidDataException failure &&
+            failure.Message == expectedMessage) { return; }
+        throw new InvalidOperationException($"Expected reflection target to reject {expectedMessage}.");
     }
 
     private static void Require(bool condition, string message)

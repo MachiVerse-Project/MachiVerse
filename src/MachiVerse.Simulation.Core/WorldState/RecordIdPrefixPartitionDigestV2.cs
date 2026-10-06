@@ -83,6 +83,16 @@ public static class RecordIdPrefixPartitionDigestV2
         ulong basisStep,
         DetailLevelV1 detailLevel,
         Func<DomainRecordEnvelopeV1<TPayload>, byte[]> canonicalRecordEncoding)
+        => CreateHeaderWithSliceObserver(partition, revision, basisStep, detailLevel,
+            canonicalRecordEncoding, null);
+
+    internal static PartitionStateHeaderV1 CreateHeaderWithSliceObserver<TPayload>(
+        DomainPartitionStateV1<TPayload> partition,
+        ulong revision,
+        ulong basisStep,
+        DetailLevelV1 detailLevel,
+        Func<DomainRecordEnvelopeV1<TPayload>, byte[]> canonicalRecordEncoding,
+        Action<PartitionDigestSliceV2>? observeSlice)
     {
         ArgumentNullException.ThrowIfNull(partition);
         ArgumentNullException.ThrowIfNull(canonicalRecordEncoding);
@@ -100,10 +110,12 @@ public static class RecordIdPrefixPartitionDigestV2
             if (currentRecords.Count == 0)
                 return;
 
-            slices.Add(CreateSlice(
+            var slice = CreateSlice(
                 partition.Identity,
                 checked((ushort)currentPrefix),
-                currentRecords));
+                currentRecords);
+            observeSlice?.Invoke(slice);
+            slices.Add(slice);
             currentRecords.Clear();
         }
 
