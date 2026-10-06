@@ -377,9 +377,18 @@ public static class Qa04ProductionReferenceRunV1
                             cancellationToken)
                         .ConfigureAwait(false)
                         ?? throw new InvalidDataException("qa04.production-run.standard-snapshot-cut-missing");
+                    // Capture the exact Market prefix commitments once at the frozen cut. Raw
+                    // snapshot verification can then stop at the first mismatching prefix instead
+                    // of reporting only a root mismatch after hashing millions of later records.
+                    var marketAuthority = currentDomainAuthorities
+                        .OfType<SocietyMarketTransactionSnapshotAuthorityV2>().Single();
+                    var marketCut = marketAuthority.WithSnapshotCommitments(
+                        digestCache.MarketChunks.CaptureSnapshotCommitments(
+                            marketAuthority.Partition.State, marketAuthority.Header));
                     frozenDomainAuthorities = new DomainPartitionSnapshotAuthoritySetV1(
                         currentState,
-                        currentDomainAuthorities);
+                        currentDomainAuthorities.Select(authority => authority.PartitionId == marketCut.PartitionId
+                            ? marketCut : authority));
                 }
             }
 

@@ -13,6 +13,7 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
 {
     private readonly bool _preparedHeaderVerified;
     private IReadOnlyList<OpaqueId128>? _recordIdsCanonical;
+    private IReadOnlyList<PartitionDigestSliceV2>? _snapshotCommitments;
 
     public SocietyMarketTransactionSnapshotAuthorityV2(
         SocietyMarketTransactionPartitionStateV2 partition,
@@ -38,6 +39,23 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
         SocietyMarketTransactionPartitionStateV2 partition,
         PartitionStateHeaderV1 header)
         => new(partition, header, preparedHeaderVerified: true);
+
+    internal SocietyMarketTransactionSnapshotAuthorityV2 WithSnapshotCommitments(
+        IReadOnlyList<PartitionDigestSliceV2> commitments)
+    {
+        ArgumentNullException.ThrowIfNull(commitments);
+        var captured = commitments.Select(static slice => new PartitionDigestSliceV2(
+            slice.Prefix, slice.RecordCount, slice.ContentDigest)).ToArray();
+        var root = RecordIdPrefixPartitionDigestV2.CreateHeaderFromPrevalidatedSlices(
+            Identity, Header.Revision, Header.BasisStep, Header.DetailLevel, Header.ItemCount, captured);
+        if (Header.DigestAlgorithm != PartitionCanonicalDigestAlgorithmV1.RecordIdPrefixV2 ||
+            !CryptographicOperations.FixedTimeEquals(root.CanonicalDigest, Header.CanonicalDigest))
+            throw new InvalidDataException("persistence.snapshot.society-market-v2-commitment-root");
+        return new SocietyMarketTransactionSnapshotAuthorityV2(Partition, Header, _preparedHeaderVerified)
+        {
+            _snapshotCommitments = Array.AsReadOnly(captured),
+        };
+    }
 
     public SocietyMarketTransactionPartitionStateV2 Partition { get; }
     public StableToken PartitionId => Identity.PartitionId;
@@ -93,6 +111,26 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
             previous = recordId;
         }
 
+        var observedSliceIndex = 0;
+        void ObserveSlice(PartitionDigestSliceV2 actual)
+        {
+            if (_snapshotCommitments is null) return;
+            var expected = observedSliceIndex < _snapshotCommitments.Count
+                ? _snapshotCommitments[observedSliceIndex] : null;
+            if (expected is null || expected.Prefix != actual.Prefix ||
+                expected.RecordCount != actual.RecordCount ||
+                !CryptographicOperations.FixedTimeEquals(expected.ContentDigest, actual.ContentDigest))
+            {
+                throw new InvalidDataException(
+                    $"persistence.snapshot.society-market-v2-slice-material partition={PartitionId.Value} " +
+                    $"step={Header.BasisStep} prefix={actual.Prefix} " +
+                    $"expected_prefix={expected?.Prefix} expected_items={expected?.RecordCount} actual_items={actual.RecordCount} " +
+                    $"expected={(expected is null ? "missing" : Convert.ToHexString(expected.ContentDigest))} " +
+                    $"actual={Convert.ToHexString(actual.ContentDigest)}");
+            }
+            observedSliceIndex++;
+        }
+
         var recomputed = Header.DigestAlgorithm switch
         {
             PartitionCanonicalDigestAlgorithmV1.LegacyFlatV1 =>
@@ -103,17 +141,20 @@ public sealed class SocietyMarketTransactionSnapshotAuthorityV2 : IDomainPartiti
                     Header.DetailLevel,
                     static payload => SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(payload)),
             PartitionCanonicalDigestAlgorithmV1.RecordIdPrefixV2 =>
-                RecordIdPrefixPartitionDigestV2.CreateHeader(
+                RecordIdPrefixPartitionDigestV2.CreateHeaderWithSliceObserver(
                     Partition.State,
                     Header.Revision,
                     Header.BasisStep,
                     Header.DetailLevel,
                     static record => PartitionStateHeaderV1.EncodeCanonicalRecord(
                         record,
-                        SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(record.Payload))),
+                        SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(record.Payload)),
+                    ObserveSlice),
             _ => throw new InvalidDataException(
                 "persistence.snapshot.society-market-v2-digest-algorithm"),
         };
+        if (_snapshotCommitments is not null && observedSliceIndex != _snapshotCommitments.Count)
+            throw new InvalidDataException("persistence.snapshot.society-market-v2-slice-count");
         if (recomputed.PartitionId != Header.PartitionId ||
             recomputed.OwnerDomain != Header.OwnerDomain ||
             recomputed.Schema != Header.Schema ||

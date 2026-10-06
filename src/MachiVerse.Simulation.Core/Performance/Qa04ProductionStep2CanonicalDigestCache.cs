@@ -48,8 +48,7 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
             PartitionStateHeaderV1.EncodeCanonicalRecord(record, Resident(record.Payload)));
         _physicalChunks = new(record =>
             PartitionStateHeaderV1.EncodeCanonicalRecord(record, Physical(record.Payload)));
-        _marketChunks = new(record =>
-            PartitionStateHeaderV1.EncodeCanonicalRecord(record, Market(record.Payload)));
+        _marketChunks = new(MarketRecord);
         _governanceChunks = new(record =>
             PartitionStateHeaderV1.EncodeCanonicalRecord(record, Governance(record.Payload)));
         _environmentChunks = new(record =>
@@ -138,7 +137,11 @@ public sealed class Qa04ProductionStep2CanonicalDigestCacheV1
             ? _marketRecords.GetValue(
                 record,
                 value => PartitionStateHeaderV1.EncodeCanonicalRecord(value, Market(value.Payload)))
-            : PartitionStateHeaderV1.EncodeCanonicalRecord(record, Market(record.Payload));
+            // Runtime orders are append-only: the prefix cache encodes each new order once and
+            // then owns its bytes. Retaining its payload digest in a second weak table provides
+            // no reuse while the authoritative history keeps every order alive.
+            : PartitionStateHeaderV1.EncodeCanonicalRecord(record,
+                SocietyMarketTransactionPayloadCanonicalDigestV2.Compute(record.Payload, _references));
 
     public byte[] GovernanceRecord(
         DomainRecordEnvelopeV1<GovernanceSecurityIncidentPayloadV1> record)
