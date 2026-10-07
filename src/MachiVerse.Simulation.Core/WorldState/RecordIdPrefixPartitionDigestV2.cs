@@ -61,8 +61,9 @@ public static class RecordIdPrefixPartitionDigestV2
         if (recordId.IsZero)
             throw new ArgumentException("RecordId ZERO is invalid.", nameof(recordId));
 
-        var bytes = recordId.ToBytes();
-        return checked((ushort)(((uint)bytes[0] << 6) | ((uint)bytes[1] >> 2)));
+        // OpaqueId128's canonical bytes are big-endian. Extract the same leading bits
+        // directly: digest merges call this for every retained record in a touched slice.
+        return checked((ushort)(recordId.Value >> (128 - PrefixBits)));
     }
 
     public static StableToken SliceKey(DomainPartitionIdentityV1 identity, ushort prefix)
