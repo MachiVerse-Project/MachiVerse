@@ -62,7 +62,22 @@ public static class Qa04ProductionReferenceRunV1
 {
     public const int CanonicalTransitionCount = 27_000;
 
-    public static async Task<Qa04ProductionReferenceRunResultV1> RunCanonicalAsync(
+    public static Task<Qa04ProductionReferenceRunResultV1> RunCanonicalAsync(
+        int workerCount,
+        string persistenceRoot,
+        CancellationToken cancellationToken = default,
+        IQa04ProductionRunObserverV1? observer = null,
+        int progressHeartbeatSeconds = 60,
+        int? persistenceInsertBatchSize = null,
+        int phaseLogIntervalTransitions = 1)
+        => Qa04ProcessWorkingSetHardGuardV1.RunAsync(
+            token => RunCanonicalCoreAsync(workerCount, persistenceRoot, token, observer,
+                progressHeartbeatSeconds, persistenceInsertBatchSize, phaseLogIntervalTransitions),
+            Qa04AcceptanceConfigV1.Current.CoreHardGuardBytes,
+            TimeSpan.FromSeconds(progressHeartbeatSeconds),
+            cancellationToken);
+
+    private static async Task<Qa04ProductionReferenceRunResultV1> RunCanonicalCoreAsync(
         int workerCount,
         string persistenceRoot,
         CancellationToken cancellationToken = default,
