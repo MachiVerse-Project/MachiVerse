@@ -66,7 +66,50 @@ internal static class MarketSharedCanonicalIndexSmoke
         catch (TargetInvocationException failure) when (failure.InnerException is InvalidDataException invalid &&
             invalid.Message == "test.market-collision") { }
         Require(state.State.ItemCount == (ulong)expected.Count, "Rejected append mutated Market state");
+        VerifyProjectedUpdates(cut, prototype);
+        VerifyDamagedCountIsRejected(append, prototype);
         Console.WriteLine("Market shared canonical index / legacy digest / frozen recovery PASS");
+    }
+
+    private static void VerifyProjectedUpdates(SocietyMarketTransactionPartitionStateV2 cut,
+        SocietyMarketTransactionRecordMaterialV2 prototype)
+    {
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var added = new DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>(
+            new OpaqueId128(UInt128.MaxValue), prototype.RecordSchema, 1, 256, null,
+            prototype.DetailLevel, null, prototype.Payload);
+        var type = cut.State.GetType();
+        var updated = (DomainPartitionStateV1<SocietyMarketTransactionRecordPayloadV2>)
+            type.GetMethod("WithAdditions", flags)!.Invoke(cut.State, [new[] { added }, "test.projected-collision"])!;
+        Require(updated.ItemCount == cut.State.ItemCount + 1 && updated.TryGet(added.RecordId, out var actual) &&
+            actual!.Revision == added.Revision && ReferenceEquals(actual.Payload, added.Payload),
+            "Projected additions changed material or count");
+        var replaced = (DomainPartitionStateV1<SocietyMarketTransactionRecordPayloadV2>)
+            type.GetMethod("WithReplacements", flags)!.Invoke(updated,
+                [new[] { added.Revise(added.Payload) }, "test.projected-missing"])!;
+        Require(replaced.ItemCount == updated.ItemCount && replaced.TryGet(added.RecordId, out var revised) &&
+            revised!.Revision == 2 && updated.TryGet(added.RecordId, out var original) && original!.Revision == 1 &&
+            !cut.State.TryGet(added.RecordId, out _), "Projected replacements mutated an older generation");
+    }
+
+    private static void VerifyDamagedCountIsRejected(MethodInfo append,
+        SocietyMarketTransactionRecordMaterialV2 prototype)
+    {
+        var basis = new SocietyMarketTransactionPartitionStateV2(new[] { prototype });
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var map = typeof(SocietyMarketTransactionRecordSetV2).GetField("_records", flags)!.GetValue(basis.RecordSet)!;
+        var root = map.GetType().GetField("_root", flags)!.GetValue(map)!;
+        root.GetType().GetField("<Count>k__BackingField", flags)!.SetValue(root, 2);
+        var addition = new SocietyMarketTransactionRecordMaterialV2(new OpaqueId128(UInt128.MaxValue),
+            1, 256, null, prototype.DetailLevel, null, prototype.Payload);
+        try
+        {
+            append.Invoke(basis, [new[] { addition }, "test.market-collision"]);
+            throw new InvalidOperationException("Corrupt cached count was accepted");
+        }
+        catch (TargetInvocationException failure) when (failure.InnerException is InvalidDataException invalid &&
+            invalid.Message.StartsWith("society.market-transaction-v2.addition-item-count expected=3 actual=2 additions=1",
+                StringComparison.Ordinal)) { }
     }
 
     private static void RequireSharedIndex(SocietyMarketTransactionPartitionStateV2 state)
@@ -74,7 +117,7 @@ internal static class MarketSharedCanonicalIndexSmoke
         var flags = BindingFlags.NonPublic | BindingFlags.Instance;
         var source = typeof(SocietyMarketTransactionRecordSetV2).GetField("_records", flags)!.GetValue(state.RecordSet);
         var projected = state.State.GetType().GetField("_records", flags)!.GetValue(state.State)!;
-        Require(ReferenceEquals(source, projected.GetType().GetField("_source", flags)!.GetValue(projected)),
+        Require(ReferenceEquals(source, projected.GetType().GetField("_source", flags)?.GetValue(projected)),
             "Market material and envelopes must share one canonical index");
     }
 
