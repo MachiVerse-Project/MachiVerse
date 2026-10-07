@@ -121,6 +121,16 @@ public sealed class Qa04BenchmarkMetricCollectorV1 : IPersistenceCommitMetricSin
 
     public void RecordSuccessfulCommit(TimeSpan elapsed) => SqliteCommitDurations.Record(elapsed);
 
+    public void RecordSuccessfulCommit(TimeSpan elapsed, PersistenceCommitKindV1 kind)
+    {
+        // QA-04 measures the COMMIT that finalizes State(n+1), once per measured Step.
+        // Admission/scheduling remains inside Step wall time but is a different transaction.
+        if (kind == PersistenceCommitKindV1.FinalizedTransition)
+            RecordSuccessfulCommit(elapsed);
+        else if (kind != PersistenceCommitKindV1.ScheduledOperationBatch)
+            throw new ArgumentOutOfRangeException(nameof(kind));
+    }
+
     public void RecordStepDuration(TimeSpan measurementElapsed, TimeSpan duration)
     {
         if (measurementElapsed < TimeSpan.Zero)

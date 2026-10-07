@@ -237,7 +237,8 @@ INSERT INTO qa04_operation_batch (
             await UpdateHistoryAnchorAsync(authority.History, transaction, cancellationToken).ConfigureAwait(false);
             var commitStarted = Stopwatch.GetTimestamp();
             transaction.Commit();
-            ObserveSuccessfulCommit(Stopwatch.GetElapsedTime(commitStarted));
+            ObserveSuccessfulCommit(
+                Stopwatch.GetElapsedTime(commitStarted), PersistenceCommitKindV1.ScheduledOperationBatch);
 
             var durable = CreateQa04LogicalScheduledOperations(
                 bindings,
