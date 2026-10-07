@@ -16,10 +16,15 @@
     <PackageReference Include="Grpc.Tools" Version="2.83.0" PrivateAssets="All" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <PackageReference Include="Tomlyn" Version="2.10.1" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
   </ItemGroup>
   <ItemGroup>
     <Protobuf Include="../../docs/protocols/schema/common.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="Server" />
     <Protobuf Include="../../docs/protocols/schema/payloads.proto" ProtoRoot="../../docs/protocols/schema" GrpcServices="None" />
     <Content Include="../../config/simulation-core.toml" Link="config/simulation-core.toml" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../config/simulation-core-v1-legacy.toml" Link="config/simulation-core-v1-legacy.toml" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../config/qa04-alpha11.json" Link="config/qa04-alpha11.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

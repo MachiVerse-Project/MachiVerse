@@ -57,6 +57,7 @@ public static class PersistenceGenerationMigration
         ArgumentNullException.ThrowIfNull(validateStaging);
         cancellationToken.ThrowIfCancellationRequested();
 
+        Qa04PersistenceCrashInjectionV1.Hit("migration-generation-switch", "before-db-begin");
         if (PersistenceLayout.ReadCurrent(migration.Source) != migration.SourceGeneration)
             throw new InvalidDataException("persistence.migration-source-no-longer-current");
         if (!Directory.Exists(migration.Staging.GenerationDirectory))
@@ -70,10 +71,14 @@ public static class PersistenceGenerationMigration
         DurableFileSystem.AtomicMoveDirectory(
             migration.Staging.GenerationDirectory,
             migration.Target.GenerationDirectory);
+        Qa04PersistenceCrashInjectionV1.Hit("migration-generation-switch", "mid-write");
 
         // If CURRENT replacement fails, sourceGeneration remains authoritative. The finalized
         // target directory is retained as an orphan candidate for operator inspection/retry;
         // this method never performs an implicit rollback or deletes the source generation.
+        Qa04PersistenceCrashInjectionV1.Hit("migration-generation-switch", "before-fsync-or-commit");
         await PersistenceLayout.WriteCurrentAsync(migration.Target, migration.TargetGeneration, cancellationToken);
+        Qa04PersistenceCrashInjectionV1.Hit("migration-generation-switch", "immediately-after-commit");
+        Qa04PersistenceCrashInjectionV1.Hit("migration-generation-switch", "before-response-or-publication");
     }
 }

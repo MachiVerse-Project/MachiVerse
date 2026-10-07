@@ -139,9 +139,8 @@ public sealed class AlphaSingleGatewayRuntime
             head = await store.ReadCoreProtocolHeadAsync(cancellationToken);
         }
 
-        if (!CryptographicOperations.FixedTimeEquals(head.ConfigDigest, config.Digest))
-            throw new InvalidDataException(
-                "alpha.config-digest-mismatch: persisted world Config differs from config/simulation-core.toml; use the Config change path or a fresh Alpha world root.");
+        config = AlphaStartupConfigAuthorityV1.Resolve(
+            config, head.ConfigDigest, Path.Combine(AppContext.BaseDirectory, "config"));
 
         var sessions = new CoreGatewaySessionRegistryV1();
         var master = new CoreMasterAuthorityCoordinatorV1(store, sessions);

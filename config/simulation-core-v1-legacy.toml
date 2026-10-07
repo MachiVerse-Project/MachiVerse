@@ -1,0 +1,10 @@
+# 既存Alpha worldのschema v1 Configを維持するための互換設定。
+# 新規Alpha 1.1 worldにはsimulation-core.tomlを使用する。
+[meta]
+format = "machiverse-config"
+schema_version = "1.0"
+component = "simulation-core"
+
+[simulation.step-rate]
+numerator = 30
+denominator = 1

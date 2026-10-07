@@ -6,7 +6,19 @@ namespace MachiVerse.Simulation.Core.Determinism;
 
 public sealed class MvDcborWriter
 {
-    private readonly ArrayBufferWriter<byte> _buffer = new();
+    private readonly IBufferWriter<byte> _buffer;
+    private readonly ArrayBufferWriter<byte>? _ownedBuffer;
+
+    public MvDcborWriter()
+    {
+        _ownedBuffer = new ArrayBufferWriter<byte>();
+        _buffer = _ownedBuffer;
+    }
+
+    internal MvDcborWriter(IBufferWriter<byte> buffer)
+    {
+        _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
+    }
 
     public void WriteUnsigned(ulong value) => WriteInitialValue(0, value);
 
@@ -44,7 +56,9 @@ public sealed class MvDcborWriter
         WriteRaw(canonicalValue);
     }
 
-    public byte[] ToArray() => _buffer.WrittenSpan.ToArray();
+    public byte[] ToArray()
+        => _ownedBuffer?.WrittenSpan.ToArray()
+           ?? throw new InvalidOperationException("This MV-DCBOR writer is backed by a streaming sink and cannot materialize its full value.");
 
     private void WriteInitialValue(byte majorType, ulong value)
     {

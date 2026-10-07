@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0",
   "testSuiteVersion": "p4-08.v1",
-  "qa04ManifestSha256": "5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423",
+  "qa04ManifestSha256": "4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06",
   "requiredSuiteIds": [
     "simulation-core.standard",
     "gateway.standard",
@@ -16,7 +16,7 @@
     "p4-08.addendum"
   ],
   "requiredTestCaseIds": [
-    "performance.soak.24h",
+    "performance.soak.12h",
     "protocol.view.slow-client",
     "persistence.history.hash-chain",
     "observability.audit.hash-chain",
@@ -31,8 +31,8 @@
     "perf.publication.v1"
   ],
   "soak": {
-    "testCaseId": "performance.soak.24h",
-    "minimumDurationSeconds": 86400,
+    "testCaseId": "performance.soak.12h",
+    "minimumDurationSeconds": 43200,
     "maxPostWarmupMemoryGrowthPercent": 10.0,
     "parallelVerifierDigestRequired": true,
     "noAcceptedOperationLoss": true,

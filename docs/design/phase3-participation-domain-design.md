@@ -87,7 +87,7 @@ RELEASED
 SUPERSEDED
 ```
 
-disconnect / reconnect / logout / 長期不在だけを理由に`ACTIVE` bindingを解除・変更しない。
+network disconnectだけを理由に`ACTIVE` bindingを解除しない。
 
 ### 4.3 binding identity
 
@@ -343,7 +343,7 @@ ACTIVE
 
 ## 15. Binding release / rebind
 
-release/rebindは明示的Operationとして扱う。#240の承認決定により、一度Diverが割り当てられた存命ResidentのDiver交代は管理者権限による明示的変更だけを許可し、通常のuser-level release/rebindによる交代を禁止する。管理者によるbinding authority変更はgenerationを進め、旧generationの操作authorityをstaleとして拒否する。Resident死亡時はbindingを終了可能とし、同じDiverは参加規則に従い別の既存Residentへbindできる。
+release/rebindは明示的Operationとして扱う。
 
 概念:
 
@@ -357,7 +357,7 @@ ACTIVE old binding
 
 同一Stepのrelease+bind conflictはcanonical ordering/conflict scopeで決定論化する。
 
-disconnect / reconnect / logout / 長期不在による解除・変更と別Diverへの自動再割り当てを禁止する。上記transitionは承認済みの管理者変更または死亡後の参加規則に従う場合に限定する。
+exact user policyはPhase 4/requirements追加で固定可能だが、implicit disconnect reassignmentはしない。
 
 ## 16. Update phases
 
@@ -576,7 +576,7 @@ Phase 4で確定する事項:
 - absence behavior priority catalog
 - control availability protocol payload
 - Resident action binding proof/reference schema
-- 承認済みrelease/rebind制約の詳細なwire表現
+- release/rebind exact policy
 - detail floor parameters
 - authorized publication fields
 

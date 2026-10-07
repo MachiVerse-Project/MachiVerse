@@ -42,7 +42,7 @@ public static class CoreConfigSchema
 
         UInt("simulation.step-rate.numerator", 30, 1, 240, ConfigImpact.Simulation);
         UInt("simulation.step-rate.denominator", 1, 1, 1000, ConfigImpact.Simulation);
-        UInt("runtime.worker-count", 4, 1, 16);
+        UInt("runtime.worker-count", 4, 1, 4096);
         UInt("runtime.domain-timeout-ms", 30000, 100, 300000);
 
         UInt("scheduling.min-lead-steps", 2, 0, 300, ConfigImpact.Simulation);

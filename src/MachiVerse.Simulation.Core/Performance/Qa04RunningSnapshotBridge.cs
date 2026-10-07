@@ -1,6 +1,16 @@
 using System.Security.Cryptography;
+using MachiVerse.Simulation.Core.Configuration;
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.Environment;
+using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
+using MachiVerse.Simulation.Core.Domains.InfrastructureInformation;
+using MachiVerse.Simulation.Core.Domains.Participation;
+using MachiVerse.Simulation.Core.Domains.PhysicalBuilt;
+using MachiVerse.Simulation.Core.Domains.Resident;
+using MachiVerse.Simulation.Core.Domains.SocietyEconomy;
+using MachiVerse.Simulation.Core.Domains.Spatial;
 using MachiVerse.Simulation.Core.Persistence;
+using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Performance;
@@ -48,10 +58,27 @@ public static class Qa04RunningSnapshotBridgeV1
         if (!standardTrigger)
             throw new InvalidDataException("qa04.snapshot.standard-trigger-contract-mismatch");
 
-        var worldId = OpaqueId128.Parse("00000000000000000000000000000072");
-        var configDigest = SHA256.HashData("qa04-running-snapshot-config"u8);
-        var worldSeed = new WorldSeed256(SHA256.HashData("qa04-running-snapshot-seed"u8));
-        var state = CreateState(worldId, worldSeed, configDigest, step: 0, previousStateDigest: null);
+        var residentSeed = Qa04ReferenceWorldMaterializerV1.MaterializeResidentIdentityLifecycle(1);
+        var config = new CoreConfigCoordinator().LoadStartup(
+            """
+            [meta]
+            format = "machiverse-config"
+            schema_version = "1.0"
+            component = "simulation-core"
+            """);
+        var registry = StandardDomainRegistryAuthorityV1.Generation1;
+        var detail = new DetailDirectoryV1(
+            Array.Empty<DetailRegionStateV1>(),
+            Array.Empty<DetailTransitionCandidateV1>());
+        var worldId = Qa04ReferenceLoadV1.WorldId;
+        var worldSeed = Qa04ReferenceLoadV1.WorldSeed;
+        var state = CreateState(
+            residentSeed,
+            config,
+            registry,
+            detail,
+            step: 0,
+            previousStateDigest: null);
         var paths = PersistenceLayout.Resolve(persistenceRoot, worldId, 1);
         PersistenceLayout.EnsureGenerationDirectories(paths);
         await PersistenceLayout.WriteCurrentAsync(paths, 1, cancellationToken).ConfigureAwait(false);
@@ -65,19 +92,39 @@ public static class Qa04RunningSnapshotBridgeV1
                 PersistenceGeneration: 1,
                 worldSeed,
                 continuity,
-                ConfigGeneration: 1,
-                configDigest,
+                ConfigGeneration: config.Generation,
+                config.Digest,
                 MasterGeneration: 1),
             genesis,
             cancellationToken).ConfigureAwait(false);
 
         for (ulong step = 0; step < 30; step++)
-            (state, continuity) = await CommitTransitionAsync(store, state, continuity, configDigest, worldSeed, cancellationToken).ConfigureAwait(false);
+        {
+            (state, continuity) = await CommitTransitionAsync(
+                store,
+                state,
+                continuity,
+                config,
+                worldSeed,
+                residentSeed,
+                registry,
+                detail,
+                cancellationToken).ConfigureAwait(false);
+        }
 
         var coordinator = new RunningSnapshotCoordinatorV1(intervalSteps: 30);
-        var cut = await coordinator.TryFreezeIfDueAsync(state, store, cancellationToken).ConfigureAwait(false)
+        var cut = await coordinator.TryFreezeWithCoreOwnerMaterialIfDueAsync(
+                state,
+                store,
+                new IFrozenCoreSnapshotOwnerMaterialV1[]
+                {
+                    FrozenDetailDirectorySnapshotOwnerV1.Freeze(state.Header.Step, detail),
+                    FrozenDomainRegistrySnapshotOwnerV1.Freeze(state.Header.Step, registry),
+                    FrozenCoreConfigSnapshotOwnerV1.Freeze(state.Header.Step, config),
+                },
+                cancellationToken)
+            .ConfigureAwait(false)
             ?? throw new InvalidDataException("qa04.snapshot.due-cut-not-frozen");
-        var cutStateDigest = cut.FrozenState.Diagnostic.StateDigest.ToArray();
         var deterministicId = cut.SnapshotId == RunningSnapshotCoordinatorV1.DeriveSnapshotId(
             worldId,
             cut.SnapshotStep,
@@ -86,59 +133,71 @@ public static class Qa04RunningSnapshotBridgeV1
             cut.StateContinuityToken);
         var singleInFlight = await coordinator.TryFreezeIfDueAsync(state, store, cancellationToken).ConfigureAwait(false) is null;
 
-        (state, continuity) = await CommitTransitionAsync(store, state, continuity, configDigest, worldSeed, cancellationToken).ConfigureAwait(false);
+        (state, continuity) = await CommitTransitionAsync(
+            store,
+            state,
+            continuity,
+            config,
+            worldSeed,
+            residentSeed,
+            registry,
+            detail,
+            cancellationToken).ConfigureAwait(false);
         var recoveryBeforeDrain = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
 
+        var resident = CreateResidentState(residentSeed).BindSnapshotMaterial(cut.FrozenState);
+        var participation = ParticipationDomainStateV1.CreateEmpty().BindSnapshotMaterial(cut.FrozenState);
+        var physicalBuilt = PhysicalBuiltDomainStateV1.CreateEmpty().BindSnapshotMaterial(cut.FrozenState);
+        var spatial = SpatialDomainStateV1.CreateEmpty().BindSnapshotMaterial(cut.FrozenState);
+        var environment = EnvironmentDomainStateV1.CreateEmpty().BindSnapshotMaterial(cut.FrozenState);
+        var societyEconomy = SocietyEconomyDomainStateV1.CreateEmpty().BindSnapshotMaterial(cut.FrozenState);
+        var infrastructureInformation = InfrastructureInformationDomainStateV1.CreateEmpty().BindSnapshotMaterial(cut.FrozenState);
+        var governanceSecurity = GovernanceSecurityDomainStateV1.CreateEmpty().BindSnapshotMaterial(cut.FrozenState);
+        var providers = StandardDomainSnapshotOwnerCompositionV1.CreateAllProviders();
+        var authorities = StandardDomainSnapshotOwnerCompositionV1.CreateAuthoritySet(
+            cut.FrozenState,
+            resident,
+            participation,
+            physicalBuilt,
+            spatial,
+            environment,
+            societyEconomy,
+            infrastructureInformation,
+            governanceSecurity);
+        if (authorities.CanonicalAuthorities.Sum(static authority => checked((long)authority.ActualItemCount)) != 1)
+            throw new InvalidDataException("qa04.snapshot.reduced-domain-material-count-mismatch");
+
+        var coreCut = cut.CoreOwnerMaterial
+            ?? throw new InvalidDataException("qa04.snapshot.core-owner-material-missing");
+        var sections = StandardSnapshotOwnerCompositionV1.CreateAll103(coreCut, authorities, providers);
+        var semanticVerifiers = StandardSnapshotOwnerCompositionV1.CreateSemanticVerifierRegistry(
+            coreCut,
+            authorities,
+            providers);
         var physical = SnapshotPhysicalStaging.Prepare(paths, cut.SnapshotId);
-        var chunkPayload = cutStateDigest
-            .Concat(cut.StateContinuityToken)
-            .Concat(U64Be.Encode(cut.HistoryAnchor.Sequence))
-            .ToArray();
-        var chunkLogicalDigest = SHA256.HashData(chunkPayload);
-        await SnapshotChunkFile.WriteAsync(
-            Path.Combine(physical.StagingChunksDirectory, "00000000.mvchunk"),
-            chunkPayload,
-            (ulong)chunkPayload.Length,
-            chunkLogicalDigest,
-            SnapshotCompression.None,
-            cancellationToken).ConfigureAwait(false);
+        var zstd = new ZstdSnapshotChunkCompressionCodecV1();
+        var staged = await CanonicalSnapshotProductionManifestDrainV1.StageRunningCutAsync(
+            cut,
+            physical,
+            sections,
+            config,
+            worldSeed,
+            zstdCodec: zstd,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (staged.Manifest.Logical.Sections.Count != SnapshotManifestValidation.StandardRequiredSectionCount)
+            throw new InvalidDataException("qa04.snapshot.standard-section-count-not-103");
 
-        var manifestBytes = cut.SnapshotId.ToBytes()
-            .Concat(U64Be.Encode(cut.SnapshotStep))
-            .Concat(cut.HistoryAnchor.Digest)
-            .Concat(cut.StateContinuityToken)
-            .Concat(cutStateDigest)
-            .ToArray();
-        await SnapshotPhysicalStaging.WriteManifestDurablyAsync(physical, manifestBytes, cancellationToken).ConfigureAwait(false);
-        var physicalManifestDigest = SHA256.HashData(manifestBytes);
-        var snapshotDigest = HashSuite.DomainHash("mv.snapshot.v1", writer =>
-        {
-            writer.WriteMapStart(6);
-            writer.WriteUnsigned(0); writer.WriteBytes(cut.SnapshotId.ToBytes());
-            writer.WriteUnsigned(1); writer.WriteUnsigned(cut.SnapshotStep);
-            writer.WriteUnsigned(2); writer.WriteUnsigned(cut.HistoryAnchor.Sequence);
-            writer.WriteUnsigned(3); writer.WriteBytes(cut.HistoryAnchor.Digest);
-            writer.WriteUnsigned(4); writer.WriteBytes(cut.StateContinuityToken);
-            writer.WriteUnsigned(5); writer.WriteBytes(cutStateDigest);
-        });
-
-        var committed = await coordinator.CommitDrainedAsync(
+        var committed = await coordinator.CommitCanonicalDrainedAsync(
             cut,
             store,
             paths,
             physical,
-            snapshotDigest,
-            physicalManifestDigest,
-            async (candidate, token) =>
-            {
-                var actualManifest = await File.ReadAllBytesAsync(candidate.StagingManifestPath, token).ConfigureAwait(false);
-                if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(actualManifest), physicalManifestDigest))
-                    throw new InvalidDataException("qa04.snapshot.manifest-digest-mismatch");
-                await SnapshotChunkFile.ValidateAsync(
-                    Path.Combine(candidate.StagingChunksDirectory, "00000000.mvchunk"),
-                    token).ConfigureAwait(false);
-            },
-            cancellationToken).ConfigureAwait(false);
+            staged.SnapshotDigest,
+            staged.PhysicalManifestDigest,
+            sections,
+            semanticVerifiers,
+            compressionDecoders: CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders(zstd),
+            cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var frozenAnchorDurable = await store.HistoryAnchorExistsAsync(
             cut.HistoryAnchor.Sequence,
@@ -148,7 +207,9 @@ public static class Qa04RunningSnapshotBridgeV1
         var catalogPreserved = candidates.Count == 1 &&
                                candidates[0].SnapshotId == cut.SnapshotId &&
                                candidates[0].SnapshotStep == 30 &&
-                               candidates[0].HistoryAnchorSequence == cut.HistoryAnchor.Sequence;
+                               candidates[0].HistoryAnchorSequence == cut.HistoryAnchor.Sequence &&
+                               CryptographicOperations.FixedTimeEquals(candidates[0].SnapshotDigest, staged.SnapshotDigest) &&
+                               CryptographicOperations.FixedTimeEquals(candidates[0].PhysicalManifestDigest, staged.PhysicalManifestDigest);
         var recoveryAfterDrain = await store.ReadRecoveryHeadAsync(cancellationToken).ConfigureAwait(false);
         var laterAuthorityPreserved = recoveryAfterDrain.FinalizedStep == 31 &&
                                       CryptographicOperations.FixedTimeEquals(recoveryAfterDrain.ContinuityToken, continuity);
@@ -190,7 +251,6 @@ public static class Qa04RunningSnapshotBridgeV1
             ReleaseEvidenceCapable = false,
             BlockingFailureCodes =
             [
-                "qa04.target.canonical-103-section-snapshot-serialization-not-assembled",
                 "qa04.target.reference-world-not-materialized",
                 "qa04.target.authoritative-step-loop-not-assembled",
             ],
@@ -201,16 +261,20 @@ public static class Qa04RunningSnapshotBridgeV1
         SqlitePersistenceStore store,
         WorldStateV1 state,
         byte[] previousContinuity,
-        byte[] configDigest,
+        EffectiveCoreConfig config,
         WorldSeed256 worldSeed,
+        Qa04ResidentIdentityMaterializationV1 residentSeed,
+        DomainRegistryStateV1 registry,
+        DetailDirectoryV1 detail,
         CancellationToken cancellationToken)
     {
         var anchor = await store.ReadHistoryAnchorAsync(cancellationToken).ConfigureAwait(false);
         var targetStep = checked(state.Header.Step + 1);
         var nextState = CreateState(
-            state.Header.WorldId,
-            worldSeed,
-            configDigest,
+            residentSeed,
+            config,
+            registry,
+            detail,
             targetStep,
             state.Diagnostic.StateDigest);
         var history = HistoryRecordMaterial.Create(
@@ -238,8 +302,8 @@ public static class Qa04RunningSnapshotBridgeV1
             state.Header.Step,
             targetStep,
             continuity,
-            activeConfigGeneration: 1,
-            configDigest,
+            activeConfigGeneration: config.Generation,
+            config.Digest,
             history,
             Array.Empty<TerminalOperationCommit>(),
             cancellationToken).ConfigureAwait(false);
@@ -247,36 +311,60 @@ public static class Qa04RunningSnapshotBridgeV1
     }
 
     private static WorldStateV1 CreateState(
-        OpaqueId128 worldId,
-        WorldSeed256 worldSeed,
-        byte[] configDigest,
+        Qa04ResidentIdentityMaterializationV1 residentSeed,
+        EffectiveCoreConfig config,
+        DomainRegistryStateV1 registry,
+        DetailDirectoryV1 detail,
         ulong step,
         byte[]? previousStateDigest)
     {
         var partitions = StandardDomainPartitionRegistry.Entries.Select(identity => new PartitionStateRefV1(
-            new PartitionStateHeaderV1(
-                identity,
-                revision: 1,
-                basisStep: 0,
-                detailLevel: DetailLevelV1.D0Entity,
-                itemCount: 0,
-                canonicalDigest: SHA256.HashData(System.Text.Encoding.ASCII.GetBytes(identity.PartitionId.Value)))));
+            residentSeed.WorldState.Partitions.Get(identity.PartitionId.Value).Header));
+        var scheduler = OperationSchedulerSubstateV1.Canonicalize(
+            new OperationSchedulerStateV1(
+                nextSchedulableStep: step,
+                freezeStep: null,
+                scheduled: Array.Empty<ScheduledOperationRefV1>()),
+            step);
+        var operations = DurableOperationSubstateV1.Canonicalize(Array.Empty<DurableOperationStateV1>());
+        var detailAuthority = DetailDirectorySubstateV1.Canonicalize(detail);
         return new WorldStateV1(
             new WorldStateHeaderV1(
-                worldId,
+                Qa04ReferenceLoadV1.WorldId,
                 step,
-                SHA256.HashData(worldSeed.ToBytes()),
-                configGeneration: 1,
+                SHA256.HashData(Qa04ReferenceLoadV1.WorldSeed.ToBytes()),
+                config.Generation,
                 masterGeneration: 1,
                 rateGeneration: 1,
                 previousStateDigest),
             new OrderedPartitionDirectoryV1(partitions),
-            WorldStateV1.EmptySubstate("core.scheduler-state"),
-            WorldStateV1.EmptySubstate("core.operation-state"),
-            WorldStateV1.EmptySubstate("core.detail-state"),
-            WorldStateV1.EmptySubstate("core.domain-registry-state"),
-            configDigest);
+            scheduler,
+            operations,
+            detailAuthority,
+            registry.ToWorldSubstateRef(),
+            config.Digest);
     }
+
+    private static ResidentDomainStateV1 CreateResidentState(Qa04ResidentIdentityMaterializationV1 qa)
+        => new(
+            qa.Partition,
+            Empty<ResidentBodyHealthPayloadV1>(ResidentBodyHealthPayloadV1.PartitionId),
+            Empty<ResidentPhysiologyPayloadV1>(ResidentPhysiologyPayloadV1.PartitionId),
+            Empty<ResidentPerceptionPayloadV1>(ResidentPerceptionPayloadV1.PartitionId),
+            Empty<ResidentKnowledgeBeliefPayloadV1>(ResidentKnowledgeBeliefPayloadV1.PartitionId),
+            Empty<ResidentMemoryPayloadV1>(ResidentMemoryPayloadV1.PartitionId),
+            Empty<ResidentPsychologyPayloadV1>(ResidentPsychologyPayloadV1.PartitionId),
+            Empty<ResidentGoalPlanPayloadV1>(ResidentGoalPlanPayloadV1.PartitionId),
+            Empty<ResidentSkillAptitudePayloadV1>(ResidentSkillAptitudePayloadV1.PartitionId),
+            Empty<ResidentRelationshipPayloadV1>(ResidentRelationshipPayloadV1.PartitionId),
+            Empty<ResidentFamilyLineagePayloadV1>(ResidentFamilyLineagePayloadV1.PartitionId),
+            Empty<ResidentBehaviorStatePayloadV1>(ResidentBehaviorStatePayloadV1.PartitionId),
+            Empty<ResidentLineagePayloadV1>(ResidentLineagePayloadV1.PartitionId));
+
+    private static DomainPartitionStateV1<TPayload> Empty<TPayload>(string partitionId)
+        => new(
+            StandardDomainPartitionRegistry.Get(partitionId),
+            Array.Empty<DomainRecordEnvelopeV1<TPayload>>());
 
     private static HistoryRecordMaterial CreateGenesisHistory(WorldStateV1 state, WorldSeed256 worldSeed)
         => HistoryRecordMaterial.Create(

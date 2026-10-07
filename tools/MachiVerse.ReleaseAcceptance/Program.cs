@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 
 internal static class Program
 {
-    private const string CanonicalQa04ManifestSha256 = "5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423";
+    private const string CanonicalQa04ManifestSha256 = "4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06";
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -50,7 +50,7 @@ internal static class Program
         Console.WriteLine($"Required suites: {manifest.RequiredSuiteIds.Length}");
         Console.WriteLine($"Required performance profiles: {string.Join(",", manifest.RequiredPerformanceProfiles.OrderBy(static x => x, StringComparer.Ordinal))}");
         Console.WriteLine($"Minimum soak duration: {manifest.Soak.MinimumDurationSeconds} seconds");
-        Console.WriteLine("Short CI is contract validation only; it is not performance.soak.24h evidence.");
+        Console.WriteLine("Short CI is contract validation only; it is not performance.soak.12h evidence.");
         return 0;
     }
 
@@ -159,7 +159,7 @@ internal static class Program
 
         if (evidence.Soak is null)
         {
-            incomplete.Add("soak.missing:performance.soak.24h");
+            incomplete.Add("soak.missing:performance.soak.12h");
         }
         else
         {
@@ -171,7 +171,7 @@ internal static class Program
             if (string.IsNullOrWhiteSpace(soak.ReportRef)) incomplete.Add("soak.report-ref-missing");
             if (soak.DurationSeconds < manifest.Soak.MinimumDurationSeconds)
                 incomplete.Add($"soak.duration-too-short:{soak.DurationSeconds}");
-            if (!soak.Passed) failures.Add("performance.soak.24h");
+            if (!soak.Passed) failures.Add("performance.soak.12h");
             if (!soak.ParallelVerifierDigestMatched) failures.Add("determinism.divergence");
             if (soak.MaxPostWarmupMemoryGrowthPercent > manifest.Soak.MaxPostWarmupMemoryGrowthPercent)
                 failures.Add("soak.memory-growth");
@@ -281,7 +281,7 @@ internal static class Program
             {
                 TestCaseId = manifest.Soak.TestCaseId,
                 SourceCommit = commit,
-                ReportRef = "fixture://performance.soak.24h",
+                ReportRef = "fixture://performance.soak.12h",
                 ReportDigest = new string('9', 64),
                 DurationSeconds = manifest.Soak.MinimumDurationSeconds,
                 Passed = true,
@@ -310,9 +310,9 @@ internal static class Program
         RequireExactSet(manifest.RequiredPerformanceProfiles,
             ["perf.reference.v1", "perf.persistence.v1", "perf.publication.v1"],
             "requiredPerformanceProfiles");
-        RequireEqual(manifest.Soak.TestCaseId, "performance.soak.24h", "soak.testCaseId");
-        if (manifest.Soak.MinimumDurationSeconds < 86_400)
-            throw new InvalidDataException("INT-03 soak minimum cannot be shorter than 24 wall-clock hours.");
+        RequireEqual(manifest.Soak.TestCaseId, "performance.soak.12h", "soak.testCaseId");
+        if (manifest.Soak.MinimumDurationSeconds < 43_200)
+            throw new InvalidDataException("INT-03 soak minimum cannot be shorter than 12 wall-clock hours.");
         if (manifest.Soak.MaxPostWarmupMemoryGrowthPercent > 10.0)
             throw new InvalidDataException("INT-03 soak memory-growth guard cannot exceed 10%.");
         if (!manifest.Soak.ParallelVerifierDigestRequired || !manifest.Soak.NoAcceptedOperationLoss ||

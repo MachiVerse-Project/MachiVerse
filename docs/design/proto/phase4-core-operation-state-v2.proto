@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package machiverse.persistence.v2;
+
+// Normative extension of the existing P4-04 core.operation-state section.
+// The logical section count remains six Core + 97 domain = 103.
+// Serialized protobuf bytes are transport only; semantic authority is defined
+// by phase4-core-operation-state-v2.md.
+
+message CoreOperationStateSnapshotFragmentWireV2 {
+  uint64 basis_step = 1;
+  repeated CoreOperationStateItemSnapshotWireV2 items = 2;
+}
+
+message CoreOperationStateItemSnapshotWireV2 {
+  oneof item {
+    DurableOperationStateSnapshotWireV2 durable_operation = 1;
+    CrossDomainTransactionStateSnapshotWireV2 cross_domain_transaction = 2;
+  }
+}
+
+message DurableOperationStateSnapshotWireV2 {
+  bytes operation_id = 1;             // exactly 16 bytes, ZERO invalid
+  bytes operation_payload_digest = 2; // exactly 32 bytes
+  uint32 lifecycle = 3;               // DurableOperationLifecycleV1, defined value only
+  optional uint64 accepted_sequence = 4;
+  optional uint64 scheduled_sequence = 5;
+  optional uint64 effective_step = 6;
+  optional uint64 terminal_sequence = 7;
+  optional uint32 terminal_status = 8; // CoreOperationResultStatusV1, defined value only
+  optional string result_code = 9;     // StableToken when present
+  optional bytes rich_result_payload = 10;
+}
+
+message CrossDomainTransactionStateSnapshotWireV2 {
+  bytes transaction_id = 1;           // exactly 16 bytes, ZERO invalid
+  string transaction_kind = 2;        // registered CrossDomainTransactionKind token
+  uint32 lifecycle = 3;               // TransactionLifecycleV1, defined value only
+  uint64 created_step = 4;
+  uint64 updated_step = 5;
+  optional uint64 terminal_step = 6;
+  CausalityRefSnapshotWireV2 root_causality = 7;
+  repeated bytes subject_ids = 8;      // each exactly 16 bytes, ZERO invalid
+  repeated PersistentTransactionParticipantSnapshotWireV2 participants = 9;
+  repeated TransactionInvariantResultSnapshotWireV2 invariant_results = 10;
+}
+
+message CausalityRefSnapshotWireV2 {
+  uint32 kind = 1;                    // CausalityRefKindV1, defined value only
+  bytes id = 2;                       // non-empty exact authority bytes
+  optional uint64 basis_step = 3;
+}
+
+message PersistentTransactionParticipantSnapshotWireV2 {
+  string domain_token = 1;            // registered standard domain
+  string partition_id = 2;            // owned by domain_token
+  repeated bytes intent_ids = 3;      // each exactly 16 bytes, ZERO invalid
+  bool required = 4;
+  uint32 outcome = 5;                 // TransactionParticipantOutcomeV1
+  bytes candidate_effect_digest = 6;  // exactly 32 bytes
+  optional string diagnostic_code = 7;// StableToken when present
+}
+
+message TransactionInvariantResultSnapshotWireV2 {
+  string invariant_id = 1;            // StableToken
+  uint32 severity = 2;                // InvariantSeverityV1, defined value only
+  uint32 outcome = 3;                 // InvariantOutcomeV1, defined value only
+  optional string diagnostic_code = 4;// StableToken when present
+  repeated CausalityRefSnapshotWireV2 participant_refs = 5;
+}

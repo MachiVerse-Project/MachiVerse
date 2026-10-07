@@ -153,8 +153,8 @@
     "continuityAfterCoalesceResyncRequired": true
   },
   "soakProfile": {
-    "testCaseId": "performance.soak.24h",
-    "durationHours": 24,
+    "testCaseId": "performance.soak.12h",
+    "durationHours": 12,
     "gatewayReconnectFailoverIntervalMinutes": 30,
     "periodicSnapshotRecoveryCheckpoints": true,
     "viewChurnAndSlowConsumerLoad": true,

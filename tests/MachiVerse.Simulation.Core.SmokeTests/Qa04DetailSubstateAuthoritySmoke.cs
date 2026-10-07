@@ -88,6 +88,9 @@ internal static class Qa04DetailSubstateAuthoritySmoke
             plan.Selected,
             new DetailConservationSnapshotV1(),
             new DetailConservationSnapshotV1());
+        var unchanged = directory.Apply(plan, conservation);
+        Require(ReferenceEquals(directory, unchanged),
+            "DetailDirectory no-op Apply must reuse the immutable directory instance.");
 
         var rejected = false;
         try

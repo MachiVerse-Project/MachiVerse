@@ -1,0 +1,35 @@
+name: INT-03 full Physical shape materialization validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.PhysicalShapeFullProductionSmoke/**'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04PhysicalShapeMaterializationInitializer.cs'
+      - '.github/workflows/int03-physical-shape-full-production-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-physical-shape-full-production-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  physical-shape-full-production:
+    name: Full 500,000-record Physical shape materialization
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build full Physical shape materialization probe
+        run: dotnet build tests/MachiVerse.Simulation.Core.PhysicalShapeFullProductionSmoke/MachiVerse.Simulation.Core.PhysicalShapeFullProductionSmoke.csproj --configuration Release
+      - name: Prove full canonical Physical shape materialization
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.PhysicalShapeFullProductionSmoke/MachiVerse.Simulation.Core.PhysicalShapeFullProductionSmoke.csproj --configuration Release --no-build
