@@ -99,6 +99,10 @@ internal static class Qa04DetailDecisionPersistenceSmoke
                     "QA-04 detail decision persistence smoke must use the canonical 5,000-operation Step.");
 
                 var batchAnchor = await store.ReadHistoryAnchorAsync();
+                var collector = new Qa04BenchmarkMetricCollectorV1();
+                var allCommits = new LegacyCommitMetricSink();
+                store.AttachCommitMetricSink(collector);
+                using var ambientMetrics = SqlitePersistenceStore.PushAmbientCommitMetricSink(allCommits);
                 var batchAuthority = Qa04ScheduledOperationBatchAuthorityBuilderV1.Create(
                     Qa04ReferenceLoadV1.WorldId,
                     batchAnchor,
@@ -106,6 +110,11 @@ internal static class Qa04DetailDecisionPersistenceSmoke
                     effectiveStep: 1,
                     bindings);
                 _ = await store.PersistQa04ScheduledOperationBatchAsync(batchAuthority, bindings);
+                Require(allCommits.Count == 1 && collector.Snapshot().SqliteCommitDuration is null,
+                    "Scheduling COMMIT must remain observable without entering finalized-Step COMMIT samples.");
+                _ = await store.PersistQa04ScheduledOperationBatchAsync(batchAuthority, bindings);
+                Require(allCommits.Count == 1 && collector.Snapshot().SqliteCommitDuration is null,
+                    "Idempotent scheduling retry must not fabricate a latency sample.");
 
                 var directory = new DetailDirectoryV1(Array.Empty<DetailRegionStateV1>());
                 var policy = new DetailTransitionPolicyV1(
@@ -189,6 +198,21 @@ internal static class Qa04DetailDecisionPersistenceSmoke
                     decision);
                 Require(durable.ResultingStep == 2 && durable.HistorySequence == transition.History.Sequence,
                     "Detail decision transition durability receipt drifted.");
+                Require(allCommits.Count == 2 && collector.Snapshot().SqliteCommitDuration?.SampleCount == 1 &&
+                        store.CommitMetricObserverFailureCount == 0,
+                    "One real scheduled/terminal Step must yield exactly one finalized COMMIT sample, with both durable commits observable.");
+                try
+                {
+                    _ = await store.PersistQa04CanonicalTransitionCommitAsync(
+                        0, transition, terminals, basisPrefix, resultingPrefix,
+                        Array.Empty<CrossDomainTransactionStateV1>(), CancellationToken.None, decision);
+                    throw new InvalidOperationException("A stale finalized transition must be rejected.");
+                }
+                catch (InvalidDataException ex) when (ex.Message == "persistence.qa04-canonical-transition.base-step-mismatch")
+                {
+                }
+                Require(allCommits.Count == 2 && collector.Snapshot().SqliteCommitDuration?.SampleCount == 1,
+                    "Rejected stale transition must not fabricate a finalized COMMIT sample.");
 
                 var anchorAfter = await store.ReadHistoryAnchorAsync();
                 Require(anchorAfter.Sequence == transition.History.Sequence &&
@@ -222,6 +246,16 @@ internal static class Qa04DetailDecisionPersistenceSmoke
         finally
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private sealed class LegacyCommitMetricSink : IPersistenceCommitMetricSinkV1
+    {
+        public int Count { get; private set; }
+        public void RecordSuccessfulCommit(TimeSpan elapsed)
+        {
+            Require(elapsed >= TimeSpan.Zero, "Successful COMMIT duration must be non-negative.");
+            Count++;
         }
     }
 

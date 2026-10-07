@@ -10,6 +10,17 @@ namespace MachiVerse.Simulation.Core.Persistence;
 public interface IPersistenceCommitMetricSinkV1
 {
     void RecordSuccessfulCommit(TimeSpan elapsed);
+
+    // Existing diagnostics sinks still observe every successful COMMIT. Consumers that need a
+    // particular durability boundary can select it without changing persistence semantics.
+    void RecordSuccessfulCommit(TimeSpan elapsed, PersistenceCommitKindV1 kind)
+        => RecordSuccessfulCommit(elapsed);
+}
+
+public enum PersistenceCommitKindV1
+{
+    FinalizedTransition,
+    ScheduledOperationBatch,
 }
 
 public sealed partial class SqlitePersistenceStore
@@ -41,23 +52,25 @@ public sealed partial class SqlitePersistenceStore
         return new AmbientCommitMetricScope(previous);
     }
 
-    private void ObserveSuccessfulCommit(TimeSpan elapsed)
+    private void ObserveSuccessfulCommit(
+        TimeSpan elapsed,
+        PersistenceCommitKindV1 kind = PersistenceCommitKindV1.FinalizedTransition)
     {
         var attached = Volatile.Read(ref _commitMetricSink);
         var ambient = AmbientCommitMetricSink.Value;
 
-        ObserveOne(attached, elapsed);
+        ObserveOne(attached, elapsed, kind);
         if (ambient is not null && !ReferenceEquals(ambient, attached))
-            ObserveOne(ambient, elapsed);
+            ObserveOne(ambient, elapsed, kind);
     }
 
-    private void ObserveOne(IPersistenceCommitMetricSinkV1? sink, TimeSpan elapsed)
+    private void ObserveOne(IPersistenceCommitMetricSinkV1? sink, TimeSpan elapsed, PersistenceCommitKindV1 kind)
     {
         if (sink is null) return;
 
         try
         {
-            sink.RecordSuccessfulCommit(elapsed);
+            sink.RecordSuccessfulCommit(elapsed, kind);
         }
         catch
         {

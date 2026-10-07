@@ -228,6 +228,8 @@ public sealed class SocietyMarketFactPayloadV2 : SocietyMarketTransactionRecordP
 
 public sealed class SocietyMarketTransactionRecordMaterialV2
 {
+    internal DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2> Envelope { get; }
+
     public SocietyMarketTransactionRecordMaterialV2(
         OpaqueId128 recordId,
         ulong revision,
@@ -245,23 +247,19 @@ public sealed class SocietyMarketTransactionRecordMaterialV2
             throw new ArgumentException("Lineage id ZERO is invalid.", nameof(lineageRef));
         if (!Enum.IsDefined(detailLevel)) throw new ArgumentOutOfRangeException(nameof(detailLevel));
         ArgumentNullException.ThrowIfNull(payload);
-        RecordId = recordId;
-        Revision = revision;
-        CreatedStep = createdStep;
-        RetiredStep = retiredStep;
-        DetailLevel = detailLevel;
-        LineageRef = lineageRef;
-        Payload = payload;
+        Envelope = new DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>(
+            recordId, SocietyMarketTransactionRecordSchemaV2.RecordSchema,
+            revision, createdStep, retiredStep, detailLevel, lineageRef, payload);
     }
 
-    public OpaqueId128 RecordId { get; }
+    public OpaqueId128 RecordId => Envelope.RecordId;
     public SchemaRefV1 RecordSchema => SocietyMarketTransactionRecordSchemaV2.RecordSchema;
-    public ulong Revision { get; }
-    public ulong CreatedStep { get; }
-    public ulong? RetiredStep { get; }
-    public DetailLevelV1 DetailLevel { get; }
-    public OpaqueId128? LineageRef { get; }
-    public SocietyMarketTransactionRecordPayloadV2 Payload { get; }
+    public ulong Revision => Envelope.Revision;
+    public ulong CreatedStep => Envelope.CreatedStep;
+    public ulong? RetiredStep => Envelope.RetiredStep;
+    public DetailLevelV1 DetailLevel => Envelope.DetailLevel;
+    public OpaqueId128? LineageRef => Envelope.LineageRef;
+    public SocietyMarketTransactionRecordPayloadV2 Payload => Envelope.Payload;
 
     public static SocietyMarketTransactionRecordMaterialV2 MigrateLegacyFact(
         DomainRecordEnvelopeV1<SocietyMarketTransactionPayloadV1> source)

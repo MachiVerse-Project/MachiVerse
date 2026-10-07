@@ -73,6 +73,17 @@ public sealed class SocietyMarketTransactionRecordSetV2
 
     public IReadOnlyList<SocietyMarketTransactionRecordMaterialV2> RecordsCanonical => _records;
 
+    internal DomainPartitionStateV1<SocietyMarketTransactionRecordPayloadV2> CreateSharedState()
+        => DomainPartitionStateV1<SocietyMarketTransactionRecordPayloadV2>.FromSharedCanonicalMap(
+            SocietyMarketTransactionPartitionIdentityV2.Identity,
+            new ProjectedCanonicalRecordMapV1<SocietyMarketTransactionRecordMaterialV2,
+                DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>>(
+                _records,
+                static record => record.Envelope,
+                static record => new SocietyMarketTransactionRecordMaterialV2(
+                    record.RecordId, record.Revision, record.CreatedStep, record.RetiredStep,
+                    record.DetailLevel, record.LineageRef, record.Payload)));
+
     public bool TryGet(OpaqueId128 recordId, out SocietyMarketTransactionRecordMaterialV2? record)
         => _records.TryGet(recordId, out record);
 }
@@ -83,19 +94,7 @@ public sealed class SocietyMarketTransactionPartitionStateV2
     {
         SocietyMarketTransactionPartitionIdentityV2.ValidateCanonicalContract();
         RecordSet = new SocietyMarketTransactionRecordSetV2(records);
-        var envelopes = RecordSet.RecordsCanonical.Select(static record =>
-            new DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>(
-                record.RecordId,
-                SocietyMarketTransactionRecordSchemaV2.RecordSchema,
-                record.Revision,
-                record.CreatedStep,
-                record.RetiredStep,
-                record.DetailLevel,
-                record.LineageRef,
-                record.Payload));
-        State = new DomainPartitionStateV1<SocietyMarketTransactionRecordPayloadV2>(
-            SocietyMarketTransactionPartitionIdentityV2.Identity,
-            envelopes);
+        State = RecordSet.CreateSharedState();
         RequireAlignedCount();
     }
 
@@ -127,21 +126,13 @@ public sealed class SocietyMarketTransactionPartitionStateV2
         ArgumentNullException.ThrowIfNull(additions);
         ArgumentException.ThrowIfNullOrWhiteSpace(collisionCode);
 
-        var envelopes = additions
-            .Select(static record => new DomainRecordEnvelopeV1<SocietyMarketTransactionRecordPayloadV2>(
-                record.RecordId,
-                SocietyMarketTransactionRecordSchemaV2.RecordSchema,
-                record.Revision,
-                record.CreatedStep,
-                record.RetiredStep,
-                record.DetailLevel,
-                record.LineageRef,
-                record.Payload))
-            .ToArray();
-
-        return new SocietyMarketTransactionPartitionStateV2(
-            RecordSet.WithAdditions(additions, collisionCode),
-            State.WithAdditions(envelopes, collisionCode));
+        RequireAlignedCount();
+        var recordSet = RecordSet.WithAdditions(additions, collisionCode);
+        var expectedCount = checked(RecordSet.RecordsCanonical.Count + additions.Count);
+        if (recordSet.RecordsCanonical.Count != expectedCount)
+            throw new InvalidDataException(
+                $"society.market-transaction-v2.addition-item-count expected={expectedCount} actual={recordSet.RecordsCanonical.Count} additions={additions.Count}");
+        return new SocietyMarketTransactionPartitionStateV2(recordSet, recordSet.CreateSharedState());
     }
 
     public SocietyMarketTransactionRecordSetV2 RecordSet { get; }
@@ -150,6 +141,7 @@ public sealed class SocietyMarketTransactionPartitionStateV2
     private void RequireAlignedCount()
     {
         if (State.ItemCount != checked((ulong)RecordSet.RecordsCanonical.Count))
-            throw new InvalidDataException("society.market-transaction-v2.partition-item-count");
+            throw new InvalidDataException(
+                $"society.market-transaction-v2.partition-item-count state={State.ItemCount} records={RecordSet.RecordsCanonical.Count}");
     }
 }
