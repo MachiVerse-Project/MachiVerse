@@ -103,7 +103,7 @@ public sealed class DomainRecordEnvelopeV1<TPayload>
 
 public sealed class DomainPartitionStateV1<TPayload>
 {
-    private readonly PersistentCanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>> _records;
+    private readonly ICanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>> _records;
 
     public DomainPartitionStateV1(
         DomainPartitionIdentityV1 identity,
@@ -122,11 +122,16 @@ public sealed class DomainPartitionStateV1<TPayload>
 
     private DomainPartitionStateV1(
         DomainPartitionIdentityV1 identity,
-        PersistentCanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>> records)
+        ICanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>> records)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
         _records = records ?? throw new ArgumentNullException(nameof(records));
     }
+
+    internal static DomainPartitionStateV1<TPayload> FromSharedCanonicalMap(
+        DomainPartitionIdentityV1 identity,
+        ICanonicalRecordMapV1<DomainRecordEnvelopeV1<TPayload>> records)
+        => new(identity, records);
 
     internal static DomainPartitionStateV1<TPayload> FromCanonicalRecords(
         DomainPartitionIdentityV1 identity,

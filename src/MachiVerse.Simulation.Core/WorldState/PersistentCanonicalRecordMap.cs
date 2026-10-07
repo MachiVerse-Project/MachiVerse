@@ -10,7 +10,14 @@ namespace MachiVerse.Simulation.Core.WorldState;
 /// This is an implementation structure only: it does not change record identity, ordering, payload,
 /// or any canonical digest input.
 /// </summary>
-internal sealed class PersistentCanonicalRecordMapV1<T> : IReadOnlyList<T>
+internal interface ICanonicalRecordMapV1<T> : IReadOnlyList<T> where T : class
+{
+    bool TryGet(OpaqueId128 key, out T? value);
+    ICanonicalRecordMapV1<T> AddRange(IEnumerable<T> additions, string collisionCode);
+    ICanonicalRecordMapV1<T> ReplaceRange(IEnumerable<T> replacements, string missingCode);
+}
+
+internal sealed class PersistentCanonicalRecordMapV1<T> : ICanonicalRecordMapV1<T>
     where T : class
 {
     private readonly Node? _root;
@@ -143,6 +150,12 @@ internal sealed class PersistentCanonicalRecordMapV1<T> : IReadOnlyList<T>
     public PersistentCanonicalRecordMapV1<T> UpsertRange(
         IEnumerable<T> values)
         => Apply(values, allowCreate: true, allowReplace: true, _duplicateCode, _duplicateCode);
+
+    ICanonicalRecordMapV1<T> ICanonicalRecordMapV1<T>.AddRange(IEnumerable<T> additions, string collisionCode)
+        => AddRange(additions, collisionCode);
+
+    ICanonicalRecordMapV1<T> ICanonicalRecordMapV1<T>.ReplaceRange(IEnumerable<T> replacements, string missingCode)
+        => ReplaceRange(replacements, missingCode);
 
     public IEnumerator<T> GetEnumerator()
     {
