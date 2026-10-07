@@ -79,9 +79,14 @@ public sealed class GatewayAuditStoreV1 : IAuditWriterV1, IAsyncDisposable
         try
         {
             await using var connection = await OpenConfiguredConnectionAsync(cancellationToken).ConfigureAwait(false);
+            Qa04AuditCrashInjectionV1.Hit("before-db-begin");
             await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             var record = await AppendInTransactionAsync(connection, transaction, draft, cancellationToken).ConfigureAwait(false);
+            Qa04AuditCrashInjectionV1.Hit("mid-write");
+            Qa04AuditCrashInjectionV1.Hit("before-fsync-or-commit");
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            Qa04AuditCrashInjectionV1.Hit("immediately-after-commit");
+            Qa04AuditCrashInjectionV1.Hit("before-response-or-publication");
             return record;
         }
         finally

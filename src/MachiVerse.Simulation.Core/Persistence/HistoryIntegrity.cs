@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MachiVerse.Simulation.Core.Determinism;
 
 namespace MachiVerse.Simulation.Core.Persistence;
@@ -89,6 +90,156 @@ public sealed class HistoryRecordMaterial
             normalizedDigest,
             recordDigest);
     }
+
+    internal static HistoryRecordMaterial CreateFromOwnedCanonicalPayloads(
+        OpaqueId128 worldId,
+        ulong sequence,
+        ReadOnlySpan<byte> previousRecordDigest,
+        string recordType,
+        string payloadSchemaId,
+        ushort payloadSchemaMajor,
+        ushort payloadSchemaMinor,
+        byte[] payloadBytes,
+        byte[] normalizedPayloadBytes,
+        byte[] recordDigest)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid for history.", nameof(worldId));
+        if (sequence == 0) throw new ArgumentOutOfRangeException(nameof(sequence), "HistorySequence starts at 1.");
+        if (previousRecordDigest.Length != 32)
+            throw new ArgumentException("Previous history digest must be exactly 32 bytes.", nameof(previousRecordDigest));
+        ArgumentNullException.ThrowIfNull(payloadBytes);
+        ArgumentNullException.ThrowIfNull(normalizedPayloadBytes);
+        ArgumentNullException.ThrowIfNull(recordDigest);
+        if (normalizedPayloadBytes.Length == 0)
+            throw new InvalidDataException("persistence.normalized-history-payload-empty");
+        if (recordDigest.Length != 32)
+            throw new InvalidDataException("persistence.history-persisted-digest-width");
+
+        var recordToken = new StableToken(recordType);
+        var schemaToken = new StableToken(payloadSchemaId);
+        var expectedNormalizedDigest = HashSuite.Hash256(normalizedPayloadBytes);
+        var previous = previousRecordDigest.ToArray();
+        var expectedRecordDigest = HistoryIntegrity.ComputeHistoryRecordDigest(
+            worldId,
+            sequence,
+            previous,
+            recordToken,
+            normalizedPayloadBytes);
+        if (!CryptographicOperations.FixedTimeEquals(expectedRecordDigest, recordDigest))
+            throw new InvalidDataException("persistence.history-record-digest-mismatch");
+
+        return new HistoryRecordMaterial(
+            worldId,
+            sequence,
+            previous,
+            recordToken,
+            schemaToken,
+            payloadSchemaMajor,
+            payloadSchemaMinor,
+            payloadBytes,
+            normalizedPayloadBytes,
+            expectedNormalizedDigest,
+            recordDigest);
+    }
+
+    internal static HistoryRecordMaterial CreateFromOwnedPrehashedCanonicalPayloads(
+        OpaqueId128 worldId,
+        ulong sequence,
+        ReadOnlySpan<byte> previousRecordDigest,
+        string recordType,
+        string payloadSchemaId,
+        ushort payloadSchemaMajor,
+        ushort payloadSchemaMinor,
+        byte[] payloadBytes,
+        byte[] normalizedPayloadBytes,
+        byte[] normalizedPayloadDigest,
+        byte[] recordDigest)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid for history.", nameof(worldId));
+        if (sequence == 0) throw new ArgumentOutOfRangeException(nameof(sequence), "HistorySequence starts at 1.");
+        if (previousRecordDigest.Length != 32)
+            throw new ArgumentException("Previous history digest must be exactly 32 bytes.", nameof(previousRecordDigest));
+        ArgumentNullException.ThrowIfNull(payloadBytes);
+        ArgumentNullException.ThrowIfNull(normalizedPayloadBytes);
+        ArgumentNullException.ThrowIfNull(normalizedPayloadDigest);
+        ArgumentNullException.ThrowIfNull(recordDigest);
+        if (normalizedPayloadBytes.Length == 0)
+            throw new InvalidDataException("persistence.normalized-history-payload-empty");
+        if (normalizedPayloadDigest.Length != 32 || recordDigest.Length != 32)
+            throw new InvalidDataException("persistence.history-persisted-digest-width");
+
+        return new HistoryRecordMaterial(
+            worldId,
+            sequence,
+            previousRecordDigest.ToArray(),
+            new StableToken(recordType),
+            new StableToken(payloadSchemaId),
+            payloadSchemaMajor,
+            payloadSchemaMinor,
+            payloadBytes,
+            normalizedPayloadBytes,
+            normalizedPayloadDigest,
+            recordDigest);
+    }
+
+    /// <summary>
+    /// Rehydrates persisted history material only after independently validating its normalized
+    /// semantic payload digest and history RecordDigest. Recovery codecs use this when normalized
+    /// bytes are reconstructed from the authoritative physical payload rather than stored directly.
+    /// </summary>
+    public static HistoryRecordMaterial RestoreValidated(
+        OpaqueId128 worldId,
+        ulong sequence,
+        ReadOnlySpan<byte> previousRecordDigest,
+        string recordType,
+        string payloadSchemaId,
+        ushort payloadSchemaMajor,
+        ushort payloadSchemaMinor,
+        ReadOnlySpan<byte> payloadBytes,
+        ReadOnlySpan<byte> normalizedPayloadBytes,
+        ReadOnlySpan<byte> normalizedPayloadDigest,
+        ReadOnlySpan<byte> recordDigest)
+    {
+        if (worldId.IsZero) throw new ArgumentException("WorldId ZERO is invalid for history.", nameof(worldId));
+        if (sequence == 0) throw new ArgumentOutOfRangeException(nameof(sequence), "HistorySequence starts at 1.");
+        if (previousRecordDigest.Length != 32)
+            throw new ArgumentException("Previous history digest must be exactly 32 bytes.", nameof(previousRecordDigest));
+        if (normalizedPayloadBytes.IsEmpty)
+            throw new InvalidDataException("persistence.normalized-history-payload-empty");
+        if (normalizedPayloadDigest.Length != 32 || recordDigest.Length != 32)
+            throw new InvalidDataException("persistence.history-persisted-digest-width");
+
+        var recordToken = new StableToken(recordType);
+        var schemaToken = new StableToken(payloadSchemaId);
+        var normalized = normalizedPayloadBytes.ToArray();
+        var expectedNormalizedDigest = HashSuite.Hash256(normalized);
+        if (!CryptographicOperations.FixedTimeEquals(expectedNormalizedDigest, normalizedPayloadDigest))
+            throw new InvalidDataException("persistence.normalized-history-payload-digest-mismatch");
+
+        var previous = previousRecordDigest.ToArray();
+        var expectedRecordDigest = HistoryIntegrity.ComputeHistoryRecordDigest(
+            worldId,
+            sequence,
+            previous,
+            recordToken,
+            normalized);
+        if (!CryptographicOperations.FixedTimeEquals(expectedRecordDigest, recordDigest))
+            throw new InvalidDataException("persistence.history-record-digest-mismatch");
+
+        return new HistoryRecordMaterial(
+            worldId,
+            sequence,
+            previous,
+            recordToken,
+            schemaToken,
+            payloadSchemaMajor,
+            payloadSchemaMinor,
+            payloadBytes.ToArray(),
+            normalized,
+            expectedNormalizedDigest,
+            expectedRecordDigest);
+    }
+
 }
 
 public static class HistoryIntegrity
@@ -107,17 +258,15 @@ public static class HistoryIntegrity
         if (normalizedRecordPayload.IsEmpty)
             throw new ArgumentException("Normalized record payload cannot be empty.", nameof(normalizedRecordPayload));
 
-        var previous = previousRecordDigest.ToArray();
-        var normalized = normalizedRecordPayload.ToArray();
-        return HashSuite.DomainHash("mv.history-record.v1", writer =>
-        {
-            writer.WriteMapStart(5);
-            writer.WriteUnsigned(0); writer.WriteBytes(worldId.ToBytes());
-            writer.WriteUnsigned(1); writer.WriteUnsigned(sequence);
-            writer.WriteUnsigned(2); writer.WriteBytes(previous);
-            writer.WriteUnsigned(3); writer.WriteAsciiText(recordType.Value);
-            writer.WriteUnsigned(4); writer.WriteCanonicalValue(normalized);
-        });
+        using var session = HashSuite.BeginDomainHashStreaming("mv.history-record.v1");
+        var writer = session.Writer;
+        writer.WriteMapStart(5);
+        writer.WriteUnsigned(0); writer.WriteBytes(worldId.ToBytes());
+        writer.WriteUnsigned(1); writer.WriteUnsigned(sequence);
+        writer.WriteUnsigned(2); writer.WriteBytes(previousRecordDigest);
+        writer.WriteUnsigned(3); writer.WriteAsciiText(recordType.Value);
+        writer.WriteUnsigned(4); writer.WriteCanonicalValue(normalizedRecordPayload);
+        return session.Complete();
     }
 
     public static byte[] ComputeGenesisContinuityToken(OpaqueId128 worldId, ReadOnlySpan<byte> genesisRecordDigest)

@@ -10,7 +10,7 @@ internal static partial class Program
 {
     private const int ExpectedRunCount = 12;
     private const string ExpectedWorldSeed = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
-    private const string ExpectedManifestSha256 = "5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423";
+    private const string ExpectedManifestSha256 = "4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06";
 
     private static readonly JsonSerializerOptions Json = new()
     {

@@ -1,0 +1,35 @@
+name: INT-03 Society Employment full production validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/MachiVerse.Simulation.Core/**'
+      - 'tests/MachiVerse.Simulation.Core.SocietyEmploymentFullProductionSmoke/**'
+      - 'tests/MachiVerse.Simulation.Core.SmokeTests/Qa04SocietyEmploymentCanonicalAuthoritySmoke.cs'
+      - '.github/workflows/int03-society-employment-full-production-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: int03-society-employment-full-production-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  society-employment-full-production:
+    name: Full 80,000-record Society Employment proof
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.400
+      - name: Build Society Employment full-production probe
+        run: dotnet build tests/MachiVerse.Simulation.Core.SocietyEmploymentFullProductionSmoke/MachiVerse.Simulation.Core.SocietyEmploymentFullProductionSmoke.csproj --configuration Release
+      - name: Prove Society Employment materialization and recovery
+        run: dotnet run --project tests/MachiVerse.Simulation.Core.SocietyEmploymentFullProductionSmoke/MachiVerse.Simulation.Core.SocietyEmploymentFullProductionSmoke.csproj --configuration Release --no-build

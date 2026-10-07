@@ -4,7 +4,7 @@ using System.Text.Json;
 
 internal static class Program
 {
-    internal const string CanonicalQa04ManifestSha256 = "5de8301439ca57080eefa599da284f9271b29366c791bcb9c2f85ddbfa041423";
+    internal const string CanonicalQa04ManifestSha256 = "4cdd020abcc8ce37a54944181ce718fb4ae6de8f562bf4f846d669dbdf155a06";
 
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -24,15 +24,60 @@ internal static class Program
                 return 0;
             }
 
-            if (string.Equals(args[0], "run", StringComparison.Ordinal) && args.Length == 6)
+            if (string.Equals(args[0], "run-step2", StringComparison.Ordinal) && args.Length == 6)
             {
-                var result = await ReleaseEvidenceRunner.RunAsync(
+                await ReleaseEvidenceRunner.RunGate4Step2ActualRunAsync(
+                    root,
+                    args[1],
+                    Path.GetFullPath(args[2]),
+                    int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture),
+                    int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture),
+                    Path.GetFullPath(args[5]));
+                return 0;
+            }
+
+            if (string.Equals(args[0], "verify-step2", StringComparison.Ordinal) && args.Length == 2)
+            {
+                _ = Qa04DeterminismEvidenceVerifier.VerifyActualMatrix(
+                    root,
+                    Path.GetFullPath(args[1]));
+                return 0;
+            }
+
+            if (string.Equals(args[0], "run-step3", StringComparison.Ordinal) && args.Length == 6)
+            {
+                return await ReleaseEvidenceRunner.RunGate4Step3Alpha11Async(
                     root,
                     args[1],
                     args[2],
                     Path.GetFullPath(args[3]),
                     Path.GetFullPath(args[4]),
                     Path.GetFullPath(args[5]));
+            }
+
+            if (string.Equals(args[0], "run-step4", StringComparison.Ordinal) && args.Length == 7)
+            {
+                return await ReleaseEvidenceRunner.RunGate4Step4Async(
+                    root,
+                    args[1],
+                    args[2],
+                    Path.GetFullPath(args[3]),
+                    Path.GetFullPath(args[4]),
+                    Path.GetFullPath(args[5]),
+                    Path.GetFullPath(args[6]));
+            }
+
+            if (string.Equals(args[0], "run", StringComparison.Ordinal) && args.Length == 6)
+            {
+                var planDirectory = Path.GetFullPath(args[4]);
+                var outputDirectory = Path.GetFullPath(args[5]);
+                var result = await ReleaseEvidenceRunner.RunAsync(
+                    root,
+                    args[1],
+                    args[2],
+                    Path.GetFullPath(args[3]),
+                    planDirectory,
+                    outputDirectory);
                 return result;
             }
 
@@ -46,7 +91,7 @@ internal static class Program
             }
 
             throw new ArgumentException(
-                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]");
+                "Usage: MachiVerse.ReleaseEvidenceRunner [verify|run-step2 <source-commit> <core-executable> <worker-count> <run-ordinal> <output.json>|verify-step2 <matrix.json>|run-step3 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|run-step4 <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <step3-evidence.json> <output-directory>|run <contract-smoke|release> <source-commit> <adapter-executable> <plan-directory> <output-directory>|apply <fragment.json> <base-evidence.json> <output-evidence.json>]" );
         }
         catch (Exception ex)
         {
@@ -86,7 +131,7 @@ internal static class Program
             throw new InvalidDataException($"{name} cannot be all zero.");
     }
 
-    private static string FindRepositoryRoot(string start)
+    internal static string FindRepositoryRoot(string start)
     {
         var current = new DirectoryInfo(start);
         while (current is not null)

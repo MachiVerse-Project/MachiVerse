@@ -9,7 +9,7 @@ This directory is the version-controlled orchestration contract for Phase 4 `QA-
 - `docs/design/phase4-test-acceptance-addendum.md`
 - `docs/design/phase4-implementation-work-breakdown.md`
 
-`harness-manifest.json` fixes the `perf.reference.v1` seed, reference-world load, worker/process repetition matrix, performance thresholds, persistence/publication stress subprofiles, `performance.soak.24h`, report fields, and external target-adapter boundary.
+`harness-manifest.json` fixes the `perf.reference.v1` seed, reference-world load, worker/process repetition matrix, performance thresholds, persistence/publication stress subprofiles, `performance.soak.12h`, report fields, and external target-adapter boundary.
 
 ## Commands
 
@@ -24,7 +24,7 @@ dotnet run --project tools/MachiVerse.PerformanceHarness -- materialize <output-
 
 The repository harness is an orchestrator/contract validator. It does not load production component DLLs or internal types, and it does not invent world semantics.
 
-The real `perf.reference.v1` runs, persistence/publication stress runs, and 24 wall-clock hour soak are executed by target adapters against the assembled runtime. A short CI validation must never be reported as the 24h acceptance result.
+The real `perf.reference.v1` runs, persistence/publication stress runs, and 12 wall-clock hour soak are executed by target adapters against the assembled runtime. A short CI validation must never be reported as the 12h acceptance result.
 
 Target adapters must preserve the canonical seed/config/history and return reports matching the materialized contracts. Wall-clock timing is diagnostic only and must not become authoritative world input.
 

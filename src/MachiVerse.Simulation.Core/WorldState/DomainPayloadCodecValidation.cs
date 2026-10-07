@@ -90,9 +90,11 @@ public sealed class StandardDomainPayloadCodecValidatorV1
         PartitionRecordRefV1 reference,
         IDomainRecordSchemaResolverV1 resolver)
     {
-        var expected = StandardDomainPartitionRegistry.Get(reference.PartitionId.Value).RecordSchema;
-        if (!resolver.TryGetRecordSchema(reference, out var actual) || actual != expected)
+        if (!resolver.TryGetRecordSchema(reference, out var actual) ||
+            !StandardDomainRecordSchemaMigrationRegistryV1.IsAllowedRecordSchema(reference.PartitionId.Value, actual))
+        {
             throw new InvalidDataException($"domain.payload.reference-schema:{partitionId}:{field}");
+        }
     }
 
     private static void ValidateSchemaSpecificRange(

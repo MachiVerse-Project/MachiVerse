@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.WorldState;
 
 namespace MachiVerse.Simulation.Core.Domains.Participation;
 
@@ -218,13 +219,15 @@ public static class ParticipationControlContextFactoryV1
     }
 }
 
-public sealed record ParticipationPolicyRuleV1(int Priority, StableToken RuleId)
+public sealed record ParticipationPolicyRuleV1(int Priority, StableToken RuleId) : ICanonicalDomainNestedValueV1
 {
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(RuleId.Value))
             throw new InvalidDataException("participation.policy-rule-id-empty");
     }
+
+    public void ValidateCanonical() => Validate();
 }
 
 public sealed class ParticipationAbsencePolicyV1

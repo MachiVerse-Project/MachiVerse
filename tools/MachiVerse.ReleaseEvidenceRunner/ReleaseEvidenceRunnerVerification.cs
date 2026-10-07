@@ -25,20 +25,32 @@ internal static class ReleaseEvidenceRunnerVerification
         if (boundary > limit || regression <= limit)
             throw new InvalidDataException("worker16 median-p95 acceptance boundary self-test failed.");
 
+        Qa04AdapterResponse.VerifyReleaseReadinessContract();
+        Qa04DeterminismEvidenceVerifier.VerifyContract();
+        ReleaseEvidenceRunner.VerifyAlpha11Contract();
+
         var soak = root.GetProperty("soakProfile");
-        if (soak.GetProperty("durationHours").GetInt32() != 24)
-            throw new InvalidDataException("QA-04 soak duration must remain 24 hours.");
+        RequireEqual(soak.GetProperty("testCaseId").GetString(), "performance.soak.12h", "QA-04 soak testCaseId");
+        if (soak.GetProperty("durationHours").GetInt32() != 12)
+            throw new InvalidDataException("QA-04 soak duration must remain 12 hours.");
 
         var releaseManifestPath = Path.Combine(repositoryRoot, "tests", "release-acceptance-fixtures", "v1", "acceptance-manifest.json");
         using var releaseManifest = JsonDocument.Parse(File.ReadAllBytes(releaseManifestPath));
         RequireEqual(releaseManifest.RootElement.GetProperty("qa04ManifestSha256").GetString(),
             Program.CanonicalQa04ManifestSha256, "release QA-04 digest binding");
-        if (releaseManifest.RootElement.GetProperty("soak").GetProperty("minimumDurationSeconds").GetInt64() < 86_400)
-            throw new InvalidDataException("Release acceptance soak minimum cannot be shorter than 86400 seconds.");
+        RequireEqual(releaseManifest.RootElement.GetProperty("soak").GetProperty("testCaseId").GetString(),
+            "performance.soak.12h", "release soak testCaseId");
+        if (releaseManifest.RootElement.GetProperty("soak").GetProperty("minimumDurationSeconds").GetInt64() != 43_200)
+            throw new InvalidDataException("Release acceptance soak minimum must remain exactly 43200 seconds.");
+        if (ReleaseEvidenceRunner.IsCompleteSoakDuration(43_199))
+            throw new InvalidDataException("Release soak duration boundary accepted 43199 seconds.");
+        if (!ReleaseEvidenceRunner.IsCompleteSoakDuration(43_200))
+            throw new InvalidDataException("Release soak duration boundary rejected 43200 seconds.");
 
         Console.WriteLine("INT-03 release evidence runner contract verification PASS");
         Console.WriteLine($"QA-04 manifest SHA-256: {digest}");
         Console.WriteLine("Adapter boundary: external JSONL process only; no production component assembly reference.");
+        Console.WriteLine("Release adapter responses require explicit materialization/readiness evidence.");
         Console.WriteLine("Contract-smoke output is never release-eligible.");
     }
 

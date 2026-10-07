@@ -146,38 +146,44 @@ public static class OperationSchedulerSubstateV1
         if (scheduler.FreezeStep is { } freeze && freeze >= scheduler.NextSchedulableStep)
             throw new InvalidDataException("scheduler-substate.freeze-barrier-invalid");
 
-        var digest = HashSuite.DomainHash("mv.core-scheduler-state.v1", writer =>
+        using var session = HashSuite.BeginDomainHashStreaming("mv.core-scheduler-state.v1");
+        var writer = session.Writer;
+        writer.WriteMapStart(5);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
+        writer.WriteUnsigned(1); writer.WriteUnsigned(worldStep);
+        writer.WriteUnsigned(2); writer.WriteUnsigned(scheduler.NextSchedulableStep);
+        writer.WriteUnsigned(3);
+        if (scheduler.FreezeStep is { } frozen)
         {
-            writer.WriteMapStart(5);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
-            writer.WriteUnsigned(1); writer.WriteUnsigned(worldStep);
-            writer.WriteUnsigned(2); writer.WriteUnsigned(scheduler.NextSchedulableStep);
-            writer.WriteUnsigned(3);
-            if (scheduler.FreezeStep is { } frozen)
+            writer.WriteArrayStart(1);
+            writer.WriteUnsigned(frozen);
+        }
+        else writer.WriteArrayStart(0);
+        writer.WriteUnsigned(4);
+        writer.WriteArrayStart((ulong)buckets.Length);
+
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        Span<byte> orderKeyBytes = stackalloc byte[SameStepOrderKey.DatabaseKeyLength];
+        foreach (var bucket in buckets)
+        {
+            writer.WriteArrayStart(2);
+            writer.WriteUnsigned(bucket.Key);
+            writer.WriteArrayStart((ulong)bucket.Value.Count);
+            foreach (var operation in bucket.Value)
             {
-                writer.WriteArrayStart(1);
-                writer.WriteUnsigned(frozen);
-            }
-            else writer.WriteArrayStart(0);
-            writer.WriteUnsigned(4);
-            writer.WriteArrayStart((ulong)buckets.Length);
-            foreach (var bucket in buckets)
-            {
+                operation.Validate();
+                if (operation.EffectiveStep != bucket.Key)
+                    throw new InvalidDataException("scheduler-substate.bucket-effective-step-mismatch");
+
+                operation.OperationId.WriteBytes(operationIdBytes);
+                operation.OrderKey.WriteDatabaseBytes(orderKeyBytes);
                 writer.WriteArrayStart(2);
-                writer.WriteUnsigned(bucket.Key);
-                writer.WriteArrayStart((ulong)bucket.Value.Count);
-                foreach (var operation in bucket.Value)
-                {
-                    operation.Validate();
-                    if (operation.EffectiveStep != bucket.Key)
-                        throw new InvalidDataException("scheduler-substate.bucket-effective-step-mismatch");
-                    writer.WriteArrayStart(2);
-                    writer.WriteBytes(operation.OperationId.ToBytes());
-                    writer.WriteBytes(operation.OrderKey.ToDatabaseBytes());
-                }
+                writer.WriteBytes(operationIdBytes);
+                writer.WriteBytes(orderKeyBytes);
             }
-        });
-        return new WorldSubstateRefV1(Schema, digest);
+        }
+
+        return new WorldSubstateRefV1(Schema, session.Complete());
     }
 
     public static OperationSchedulerStateV1 ProjectAfterFinalization(
@@ -191,14 +197,16 @@ public static class OperationSchedulerSubstateV1
             throw new InvalidDataException("scheduler-substate.frozen-barrier-mismatch");
 
         var current = scheduler.ForEffectiveStep(frozenInput.BasisStep);
-        if (current.Count != frozenInput.ScheduledOperations.Count)
-            throw new InvalidDataException("scheduler-substate.frozen-set-mismatch");
-        for (var index = 0; index < current.Count; index++)
+        if (!ReferenceEquals(current, frozenInput.ScheduledOperations))
         {
-            if (current[index].OperationId != frozenInput.ScheduledOperations[index].OperationId ||
-                !current[index].OrderKey.ToDatabaseBytes().AsSpan()
-                    .SequenceEqual(frozenInput.ScheduledOperations[index].OrderKey.ToDatabaseBytes()))
+            if (current.Count != frozenInput.ScheduledOperations.Count)
                 throw new InvalidDataException("scheduler-substate.frozen-set-mismatch");
+            for (var index = 0; index < current.Count; index++)
+            {
+                if (current[index].OperationId != frozenInput.ScheduledOperations[index].OperationId ||
+                    !current[index].OrderKey.CanonicallyEquals(frozenInput.ScheduledOperations[index].OrderKey))
+                    throw new InvalidDataException("scheduler-substate.frozen-set-mismatch");
+            }
         }
 
         var future = scheduler.CanonicalBuckets
@@ -238,49 +246,71 @@ public static class DurableOperationSubstateV1
             .Select(static state => state ?? throw new ArgumentNullException(nameof(states)))
             .OrderBy(static state => state.OperationId)
             .ToArray();
-        if (ordered.Select(static state => state.OperationId).Distinct().Count() != ordered.Length)
-            throw new InvalidDataException("operation-substate.duplicate-operation-id");
-        if (ordered.Length == 0)
-            return WorldStateV1.EmptySubstate(Schema.SchemaId.Value);
-        foreach (var state in ordered) Validate(state);
+        return CanonicalizeOrderedByOperationId(ordered);
+    }
 
-        var digest = HashSuite.DomainHash("mv.core-operation-state.v1", writer =>
+    internal static WorldSubstateRefV1 CanonicalizeOrderedByOperationId(
+        IReadOnlyList<DurableOperationStateV1> ordered)
+    {
+        ArgumentNullException.ThrowIfNull(ordered);
+        if (ordered.Count == 0)
+            return WorldStateV1.EmptySubstate(Schema.SchemaId.Value);
+
+        DurableOperationStateV1? previous = null;
+        foreach (var state in ordered)
         {
-            writer.WriteMapStart(2);
-            writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
-            writer.WriteUnsigned(1);
-            writer.WriteArrayStart((ulong)ordered.Length);
-            foreach (var state in ordered)
+            ArgumentNullException.ThrowIfNull(state);
+            if (previous is not null)
             {
-                writer.WriteMapStart(10);
-                writer.WriteUnsigned(0); writer.WriteBytes(state.OperationId.ToBytes());
-                writer.WriteUnsigned(1); writer.WriteBytes(state.OperationPayloadDigest);
-                writer.WriteUnsigned(2); writer.WriteUnsigned((byte)state.Lifecycle);
-                WriteOptional(writer, 3, state.AcceptedSequence);
-                WriteOptional(writer, 4, state.ScheduledSequence);
-                WriteOptional(writer, 5, state.EffectiveStep);
-                WriteOptional(writer, 6, state.TerminalSequence);
-                writer.WriteUnsigned(7);
-                if (state.TerminalStatus is { } status)
-                {
-                    writer.WriteArrayStart(1); writer.WriteInt64(status);
-                }
-                else writer.WriteArrayStart(0);
-                writer.WriteUnsigned(8);
-                if (state.ResultCode is { } code)
-                {
-                    writer.WriteArrayStart(1); writer.WriteAsciiText(code);
-                }
-                else writer.WriteArrayStart(0);
-                writer.WriteUnsigned(9);
-                if (state.RichResultPayload is { } rich)
-                {
-                    writer.WriteArrayStart(1); writer.WriteBytes(rich);
-                }
-                else writer.WriteArrayStart(0);
+                var comparison = previous.OperationId.CompareTo(state.OperationId);
+                if (comparison == 0)
+                    throw new InvalidDataException("operation-substate.duplicate-operation-id");
+                if (comparison > 0)
+                    throw new InvalidDataException("operation-substate.noncanonical-operation-order");
             }
-        });
-        return new WorldSubstateRefV1(Schema, digest);
+
+            Validate(state);
+            previous = state;
+        }
+
+        using var session = HashSuite.BeginDomainHashStreaming("mv.core-operation-state.v1");
+        var writer = session.Writer;
+        writer.WriteMapStart(2);
+        writer.WriteUnsigned(0); writer.WriteAsciiText(Schema.SchemaId.Value);
+        writer.WriteUnsigned(1);
+        writer.WriteArrayStart((ulong)ordered.Count);
+        Span<byte> operationIdBytes = stackalloc byte[16];
+        foreach (var state in ordered)
+        {
+            state.OperationId.WriteBytes(operationIdBytes);
+            writer.WriteMapStart(10);
+            writer.WriteUnsigned(0); writer.WriteBytes(operationIdBytes);
+            writer.WriteUnsigned(1); writer.WriteBytes(state.OperationPayloadDigest);
+            writer.WriteUnsigned(2); writer.WriteUnsigned((byte)state.Lifecycle);
+            WriteOptional(writer, 3, state.AcceptedSequence);
+            WriteOptional(writer, 4, state.ScheduledSequence);
+            WriteOptional(writer, 5, state.EffectiveStep);
+            WriteOptional(writer, 6, state.TerminalSequence);
+            writer.WriteUnsigned(7);
+            if (state.TerminalStatus is { } status)
+            {
+                writer.WriteArrayStart(1); writer.WriteInt64(status);
+            }
+            else writer.WriteArrayStart(0);
+            writer.WriteUnsigned(8);
+            if (state.ResultCode is { } code)
+            {
+                writer.WriteArrayStart(1); writer.WriteAsciiText(code);
+            }
+            else writer.WriteArrayStart(0);
+            writer.WriteUnsigned(9);
+            if (state.RichResultPayload is { } rich)
+            {
+                writer.WriteArrayStart(1); writer.WriteBytes(rich);
+            }
+            else writer.WriteArrayStart(0);
+        }
+        return new WorldSubstateRefV1(Schema, session.Complete());
     }
 
     public static IReadOnlyList<DurableOperationStateV1> ProjectTerminalCommit(

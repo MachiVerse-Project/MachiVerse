@@ -1,4 +1,5 @@
 using MachiVerse.Simulation.Core.Determinism;
+using MachiVerse.Simulation.Core.Domains.GovernanceSecurity;
 using MachiVerse.Simulation.Core.Runtime;
 using MachiVerse.Simulation.Core.WorldState;
 
@@ -8,9 +9,21 @@ public sealed class GovernanceSecurityDomainRuntimeV1 : DeterministicDomainRunti
 {
     public GovernanceSecurityDomainRuntimeV1(
         DomainIntentEvaluatorV1 intentEvaluator,
-        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null)
+        DomainPartitionCandidateEvaluatorV1? partitionCandidateEvaluator = null,
+        GovernanceSecurityDomainStateV1? state = null)
         : base("governance_security", intentEvaluator, partitionCandidateEvaluator)
     {
+        State = state;
+    }
+
+    public GovernanceSecurityDomainStateV1? State { get; }
+    public GovernanceSecurityDomainStateV1 RequireState()
+        => State ?? throw new InvalidDataException("governance.runtime-state.unavailable");
+
+    public GovernanceSecurityDomainSnapshotMaterialV1 BindSnapshotMaterial(WorldStateV1 frozenState)
+    {
+        ArgumentNullException.ThrowIfNull(frozenState);
+        return RequireState().BindSnapshotMaterial(frozenState);
     }
 }
 

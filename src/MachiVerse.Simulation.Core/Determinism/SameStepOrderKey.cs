@@ -10,24 +10,62 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
     private readonly byte[] _conflictScopeDigest;
 
     public SameStepOrderKey(byte phase, ushort domainRank, ReadOnlySpan<byte> conflictScopeDigest, int semanticPriority, OpaqueId128 intentId)
+        : this(
+            phase,
+            domainRank,
+            conflictScopeDigest.Length == ConflictScopeDigestLength
+                ? conflictScopeDigest.ToArray()
+                : throw new ArgumentException("ConflictScopeDigest requires exactly 32 bytes.", nameof(conflictScopeDigest)),
+            semanticPriority,
+            intentId)
+    {
+    }
+
+    private SameStepOrderKey(
+        byte phase,
+        ushort domainRank,
+        byte[] conflictScopeDigest,
+        int semanticPriority,
+        OpaqueId128 intentId)
     {
         if (phase > 5) throw new ArgumentOutOfRangeException(nameof(phase), "Standard OrderPhase is 0..5.");
+        ArgumentNullException.ThrowIfNull(conflictScopeDigest);
         if (conflictScopeDigest.Length != ConflictScopeDigestLength)
             throw new ArgumentException("ConflictScopeDigest requires exactly 32 bytes.", nameof(conflictScopeDigest));
         if (intentId.IsZero) throw new ArgumentException("IntentId must be non-zero.", nameof(intentId));
-
         Phase = phase;
         DomainRank = domainRank;
-        _conflictScopeDigest = conflictScopeDigest.ToArray();
+        _conflictScopeDigest = conflictScopeDigest;
         SemanticPriority = semanticPriority;
         IntentId = intentId;
     }
+
+    internal static SameStepOrderKey FromTrustedImmutableConflictScopeDigest(
+        byte phase,
+        ushort domainRank,
+        byte[] conflictScopeDigest,
+        int semanticPriority,
+        OpaqueId128 intentId)
+        => new(
+            phase,
+            domainRank,
+            conflictScopeDigest,
+            semanticPriority,
+            intentId);
 
     public byte Phase { get; }
     public ushort DomainRank { get; }
     public ReadOnlySpan<byte> ConflictScopeDigest => _conflictScopeDigest;
     public int SemanticPriority { get; }
     public OpaqueId128 IntentId { get; }
+
+    internal bool CanonicallyEquals(SameStepOrderKey? other)
+        => other is not null &&
+           Phase == other.Phase &&
+           DomainRank == other.DomainRank &&
+           _conflictScopeDigest.AsSpan().SequenceEqual(other._conflictScopeDigest) &&
+           SemanticPriority == other.SemanticPriority &&
+           IntentId == other.IntentId;
 
     public int CompareTo(SameStepOrderKey? other)
     {
@@ -46,13 +84,20 @@ public sealed class SameStepOrderKey : IComparable<SameStepOrderKey>
     public byte[] ToDatabaseBytes()
     {
         var bytes = new byte[DatabaseKeyLength];
-        bytes[0] = Phase;
-        BinaryPrimitives.WriteUInt16BigEndian(bytes.AsSpan(1, 2), DomainRank);
-        _conflictScopeDigest.CopyTo(bytes.AsSpan(3, ConflictScopeDigestLength));
-        var sortablePriority = unchecked((uint)(SemanticPriority ^ int.MinValue));
-        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(35, 4), sortablePriority);
-        IntentId.ToBytes().CopyTo(bytes.AsSpan(39, 16));
+        WriteDatabaseBytes(bytes);
         return bytes;
+    }
+
+    internal void WriteDatabaseBytes(Span<byte> destination)
+    {
+        if (destination.Length != DatabaseKeyLength)
+            throw new ArgumentException($"SameStepOrderKey database encoding must be {DatabaseKeyLength} bytes.", nameof(destination));
+        destination[0] = Phase;
+        BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(1, 2), DomainRank);
+        _conflictScopeDigest.CopyTo(destination.Slice(3, ConflictScopeDigestLength));
+        var sortablePriority = unchecked((uint)(SemanticPriority ^ int.MinValue));
+        BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(35, 4), sortablePriority);
+        IntentId.WriteBytes(destination.Slice(39, 16));
     }
 
     public static SameStepOrderKey FromDatabaseBytes(ReadOnlySpan<byte> bytes)
