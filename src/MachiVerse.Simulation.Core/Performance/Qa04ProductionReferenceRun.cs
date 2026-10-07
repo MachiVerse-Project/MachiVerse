@@ -62,7 +62,22 @@ public static class Qa04ProductionReferenceRunV1
 {
     public const int CanonicalTransitionCount = 27_000;
 
-    public static async Task<Qa04ProductionReferenceRunResultV1> RunCanonicalAsync(
+    public static Task<Qa04ProductionReferenceRunResultV1> RunCanonicalAsync(
+        int workerCount,
+        string persistenceRoot,
+        CancellationToken cancellationToken = default,
+        IQa04ProductionRunObserverV1? observer = null,
+        int progressHeartbeatSeconds = 60,
+        int? persistenceInsertBatchSize = null,
+        int phaseLogIntervalTransitions = 1)
+        => Qa04ProcessWorkingSetHardGuardV1.RunAsync(
+            token => RunCanonicalCoreAsync(workerCount, persistenceRoot, token, observer,
+                progressHeartbeatSeconds, persistenceInsertBatchSize, phaseLogIntervalTransitions),
+            Qa04AcceptanceConfigV1.Current.CoreHardGuardBytes,
+            TimeSpan.FromSeconds(progressHeartbeatSeconds),
+            cancellationToken);
+
+    private static async Task<Qa04ProductionReferenceRunResultV1> RunCanonicalCoreAsync(
         int workerCount,
         string persistenceRoot,
         CancellationToken cancellationToken = default,
@@ -420,14 +435,23 @@ public static class Qa04ProductionReferenceRunV1
             var diagnosticMeasurement = measurement.Snapshot();
             Console.Error.WriteLine(FormattableString.Invariant(
                 $"QA04_MEASUREMENT status=diagnostic-only workers={workerCount} samples={diagnosticMeasurement.StepSampleCount} p99_ms={diagnosticMeasurement.StepDuration?.P99.TotalMilliseconds:F3} deadline_ms={diagnosticMeasurement.StepDeadlineMilliseconds:F3} deadline_misses={diagnosticMeasurement.StepDeadlineMissCount} deadline_miss_ratio={diagnosticMeasurement.StepDeadlineMissRatio:F9}"));
+            // The final WorldState contains authoritative headers/digests, not the typed record
+            // material. Keep the frozen Snapshot cut, but release the completed workload's live
+            // generations and byte cache before allocating an independent recovery world.
+            currentMutationState = null!;
+            currentDomainAuthorities = Array.Empty<IDomainPartitionSnapshotAuthorityV1>();
+            digestCache = null!;
+            assembly = null!;
             Volatile.Write(ref progressPhase, "snapshot-recovery");
-            var snapshot = await DrainCommitAndRecoverSnapshotAsync(
+            var recoveryTask = DrainCommitAndRecoverSnapshotAsync(
                 snapshotCoordinator,
                 frozenSnapshot,
                 frozenDomainAuthorities,
                 store,
                 paths,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken);
+            frozenDomainAuthorities = null;
+            var snapshot = await recoveryTask.ConfigureAwait(false);
             snapshotCommitted = true;
 
             if (!CryptographicOperations.FixedTimeEquals(
@@ -691,6 +715,13 @@ public static class Qa04ProductionReferenceRunV1
             domainLogicalRecordCount,
             staged.SnapshotDigest.ToArray(),
             staged.PhysicalManifestDigest.ToArray());
+
+        // Drain and commit have completed, including authority validation. These sources own
+        // the frozen record generations / serialized fragments and are no longer recovery input.
+        // Recovery must continue reading and rehashing the independently persisted Snapshot.
+        sections = null!;
+        domainAuthorities = null!;
+        providers = null!;
 
         var decoders = CanonicalSnapshotProductionPhysicalDrainV1.ProductionDecoders(zstd);
         Console.Error.WriteLine($"QA04_SNAPSHOT phase=durable-recovery step={cut.SnapshotStep}");
