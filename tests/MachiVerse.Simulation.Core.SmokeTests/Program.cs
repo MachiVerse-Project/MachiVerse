@@ -279,6 +279,7 @@ Qa04MarketOrderApplicationSmoke.Run();
 Qa04CanonicalOperationMutationBatchSmoke.Run();
 Qa04CanonicalOperationPartitionCandidatesSmoke.Run();
 Qa04PrefixDigestGcSmoke.Run();
+await Qa04ProcessWorkingSetGuardSmoke.RunAsync();
 await Qa04CanonicalOperationStepFinalizationSmoke.RunAsync();
 await Qa04RuntimeTargetSmoke.RunAsync();
 await Qa04CoreSubstateAuthoritySmoke.RunAsync();
